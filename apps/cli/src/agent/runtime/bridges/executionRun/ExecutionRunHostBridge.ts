@@ -11,34 +11,14 @@ import type {
 import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
-import {
-  buildBackendTargetKey,
-  buildBackendTargetKeyV2,
-  type AcpConfigOptionOverridesV1,
-  type BackendTargetRefV1,
-  type ConnectedServiceBindingsV2,
-  type ExecutionRunConnectedServicesLaunchV1,
-  type ExecutionRunUserTranscriptDirective,
-  type ExecutionRunBridgeLifecycleHookEventIdV1,
-  type ExecutionRunListRequest,
-  type ExecutionRunPublicState,
-  type ExecutionRunStartRequest,
-  type ExecutionRunResultContractV1,
-  type ProviderBoundModelRef,
-  type TeamCredentialProviderModelSelectionV1,
-  type SessionRunPromptReadActionIdV1,
-  SessionRunPromptContextV1Schema,
-  type SessionRunPromptContextV1,
-  type SessionInputCausalPermissionAuthorityV1,
-  type SecretReferenceOverlayV1,
-  readBackendTargetRefV2,
-  buildQualifiedPluginContributionKey,
-  sameQualifiedConnectedAccountRef,
-  type StructuredQuestionAnswersV1,
-  readActionCompletionRunObservationV1,
-  isActionCompletionRunObservationPendingV1,
-  type ReviewWalkthroughObservation,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1, StructuredQuestionAnswersV1, ReviewWalkthroughObservation } from '@happier-dev/protocol';
+import { SessionRunPromptContextV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
 
 import { VoiceAgentError, VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
 import type {
@@ -110,7 +90,7 @@ import {
   type PreparedWorkerContextItem,
 } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 import { measureSessionFollowUtf8Bytes } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
-import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol';
+import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { omitExecutionRunRoleCompositionContext, startExecutionRun } from './startExecutionRun';
 import { cancelCurrentExecutionRunTurn } from './cancelCurrentExecutionRunTurn';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';

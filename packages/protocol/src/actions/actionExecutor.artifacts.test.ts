@@ -116,7 +116,7 @@ describe('ordinary Artifact Actions', () => {
     expect(readWorkBoardArtifactSummaryV1(current.id, header)).toEqual({
       id: 'board-1', name: 'Prior', pinnedInSessions: true, source: { sections: ['needs_you'] },
     });
-    expect(header.source).toEqual({ sessionId: 'session-1' });
+    expect(header).not.toHaveProperty('source');
   });
   it('restores Workflow preview labels from the selected definition rather than its displaced header', () => {
     const definitionId = '11111111-1111-4111-8111-111111111111';

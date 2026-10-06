@@ -14,7 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import { useSurfaceStateSize } from './surfaceStateSize';
+import { useSurfaceStateCardSize } from './surfaceStateSize';
 
 export type SurfaceStateKind = HappierSurfaceStateKind;
 /**
@@ -205,7 +205,7 @@ export function SurfaceStateCard(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const containerSize = useSurfaceStateSize();
+    const containerSize = useSurfaceStateCardSize();
     const size = props.size ?? containerSize;
     const failureGlyph = resolveHappierStateFailureGlyph(props.kind, size === 'line');
     const kindIconName = failureGlyph ? resolvePluginUiIconName(failureGlyph) : undefined;

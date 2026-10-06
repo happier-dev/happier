@@ -1,15 +1,9 @@
-import {
-    AgentExecutionRunEventSchema,
-    AgentLaunchEnvironmentV1Schema,
-    AgentRuntimeJsonValueV1Schema,
-} from '@happier-dev/protocol/runtime';
-import {
-    HappierStructuredInputV1Schema,
-    PluginContributionIdentityV1Schema,
-    renderSessionInputContextPromptV1,
-    type AccountSettings,
-    type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { AgentExecutionRunEventSchema } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
+import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { AccountSettings, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type {
     AgentExecutionRunEvent,
     AgentExecutionRunOpenRequest,
@@ -32,7 +26,7 @@ import type { WorkStateService } from '@happier-dev/plugin-sdk/sessions/work-sta
 import { createExecutionRunHostBackendFromSessionRuntime } from '@happier-dev/plugin-sdk/host/registration';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CreateCliExecutionRunBackendParams, EngineResolutionAgent } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
@@ -57,6 +51,7 @@ import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/reg
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import {
     createNativeAgentSessionInteractionOperations,
+    resolveNativeAgentSessionNativeHomeService,
     toNativeAgentUsageObservation,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { UsageObservation } from '@/usage/usageObservation';
@@ -74,7 +69,9 @@ import { createNativeAgentExecutionRunHostServices } from '@/agent/runtime/regis
 import type { PluginRuntimeAuthoritySnapshotV1 } from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';
 import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
-import { createExecutionRunCodedError } from './errors';
+import { readConnectedServiceChildMemberLogContextFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { logger } from '@/ui/logger';
+import { createExecutionRunCodedError, readExecutionRunRejectedStartDiagnostic, type ExecutionRunRejectedStartError } from './errors';
 import {
     isWorkflowInteractionCapacityError,
     WORKFLOW_INTERACTION_CAPACITY_EXCEEDED,
@@ -185,6 +182,9 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     getPermissionRequestStore?: CreateCliExecutionRunBackendParams['getPermissionRequestStore'];
     mcpSelection?: SessionMcpSelectionV1;
     happyHomeDir?: string;
+    agent?: EngineResolutionAgent;
+    sourceEnvironment?: Readonly<Record<string, string>>;
+    refreshRuntimeAuthViaDaemon?: CreateCliExecutionRunBackendParams['connectedServiceRuntimeAuthRefresh'];
     createInvocationServices?: (params: Readonly<{
         currentSession: HostCurrentSessionUiServices;
         signal: AbortSignal;
@@ -321,6 +321,11 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             signal,
             ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
         });
+        const nativeHome = params.agent ? await resolveNativeAgentSessionNativeHomeService({
+            agent: params.agent,
+            sourceEnvironment: params.sourceEnvironment ?? {},
+        }) : null;
+        signal.throwIfAborted();
         const executionRunServices = createNativeAgentExecutionRunHostServices({
             signal,
             executionRunId: runId,
@@ -333,6 +338,8 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             pluginId: params.lease.pluginId,
             agentId: params.lease.agentId,
             ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+            ...(nativeHome ? { nativeHome } : {}),
+            ...(params.refreshRuntimeAuthViaDaemon ? { refreshRuntimeAuthViaDaemon: params.refreshRuntimeAuthViaDaemon } : {}),
         });
         let context: AgentExecutionRunRuntimeContextV1;
         try {
@@ -741,6 +748,9 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     let lastSequence = -1;
     let terminal = false;
     let disposed = false;
+    let openingInitialInput = false;
+    let providerWorkObserved = false;
+    let rejectedStart: ExecutionRunRejectedStartError | null = null;
     let resolveTerminal!: () => void;
     let rejectTerminal!: (error: Error) => void;
     const terminalPromise = new Promise<void>((resolve, reject) => {
@@ -748,6 +758,14 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         rejectTerminal = reject;
     });
     void terminalPromise.catch(() => undefined);
+
+    function logProviderFailure(): void {
+        logger.warn('[EXECUTION RUN] provider failure', {
+            runId,
+            agentId: params.lease.agentId,
+            selectedMembers: readConnectedServiceChildMemberLogContextFromEnv(launchEnvironment?.values ?? {}),
+        });
+    }
 
     function assertUsable(): void {
         if (disposed) throw new Error('Native Agent execution run is disposed');
@@ -798,6 +816,21 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         }
         if (terminal) return;
         lastSequence = normalizedEvent.sequence;
+        if (normalizedEvent.kind === 'run-progress' || normalizedEvent.kind === 'output-delta'
+            || normalizedEvent.kind === 'run-complete' || normalizedEvent.kind === 'run-cancelled') {
+            providerWorkObserved = true;
+        }
+        if (normalizedEvent.kind === 'run-failed' && openingInitialInput && !providerWorkObserved) {
+            const rejection = readExecutionRunRejectedStartDiagnostic(normalizedEvent.diagnostic);
+            if (rejection) {
+                logProviderFailure();
+                rejectedStart = rejection;
+                terminal = true;
+                rejectTerminal(rejection);
+                return;
+            }
+        }
+        if (normalizedEvent.kind === 'run-failed') logProviderFailure();
         const message = toHostMessage(normalizedEvent, sanitizeProviderDiagnosticText);
         if (message) emit(message);
         if (normalizedEvent.kind === 'run-complete' || normalizedEvent.kind === 'run-cancelled') {
@@ -860,15 +893,21 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     opened = await directExecutionRuns!.open(request, context);
                 }
             } catch (error) {
+                logProviderFailure();
                 throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
             }
             try {
                 assertUsable();
                 nativeRuntime = opened;
+                openingInitialInput = request.kind === 'create';
                 watchDisposable = opened.watch(handleEvent);
+                if (rejectedStart) throw rejectedStart;
             } catch (error) {
+                if (rejectedStart === error) throw error;
                 await opened.dispose();
                 throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
+            } finally {
+                openingInitialInput = false;
             }
             return opened;
         })();
@@ -989,9 +1028,11 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                         : {}),
                 });
             } catch (error) {
+                logProviderFailure();
                 throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
             }
             if (result.status !== 'admitted') {
+                logProviderFailure();
                 throw new Error(diagnosticMessage(
                     result.diagnostic,
                     sanitizeProviderDiagnosticText,
@@ -1012,6 +1053,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             try {
                 result = await opened.stop({ signal });
             } catch (error) {
+                logProviderFailure();
                 throw sanitizeThrownError(error, sanitizeProviderDiagnosticText);
             }
             if (result.status === 'unavailable' || result.status === 'unsupported') {

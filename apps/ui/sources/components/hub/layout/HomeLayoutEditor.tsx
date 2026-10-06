@@ -68,13 +68,14 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
     };
     const rows: EditorRow[] = layout.sections.map((section) => ({ id: section.id, section }));
 
+    // These in-place events keep failures in the mounted queue-owned error/retry controls below.
     const reset = (
         <SectionActionButton
             testID="home-layout.reset"
             title={t('homeIndex.reset')}
             icon="arrow-arc-left"
             disabled={layout.isDefault}
-            onPress={layout.reset}
+            onPress={() => layout.reset().catch(() => {})}
         />
     );
     const popover = props.presentation === 'popover';
@@ -136,7 +137,7 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
                     title={t('homeIndex.hiddenSetupSteps')}
                     detail={t('homeIndex.showAgain', { count: layout.hiddenSetupStepCount })}
                     showChevron={false}
-                    onPress={layout.showHiddenSetupSteps}
+                    onPress={() => layout.showHiddenSetupSteps().catch(() => {})}
                 />
             ) : null}
         </ItemGroup>
@@ -185,7 +186,7 @@ function EditorRowView(props: Readonly<{
                                 testID={`home-layout.${row.id}.shown`}
                                 accessibilityLabel={`${t('settingsOverview.homeShowSection')}: ${title}`}
                                 value={shown}
-                                onValueChange={(next) => layout.setHidden(row.id, !next)}
+                                onValueChange={(next) => { void layout.setHidden(row.id, !next).catch(() => {}); }}
                             />
                         )}
                     />

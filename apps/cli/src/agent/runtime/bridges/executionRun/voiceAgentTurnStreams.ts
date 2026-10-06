@@ -8,11 +8,8 @@ import type {
   PendingVoiceAgentTranscriptTurn,
 } from '@/agent/executionRuns/controllers/types';
 import type { VoiceAgentTurnStreamEvent, VoiceAgentTurnStreamReadResult } from '@/agent/voice/agent/voiceAgentTypes';
-import {
-  buildSessionTranscriptMessageProvenanceV1,
-  type ExecutionRunUserTranscriptDirective,
-  type SessionInputCausalPermissionAuthorityV1,
-} from '@happier-dev/protocol';
+import { buildSessionTranscriptMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { ExecutionRunUserTranscriptDirective, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 
 type DurableVoiceAgentTranscriptTurnWriter = Readonly<{
   appendUserTextCommitted?: (

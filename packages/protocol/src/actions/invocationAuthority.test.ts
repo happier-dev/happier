@@ -23,6 +23,19 @@ describe('verified invocation authority', () => {
     expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec('approval.request.decide'), authority: 'account_automation', grant })).toEqual({ ok: true });
     expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec('account.apiTokens.create'), authority: 'account_automation', grant })).toEqual({ ok: false, errorCode: 'present_user_required' });
   });
+  it('admits host agent permission answers without widening external credential authority', () => {
+    const spec = getActionSpec('session.permission.respond');
+    for (const surface of ['agent', 'mcp', 'api', 'cli', 'rpc', 'plugin', 'ui', 'voice'] as const) {
+      expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation', grant: null, surface }))
+        .toEqual(surface === 'agent' || surface === 'mcp' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+      expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation', grant: null, surface,
+        hasExternalCredential: true })).toEqual({ ok: false, errorCode: 'present_user_required' });
+      expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation',
+        grant: API_TOKEN_FULL_GRANT_V1, surface })).toEqual({ ok: false, errorCode: 'present_user_required' });
+      expect(resolveCredentialActionAdmissionV1({ spec, authority: 'account_automation',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true }, surface })).toEqual({ ok: true });
+    }
+  });
   it('admits surface-control automation without granting human decision authority', () => {
     for (const actionId of ['browser.control.takeControl', 'browser.control.handBack', 'computer.targets.list',
       'computer.target.select', 'computer.control.interrupt', 'computer.control.handBack',

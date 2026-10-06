@@ -126,6 +126,25 @@ function createOwner(host: { os: 'web' | 'ios'; desktop: boolean } = { os: 'web'
     return { action, account: () => account, local: () => local, openedInteractions };
 }
 
+describe('navigation placement Settings Actions', () => {
+    it('reads the effective device-local placement map and writes strict current preferences', async () => {
+        const owner = createOwner();
+        expect(await owner.action({ actionId: 'settings.get', input: { anchor: 'appearance.navigationPlacements' } }))
+            .toMatchObject({ anchor: 'appearance.navigationPlacements', value: { sessionTabBar: { orderedIds: ['browse', 'git', 'companion', 'terminal'] } } });
+        const value = { appRail: { orderedIds: ['plugin:removed', 'sessions'], placements: { 'plugin:removed': 'hidden', sessions: 'overflow' } }, sessionTabBar: { orderedIds: [], placements: { git: 'hidden' } } };
+        expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.navigationPlacements', value } }))
+            .toMatchObject({ anchor: 'appearance.navigationPlacements', value });
+        expect(owner.local().navigationSurfacePlacementsV1).toEqual(value);
+        expect(owner.local().sessionCockpitBarSurfaceIds).toBeNull();
+        expect(owner.local().compactAppDestinationPreferencesV1).toEqual({ orderedDestinationIds: [], hiddenDestinationIds: [] });
+        const before = owner.local();
+        for (const bad of [{ ...value, futureSurface: {} }, { appRail: { ...value.appRail, future: true } }, { appRail: { orderedIds: [], placements: { sessions: 'visible' } } }]) {
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'appearance.navigationPlacements', value: bad } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+        }
+        expect(owner.local()).toEqual(before);
+    });
+});
+
 /** Seed only device storage; model descriptors, catalog projection and admission stay real. */
 function offeredSummaryProfiles() {
     const before = storage.getState();
@@ -207,7 +226,7 @@ describe('declared settings owner', () => {
         onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); resetServerFeaturesClientForTests(); vi.unstubAllGlobals(); });
         const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ experiments: true,
             featureToggles: { voice: true, 'voice.agent': true, 'voice.daemonInference': true, 'execution.runs': true },
-            voice: { ...settingsDefaults.voice, executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine', autoMachineId: null } } }, settingsDefaults));
+            voice: { ...settingsDefaults.voice, executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine' } } }, settingsDefaults));
         storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
         primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId,
             snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { voice: { enabled: true }, execution: { runs: { enabled: true } } }, capabilities: {} }) } });
@@ -251,11 +270,11 @@ describe('declared settings owner', () => {
         const before = storage.getState();
         onTestFinished(() => storage.setState(before, true));
         const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ voice: { ...settingsDefaults.voice, providerId: null,
-            executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine', autoMachineId: null } } }, settingsDefaults));
+            executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine' } } }, settingsDefaults));
         storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
         const owner = createOwner(undefined, true, true, account);
         const declarations = await owner.action({ actionId: 'settings.list', input: { pageId: 'voiceConversations' } });
-        if (!('items' in declarations) || !declarations.items) throw new Error('Missing readiness declaration');
+        if (!('items' in declarations) || !Array.isArray(declarations.items)) throw new Error('Missing readiness declaration');
         const readiness = declarations.items.find(item => item.anchor.endsWith('.readiness'));
         if (!readiness) throw new Error('Missing readiness declaration');
         expect(await throughActionExecutor(owner.action).execute('settings.invoke', { anchor: readiness.anchor }, { surface: 'ui', authority: 'present_user' }))
@@ -264,7 +283,7 @@ describe('declared settings owner', () => {
     it('reads actual diagnostics through the declared operation and refuses a different machine or missing artifact', async () => {
         const before = storage.getState();
         onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); });
-        const account = applySettings(settingsDefaults, { voiceSettingsV1: { ...settingsDefaults.voice, executionMachine: { mode: 'fixed', machineId: 'voice-machine', autoMachineId: null } } });
+        const account = applySettings(settingsDefaults, { voiceSettingsV1: { ...settingsDefaults.voice, executionMachine: { mode: 'fixed', machineId: 'voice-machine' } } });
         storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
         const owner = createOwner(undefined, true, true, account);
         const status = { ok: true, root: '/private/voice/diagnostics', settings: readVoiceDiagnosticsSettings(account.voice), artifacts: [],
@@ -310,7 +329,7 @@ describe('declared settings owner', () => {
         const revocation = await import('@/voice/diagnostics/runtimeRevocation');
         onTestFinished(() => { storage.setState(before, true); settingsMachineRpc.mockReset(); runtime.resetVoiceDiagnosticsRuntimeStatusForTests(); revocation.resetVoiceDiagnosticsRevocationForTests(); });
         const account = applySettings(settingsDefaults, normalizeVoiceSettingsLocalDelta({ voice: { ...settingsDefaults.voice,
-            executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine', autoMachineId: null } } }, settingsDefaults));
+            executionMachine: { mode: 'fixed' as const, machineId: 'voice-machine' } } }, settingsDefaults));
         storage.setState({ settings: account, settingsScope: { serverId: 'test-home', accountId: 'test-account' },
             machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
         const obligation = runtime.beginVoiceDiagnosticsRevocationObligation({ kind: 'machine_policy', machineId: 'voice-machine' }, 'failed');
@@ -510,7 +529,7 @@ describe('declared settings owner', () => {
         const descriptor = entry?.providerSettings;
         if (!entry || !descriptor) throw new Error('missing real speech settings owner');
         const voice = { ...writeVoiceProviderSettingsConfig(settingsDefaults.voice, providerId, descriptor.defaultConfig),
-            executionMachine: { mode: 'fixed' as const, machineId: 'machine-a', autoMachineId: null },
+            executionMachine: { mode: 'fixed' as const, machineId: 'machine-a' },
         };
         const owner = createOwner(undefined, true, true, applySettings(settingsDefaults, { voiceSettingsV1: voice }));
         const anchor = `voiceDictation.provider.${providerId}.baseUrl`;
@@ -529,7 +548,7 @@ describe('declared settings owner', () => {
         const intent = await prepareSpeechEndpointSettingChange({ entry, settings: owner.account(), value: 'http://localhost:11435/v1', isCurrent: () => true });
         if (!intent) throw new Error('expected confirmed endpoint intent');
         const latest = applySettings(owner.account(), { voiceSettingsV1: { ...owner.account().voice,
-            executionMachine: { mode: 'fixed', machineId: 'machine-b', autoMachineId: null },
+            executionMachine: { mode: 'fixed', machineId: 'machine-b' },
         } });
         expect(intent(latest)).toBeNull();
     });
@@ -603,7 +622,7 @@ describe('declared settings owner', () => {
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voiceAdvanced.executionMachine', value: 'machine-a' } })).toEqual({ anchor: 'voiceAdvanced.executionMachine', value: 'machine-a' });
         expect(owner.account().voice.executionMachine).toMatchObject({ mode: 'fixed', machineId: 'machine-a' });
         expect(await owner.action({ actionId: 'settings.set', input: { anchor: 'voiceAdvanced.executionMachine', value: 'auto' } })).toEqual({ anchor: 'voiceAdvanced.executionMachine', value: 'auto' });
-        expect(owner.account().voice.executionMachine).toEqual({ mode: 'auto', machineId: null, autoMachineId: null });
+        expect(owner.account().voice.executionMachine).toEqual({ mode: 'auto', machineId: null });
         expect(owner.account().voice.assistantLanguage).toBeNull();
     });
     it('selects a Voice Agent with its catalog routing facts, never a raw-id-only write', async () => {
@@ -641,6 +660,8 @@ describe('declared settings owner', () => {
                 .toEqual({ anchor: 'voiceDictation.provider', value: 'same_as_local' });
             expect(owner.account().voice.dictation.sttBinding).toBe('same_as_local');
             expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: 5 } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+            expect(await owner.action({ actionId: 'settings.set', input: { anchor, value: { model: 'other' } } })).toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
+            expect(owner.account().voice.providers[providerId]).toMatchObject({ schemaVersion: 2, config: { model: 'large' } });
             expect(await owner.action({ actionId: 'settings.set', input: { anchor: `voiceDictation.provider.${providerId}.__proto__`, value: 'no' } })).toMatchObject({ ok: false, errorCode: 'setting_not_found' });
         } finally {
             removeExternalVoiceProviderRegistration(token);

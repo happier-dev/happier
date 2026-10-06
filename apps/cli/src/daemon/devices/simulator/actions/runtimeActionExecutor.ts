@@ -1,19 +1,8 @@
-import {
-    BACKABLE_SIMULATOR_STREAM_CONTROLS_V1,
-    classifySimulatorRuntimeActionBackingV1,
-    createUnavailableRuntimeActionExecutor,
-    getActionSpec,
-    isBackedSimulatorSidebandKindV1,
-    isSimulatorRuntimeActionIdV1,
-    resolveRuntimeActionExecutionFamily,
-    type MachineLiveStreamInputControlKindV1,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-    type SimulatorDeviceResourceV1,
-    type SimulatorRuntimeActionIdV1,
-    type SimulatorSidebandKindV1,
-    type SimulatorStreamControlsV1,
-} from '@happier-dev/protocol';
+import { BACKABLE_SIMULATOR_STREAM_CONTROLS_V1, classifySimulatorRuntimeActionBackingV1, isSimulatorRuntimeActionIdV1 } from '@happier-dev/protocol/devices/simulator/runtimeActionBacking';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
+import type { MachineLiveStreamInputControlKindV1, RuntimeActionExecute, RuntimeActionExecuteArgs, SimulatorDeviceResourceV1, SimulatorRuntimeActionIdV1, SimulatorSidebandKindV1, SimulatorStreamControlsV1 } from '@happier-dev/protocol';
 
 import { randomUUID } from 'node:crypto';
 

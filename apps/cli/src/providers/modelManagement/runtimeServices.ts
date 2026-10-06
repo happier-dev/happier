@@ -1,51 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  buildBackendTargetKeyV2,
-  computeCanonicalDomainSeparatedDigest,
-  createProviderErrorV1,
-  parseBackendTargetKeyV2,
-  sameQualifiedConnectedAccountGroupRef,
-  sameQualifiedConnectedAccountRef,
-  selectProviderRuntimeCredentialTransportV1,
-  pluginJsonValuesEqual,
-  ProviderModelDescriptorV1Schema,
-  type ProviderCatalogDeclarationV1,
-  type ProviderBoundModelRef,
-  type ProviderConnectionId,
-  type ProviderCredentialTransportV1,
-  type ProviderBrokerApplicationBindingV1,
-  type ProviderModelDescriptorV1,
-  type ProviderWireProtocol,
-  type PersistedBackendTargetRefV2,
-  type ProviderRuntimeStateFileV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import type { ProviderCatalogDeclarationV1, ProviderBoundModelRef, ProviderConnectionId, ProviderCredentialTransportV1, ProviderBrokerApplicationBindingV1, ProviderModelDescriptorV1, ProviderWireProtocol, PersistedBackendTargetRefV2, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionCpxBridge';
-import type {
-  DaemonProviderBindingStatusRequestV1,
-  DaemonProviderBindingStatusResponseV1,
-  DaemonProviderCurrentSelectionRecoveryV1,
-  DaemonProviderModelProjectionRefreshFailureV1,
-  DaemonProviderModelProjectionRequestV1,
-  DaemonProviderModelProjectionResponseV1,
-  DaemonProviderTeamCredentialRequestPolicySupportV1,
-  DaemonProviderTeamCredentialRequestPolicySupportRequestV1,
-  DaemonProviderTeamCredentialRequestPolicySupportResponseV1,
-  DaemonProviderModelSettingsMutationRequestV1,
-  DaemonProviderModelSettingsMutationResponseV1,
-  DaemonProviderTeamCredentialResourceTestCandidateRequestV1,
-  DaemonProviderTeamCredentialResourceTestCandidateResponseV1,
-  DaemonProviderTeamCredentialBrokerEligibilityRequestV1,
-  DaemonProviderTeamCredentialBrokerEligibilityResponseV1,
-} from '@happier-dev/protocol/rpc';
+import type { DaemonProviderBindingStatusRequestV1, DaemonProviderBindingStatusResponseV1, DaemonProviderCurrentSelectionRecoveryV1, DaemonProviderModelProjectionRefreshFailureV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderTeamCredentialRequestPolicySupportV1, DaemonProviderTeamCredentialRequestPolicySupportRequestV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1, DaemonProviderModelSettingsMutationRequestV1, DaemonProviderModelSettingsMutationResponseV1, DaemonProviderTeamCredentialResourceTestCandidateRequestV1, DaemonProviderTeamCredentialResourceTestCandidateResponseV1, DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
-import {
-  DaemonProviderModelProjectionResponseV1Schema,
-  DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema,
-  DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema,
-} from '@happier-dev/protocol/rpc';
+import { DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { getProviderContribution } from '@/providers/registry/lookup';

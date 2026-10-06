@@ -79,12 +79,12 @@ function request(
     };
 }
 
-function registry(params: Readonly<{
+async function registry(params: Readonly<{
     takeover: AgentExternalSessionTakeoverContribution;
     isOccurrenceCurrent?: () => boolean;
     retirementSignal?: AbortSignal;
 }>) {
-    return createTargetAgentRuntimeRegistry({
+    return await createTargetAgentRuntimeRegistry({
         agents: [{
             id: 'assistant',
             identity: {

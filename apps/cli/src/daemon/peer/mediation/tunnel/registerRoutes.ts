@@ -1,18 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 
-import {
-    DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES,
-    decodePeerTcpTunnelBinaryFrameHeaderV2,
-    decodePeerTcpTunnelBinaryFrameV2,
-    PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    PEER_TCP_TUNNEL_OPEN_PATH_V2,
-    PEER_TCP_TUNNEL_STREAM_PATH,
-    PeerTcpTunnelOpenV2Schema,
-    type PeerFlowKindV1,
-    type VoiceMediaApplicationAuthorityV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { decodePeerTcpTunnelBinaryFrameHeaderV2, decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import { PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES, PEER_TCP_TUNNEL_STREAM_PATH } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import { PEER_TCP_TUNNEL_OPEN_PATH_V2, PeerTcpTunnelOpenV2Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
+import type { PeerFlowKindV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 
 import { openPeerTcpTunnel, type OpenPeerTcpTunnelInput, type OpenPeerTcpTunnelResult } from './open';
 import {

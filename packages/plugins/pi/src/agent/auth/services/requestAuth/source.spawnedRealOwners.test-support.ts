@@ -9,13 +9,10 @@ import { createInterface } from 'node:readline';
 import { TLSSocket } from 'node:tls';
 import { fileURLToPath } from 'node:url';
 
-import {
-  buildConnectedServiceCredentialRecord,
-  ConnectedAccountAuthFailureRequestV1Schema,
-  SPAWN_SESSION_ERROR_CODES,
-  type QualifiedConnectedAccountServiceRef,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol/connect/build-connected-service-credential-record';
+import { ConnectedAccountAuthFailureRequestV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import type { QualifiedConnectedAccountServiceRef, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';

@@ -135,7 +135,9 @@ describe('bundled predecessor message metadata projection', () => {
       },
     }]);
     expect(output).not.toContain('@happier-dev/plugins-claude');
-    expect(output).toContain('buildClaudePredecessorMessageMeta(settings,');
+    // A bound constant, not a fresh literal: later plugin settings must not trip
+    // the protocol defaults type's excess-property check.
+    expect(output).toContain('buildClaudePredecessorMessageMeta(settings, CLAUDE_PREDECESSOR_MESSAGE_META_DEFAULTS)');
     expect(output).toContain('"claudeRemoteAgentSdkEnabled": true');
     expect(renderBundledUiBehaviorOverridesTs([])).not.toContain('buildClaudePredecessorMessageMeta');
   });

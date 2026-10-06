@@ -1,9 +1,5 @@
-import {
-  normalizeSpawnSessionNonceResolution,
-  type SpawnSessionCreationOutcome,
-  type SpawnSessionErrorDetail,
-  type SpawnSessionNonceResolution,
-} from '@happier-dev/protocol';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import type { SpawnSessionCreationOutcome, SpawnSessionErrorDetail, SpawnSessionNonceResolution } from '@happier-dev/protocol';
 
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';

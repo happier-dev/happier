@@ -1,8 +1,5 @@
 /** @moduleRealm any */
-import {
-    arePluginMachineMaterializationRefsEqual as canonicalArePluginMachineMaterializationRefsEqual,
-    arePluginMachineExecutionOriginsEqual as canonicalArePluginMachineExecutionOriginsEqual,
-} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineMaterializationRefsEqual as canonicalArePluginMachineMaterializationRefsEqual, arePluginMachineExecutionOriginsEqual as canonicalArePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginMachineExecutionOriginV1 } from './actions/executionOrigin.js';
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 

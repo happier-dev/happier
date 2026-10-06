@@ -620,6 +620,48 @@ describe('MultiTextInput', () => {
         expect(onContentHeightChange).toHaveBeenLastCalledWith(96);
     });
 
+    it('remeasures wrapping when a pane changes the web composer width without changing its text', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        let resize: (() => void) | undefined;
+        const disconnect = vi.fn();
+        vi.stubGlobal('ResizeObserver', class {
+            constructor(callback: () => void) { resize = callback; }
+            observe() {}
+            disconnect = disconnect;
+        });
+        const node = {
+            value: 'A prompt that wraps when the settings pane docks', clientWidth: 800,
+            selectionStart: 0, selectionEnd: 0, scrollTop: 0, scrollHeight: 64,
+            style: {} as Record<string, string>,
+            setSelectionRange: vi.fn(), dispatchEvent: vi.fn(), focus: vi.fn(), blur: vi.fn(),
+        };
+        const onContentHeightChange = vi.fn();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            await act(async () => {
+                tree = renderer.create(<MultiTextInput value={node.value} maxHeight={300}
+                    onChangeText={() => {}} onContentHeightChange={onContentHeightChange} />,
+                    { createNodeMock: (element) => element.type === 'textarea' ? node : null });
+            });
+            expect(node.style.height).toBe('64px');
+            // A height-only observer notification must not start another
+            // measurement or emit a new content-height report.
+            node.scrollHeight = 72;
+            await act(async () => { resize?.(); });
+            expect(node.style.height).toBe('64px');
+            node.clientWidth = 400;
+            node.scrollHeight = 96;
+            await act(async () => { resize?.(); });
+            expect(node.style.height).toBe('96px');
+            expect(onContentHeightChange).toHaveBeenLastCalledWith(96);
+            await act(async () => { tree?.unmount(); });
+            expect(disconnect).toHaveBeenCalled();
+        } finally {
+            await act(async () => { tree?.unmount(); });
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('reports true web content height for oversized text so the expand toggle can appear', async () => {
         // The oversized branch skips the collapse-to-measure autosize pass and
         // used to report the CLAMPED max height as the content height. The

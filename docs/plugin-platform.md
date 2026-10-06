@@ -12,7 +12,37 @@ The canonical manifest schema and normalizer remain Protocol/platform-owned. [`m
 
 The host derives registration rights from the admitted manifest. [`registrationRightsHost.ts`](../apps/cli/src/plugins/runtime/api/registrationRightsHost.ts) wraps the SDK registration scope with occurrence currentness and diagnostics; a retired occurrence cannot register. The reload lifecycle owns the serving occurrence in [`runtimeSlots.ts`](../apps/cli/src/plugins/runtime/runtimeSlots.ts). A consumer does not reconstruct currentness from an id, callback or manifest snapshot.
 
+In 0.3 development source, admitted targeted Actions use the existing contributor-materialization and target-occurrence checks in [`executeContributedAction.ts`](../apps/cli/src/plugins/runtime/invocation/actions/executeContributedAction.ts) before demanding activation, and repeat them after awaited bindings before starting the handler. A stale admitted occurrence returns its retirement result without demanding activation; the later fence still protects retirement during activation or binding.
+
 Contribution-family membership and normalization are Protocol-owned. In development source, the CLI's [`projection/families.ts`](../apps/cli/src/plugins/projection/families.ts) asserts its descriptors against that catalog, adds current occurrence facts and validates each projected entry with the existing Protocol schema. The daemon omits an invalid entry and publishes a plugin-attributed diagnostic identifying its family and entry, while retaining healthy entries in the same projection. Agent catalog and UI registries consume that projection; a feature must not scan Actions, invent conventional ids or install a second registry to discover its contributors.
+
+Catalog-scale Action, contribution-projection and Account-settings schemas in
+development source use Protocol's internal
+[`lazyZodSchema`](../packages/protocol/src/lazyZodSchema.ts) construction owner.
+Referencing a definition or deriving another schema does not construct its
+concrete validator until use; parsing and schema inspection still use the
+existing Zod schema and validation rules. Nested JSON Schema traversal delegates
+to the concrete schema through Zod's reference handling, preserving references through
+optional and lazy wrappers. This is not a second parser or a public
+SDK flavor change. The private neutral-to-Zod Action bridge uses Zod's native
+lazy combinator because its contract is the base `ZodType`, including recursive
+JSON Schema projection, rather than a concrete fluent schema type.
+Persistence-only projections use the same internal definition lifetime at
+[`json/storedReadSchema.ts`](../packages/protocol/src/json/storedReadSchema.ts).
+Recursive derivation waits for the first read or schema inspection, retains
+Core/Mini support and the existing known-field checks, and drops unknown stored
+object fields. This reader is not request, Action, event or write admission.
+
+An app page's optional shell column has the same destination as its page but a distinct physical mount and renderer binding. The CLI's [UI projection producer](../apps/cli/src/plugins/projection/registry/ui/projection.ts) admits that column binding through the existing Protocol destination normalizer. UI projection and the app-page catalog carry it unchanged; the surface mount reader rejects renderer or plugin identity mismatches rather than retargeting the page's binding.
+
+The install registry's materialization map supplies exact execution-origin stamps
+for daemon projections. A daemon-selected plugin's release-less Account
+declaration supplies server currentness for Collections, webhooks and Events,
+not install-registry projection authority. The runtime's current-materialization
+getter retains that declaration identity for Account operations. Without an
+install materialization, Plugin UI entries remain originless and use the existing
+Administration machine selection; stamped entries still require exact per-plugin
+origin selection.
 
 The declarative `workflows` family uses the canonical Workflow definition schema. Bundled and installed contributions reach `workflow.definition.list` through the existing plugin catalog projection; the library, Work tab picker and composer consume that same read. Plugin workflows are read-only and can be duplicated into the user's library through the existing create path. A start names the qualified `plugin:<pluginId>/<localId>` reference and the observed plugin version; the Workflow admission owner resolves and freezes the definition in the accepted Run snapshot.
 
@@ -39,6 +69,8 @@ The CLI reads the current serving occurrence from its contribution registry. The
 
 For collection-based plugin pages, the public Plugin UI `Collection` composes one headless model, item anatomy and detail renderer across presentations and containers. `Step`, controlled `Tabs` (including host-rendered strips) and `HappierDisclosure` belong to that public UI/presentation boundary, rather than feature-local replacements. See [Collection presentation](collection-presentation.md) and the [public author composition](../apps/docs/content/docs/plugins/ui/react-native.mdx).
 
+The app shell supplies plugin-column physical focus eligibility through the existing presentation provider, using its dock visibility and peek focus facts. Hover previews may remain presented without receiving programmatic focus; deferred or exiting peek content cannot receive it. Columns explicitly do not publish semantic current UI context: that authority remains with the active page's existing owner.
+
 ### Entity drag sources and drop targets (0.3 development)
 
 `definePlugin` declares `dragSources` and `dropTargets` through the existing contribution catalog. Each source has a declared JSON reference schema and a client execution reference; each target declares accepted built-in or qualified `plugin:<pluginId>/<localId>` kinds and an explicit host/contributed Action allowlist. `activate(api)` registers only admitted local ids through `api.dragSources.register` and `api.dropTargets.register`. These families have client occurrence rights, not daemon or Session runtime rights.
@@ -51,9 +83,11 @@ Public Plugin UI `DragSource` and `DropTarget`, declarative `dragSource`/`dropTa
 
 The portable item union is closed, including the development `work-board-widget` and `widget-area-instance` arms. Native WorkBoard sources build their qualified Board/instance reference from current membership; Project/plugin areas carry an exact `WidgetInstanceRefV1` whose surface matches the captured Home/Account. Widget-shaped JSON supplied as a plugin reference stays within the contributed `plugin` arm; it cannot manufacture a built-in reference or select its authority.
 
-A target's synchronous `resolve` returns an allowed Action request with release preview, or a typed refusal with a reason. Hover performs no mutation. Completed release resolves again before the ordinary Action front door applies current admission and approval policy; a dispatched unknown result stays with that effect owner. Core and plugin sources use the same release preview, Organize grip, staged keyboard and chooser primitives. OS Files retain boundary-local acquisition handles and never enter serialized plugin references. See [Actions](actions.md#entity-drop-effects-development) and the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#entity-drag-and-drop-development).
+A target's synchronous `resolve` returns an allowed Action request with release preview, or a typed refusal with a reason. The preview declares `verb`, `target`, optional `consequence` and optional `glyph` from the closed `EntityDropPreviewV1` vocabulary. Core and plugin targets declare their marks through that same field; the shared outcome presenter never derives a mark from Action ids or inputs. An omitted mark retains the generic `add` presentation. Pending and settled feedback retain the released effect's declared mark; refusal chrome uses the refusal mark. A mark grants no effect authority. Hover performs no mutation. Completed release resolves again before the ordinary Action front door applies current admission and approval policy; a dispatched unknown result stays with that effect owner. Core and plugin sources use the same release preview, Organize grip, staged keyboard and chooser primitives. OS Files retain boundary-local acquisition handles and never enter serialized plugin references. See [Actions](actions.md#entity-drop-effects-development) and the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#entity-drag-and-drop-development).
 
 The shared `HappierDragGrip` presentation accepts optional `revealed` pointer chrome. Omission retains visible chrome; `false` quiets only the glyph surface, not the host's mounted focus/gesture target or its geometry. Active and touch-density grips remain visible. Canvas work cards reveal this existing grip on hover, focus or an open Organize chooser; touch and widget grips retain discoverability. This presentation input changes no carry, measurement, release or effect authority.
+
+Interactive grips use `HappierDragGripTrigger`, including the core `EntityDragGripTrigger` binding and hosted Plugin UI sources. It composes the shared pressable and grip chrome, carries domain-owned accessibility actions, and exposes the existing focus registration and keyboard-consumption seam. Gesture-only phone handles retain chrome-only `HappierDragGrip`; they do not create a second interactive trigger.
 
 These are development / Developer Preview authoring contracts. Source tests and generated exports do not certify a published SDK or a loaded browser/native journey.
 
@@ -168,6 +202,12 @@ frames and mutations reuse the Home/widget owners. Declarative area nodes
 require a mounted plugin page and are excluded from Session Board documents
 and transcript projection.
 
+Native/declarative page ScrollAreas and the Project ItemList pass the incumbent
+near-viewport admission to area cards. Offscreen executable bodies release
+Resource read/watch demand while their frames retain measured room; reentry
+mounts the current bound context. Route focus remains an additional admission
+condition, not a substitute for viewport activity.
+
 Area copies use the shared pointer grip, staged keyboard and Move-to chooser.
 Current membership and anchors become requests to `widgets.instance.move`;
 its incumbent surface ports own admission, approvals and persistence. Canonical
@@ -236,8 +276,10 @@ bare mark, badge, test identity and footer; the app no longer synthesizes mark
 glyph tokens. Optional host bindings have explicit author fallbacks; they do
 not add a wire capability or another renderer.
 
-Public `DictationButton` composes with an author's own controlled input and
-delivers editable text only. Its private host binding uses the incumbent
+Public `TextField.dictation` composes `DictationButton` with the existing field,
+binding capture admission to field editability. Authors may also use the public
+button beside a custom controlled input. Both deliver editable text only and
+leave insertion and submission with the author. The private host binding uses the incumbent
 Dictation button, `useTextInputDictation` delivery/error adapter and
 `useVoiceDictation` / `VoiceDictationController` engine. Session authoring uses
 that same delivery adapter. An opaque mount-local control id is not a Session:
@@ -462,12 +504,52 @@ an id-based host fallback.
 
 ### Connected Account refresh and quota identity (0.3 development)
 
+Manual authentication inputs are admitted against the service contribution's
+field schemas by both the form and the daemon attempt owner, before provider
+invocation or credential settlement. Anthropic declares its API-key shape in
+the Claude plugin and verifies new keys with `GET /v1/models` through the
+origin-scoped host HTTP service. Provider 401/403 responses reject the attempt;
+transport failures and other unsuccessful responses leave verification
+unavailable. Neither path stages a key or creates an account. Retry after a
+terminal refusal opens a fresh editable form. Retained credentials remain
+readable and materializable without imposing these new-input checks. This is
+a development-source admission contract, not release or loaded-runtime proof.
+
+Before a provider callback starts, the canonical Connected Account attempt owner
+may re-admit a retired runtime occurrence through the current daemon registry.
+Recovery requires the same qualified service, source custody, authentication mode
+and configuration target/revision. Initial lazy activation may refresh admission
+once from the published registry when the old occurrence proves it did not start
+provider work. The invoker preserves that typed pre-entry result; retirement after
+provider entry retains the existing uncertain-outcome recovery and never replays
+the callback. UI, CLI and Agent Actions use this same daemon owner.
+
 The Codex and Claude token-exchange owners classify HTTP 429 and unsuccessful
 server responses as `outcomeUnknown`, preserving the host's retryable health
 path. Authentication rejection still requires reconnecting. Codex stages a
 replacement access token only when the response contains a fresh `access_token`
 or `id_token`; retained identity and refresh metadata cannot establish a fresh
 access token.
+
+Codex Connected Account native materialization uses one access-only serializer
+for launch/resume homes and hot-auth persistence. It writes
+`auth_mode: "chatgptAuthTokens"`; the required `refresh_token` fields are empty,
+not copies of host-held rotation material. Rematerialization replaces historical
+native credentials rather than sharing `auth.json` or `accounts` from the user's
+Codex home. The app-server runtime registers `account/login/start` with external
+access tokens before opening or resuming a thread, including after client
+recreation. Its refresh request handler delegates to the daemon's existing
+Connected Service refresh coordinator and lease/revision checks. An app-server
+that rejects external auth produces `codex_refresh_free_auth_unsupported`, not a
+refresh-bearing fallback. Qualified launch selections and predecessor local
+selections normalize at the same plugin boundary; refresh-wire selections remain
+local. Connected Account ACP launches also return that typed unsupported code:
+the current ACP composer has no host-managed token-refresh bridge. Personal
+native login and API-key ACP launches are unchanged. App-server Execution Runs
+without a refresh callback likewise cannot open a Connected Account thread.
+Claude's native OAuth file already contains access material, expiry and
+scopes only. These are 0.3 development contracts, not a claim about older shipped
+native materializations or already-running sessions.
 
 Connected Account quota limits carry optional `providerLimitId` separately from
 their window `id`. The strict host result owner validates and preserves that
@@ -578,10 +660,12 @@ migration. See [linked Session authoring](../apps/docs/content/docs/plugins/ui/i
 
 ## Generated ownership
 
-The Action DTO generator preserves the canonical `WorkflowDefinitionV1` in
-inline Workflow and Session trigger add/update inputs. Its neutral SDK support
-projection closes the recursive block types; the validator's erased Zod input
-does not become an author-facing `unknown`. The external-author fixture in
+The canonical Workflow schema types both authored input and parsed output as
+`WorkflowDefinitionV1`, including inline Workflow and Session trigger inputs
+and triggers at Session birth. The Action DTO generator derives that contract
+directly; its neutral SDK support projection closes recursive block types in
+their input or output context, preserving the canonical JSON projection.
+The external-author fixture in
 `packages/plugin-sdk/fixtures/authoring-inference/workflowTriggers.ts` checks
 valid definitions and rejects unknown block kinds. This changes development
 source typing without changing the trigger runtime validator.
@@ -595,6 +679,34 @@ do not import executable plugin packages; excluding a failed optional plugin
 omits its descriptors and compatibility binding in the same publication.
 
 Public author toolchain facts have one strict carrier, [`PublicToolchainCompatibilityV1`](../packages/protocol/src/plugins/publicToolchainCompatibilityV1.ts). Authoring/scaffold consumers use its package and runtime facts rather than inventing a second compatibility table. Feature validation uses current source, ordinary package checks and the loaded development runtime. Packaging, registry publication and exact release-byte checks remain release-owned.
+
+In 0.3 development, daemon preparation evaluates a code-defined plugin once and
+passes that canonical manifest to the managed UI compiler through a temporary
+manifest input. The author root needs no emitted `plugin.json`; artifact paths
+still resolve against that root. Cold-manifest builds keep their existing input.
+Installed catalog and runtime discovery consume the same validated manifest
+projection committed with each accepted development candidate, rather than
+parsing or re-evaluating its source entrypoint. Until a new candidate is accepted,
+discovery retains the accepted declarations; a missing projection fails closed.
+JSON-manifest and managed-artifact discovery retain the canonical JSON reader.
+The change service logs failures locally before projecting their redacted public
+diagnostics, retaining filesystem paths while removing credentials. Managed
+dependency preparation may reclaim an empty workspace file or one whose first
+line identifies Happier's transient configuration; author-owned configurations
+remain protected.
+
+Prepublication dependency preparation uses a content-addressed file override
+for the complete SDK package closure. Repeated preparations reuse its pnpm
+virtual-store identity; the transient workspace config selects pnpm's native
+immediate orphan pruning when the closure changes. Both temporary package roots
+and the workspace config are released after preparation. Published registry
+resolution keeps its existing policy.
+
+The shared authoring source observer excludes that marker-owned configuration
+and remembers the last attempted input signatures separately from the adopted
+baseline. A retained or failed candidate therefore waits for a real input edit
+or an explicit reload, while its unadopted dependency changes remain part of the
+next candidate. Preparation output events cannot replay an unchanged candidate.
 
 ## Related
 

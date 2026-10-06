@@ -84,6 +84,36 @@ const RESUME_CHOICE_QUESTION = 'How should Claude resume this session?';
 const SAFEGUARD_CHOICE_QUESTION = 'How should Claude continue?';
 
 describe('createClaudeUnifiedTerminalTurnOperations', () => {
+  it('recognizes native generation without turn-start hooks and queues input without interruption', async () => {
+    const terminalHost = createTerminalHostFixture();
+    terminalHost.service.captureInputState = vi.fn(async () => ({
+      stable: true,
+      currentInput: '● Reading files\n✻ Pondering… (esc to interrupt)',
+      observedAt: Date.now(),
+    }));
+    const operations = createClaudeUnifiedTerminalProviderOperations({
+      ctx: createPluginContextFixture(terminalHost.service, createEventsFixture().service),
+      directory: '/tmp/claude-project', happierSessionId: 'happy-lost-turn-start',
+      hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+    });
+    const accepted = vi.fn();
+    operations.setOnPromptAcceptedByProvider(accepted);
+    try {
+      await operations.startProviderSession();
+      expect(operations.isTurnInFlight()).toBe(true);
+      await operations.sendProviderTurnPrompt('continue without interruption', { localId: 'lost-turn-start-input' });
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+      expect(terminalHost.service.interruptTurn).not.toHaveBeenCalled();
+      await operations.observeTerminalLifecycle({
+        agentId: 'claude', type: 'prompt_submitted', promptText: 'continue without interruption',
+        observedAtMs: Date.now(), source: 'hook',
+      });
+      expect(accepted).not.toHaveBeenCalled();
+    } finally {
+      await operations.disposeProviderSession();
+    }
+  });
+
   it('delivers the startup plan through a private file on native resume and removes it on shutdown', async () => {
     const terminalHost = createTerminalHostFixture();
     const instructions = `ROLE\n${'雪 " $ \\'.repeat(8_000)}`;

@@ -30,6 +30,7 @@ import {
     ConversationBindingReadResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -358,8 +359,19 @@ export function createUiWorkflowAction(params: Readonly<{
             || args.actionId === 'workflow.run.invocations.retry'
             || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
             || ((definitionWrite || triggerOperation) && args.context.authority !== 'present_user');
-        const result = await (ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation
-            ? executeAccount(args) : executeRelay(args));
+        let result: unknown;
+        try {
+            result = await (ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation
+                ? executeAccount(args) : executeRelay(args));
+        } catch (error) {
+            try { account.assertCurrent(); } catch { return unavailable; }
+            if (args.actionId !== 'workflow.run.start') throw error;
+            // Only the transport's explicit not-sent witness proves rejection.
+            // A missing reply (including timeout) may follow committed admission.
+            const code = readRpcRequestDisposition(error) === 'notSent'
+                ? 'target_unavailable' : 'workflow_outcome_unresolved';
+            return { ok: false, errorCode: code, error: code };
+        }
         try { account.assertCurrent(); } catch { return unavailable; }
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
         return failure.success ? failure.data : result as Awaited<ReturnType<WorkflowActionExecute>>;

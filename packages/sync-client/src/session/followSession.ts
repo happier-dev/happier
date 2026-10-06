@@ -1,4 +1,5 @@
-import { EphemeralUpdateSchema, UpdateContainerSchema, type EphemeralUpdate, type UpdateBody } from '@happier-dev/protocol/updates';
+import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import type { EphemeralUpdate, UpdateBody } from '@happier-dev/protocol/updates';
 import type { SessionMessageV1, SessionMessagesPageV1 } from '@happier-dev/protocol';
 import { openSessionStateValue, openSessionStoredContent, type OpenSessionStoredContentResult, type SessionStoredContentContext } from '../content/sessionStoredContent.js';
 import { drainSessionMessagesAfter } from '../messages/drainSessionMessagesAfter.js';

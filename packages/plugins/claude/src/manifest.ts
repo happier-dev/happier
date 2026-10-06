@@ -41,7 +41,7 @@ import { claudeExternalSessionHooksContribution } from './agent/surfaces/session
 import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
 import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import { anthropicConnectedAccountRuntime } from './connectedAccounts/anthropicRuntime.js';
+import { anthropicConnectedAccountRuntime, ANTHROPIC_API_KEY_INPUT_SCHEMA } from './connectedAccounts/anthropicRuntime.js';
 import {
   claudeSubscriptionConnectedAccountRuntime,
 } from './connectedAccounts/claudeSubscriptionRuntime.js';
@@ -191,6 +191,18 @@ export const CLAUDE_PLUGIN = definePlugin({
           methods: ['GET'],
         },
       },
+      {
+        id: 'anthropic-key-verification',
+        capability: 'network',
+        reason: 'Verify an Anthropic API key before connecting the account.',
+        scope: {
+          targets: [
+            { kind: 'fixedOrigin', origin: 'https://api.anthropic.com' },
+            { kind: 'connectedAccountOrigin', service: 'anthropic' },
+          ],
+          methods: ['GET'],
+        },
+      },
     ],
     optional: [],
   },
@@ -241,7 +253,7 @@ export const CLAUDE_PLUGIN = definePlugin({
             fields: [{
               id: 'token',
               title: 'Anthropic API key',
-              schema: { type: 'string', minLength: 1 },
+              schema: ANTHROPIC_API_KEY_INPUT_SCHEMA,
               secret: true,
             }],
           }],

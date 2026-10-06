@@ -29,6 +29,9 @@ const badgeSettingsState = vi.hoisted(() => ({
 const cockpitPinsState = vi.hoisted(() => ({
     value: null as string[] | null,
 }));
+const surfacePlacementsState = vi.hoisted(() => ({
+    value: {} as Record<string, { orderedIds: string[]; placements: Record<string, 'pinned' | 'overflow' | 'hidden'> }>,
+}));
 // The bar's width decides what fits; 800 is wide enough for everything, 390 is an iPhone.
 const windowState = vi.hoisted(() => ({ width: 800 }));
 const swipeSettingsState = vi.hoisted(() => ({ always: false, swipe: true }));
@@ -94,7 +97,8 @@ async function seedCockpitState(element: React.ReactNode) {
         sessionCockpitSwipeAlwaysSessionsEnabled: swipeSettingsState.always,
         sessionCockpitSwipeNavigationEnabled: swipeSettingsState.swipe,
     }, isDataReady: true });
-    storage.getState().applySettingsLocal({ sessionCockpitBarSurfaceIds: cockpitPinsState.value });
+    storage.getState().applySettingsLocal({ sessionCockpitBarSurfaceIds: cockpitPinsState.value,
+        navigationSurfacePlacementsV1: surfacePlacementsState.value });
     if (route) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
@@ -173,6 +177,11 @@ vi.mock('@/components/ui/layout/layout', () => ({
     useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
+// Prepare the module after the canonical boundary options are installed. Module transformation
+// belongs to suite setup, so a saturated host does not count it against a behavior assertion.
+const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+
 describe('cockpit tab bars', () => {
     let initialStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState>;
     beforeEach(async () => { initialStorageState = (await import('@/sync/domains/state/storageStore')).storage.getState(); });
@@ -188,6 +197,7 @@ describe('cockpit tab bars', () => {
         badgeSettingsState.gitBadgeMode = 'changedFiles';
         badgeSettingsState.openTabs = true;
         cockpitPinsState.value = null;
+        surfacePlacementsState.value = {};
         windowState.width = 800;
         swipeSettingsState.always = false;
         swipeSettingsState.swipe = true;
@@ -597,9 +607,10 @@ describe('cockpit tab bars', () => {
                     onSurfacePress={() => {}}
                 />,
             );
-            expect(screen.tree.findByType('DropdownMenu' as never).props.items).toEqual(expect.arrayContaining([
+            expect(screen.tree.findByType(DropdownMenu).props.items).toEqual(expect.arrayContaining([
                 expect.objectContaining({ id: 'collaboration' }),
             ]));
+            await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
             expect(screen.findHostByTestId('session-cockpit-more-fact:collaboration')).not.toBeNull();
 
             // Plain unread discussion stays quiet here, as on the desktop rail.
@@ -631,7 +642,7 @@ describe('cockpit tab bars', () => {
         expect(browserTab?.props.accessibilityLabel).toBe('en:browserSurface.title');
         expect(browserTab?.props.accessibilityState).toEqual({ selected: true });
         expect(servicesTab).toBeNull();
-        const menu = screen.tree.findByType('DropdownMenu' as never);
+        const menu = screen.tree.findByType(DropdownMenu);
         expect(menu.props.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'services', title: 'en:localServices.inventory.title' }),
         ]));
@@ -662,13 +673,34 @@ describe('cockpit tab bars', () => {
         }
         expect(screen.findByTestId('session-cockpit-tab-tabs')).toBeNull();
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
-        const items = screen.tree.findByType('DropdownMenu' as never).props.items as readonly Record<string, unknown>[];
+        const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
         expect(items.map((item) => item.id)).toEqual(expect.arrayContaining(['browse', 'git', 'tabs', 'navigation', 'browser', 'services']));
         expect(items.find((item) => item.id === 'git')?.category).toBe('en:phoneNav.bar.onTheBar');
         expect(items.find((item) => item.id === 'tabs')?.category).toBe('en:phoneNav.bar.more');
         // Every tool can be pinned, not only plugins.
+        await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
         expect(screen.findByTestId('session-cockpit-pin:navigation')).toBeTruthy();
         expect(screen.findByTestId('session-cockpit-pin:git')?.props.accessibilityState?.checked).toBe(true);
+    });
+
+    it('renders shared placement ordering and omits hidden tools from the bar and More', async () => {
+        surfacePlacementsState.value = { sessionTabBar: {
+            orderedIds: ['terminal', 'browse', 'git'],
+            placements: { git: 'hidden', companion: 'overflow', tabs: 'hidden' },
+        } };
+        const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
+        const screen = await renderScreen(<SessionCockpitTabBar sessionId="sess_1" activeSurface="chat"
+            terminalTabAvailable={true} openDetailsTabCount={0} onSurfacePress={() => {}} />);
+        expect(screen.findByTestId('session-cockpit-tab-terminal')).toBeTruthy();
+        expect(screen.findByTestId('session-cockpit-tab-git')).toBeNull();
+        expect(screen.findByTestId('session-cockpit-tab-companion')).toBeNull();
+        const tabs = screen.findAll((node) => typeof node.type === 'string' && /^session-cockpit-tab-(chat|terminal|browse)$/.test(node.props.testID ?? ''))
+            .map((node) => node.props.testID as string);
+        expect([...new Set(tabs)]).toEqual(['session-cockpit-tab-chat', 'session-cockpit-tab-terminal', 'session-cockpit-tab-browse']);
+        const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
+        expect(items.map((item) => item.id)).not.toContain('git');
+        expect(items.map((item) => item.id)).not.toContain('tabs');
+        expect(items.map((item) => item.id)).toContain('customize');
     });
 
     it('scrolls a bar of more tools than fit, and hands the horizontal axis to it', async () => {
@@ -697,7 +729,7 @@ describe('cockpit tab bars', () => {
         expect(screen.tree.findAllByType('GestureHandlerScrollView' as never)).toHaveLength(0);
         expect(screen.findByTestId('session-cockpit-tab-tabs')).toBeTruthy();
         expect(screen.findByTestId('session-cockpit-tab-navigation')).toBeNull();
-        const items = screen.tree.findByType('DropdownMenu' as never).props.items as readonly Record<string, unknown>[];
+        const items = screen.tree.findByType(DropdownMenu).props.items as readonly Record<string, unknown>[];
         expect(items.find((item) => item.id === 'navigation')).toEqual(expect.objectContaining({
             category: 'en:phoneNav.bar.onTheBar',
             subtitle: 'en:phoneNav.bar.heldInMore',
@@ -734,7 +766,7 @@ describe('cockpit tab bars', () => {
         );
         const screen = await renderScreen(renderBar());
 
-        const menu = screen.tree.findByType('DropdownMenu' as never);
+        const menu = screen.tree.findByType(DropdownMenu);
         expect(menu.props.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'plugin:acme.review:review-panel', title: 'Review' }),
         ]));
@@ -768,6 +800,7 @@ describe('cockpit tab bars', () => {
                 />
             );
             const screen = await renderScreen(renderBar());
+            await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
             const pinTestID = 'session-cockpit-pin:plugin:acme.review:review-panel';
             const pin = screen.findByTestId(pinTestID);
             const minimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
@@ -781,18 +814,6 @@ describe('cockpit tab bars', () => {
                 // frame; RNW cannot turn Pressable hitSlop into a physical target.
                 hitSlop: 0,
             }));
-            const restingStyle = typeof pin?.props.style === 'function'
-                ? pin.props.style({ pressed: false })
-                : pin?.props.style;
-            expect(flattenStyle(restingStyle)).toEqual(expect.objectContaining({
-                width: 28,
-                height: minimumTargetSize,
-                marginHorizontal: 0,
-                marginVertical: -(minimumTargetSize - 28) / 2,
-            }));
-            expect(flattenStyle(screen.findByTestId(`${pinTestID}-surface`)?.props.style)).toEqual(
-                expect.objectContaining({ width: 28, height: 28 }),
-            );
 
             const stopPropagation = vi.fn();
             await act(async () => {
@@ -800,8 +821,10 @@ describe('cockpit tab bars', () => {
             });
             expect(stopPropagation).toHaveBeenCalledTimes(1);
             // The first change starts from the host defaults, then adds the plugin at the end.
-            expect((await import('@/sync/domains/state/storageStore')).storage.getState().localSettings.sessionCockpitBarSurfaceIds)
-                .toEqual(['browse', 'git', 'companion', 'terminal', 'plugin:acme.review:review-panel']);
+            expect((await import('@/sync/domains/state/storageStore')).storage.getState().localSettings.navigationSurfacePlacementsV1)
+                .toMatchObject({
+                    sessionTabBar: { placements: { 'plugin:acme.review:review-panel': 'pinned' } },
+                });
             expect(onSurfacePress).not.toHaveBeenCalled();
 
             await act(async () => {

@@ -479,6 +479,14 @@ interface AgentInputProps {
     /** The status row above the card takes no height while it has nothing to show (Home). */
     collapseEmptyStatusRow?: boolean;
     /**
+     * `document`: the composer is one card in a document (a workflow step), not the floating
+     * composer of a conversation. It draws the plain hairline card the read-only presentation
+     * draws — no glass rim or cast shadow, whatever the composer style setting — with no outer
+     * vertical padding and no reserved empty status row, so the document's own rhythm places it.
+     * Default `composer`.
+     */
+    panelPresentation?: 'composer' | 'document';
+    /**
      * Plan/quota usage bundle rendered by the instrument strip. Data path stays
      * System-B-owned (SessionView); the strip only restyles the trigger.
      */
@@ -733,6 +741,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingBottom: 8,
         paddingTop: 8,
     },
+    /** A document card: the document's own rhythm places it (`panelPresentation="document"`). */
+    containerDocument: {
+        paddingTop: 0,
+        paddingBottom: 0,
+    },
     innerContainer: {
         width: '100%',
         position: 'relative',
@@ -777,9 +790,17 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'column',
         alignItems: 'stretch',
     },
-    readOnlyText: {
-        color: theme.colors.text.primary,
-    },
+        readOnlyText: {
+            color: theme.colors.text.primary,
+            textAlign: 'left',
+        },
+        /** The same hairline card in a document, editable or read-only. */
+        documentPanel: resolveAgentInputPanelLayoutStyle(theme, true),
+        readOnlyPanel: {
+            ...resolveAgentInputPanelLayoutStyle(theme, true),
+            width: '100%',
+            alignSelf: 'stretch',
+        },
     nativeKeyboardPanelContent: {
         minHeight: 0,
     },
@@ -1008,11 +1029,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
      */
     trailingAccessoryInline: {
         flexDirection: 'row',
+        flexShrink: 0,
         alignItems: 'center',
         gap: 8,
     },
     trailingAccessoryStack: {
         flexDirection: 'column-reverse',
+        flexShrink: 0,
         alignItems: 'center',
         // The visual rhythm remains 32pt. The Voice accessory's outer target can
         // be larger, so keep the column centered instead of assuming equal
@@ -1038,7 +1061,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexWrap: 'wrap',
         overflow: 'visible',
     },
-    // A host-chosen bar (`barControlIds`) is one row: the folder label gives way instead of wrapping.
+    // The collapsed host-chosen bar is one row; an explicitly wrapping bar keeps its chips reachable.
     actionButtonsLeftSingleRow: {
         flexWrap: 'nowrap',
         minWidth: 0,
@@ -1178,7 +1201,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const readOnly = props.onChangeText === undefined;
     const voiceFeatureEnabled = useFeatureEnabled('voice');
     const voiceEnabled = !readOnly && voiceFeatureEnabled && props.voiceAffordance !== 'none';
-    const isGlassComposer = isGlassComposerSurface({ setting: useSetting('composerSurfaceStyle') });
+    const documentPanel = props.panelPresentation === 'document';
+    const composerSurfaceStyleSetting = useSetting('composerSurfaceStyle');
+    const isGlassComposer = !documentPanel && isGlassComposerSurface({ setting: composerSurfaceStyleSetting });
     const surfaceGroup = props.surfaceGroup ?? 'content';
     const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
     const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'content', solidColor: composerSurfaceColor };
@@ -2801,10 +2826,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const actionBarShouldScroll = effectiveActionBarLayout === 'scroll';
     const actionBarIsCollapsed = effectiveActionBarLayout === 'collapsed';
-    const showSecondaryControlsRow = shouldShowSecondaryControlRow(
-        effectiveActionBarLayout,
-        hasMachine || hasPath || hasResume,
-    );
     const actionChipTransientStyles = React.useMemo(() => ({
         iconOnly: AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE,
         pressed: AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE,
@@ -2962,10 +2983,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
     const {
         controlNodes: renderedActionControlNodes,
+        readOnlyEngineNodes,
         extraChipNodes: renderedExtraChipNodes,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
         extraChipAnchorRefsByKey,
     } = useRenderedAgentInputControlRows({
+        readOnly,
         layout: effectiveActionBarLayout,
         ...(props.barControlIds ? { barControlIds: props.barControlIds } : {}),
         chips: props.extraActionChips,
@@ -3004,7 +3027,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         envVarsChipAnchorRef,
         envVarsCount: props.envVarsCount,
         onEnvVarsPress: handleEnvVarsPress,
-        hasAgentSelection: hasAgent,
+        hasAgentSelection: hasAgent || (readOnly && Boolean(props.agentType || props.engineLabel)),
         agentChipAnchorRef,
         agentId: engineChipAgentId,
         agentIdentityIcon: engineChipIdentityIcon,
@@ -3033,6 +3056,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         sourceControlCompact: actionBarShouldScroll || !showChipLabels,
         sourceControlWrapperStyle: styles.actionItemWrapper,
     });
+
+    const showSecondaryControlsRow = shouldShowSecondaryControlRow(
+        effectiveActionBarLayout,
+        secondaryLeadingControlsForWrap.length > 0 || hasPath || hasResume,
+    );
 
     const handlePermissionSelect = React.useCallback((mode: PermissionMode) => {
         hapticsLight();
@@ -3218,8 +3246,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
         return (
             <TextSelectabilityScope selectable>
-                <View testID="agent-input-composer" style={[styles.container, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
-                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, props.panelStyle]}>
+                <View testID="agent-input-composer" style={[styles.container, documentPanel ? styles.containerDocument : null, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
+                    <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, props.panelStyle, styles.readOnlyPanel]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
                         <View style={[styles.inputContainer, styles.readOnlyInputContent]}>
@@ -3228,9 +3256,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 <Text key={`${reference.start}:${reference.ref}`} selectable style={styles.composerDecorationFeedbackText}>{reference.label ?? reference.token}</Text>
                             ))}
                         </View>
-                        {hasExtraActionChips ? (
-                            <View style={styles.actionButtonsLeft}>
-                                {renderedExtraChipNodes}
+                        {readOnlyEngineNodes.length > 0 || renderedExtraChipNodes.length > 0 ? (
+                            <View style={styles.actionButtonsRow}>
+                                <View style={styles.actionButtonsLeft}>{readOnlyEngineNodes}</View>
+                                <View style={[styles.actionButtonsLeft, styles.actionButtonsLeftNoFlex, { flexShrink: 1, minWidth: 0 }]}>{renderedExtraChipNodes}</View>
                             </View>
                         ) : null}
                     </GlassSurface>
@@ -3249,6 +3278,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 pointerEvents={Platform.OS === 'web' ? 'auto' : undefined}
                 style={[
                     styles.container,
+                    documentPanel ? styles.containerDocument : null,
                     stageSpotlightProps.style,
                     { paddingHorizontal: props.contentPaddingHorizontal ?? (screenWidth > 700 ? 16 : 8) },
                 ]}
@@ -3374,7 +3404,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     activeStatusBadgeKey={props.activeStatusBadgeKey}
                     onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}
                     onGitPress={props.onFileViewerPress}
-                    collapseWhenEmpty={props.collapseEmptyStatusRow === true}
+                    collapseWhenEmpty={props.collapseEmptyStatusRow === true || documentPanel}
                 />
 
                 {/* Box 2: Action Area (Input + Send) */}
@@ -3402,13 +3432,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     style={[
                         styles.unifiedPanel,
                         isGlassComposer ? styles.unifiedPanelGlass : null,
+                        documentPanel ? styles.documentPanel : null,
                         props.panelStyle,
                         typeof hostPanelMaxHeight === 'number' ? { maxHeight: hostPanelMaxHeight } : null,
                     ]}
                 >
                     {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
                         <ExternalFileDropOutcomePill testID="agent-input-drop-overlay"
-                            outcome={{ glyph: 'attach', tone: 'allowed', title: t('entityDragDrop.files.attach') }} />
+                            outcome={{ glyph: 'attach', tone: 'allowed', title: t('entityDragDrop.files.attach'), detail: t('entityDragDrop.composer.consequence') }} />
                     ) : null}
                     {Platform.OS === 'web' ? (
                         <>
@@ -3506,7 +3537,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 {renderedActionControlNodes as any}
                                             </AgentInputScrollableChipRow>
                                         ) : (
-                                            <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null, props.barControlIds ? styles.actionButtonsLeftSingleRow : null]}>
+                                            <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null, props.barControlIds && actionBarIsCollapsed ? styles.actionButtonsLeftSingleRow : null]}>
                                                 {renderedActionControlNodes as any}
                                             </View>
                                         )}
@@ -3708,7 +3739,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                     {renderedActionControlNodes as any}
                                                 </AgentInputScrollableChipRow>
                                             ) : (
-                                                <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null, props.barControlIds ? styles.actionButtonsLeftSingleRow : null]}>
+                                                <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null, props.barControlIds && actionBarIsCollapsed ? styles.actionButtonsLeftSingleRow : null]}>
                                                     {renderedActionControlNodes as any}
                                                 </View>
                                             )}

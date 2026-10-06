@@ -3,16 +3,10 @@ import { logger } from '../ui/logger';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  DaemonExecutionRunMarkerPersistenceReadSchema,
-  DaemonExecutionRunMarkerOwnerWriteSchema,
-  DaemonExecutionRunMarkerSchema,
-  type DaemonExecutionRunMarker,
-  type DaemonExecutionRunMarkerPersistenceRead,
-  type DaemonExecutionRunMarkerOwnerWrite,
-  WorkerUpdateV1Schema,
-  readBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { DaemonExecutionRunMarkerPersistenceReadSchema, DaemonExecutionRunMarkerOwnerWriteSchema, DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
+import type { DaemonExecutionRunMarker, DaemonExecutionRunMarkerPersistenceRead, DaemonExecutionRunMarkerOwnerWrite } from '@happier-dev/protocol';
+import { WorkerUpdateV1Schema } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { z } from 'zod';
 import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';

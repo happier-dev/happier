@@ -6,7 +6,8 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { pressTestInstance, renderScreen as renderCanonicalScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
+import { pressTestInstance, pressTestInstanceAsync, renderScreen as renderCanonicalScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
+import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
   EMPTY_PLUGIN_UI_PROJECTION,
@@ -29,6 +30,7 @@ import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPan
 import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import type { SessionConnectedServicesAuthSwitchResult } from '@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -38,6 +40,7 @@ const attachedTerminalState = vi.hoisted(() => ({ available: false, open: vi.fn(
 const chatHeaderSpy = vi.hoisted(() => vi.fn());
 const agentInputSpy = vi.hoisted(() => vi.fn());
 const connectedServicesAuthSwitchSpy = vi.hoisted(() => vi.fn());
+const connectedServicesAuthSwitchResultSpy = vi.hoisted(() => vi.fn<(result: SessionConnectedServicesAuthSwitchResult) => void>());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn(() => {
   (globalThis as any).location.href = 'http://localhost/session/s1/previous';
@@ -46,6 +49,7 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const keyboardDismissSpy = vi.hoisted(() => vi.fn());
 let ensureSidechainMessagesLoadedSpy: MockInstance<typeof import('@/sync/sync')['sync']['ensureSidechainMessagesLoaded']>;
+const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
 const paneOpenRightSpy = vi.hoisted(() => vi.fn());
 const paneSetRightTabSpy = vi.hoisted(() => vi.fn());
 const paneOpenDetailsTabSpy = vi.hoisted(() => vi.fn());
@@ -54,6 +58,7 @@ const paneScopeState = vi.hoisted(() => ({
   value: null as null | {
     details: { isOpen: boolean; activeTabKey: string | null; tabs: readonly unknown[]; groups: readonly unknown[] };
     right: { isOpen: boolean };
+    bottom: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
   },
 }));
 const appPaneSurfaceOpenSpy = vi.hoisted(() => vi.fn<PluginSurfaceOpenHandler>(async () => ({ ok: true as const })));
@@ -94,14 +99,6 @@ const localSettingsState = vi.hoisted(() => ({
 const sessionMachineControlTargetState = vi.hoisted(() => ({
     target: null as { machineId: string; basePath: string; confidence: 'reachable' | 'metadata_direct' } | null,
 }));
-const connectedServicesAuthSwitchState = vi.hoisted(() => ({
-    restartState: null as null | {
-        status: 'restarting' | 'pending_confirmation' | 'failed';
-        attemptId: string;
-        reason: string;
-        startedAtMs: number;
-    },
-}));
 const createEditableSessionAccessFixture = vi.hoisted(() => () => ({
   role: 'recipient' as const,
   level: 'edit' as const,
@@ -131,10 +128,19 @@ const sessionState = vi.hoisted(() => ({
     agentState: { controlledByUser: true },
   } as any,
 }));
+sessionState.session = createSessionFixture({
+  id: 's1', serverId: 'server-1', metadata: { path: '/Users/tester/project', host: 'tester.local', flavor: 'codex' },
+  accessLevel: 'edit', access: createEditableSessionAccessFixture(),
+  canApprovePermissions: true, agentState: { controlledByUser: true },
+});
 
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
 }));
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+  const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+  return createBrowserRecordStorageModuleMock();
+});
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
@@ -145,15 +151,6 @@ vi.mock('react-native-safe-area-context', () => ({
     insets: { top: 0, bottom: 0, left: 0, right: 0 },
   },
 }));
-vi.mock('@happier-dev/agents', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@happier-dev/agents')>();
-  return {
-    ...actual,
-    parsePermissionIntentAlias: () => null,
-    resolveAgentIdFromFlavor: () => 'codex',
-    resolveAgentIdFromSessionMetadata: () => 'codex',
-  };
-});
 
 vi.mock('@react-navigation/native', () => ({
     ...createReactNavigationNativeMock(),
@@ -358,19 +355,6 @@ vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
   useDaemonMergedProjectionInputs: () => ({ inputs: null }),
 }));
-vi.mock('@/agents/catalog/catalog', () => ({
-  AGENT_IDS: ['codex'],
-  buildResumeSessionExtrasFromUiState: () => null,
-  getAgentCore: () => ({
-    cli: { detectKey: 'codex' },
-    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
-    model: { defaultMode: 'default' },
-    resume: { vendorResumeIdField: null },
-    sessionModes: { kind: 'none' },
-  }),
-  isBundledAgentId: (value: unknown) => value === 'codex',
-  resolveAgentIdFromFlavor: () => 'codex',
-}));
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['codex'],
 }));
@@ -379,19 +363,6 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
 }));
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
   canResumeSessionWithOptions: () => true,
-}));
-vi.mock('@/agents/registry/registryCore', () => ({
-  AGENT_IDS: ['codex'],
-  CANONICAL_AGENT_IDS: ['codex'],
-  DEFAULT_AGENT_ID: 'codex',
-  getAgentCore: () => ({
-    cli: { detectKey: 'codex' },
-    connectedServices: null,
-    uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
-    permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
-  }),
-  isBundledAgentId: (value: unknown) => value === 'codex',
-  resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/catalog/agentUniverse', () => ({
   buildAgentUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
@@ -430,12 +401,15 @@ vi.mock('@/components/sessions/agentInput', () => ({
     return null;
   },
 }));
-vi.mock('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch', () => ({
-  useSessionConnectedServicesAuthSwitch: (props: any) => {
+vi.mock('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch')>();
+  return { ...actual, useSessionConnectedServicesAuthSwitch: (props: Parameters<typeof actual.useSessionConnectedServicesAuthSwitch>[0]) => {
     connectedServicesAuthSwitchSpy(props);
-    return { connectedServicesAuthChip: null, statusBadges: [], restartState: connectedServicesAuthSwitchState.restartState };
-  },
-}));
+    const result = actual.useSessionConnectedServicesAuthSwitch(props);
+    connectedServicesAuthSwitchResultSpy(result);
+    return result;
+  } };
+});
 vi.mock('@/utils/system/versionUtils', () => ({
   isVersionSupported: () => true,
   MINIMUM_CLI_VERSION: '0.0.0',
@@ -497,14 +471,15 @@ installSessionShellCommonModuleMocks({
     });
   },
   text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string) => key,
+    translate: (key, values) => key === 'sessionWork.strip.stillWorking'
+      ? `${key}:${values?.count}` : key,
   }),
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({
       spies: {
         alert: vi.fn(),
-        confirm: vi.fn(),
+        confirm: modalConfirmSpy,
         prompt: vi.fn(),
       },
     }).module;
@@ -610,6 +585,7 @@ afterEach(async () => {
 });
 
 const { SessionView } = await import('./SessionView');
+const { SelectionList } = await import('@/components/ui/selectionList');
 
 const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
   <InjectedAuthProvider credentials={account.credentials}><AppPaneProvider><PaneProbe />{children ?? null}</AppPaneProvider></InjectedAuthProvider>
@@ -619,11 +595,12 @@ function findPressableByAccessibilityLabel(screen: RenderScreenResult, label: st
   return screen.findAll((node) => (node.type as unknown) === 'Pressable' && node.props?.accessibilityLabel === label)[0];
 }
 
-async function renderSessionView(routeServerId: string = 'server-1') {
+async function renderSessionView(routeServerId: string = 'server-1', options: Pick<RenderWithAppProvidersOptions, 'createNodeMock'> = {}) {
   return renderScreen(
     <SessionView id="s1" routeServerId={routeServerId} />,
     {
       wrapper: AppPaneProviderWrapper,
+      ...options,
     },
   );
 }
@@ -702,18 +679,23 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 
 describe('SessionView header action menu visibility', () => {
+  beforeEach(async () => {
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+  });
   afterEach(() => {
     vi.useRealTimers();
     standardCleanup();
-    sessionState.session = {
+    vi.unstubAllGlobals();
+    sessionState.session = createSessionFixture({
       id: 's1',
       serverId: 'server-1',
-      metadata: null,
+      metadata: { path: '/Users/tester/project', host: 'tester.local', flavor: 'codex' },
       accessLevel: 'edit',
       access: createEditableSessionAccessFixture(),
       canApprovePermissions: true,
       agentState: { controlledByUser: true },
-    } as any;
+    });
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -731,7 +713,6 @@ describe('SessionView header action menu visibility', () => {
     sessionExecutionRunsSupportedState.supported = false;
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [];
-    connectedServicesAuthSwitchState.restartState = null;
     automationsSupportState.enabled = false;
     automationsState.enabledCount = 0;
     localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
@@ -743,6 +724,8 @@ describe('SessionView header action menu visibility', () => {
     chatHeaderSpy.mockClear();
     agentInputSpy.mockClear();
     connectedServicesAuthSwitchSpy.mockClear();
+    connectedServicesAuthSwitchResultSpy.mockClear();
+    modalConfirmSpy.mockClear();
     ensureSidechainMessagesLoadedSpy.mockClear();
     paneOpenRightSpy.mockClear();
     paneSetRightTabSpy.mockClear();
@@ -955,7 +938,7 @@ describe('SessionView header action menu visibility', () => {
 
     expect(handled).toBe(true);
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/triggers?serverId=server-1');
   });
 
   it('offers “When this turn finishes…” only for an exact active parent turn and preserves its identity in navigation', async () => {
@@ -977,7 +960,7 @@ describe('SessionView header action menu visibility', () => {
     expect(props?.onSelectExtraItem?.('header.automateExactTurnCompletion')).toBe(true);
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
     expect(routerPushSpy).toHaveBeenCalledWith({
-      pathname: '/session/s1/automations/when-turn-finishes',
+      pathname: '/session/s1/triggers',
       params: {
         sourceSessionId: 's1',
         sourceTurnId: 'turn-exact',
@@ -1098,6 +1081,7 @@ describe('SessionView header action menu visibility', () => {
   });
 
   it('passes the current qualified Agent and current Team Connected Service choices to auth switching', async () => {
+    sessionMachineControlTargetState.target = { machineId: 'machine-1', basePath: '/repo', confidence: 'reachable' };
     const connectedAccount = {
       purpose: 'primary',
       service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
@@ -1197,11 +1181,37 @@ describe('SessionView header action menu visibility', () => {
 
     expect(connectedServicesAuthSwitchSpy).toHaveBeenCalled();
     expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      serverId: 'server-1',
       connectedAccounts: [connectedAccount],
       agentIdentity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-      teamCredentialResources: [currentResource],
       teamNameById: teamCredentialCatalogState.teamNameById,
     });
+    const chip = connectedServicesAuthSwitchResultSpy.mock.calls.at(-1)?.[0].connectedServicesAuthChip;
+    const renderContent = chip?.collapsedContentPopover?.renderContent;
+    if (typeof renderContent !== 'function') throw new Error('Expected the real Connected Account picker');
+    const picker = await renderScreen(<>{renderContent({ requestClose: vi.fn(), maxHeight: 500 })}</>);
+    const rootStep = picker.findByType(SelectionList)?.props.rootStep as React.ComponentProps<typeof SelectionList>['rootStep'];
+    const options = rootStep.sections.flatMap((section) => section.kind === 'static' ? section.options : []);
+    const currentOption = options.find((option) => option.label === 'Current Team account');
+    const staleOption = options.find((option) => option.label === 'Stale Team account');
+    expect(currentOption).toBeDefined();
+    expect(currentOption?.disabled).toBe(false);
+    expect(staleOption).toBeDefined();
+    expect(staleOption?.subtitle).toContain('teams.unavailable.retry');
+    expect(options.some((option) => option.label === 'Provider-only Team resource')).toBe(false);
+    modalConfirmSpy.mockClear();
+    currentOption?.onSelect?.();
+    await flushHookEffects();
+    expect(modalConfirmSpy).toHaveBeenCalledWith('teams.credentials.directUse.title',
+      'teams.credentials.directUse.body', expect.objectContaining({ confirmText: 'common.continue' }));
+    // Cancel at the genuine consent boundary; no auth mutation leaves this fixture.
+    modalConfirmSpy.mockClear();
+    routerPushSpy.mockClear();
+    staleOption?.onSelect?.();
+    expect(routerPushSpy).toHaveBeenCalledWith('/settings/teams/server-1/team-current/credentials/resource-stale');
+    expect(modalConfirmSpy).not.toHaveBeenCalled();
+    expect(connectedServicesAuthSwitchResultSpy.mock.calls.at(-1)?.[0].connectedServicesAuthChip?.collapsedContentPopover?.label)
+      .toBe(chip?.collapsedContentPopover?.label);
   });
 
   it('does not pass stale metadata machine id to connected-services auth switching without a control target', async () => {
@@ -1280,7 +1290,14 @@ describe('SessionView header action menu visibility', () => {
     expect(ids).not.toContain('header.openRuns');
   });
 
-  it('renders a header subagents button when the transcript contains subagent activity', async () => {
+  it('opens active subagent work in the Agents sidebar through the accessible header Work strip', async () => {
+    // This renderer has no browser window; the real popover owns resize/scroll subscriptions.
+    vi.stubGlobal('window', {
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout, clearTimeout,
+      innerWidth: 800, innerHeight: 600,
+    });
+    sessionState.session = createSessionFixture({ id: 's1', serverId: 'server-1', active: true,
+      activeAt: Date.now(), metadata: { path: '/Users/tester/project', host: 'tester.local', flavor: 'claude' } });
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -1302,13 +1319,28 @@ describe('SessionView header action menu visibility', () => {
       },
     ];
 
-    const screen = await renderSessionView();
-    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
-
-    expect(openSubagentsButton).toBeDefined();
+    const screen = await renderSessionView('server-1', {
+      // The platform view measurement is the boundary; popover admission and rendering stay real.
+      createNodeMock: (element) => element.type === 'View' ? {
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, 20, 280, 32),
+      } : null,
+    });
+    const workButton = findPressableByAccessibilityLabel(screen, 'sessionWork.strip.a11y');
+    expect(workButton?.props.role ?? workButton?.props.accessibilityRole).toBe('button');
+    expect(screen.getTextContent()).toContain('sessionWork.strip.stillWorking:1');
+    await pressTestInstanceAsync(workButton, 'header Work strip');
+    await flushHookEffects();
+    const workPopover = screen.findAll((node) => typeof node.props.onOpenInSidebar === 'function')[0];
+    expect(workPopover?.props).toMatchObject({ sessionId: 's1', serverId: 'server-1' });
+    const openInSidebar = screen.findHostByTestId('session-work-strip-open-sidebar');
+    expect(openInSidebar?.props.role ?? openInSidebar?.props.accessibilityRole).toBe('button');
+    await pressTestInstanceAsync(openInSidebar, 'Work strip open in sidebar');
+    expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'agents' });
   });
 
   it('does not hydrate discovered sidechains from the session shell or header', async () => {
+    sessionState.session = createSessionFixture({ id: 's1', serverId: 'server-1', active: true,
+      activeAt: Date.now(), metadata: { path: '/Users/tester/project', host: 'tester.local', flavor: 'claude' } });
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -1331,10 +1363,11 @@ describe('SessionView header action menu visibility', () => {
     ];
 
     const screen = await renderSessionView();
-    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
+    const workButton = findPressableByAccessibilityLabel(screen, 'sessionWork.strip.a11y');
     await flushHookEffects();
 
-    expect(openSubagentsButton).toBeDefined();
+    expect(workButton?.props.role ?? workButton?.props.accessibilityRole).toBe('button');
+    expect(screen.getTextContent()).toContain('sessionWork.strip.stillWorking:1');
     expect(ensureSidechainMessagesLoadedSpy).not.toHaveBeenCalled();
   });
 
@@ -1425,6 +1458,7 @@ describe('SessionView header action menu visibility', () => {
     boardFeatureState.enabled = true;
     boardFeatureState.itemCount = 0;
     paneScopeState.value = {
+      bottom: { isOpen: false, activeTabId: null, tabState: {} },
       right: { isOpen: false },
       details: { isOpen: true, activeTabKey: 'board', tabs: [], groups: [] },
     };

@@ -1,9 +1,6 @@
-import {
-  buildBackendTargetKeyV2,
-  isBackendTargetDisabledByAccountSettings,
-  type AccountSettings,
-  type AgentBackendInventoryItem,
-} from '@happier-dev/protocol'
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AccountSettings, AgentBackendInventoryItem } from '@happier-dev/protocol';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot'
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle'

@@ -1,16 +1,11 @@
 import { z } from 'zod';
 
-import {
-  BackendTargetRefV2Schema,
-  SessionContinueWithReplayRequestSchema,
-  SessionContinueWithReplayRpcParamsSchema,
-  normalizeBackendTargetRefV2InputToV2,
-  normalizeLegacyContinueWithReplayRpcParamsInput,
-  buildBackendTargetKeyV2,
-  SessionModelSelectionV1Schema,
-  type SessionContinueWithReplayRpcParams,
-  validateLegacyContinueWithReplayRpcParamsCompat,
-} from '@happier-dev/protocol';
+import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionContinueWithReplayRequestSchema, SessionContinueWithReplayRpcParamsSchema } from '@happier-dev/protocol/sessions/continueWithReplay';
+import { normalizeLegacyContinueWithReplayRpcParamsInput, validateLegacyContinueWithReplayRpcParamsCompat } from '@happier-dev/protocol/backends/targets/compat/continueWithReplayRpcParamsCompat';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionContinueWithReplayRpcParams } from '@happier-dev/protocol';
 
 const SessionContinueWithReplayCompatIngressSchema = z
   .preprocess(

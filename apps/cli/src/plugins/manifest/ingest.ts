@@ -1,7 +1,5 @@
-import {
-  ingestPluginManifestV2,
-  type PluginManifestIngestionDiagnostic,
-} from '@happier-dev/protocol';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { PluginManifestIngestionDiagnostic } from '@happier-dev/protocol';
 
 import type { CanonicalPluginManifest } from './types';
 import {

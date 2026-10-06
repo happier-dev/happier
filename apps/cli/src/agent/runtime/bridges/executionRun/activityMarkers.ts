@@ -1,7 +1,8 @@
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from './executionRunTypes';
 import { retainExecutionRunState, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
-import { projectExecutionRunRequestedConfiguration, readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { projectExecutionRunRequestedConfiguration } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
 
 export function enqueueExecutionRunMarkerWrite(args: Readonly<{

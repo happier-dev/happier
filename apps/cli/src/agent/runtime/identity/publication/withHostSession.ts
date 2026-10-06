@@ -7,7 +7,8 @@ import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/c
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
 
 function resolveOpenedRuntimeDescriptorV1(params: Readonly<{

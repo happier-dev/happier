@@ -1,13 +1,6 @@
-import {
-  isModelRefGrantedV1,
-  type CallerInputConstraintsV1,
-  ProviderBoundModelRefSchema,
-  type ModelSelectionApplyPolicy,
-  type ProviderBoundModelRef,
-  type ProviderRuntimeBindingBasisV1,
-  type SessionModelTransitionResultV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import {

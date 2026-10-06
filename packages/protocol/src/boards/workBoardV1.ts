@@ -7,6 +7,7 @@ const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
 const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
 import { WidgetExpectedPresentationV1Schema } from '../widgets/widgetPresentationV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 /**
  * Boards (INT §5.1): a user's own arrangement of live work — sessions, workflow runs, workflows and
@@ -41,6 +42,7 @@ export const BoardItemRefV1Schema = z.object({
         id: IdentifierSchema,
     }).strict(),
 }).strict();
+const StoredBoardItemRefV1Schema = createStoredReadSchema(BoardItemRefV1Schema);
 export type BoardItemRefV1 = Readonly<{
     kind: WorkBoardItemKindV1;
     qualifiedId: Readonly<{ serverId: string; id: string }>;
@@ -124,7 +126,7 @@ export type WorkBoardUnknownSourceV1 = Readonly<{ sections?: readonly string[]; 
  * aside in `unknown` (and re-tried there on every read), so a newer app's board still shows what this
  * version can draw.
  */
-const StoredWorkBoardSourceV1Schema = z.object({
+const StoredWorkBoardSourceV1Schema = createStoredReadSchema(z.object({
     sections: z.array(z.string()).optional(),
     filter: SessionListFilterV1Schema.optional(),
     picked: z.array(z.unknown()).default([]),
@@ -145,7 +147,7 @@ const StoredWorkBoardSourceV1Schema = z.object({
     const picked: BoardItemRefV1[] = [];
     const unknownPicked: unknown[] = [];
     for (const candidate of [...source.picked, ...(source.unknown?.picked ?? [])]) {
-        const ref = BoardItemRefV1Schema.safeParse(candidate);
+        const ref = StoredBoardItemRefV1Schema.safeParse(candidate);
         if (ref.success) picked.push(ref.data);
         else unknownPicked.push(candidate);
     }
@@ -159,7 +161,7 @@ const StoredWorkBoardSourceV1Schema = z.object({
         picked,
         ...(Object.keys(unknown).length > 0 ? { unknown } : {}),
     };
-});
+}));
 
 export type WorkBoardV1 = Readonly<{
     id: string;
@@ -234,17 +236,24 @@ function normalizeWorkBoardV1(board: WorkBoardV1): WorkBoardV1 {
     };
 }
 
-export const WorkBoardV1Schema = z.object({
+const WorkBoardFieldsV1Schema = z.object({
     id: IdentifierSchema,
     name: z.string().trim().min(1),
-    source: StoredWorkBoardSourceV1Schema,
+    source: WorkBoardSourceV1Schema.extend({
+        unknown: z.object({
+            sections: z.array(z.string()).optional(),
+            picked: z.array(z.unknown()).optional(),
+        }).strict().optional(),
+    }),
     mode: z.enum(WORK_BOARD_MODES_V1).default('canvas'),
     snap: z.boolean().default(true),
     positionsByItemRef: z.record(z.string(), WorkBoardPositionV1Schema).default({}),
     pinnedInSessions: z.boolean().default(false),
     widgets: z.array(WorkBoardWidgetPlacementV1Schema).optional(),
     itemOrder: z.array(z.string()).optional(),
-}).strict().superRefine((board, context) => {
+}).strict();
+
+function validateWorkBoardWidgetsV1(board: Pick<WorkBoardV1, 'id' | 'widgets'>, context: z.RefinementCtx): void {
     const keys = new Set<string>();
     for (const placement of board.widgets ?? []) {
         if (placement.ref.surface.owner.kind !== 'workBoard' || placement.ref.surface.owner.boardId !== board.id) {
@@ -255,7 +264,16 @@ export const WorkBoardV1Schema = z.object({
         if (keys.has(key)) context.addIssue({ code: 'custom', path: ['widgets'], message: 'Duplicate widget placement' });
         keys.add(key);
     }
-}).transform((board): WorkBoardV1 => normalizeWorkBoardV1(board));
+}
+/** Closed output contract over the canonical normalized Board shape. */
+export const WorkBoardV1StrictSchema = WorkBoardFieldsV1Schema
+    .superRefine(validateWorkBoardWidgetsV1)
+    .transform((board): WorkBoardV1 => normalizeWorkBoardV1(board));
+/** Stored Board reads drop extra fields while retaining the canonical validation and normalization. */
+export const WorkBoardV1Schema = createStoredReadSchema(WorkBoardFieldsV1Schema
+    .extend({ source: StoredWorkBoardSourceV1Schema })
+    .superRefine(validateWorkBoardWidgetsV1)
+    .transform((board): WorkBoardV1 => normalizeWorkBoardV1(board)));
 
 export function resolveWorkBoardItemOrderV1(board: WorkBoardV1): string[] {
     const keys = [...board.source.picked.map(buildWorkBoardItemKeyV1), ...(board.widgets ?? []).map(item => buildWorkBoardWidgetKeyV1(item.ref))];
@@ -274,7 +292,7 @@ export const WorkBoardsV1Schema = z.object({
     v: z.literal(1).default(1),
     boards: z.array(z.unknown()).default([]),
     unreadable: z.array(z.unknown()).optional(),
-}).strict().transform((value): WorkBoardsV1 => {
+}).strip().transform((value): WorkBoardsV1 => {
     const boards: WorkBoardV1[] = [];
     const unreadable: unknown[] = [];
     for (const candidate of [...value.boards, ...(value.unreadable ?? [])]) {

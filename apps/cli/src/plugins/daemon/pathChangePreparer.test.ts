@@ -33,10 +33,46 @@ import { successfulManagedPluginPnpmBoundary as successfulManagedPnpmBoundary } 
 import { requestUserPluginChange } from './changeClient';
 import { updateSelectedPluginOptionalAccess } from './optionalAccessSelections';
 import { preserveValidPluginOptionalSelections } from './updateReviewPolicy';
+import { bindProcessLogger, Logger } from '@/ui/logger';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { runPluginUiArtifactBuild } from '@/plugins/authoring/toolchain';
+import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
+import { loadInstalledPlugins, loadPluginsFromState } from '@/plugins/discovery/load/installed';
+import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 
 const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../packages/plugins/codex');
 
 const roots: string[] = [];
+
+// Replace only managed command selection and the OS subprocess boundary;
+// retain the toolchain, SDK CLI, discovery and artifact publisher beneath it.
+async function buildUiWithManagedProcessBoundary(
+  input: Parameters<typeof runPluginUiArtifactBuild>[0],
+  missingInputPath?: string,
+) {
+  return await runPluginUiArtifactBuild(input, {
+    ensureManagedPnpmCommand: async () => null,
+    managedPnpmBinPath: () => '/managed/pnpm',
+    buildManagedPnpmEnvironment: (env) => env ?? {},
+    ensureManagedJavaScriptRuntimeCommand: async () => '/managed/runtime',
+    managedJavaScriptRuntimeBinPath: () => '/managed/runtime',
+    resolveNativeTypeScriptBin: () => '/managed/compiler',
+    resolvePluginUiBuildBin: () => '/managed/build-ui',
+    processEnv: {},
+    spawn: async (spawnInput) => {
+      if (missingInputPath) {
+        try { await readFile(missingInputPath); } catch (error) {
+          return { exitCode: 1, signal: null, stdout: '', stderr: (error as Error).message };
+        }
+        throw new Error('Expected the missing process input to fail');
+      }
+      const { runPluginBuildUiCli } = await import('../../../../../packages/plugin-sdk/src/ui/build/bin');
+      const errors: string[] = [];
+      const exitCode = await runPluginBuildUiCli({ argv: spawnInput.args.slice(1), cwd: spawnInput.cwd, onError: (message) => errors.push(message) });
+      return { exitCode, signal: null, stdout: '', stderr: errors.join('\n') };
+    },
+  });
+}
 
 type PathPreparerParams = Parameters<typeof createBaseDaemonPathPluginChangePreparer>[0];
 const pathPreparerOwners = new WeakMap<
@@ -253,6 +289,181 @@ async function loadCurrentDevelopmentSentinel(input: Readonly<{
 }
 
 describe('createDaemonPathPluginChangePreparer', () => {
+  it.each(['dependencies', 'ui', 'compile', 'admission', 'runtime', 'runtimeUnavailable'] as const)('logs the original local %s failure before publishing a redacted diagnostic', async (phase) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-development-log-'));
+    const pluginRoot = await createDescriptorPlugin({ development: true });
+    roots.push(happyHomeDir);
+    await writeFile(join(pluginRoot, 'package.json'), '{"name":"development-diagnostic-fixture","type":"module"}', 'utf8');
+    const missingPath = join(pluginRoot, 'missing-input.ts');
+    if (phase === 'compile') {
+      await writeFile(join(pluginRoot, 'src/index.ts'), 'import "../missing-input.ts";\n', 'utf8');
+    }
+    const logPath = join(happyHomeDir, 'development.log');
+    const localLogger = new Logger({ logFilePath: logPath, allowDangerousRemoteLogging: false, pruneCurrentProcessLogs: false });
+    const restoreLogger = bindProcessLogger(localLogger);
+    const createService = phase === 'runtimeUnavailable' ? createBaseDaemonPluginChangeService : createDaemonPluginChangeService;
+    const service = createService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        isRegisteredDevelopmentRoot: () => true,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+          prepareDevelopment: async () => {
+            await readFile(missingPath);
+            throw new Error('Expected the missing runtime input to fail');
+          },
+        },
+        runManagedPluginPnpm: async (input) => {
+          if (phase === 'dependencies') await readFile(missingPath);
+          return await successfulManagedPnpmBoundary(input);
+        },
+        runPluginUiArtifactBuild: async (input) => await buildUiWithManagedProcessBoundary(input, phase === 'ui' ? missingPath : undefined),
+      }),
+    });
+    try {
+      let result: PluginChangeRequestResult | PluginChangeDecisionResult = await service.requestPluginChange({
+        kind: 'development', sourceRootPath: pluginRoot,
+        ...(phase === 'admission' ? { pluginId: 'acme.different-identity' } : {}),
+      });
+      if (result.kind === 'reviewRequired' && result.reviewKind === 'installation') {
+        result = await service.decidePluginChange({ pendingChangeId: result.pendingChangeId, decision: 'installAndTrust' });
+      }
+      expect(result).toMatchObject({ kind: 'failed' });
+      expect(JSON.stringify(result)).not.toContain(pluginRoot);
+      localLogger.flushSync();
+      const log = await readFile(logPath, 'utf8');
+      expect(log).toContain('[WARN]');
+      const expectedCode = phase === 'dependencies' ? 'plugin_dev_dependency_preparation_failed'
+        : phase === 'ui' ? 'plugin_dev_ui_build_failed'
+        : phase === 'runtime' ? 'plugin_change_failed'
+        : phase === 'runtimeUnavailable' ? 'plugin_development_runtime_unavailable'
+        : 'plugin_change_preparation_failed';
+      expect(log).toContain(expectedCode);
+      expect(log.match(/\[WARN\]/g)).toHaveLength(1);
+      expect(log).toContain(JSON.stringify(pluginRoot).slice(1, -1));
+      if (phase === 'dependencies' || phase === 'ui' || phase === 'runtime') expect(log).toContain(JSON.stringify(missingPath).slice(1, -1));
+      if (phase === 'compile') {
+        expect(log).toContain(JSON.stringify(join(pluginRoot, 'src/index.ts')).slice(1, -1));
+        expect(log).toContain('../missing-input.ts');
+      }
+    } finally {
+      await service.shutdown();
+      restoreLogger();
+    }
+  });
+
+  it.each([false, true])('builds code-defined development UI from the evaluated manifest (hosted UI: %s)', async (hostedUi) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-code-ui-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-code-ui-root-'));
+    roots.push(happyHomeDir, pluginRoot);
+    await mkdir(join(pluginRoot, 'src'));
+    await writeFile(join(pluginRoot, 'package.json'), '{"name":"code-defined-plugin","type":"module"}', 'utf8');
+    const manifest = createPluginManifestV2Fixture({
+      id: 'acme.code-ui',
+      entrypoints: { development: './src/index.ts' },
+      ...(hostedUi ? { contributes: { ui: { views: [], translations: [], renderers: [{
+        id: 'panel', kind: 'hostedWeb', source: { kind: 'artifact', artifact: 'panel' }, requiredHostMethods: ['context'],
+      }] } } } : {}),
+    });
+    await writeFile(join(pluginRoot, 'src/index.ts'), `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`, 'utf8');
+    if (hostedUi) {
+      await mkdir(join(pluginRoot, '.happier-plugin/ui/hosted-web/panel'), { recursive: true });
+      await writeFile(join(pluginRoot, '.happier-plugin/ui/hosted-web/panel/index.html'), '<p>Current code-defined panel</p>', 'utf8');
+    }
+    const prepare = createBaseDaemonPathPluginChangePreparer({
+      happyHomeDir,
+      isRegisteredDevelopmentRoot: () => true,
+      runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+      runManagedPluginPnpm: successfulManagedPnpmBoundary,
+      runPluginUiArtifactBuild: buildUiWithManagedProcessBoundary,
+    });
+    const candidate = await prepare({ kind: 'development', sourceRootPath: pluginRoot, observedRevision: 1 });
+    expect(candidate).toMatchObject({ kind: 'preparedDevelopmentCandidate', pluginId: 'acme.code-ui' });
+    const inventory = JSON.parse(await readFile(join(pluginRoot, 'dist/happier-plugin-ui/ui-artifacts.json'), 'utf8')) as { entries: { artifactId: string }[] };
+    expect(inventory.entries.map((entry) => entry.artifactId)).toEqual(hostedUi ? ['panel'] : []);
+    await expect(readFile(join(pluginRoot, '.happier-plugin/plugin.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await candidate.cleanup();
+    if (hostedUi) {
+      const nextManifest = { ...manifest, contributes: {} };
+      await writeFile(join(pluginRoot, 'src/index.ts'), `export const manifest = ${JSON.stringify(nextManifest)};\nexport function activate() {}\n`, 'utf8');
+      const next = await prepare({ kind: 'development', sourceRootPath: pluginRoot, pluginId: 'acme.code-ui', observedRevision: 2, changedPaths: ['src/index.ts'] });
+      const nextInventory = JSON.parse(await readFile(join(pluginRoot, 'dist/happier-plugin-ui/ui-artifacts.json'), 'utf8')) as { entries: unknown[] };
+      expect(nextInventory.entries).toEqual([]);
+      await expect(readFile(join(pluginRoot, 'dist/happier-plugin-ui/hosted-web/panel/index.html'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await next.cleanup();
+    }
+  });
+
+  it.each(['packageRoot', 'singleFile'] as const)('discovers the accepted code-defined development workflow without evaluating source again (%s)', async (sourceKind) => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-workflow-discovery-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-workflow-discovery-root-'));
+    roots.push(happyHomeDir, pluginRoot);
+    await mkdir(join(pluginRoot, 'src'));
+    await writeFile(join(pluginRoot, 'package.json'), '{"name":"workflow-discovery-plugin","type":"module"}', 'utf8');
+    const sourcePath = join(pluginRoot, 'src/index.ts');
+    const locator = sourceKind === 'packageRoot' ? pluginRoot : sourcePath;
+    const pluginId = 'acme.workflow-discovery';
+    const manifest = createPluginManifestV2Fixture({
+      id: pluginId,
+      contributes: { workflows: [{
+        id: 'checkpoint', title: 'Checkpoint',
+        definition: { version: 1, blocks: [{ kind: 'wait', id: 'review',
+          document: { text: 'Review the result.', references: [], attachments: [] }, result: { kind: 'text' },
+        }] },
+      }] },
+    });
+    await writeFile(sourcePath, `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`, 'utf8');
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        isRegisteredDevelopmentRoot: () => true,
+        runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+        runManagedPluginPnpm: successfulManagedPnpmBoundary,
+      }),
+    });
+    try {
+      const result = await service.requestPluginChange({ kind: 'development', sourceRootPath: locator, observedRevision: 1 });
+      expect(result).toMatchObject({ kind: 'committed', pluginId });
+      const approved = (await createPluginRegistryStateStore({ happyHomeDir }).readSnapshot()).approvedAuthorityManifestsByPluginId[pluginId]!;
+      expect(approved.entrypoints?.development).toBe(sourceKind === 'packageRoot' ? './src/index.ts' : './index.ts');
+
+      // Discovery must read the admitted projection, not run or JSON-parse
+      // current author bytes before the development lifecycle accepts them.
+      await writeFile(sourcePath, 'throw new Error("unaccepted source must not run during discovery");\n', 'utf8');
+      const [catalogEntry] = await readInstalledPluginCatalog({ happyHomeDir });
+      expect(catalogEntry?.diagnostics).toEqual([]);
+      expect(catalogEntry?.manifest).toEqual(approved);
+      const snapshot = projectPluginCatalogEntrySnapshot(catalogEntry!);
+      expect(snapshot.diagnostics).toEqual([]);
+      expect(snapshot.contributions.contributions).toContainEqual(expect.objectContaining({
+        contribution: expect.objectContaining({ family: 'workflows', localId: 'checkpoint' }),
+      }));
+      const loaded = await loadInstalledPlugins({ happyHomeDir });
+      expect(loaded.diagnosticsByPluginId[pluginId]).toEqual([]);
+      expect(loaded.loadedPlugins).toHaveLength(1);
+      expect(loaded.loadedPlugins[0]?.manifest).toEqual(approved);
+      expect(loaded.loadedPlugins[0]?.devDaemonEntryPath).toBe(await realpath(sourcePath));
+      await expect(readFile(join(pluginRoot, '.happier-plugin/plugin.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const state = await createPluginRegistryStateStore({ happyHomeDir }).read();
+      const unprojected = await loadPluginsFromState(state);
+      expect(unprojected.loadedPlugins).toEqual([]);
+      expect(unprojected.diagnosticsByPluginId[pluginId]).toContainEqual(expect.objectContaining({ code: 'plugin_manifest_missing' }));
+
+      const revisedManifest = { ...manifest, version: '1.0.1', contributes: {} };
+      await writeFile(sourcePath, `export const manifest = ${JSON.stringify(revisedManifest)};\nexport function activate() {}\n`, 'utf8');
+      const revised = await service.requestPluginChange({ kind: 'development', sourceRootPath: locator, observedRevision: 2 });
+      expect(revised).toMatchObject({ kind: 'committed', pluginId });
+      const [revisedCatalogEntry] = await readInstalledPluginCatalog({ happyHomeDir });
+      expect(revisedCatalogEntry?.version).toBe('1.0.1');
+      expect(revisedCatalogEntry?.diagnostics).toEqual([]);
+      expect(revisedCatalogEntry?.contributionIntrospection.contributions).toEqual([]);
+      expect((await loadInstalledPlugins({ happyHomeDir })).loadedPlugins[0]?.manifest).toEqual(revisedCatalogEntry?.manifest);
+    } finally {
+      await service.shutdown();
+    }
+  });
+
   it('returns an ephemeral source-in-place candidate without writing a development generation', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-source-in-place-home-'));
     const sourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-in-place-root-'));

@@ -171,4 +171,12 @@ describe('action operation detail presentation', () => {
             cancellation: 'supported',
         }), 'available').canCancel).toBe(false);
     });
+    it('opens the canonical external session for recovery and derives Stop from owner availability', () => {
+        const external = operation({ actionId: 'sessions.external.takeover.start', cancellation: 'supported',
+            scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'external-session' },
+            progress: { kind: 'phase', phase: 'awaiting_user_resume', label: 'Needs resume' } });
+        expect(projectActionOperationDetail(external, 'available')).toMatchObject({ nextAction: { kind: 'open_session', sessionId: 'external-session' }, canCancel: true });
+        expect(projectActionOperationDetail(external, 'unavailable').canCancel).toBe(false);
+    });
+
 });

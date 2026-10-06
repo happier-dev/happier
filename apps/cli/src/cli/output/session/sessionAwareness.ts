@@ -1,16 +1,12 @@
 import { z } from 'zod';
 import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
-import {
-  projectSessionAwarenessV1,
-  resolveAgentRequestKind,
-  readSessionTerminalControlServiceabilityStateV1,
-  readSessionWorkStateV1FromMetadata,
-  resolveAwarenessCurrentnessV1,
-  SessionWorkflowActivityHeadlineV1Schema,
-  type AccountEncryptionCurrentnessResponse,
-  type ProjectSessionAwarenessV1Input,
-  type SessionAwarenessProjectionV1,
-} from '@happier-dev/protocol';
+import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { readSessionTerminalControlServiceabilityStateV1 } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { resolveAwarenessCurrentnessV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
+import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { AccountEncryptionCurrentnessResponse, ProjectSessionAwarenessV1Input, SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import {

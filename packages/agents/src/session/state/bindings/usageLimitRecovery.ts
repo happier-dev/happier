@@ -1,9 +1,5 @@
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionUsageLimitRecoveryV1Schema,
-  type SessionMetadata,
-  type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionMetadata, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

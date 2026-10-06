@@ -15,7 +15,7 @@ import { useNewSessionConnectedServices } from '@/components/sessions/new/module
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { CONNECTED_SERVICES_BINDINGS_KEY } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 
 import type { SessionAuthoringConnectedServicesContext } from './sessionAuthoringFieldControls';
 
@@ -43,7 +43,12 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
 }>): React.ReactElement | null {
     const { onChange } = props;
     const router = useRouter();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+        connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+    }));
 
     /**
      * Only an omitted value inherits: the owner then seeds its preview from the

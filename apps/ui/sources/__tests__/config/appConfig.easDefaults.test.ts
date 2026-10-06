@@ -578,6 +578,9 @@ describe('app.config.js', () => {
             'sherpa-native',
         ]));
         expect(pkg.happierExpoRuntimeVersion).not.toBe('0.2.0-native');
+        // These trains predate the compiled Android file-actions module.
+        expect(pkg.happierExpoRuntimeVersion).not.toBe('0.2.1-native');
+        expect(pkg.happierExpoRuntimeVersion).not.toBe('0.2.7-native');
     });
 
     it('allows forcing an Expo runtime policy for development diagnostics', () => {

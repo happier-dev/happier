@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -38,7 +39,7 @@ export const REVIEW_COMMENT_ACTION_IDS_V1 = Object.freeze([
 
 export const REVIEW_COMMENT_PRINCIPAL_HEADER_V1 = 'x-happier-review-comment-principal' as const;
 
-export const ReviewCommentPrincipalProofV1Schema = z.object({
+export const ReviewCommentPrincipalProofV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   alg: z.literal('ed25519-machine-installation-v1'),
   machineId: z.string().trim().min(1),
@@ -49,12 +50,12 @@ export const ReviewCommentPrincipalProofV1Schema = z.object({
   path: z.string().trim().min(1),
   bodySha256Base64Url: z.string().trim().min(1),
   signatureBase64Url: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type ReviewCommentPrincipalProofV1 = z.infer<typeof ReviewCommentPrincipalProofV1Schema>;
 
-const ReviewCommentCurrentIntentIdV1Schema = z.string().trim().min(1).max(512);
+const ReviewCommentCurrentIntentIdV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(512));
 
-const ReviewCommentPluginCurrentIntentV1Schema = z.object({
+const ReviewCommentPluginCurrentIntentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('execution_run_host_action'),
   actionId: z.literal('reviews.comments.create'),
@@ -69,8 +70,8 @@ const ReviewCommentPluginCurrentIntentV1Schema = z.object({
   projectId: ReviewCommentCurrentIntentIdV1Schema,
   workspaceId: ReviewCommentCurrentIntentIdV1Schema,
   sourceCustody: PluginSourceCustodyV1Schema,
-}).strict();
-const ReviewCommentMaterializationIntentV1Schema = z.object({
+}).strict());
+const ReviewCommentMaterializationIntentV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   kind: z.literal('review_findings_materialization'),
   actionId: z.literal('reviews.comments.create'),
@@ -85,18 +86,18 @@ const ReviewCommentMaterializationIntentV1Schema = z.object({
   if (!value.sessionId && !value.workflowRunId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['sessionId'], message: 'A Session or Workflow Run is required' });
   }
-});
-export const ReviewCommentCurrentIntentV1Schema = z.union([
+}));
+export const ReviewCommentCurrentIntentV1Schema = lazyZodSchema(() => z.union([
   ReviewCommentPluginCurrentIntentV1Schema,
   ReviewCommentMaterializationIntentV1Schema,
-]);
+]));
 export type ReviewCommentCurrentIntentV1 = z.infer<typeof ReviewCommentCurrentIntentV1Schema>;
 
-export const ReviewCommentPrincipalHeaderV1Schema = z.object({
+export const ReviewCommentPrincipalHeaderV1Schema = lazyZodSchema(() => z.object({
   actor: ReviewCommentActorRefV1Schema,
   currentIntent: ReviewCommentCurrentIntentV1Schema.optional(),
   proof: ReviewCommentPrincipalProofV1Schema.optional(),
-}).strict();
+}).strict());
 export type ReviewCommentPrincipalHeaderV1 = z.infer<typeof ReviewCommentPrincipalHeaderV1Schema>;
 
 function normalizeCanonicalJsonValue(value: unknown): unknown {
@@ -136,15 +137,15 @@ export function createReviewCommentPrincipalSigningInputV1(params: Readonly<{
   })}`);
 }
 
-export const ReviewCommentActionIdV1Schema = z.enum(REVIEW_COMMENT_ACTION_IDS_V1);
+export const ReviewCommentActionIdV1Schema = lazyZodSchema(() => z.enum(REVIEW_COMMENT_ACTION_IDS_V1));
 export type ReviewCommentActionIdV1 = z.infer<typeof ReviewCommentActionIdV1Schema>;
 
-const ReviewCommentListTaxonomyIdsV1Schema = z.preprocess(
+const ReviewCommentListTaxonomyIdsV1Schema = lazyZodSchema(() => z.preprocess(
   (value) => typeof value === 'string' ? [value] : value,
   z.array(z.string().min(1)),
-).optional();
+).optional());
 
-export const ReviewCommentOperationErrorCodeV1Schema = z.enum([
+export const ReviewCommentOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'review_comment_not_found',
   'review_comment_invalid_request',
   'review_comment_invalid_transition',
@@ -157,10 +158,10 @@ export const ReviewCommentOperationErrorCodeV1Schema = z.enum([
   'review_comment_idempotency_conflict',
   'review_comment_thread_closed',
   'review_comment_already_redacted',
-]);
+]));
 export type ReviewCommentOperationErrorCodeV1 = z.infer<typeof ReviewCommentOperationErrorCodeV1Schema>;
 
-export const ReviewCommentListRequestV1Schema = z.object({
+export const ReviewCommentListRequestV1Schema = lazyZodSchema(() => z.object({
   workspace: ReviewCommentWorkspaceV1Schema.optional(),
   workspaceId: z.string().min(1).optional(),
   projectId: z.string().min(1).optional(),
@@ -177,32 +178,32 @@ export const ReviewCommentListRequestV1Schema = z.object({
   includeHistory: z.boolean().default(false),
   cursor: z.string().min(1).optional(),
   limit: z.number().int().positive().max(200).default(50),
-}).strict();
+}).strict());
 export type ReviewCommentListRequestV1 = z.infer<typeof ReviewCommentListRequestV1Schema>;
 
 /** Action orchestration may drain the existing paged transport; the wire request stays unchanged. */
-export const ReviewCommentListActionRequestV1Schema = ReviewCommentListRequestV1Schema.extend({
+export const ReviewCommentListActionRequestV1Schema = lazyZodSchema(() => ReviewCommentListRequestV1Schema.extend({
   allPages: z.literal(true).optional(),
-}).strict();
+}).strict());
 
-export const ReviewCommentGetRequestV1Schema = z.object({
+export const ReviewCommentGetRequestV1Schema = lazyZodSchema(() => z.object({
   commentId: z.string().min(1),
   includeHistory: z.boolean().default(true),
-}).strict();
+}).strict());
 export type ReviewCommentGetRequestV1 = z.infer<typeof ReviewCommentGetRequestV1Schema>;
 
-export const ReviewCommentListResponseV1Schema = z.object({
+export const ReviewCommentListResponseV1Schema = lazyZodSchema(() => z.object({
   items: z.array(ReviewCommentV1Schema),
   cursor: z.string().min(1).nullable().default(null),
-}).strict();
+}).strict());
 export type ReviewCommentListResponseV1 = z.infer<typeof ReviewCommentListResponseV1Schema>;
 
-export const ReviewCommentGetResponseV1Schema = z.object({
+export const ReviewCommentGetResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentGetResponseV1 = z.infer<typeof ReviewCommentGetResponseV1Schema>;
 
-export const ReviewCommentPublicationTargetV1Schema = z.object({
+export const ReviewCommentPublicationTargetV1Schema = lazyZodSchema(() => z.object({
   providerId: z.string().min(1),
   configuredAccountId: z.string().min(1),
   entryRef: z.object({
@@ -215,7 +216,7 @@ export const ReviewCommentPublicationTargetV1Schema = z.object({
     kindId: z.enum(['review-thread', 'review-comment']),
     targetId: z.string().min(1),
   }).strict().nullable(),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationTargetV1 = z.infer<typeof ReviewCommentPublicationTargetV1Schema>;
 
 export type ReviewCommentPublicationTargetExpectationV1 = Readonly<{
@@ -248,26 +249,26 @@ export function reviewCommentPublicationTargetMatchesV1(
     && target.entryRef.entryId === expected.localRef.entryId;
 }
 
-export const ReviewCommentPublicationEntryV1Schema = z.object({
+export const ReviewCommentPublicationEntryV1Schema = lazyZodSchema(() => z.object({
   happierCommentId: z.string().min(1),
   expectedServerRevision: z.number().int().positive(),
   anchor: ReviewCommentAnchorV1Schema,
   snapshot: ReviewCommentSnapshotV1Schema,
   body: z.string().min(1),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationEntryV1 = z.infer<typeof ReviewCommentPublicationEntryV1Schema>;
 
-export const ReviewCommentPublicationVerdictV1Schema = z.object({
+export const ReviewCommentPublicationVerdictV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum(['approve', 'requestChanges', 'comment']),
   body: z.string().min(1),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationVerdictV1 = z.infer<typeof ReviewCommentPublicationVerdictV1Schema>;
 
 const ReviewCommentPublicationPlanShapeV1 = {
   target: ReviewCommentPublicationTargetV1Schema,
-  baseRevision: z.string().min(1).nullable(),
-  headRevision: z.string().min(1).nullable(),
-  entries: z.array(ReviewCommentPublicationEntryV1Schema),
+  baseRevision: lazyZodSchema(() => z.string().min(1).nullable()),
+  headRevision: lazyZodSchema(() => z.string().min(1).nullable()),
+  entries: lazyZodSchema(() => z.array(ReviewCommentPublicationEntryV1Schema)),
   verdict: ReviewCommentPublicationVerdictV1Schema.nullable(),
 } as const;
 
@@ -314,9 +315,9 @@ function refineReviewCommentPublicationPlanV1(
   });
 }
 
-export const ReviewCommentPublicationPlanV1Schema = z.object(ReviewCommentPublicationPlanShapeV1)
+export const ReviewCommentPublicationPlanV1Schema = lazyZodSchema(() => z.object(ReviewCommentPublicationPlanShapeV1)
   .strict()
-  .superRefine(refineReviewCommentPublicationPlanV1);
+  .superRefine(refineReviewCommentPublicationPlanV1));
 export type ReviewCommentPublicationPlanV1 = z.infer<typeof ReviewCommentPublicationPlanV1Schema>;
 
 export function parseReviewCommentPublicationPlanV1(value: unknown): ReviewCommentPublicationPlanV1 {
@@ -376,13 +377,13 @@ export function preflightReviewCommentPublicationRoutingV1(
   });
 }
 
-export const ReviewCommentPublicationCorrelationV1Schema = z.object({
+export const ReviewCommentPublicationCorrelationV1Schema = lazyZodSchema(() => z.object({
   happierCommentId: z.string().min(1),
   publicationCorrelationId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-}).strict();
+}).strict());
 export type ReviewCommentPublicationCorrelationV1 = z.infer<typeof ReviewCommentPublicationCorrelationV1Schema>;
 
-const ReviewCommentPublicationCorrelationIdV1Schema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const ReviewCommentPublicationCorrelationIdV1Schema = lazyZodSchema(() => z.string().regex(/^[A-Za-z0-9_-]{43}$/));
 
 /** Canonical opaque provider marker; providers own transport, not its grammar. */
 export function formatReviewCommentPublicationMarkerV1(
@@ -412,14 +413,14 @@ export function matchReviewCommentPublicationMarkerV1(
       : { kind: 'duplicate' };
 }
 
-export const ReviewCommentPublicationEntryEffectOutcomeV1Schema = z.union([
+export const ReviewCommentPublicationEntryEffectOutcomeV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('published'), externalRef: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('failed'), code: z.string().min(1), message: z.string().min(1).optional() }).strict(),
   z.object({ kind: z.literal('uncertain') }).strict(),
   z.object({ kind: z.literal('skippedPriorFailure') }).strict(),
-]);
+]));
 
-export const ReviewCommentPublicationVerdictEffectOutcomeV1Schema = z.union([
+export const ReviewCommentPublicationVerdictEffectOutcomeV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('published'), externalRef: z.string().min(1).optional() }).strict(),
   z.object({
     kind: z.literal('failed'),
@@ -429,46 +430,46 @@ export const ReviewCommentPublicationVerdictEffectOutcomeV1Schema = z.union([
   }).strict(),
   z.object({ kind: z.literal('uncertain'), externalRef: z.string().min(1).optional() }).strict(),
   z.object({ kind: z.literal('skippedPriorFailure') }).strict(),
-]);
+]));
 
-export const ReviewCommentPublicationEntryResultV1Schema = z.object({
+export const ReviewCommentPublicationEntryResultV1Schema = lazyZodSchema(() => z.object({
   happierCommentId: z.string().min(1),
   publicationCorrelationId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   outcome: ReviewCommentPublicationEntryEffectOutcomeV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentPublicationEntryResultV1 = z.infer<
   typeof ReviewCommentPublicationEntryResultV1Schema
 >;
 
-export const ReviewCommentPublicationVerdictResultV1Schema = z.union([
+export const ReviewCommentPublicationVerdictResultV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('notRequested') }).strict(),
   z.object({
     publicationCorrelationId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
     outcome: ReviewCommentPublicationVerdictEffectOutcomeV1Schema,
   }).strict(),
-]);
+]));
 export type ReviewCommentPublicationVerdictResultV1 = z.infer<
   typeof ReviewCommentPublicationVerdictResultV1Schema
 >;
 
-export const ReviewCommentPublicationResultV1Schema = z.object({
+export const ReviewCommentPublicationResultV1Schema = lazyZodSchema(() => z.object({
   publicationPlanId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   entries: z.array(ReviewCommentPublicationEntryResultV1Schema),
   verdict: ReviewCommentPublicationVerdictResultV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentPublicationResultV1 = z.infer<typeof ReviewCommentPublicationResultV1Schema>;
 
-export const ReviewCommentPublicationDispatchInstructionV1Schema = z.enum([
+export const ReviewCommentPublicationDispatchInstructionV1Schema = lazyZodSchema(() => z.enum([
   'dispatch',
   'reconcile',
   'confirmed',
   'held',
-]);
+]));
 export type ReviewCommentPublicationDispatchInstructionV1 = z.infer<
   typeof ReviewCommentPublicationDispatchInstructionV1Schema
 >;
 
-export const ReviewCommentClaimPublicationDispatchRequestV1Schema = z.object({
+export const ReviewCommentClaimPublicationDispatchRequestV1Schema = lazyZodSchema(() => z.object({
   ...ReviewCommentPublicationPlanShapeV1,
   settlement: z.object({
     dispatchToken: z.string().min(1).nullable(),
@@ -476,12 +477,12 @@ export const ReviewCommentClaimPublicationDispatchRequestV1Schema = z.object({
   }).strict().optional(),
 })
   .strict()
-  .superRefine(refineReviewCommentPublicationPlanV1);
+  .superRefine(refineReviewCommentPublicationPlanV1));
 export type ReviewCommentClaimPublicationDispatchRequestV1 = z.infer<
   typeof ReviewCommentClaimPublicationDispatchRequestV1Schema
 >;
 
-export const ReviewCommentClaimPublicationDispatchResponseV1Schema = z.object({
+export const ReviewCommentClaimPublicationDispatchResponseV1Schema = lazyZodSchema(() => z.object({
   disposition: z.enum(['dispatch', 'reconcile']),
   dispatchToken: z.string().min(1).nullable(),
   publicationPlanId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -506,7 +507,7 @@ export const ReviewCommentClaimPublicationDispatchResponseV1Schema = z.object({
       message: 'review_comment_publication_claim_dispatch_mismatch',
     });
   }
-});
+}));
 export type ReviewCommentClaimPublicationDispatchResponseV1 = z.infer<
   typeof ReviewCommentClaimPublicationDispatchResponseV1Schema
 >;
@@ -601,29 +602,29 @@ export function createReviewCommentPublicationSettlementRequestV1(
   });
 }
 
-export const ReviewCommentCreateResponseV1Schema = z.object({
+export const ReviewCommentCreateResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
   replayed: z.boolean().optional(),
-}).strict();
+}).strict());
 export type ReviewCommentCreateResponseV1 = z.infer<typeof ReviewCommentCreateResponseV1Schema>;
 
-export const ReviewCommentTransitionResponseV1Schema = z.object({
+export const ReviewCommentTransitionResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentTransitionResponseV1 = z.infer<typeof ReviewCommentTransitionResponseV1Schema>;
 
-export const ReviewCommentEditResponseV1Schema = z.object({
+export const ReviewCommentEditResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentEditResponseV1 = z.infer<typeof ReviewCommentEditResponseV1Schema>;
 
-export const ReviewCommentReplyResponseV1Schema = z.object({
+export const ReviewCommentReplyResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
   parent: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentReplyResponseV1 = z.infer<typeof ReviewCommentReplyResponseV1Schema>;
 
-export const ReviewCommentBulkTransitionRequestV1Schema = z.object({
+export const ReviewCommentBulkTransitionRequestV1Schema = lazyZodSchema(() => z.object({
   ...ReviewCommentScopeV1Schema.shape,
   commentIds: z.array(z.string().min(1)).min(1),
   toState: ReviewCommentStateV1Schema,
@@ -644,36 +645,36 @@ export const ReviewCommentBulkTransitionRequestV1Schema = z.object({
       message: `${value.toState} requires evidence or reason`,
     });
   }
-});
+}));
 export type ReviewCommentBulkTransitionRequestV1 = z.infer<typeof ReviewCommentBulkTransitionRequestV1Schema>;
 
-export const ReviewCommentBulkTransitionFailureV1Schema = z.object({
+export const ReviewCommentBulkTransitionFailureV1Schema = lazyZodSchema(() => z.object({
   commentId: z.string().min(1),
   errorCode: ReviewCommentOperationErrorCodeV1Schema,
   error: z.string().min(1),
-}).strict();
+}).strict());
 export type ReviewCommentBulkTransitionFailureV1 = z.infer<typeof ReviewCommentBulkTransitionFailureV1Schema>;
 
-export const ReviewCommentBulkTransitionResponseV1Schema = z.object({
+export const ReviewCommentBulkTransitionResponseV1Schema = lazyZodSchema(() => z.object({
   bulkActionId: z.string().min(1),
   updated: z.array(ReviewCommentV1Schema),
   failed: z.array(ReviewCommentBulkTransitionFailureV1Schema),
-}).strict();
+}).strict());
 export type ReviewCommentBulkTransitionResponseV1 = z.infer<typeof ReviewCommentBulkTransitionResponseV1Schema>;
 
-export const ReviewCommentRedactResponseV1Schema = z.object({
+export const ReviewCommentRedactResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentRedactResponseV1 = z.infer<typeof ReviewCommentRedactResponseV1Schema>;
 
-export const ReviewCommentSetDispositionResponseV1Schema = z.object({
+export const ReviewCommentSetDispositionResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentSetDispositionResponseV1 = z.infer<typeof ReviewCommentSetDispositionResponseV1Schema>;
 
-export const ReviewCommentAttachEvidenceResponseV1Schema = z.object({
+export const ReviewCommentAttachEvidenceResponseV1Schema = lazyZodSchema(() => z.object({
   comment: ReviewCommentV1Schema,
-}).strict();
+}).strict());
 export type ReviewCommentAttachEvidenceResponseV1 = z.infer<typeof ReviewCommentAttachEvidenceResponseV1Schema>;
 
 export const ReviewCommentActionInputSchemasV1 = Object.freeze({

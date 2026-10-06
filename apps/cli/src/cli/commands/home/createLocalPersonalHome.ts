@@ -7,7 +7,8 @@ import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { runPersonalHomeBootstrapFromSystemTasks } from '@happier-dev/cli-common/firstPartyRuntime/personalHome/bootstrapSystemTasks';
-import { SYSTEM_TASK_PROTOCOL_VERSION, type HomeConnectionDescriptorV1, type SystemTaskSpec } from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
+import type { HomeConnectionDescriptorV1, SystemTaskSpec } from '@happier-dev/protocol';
 import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { authChallenge, encodeBase64, getRandomBytes } from '@/api/encryption';

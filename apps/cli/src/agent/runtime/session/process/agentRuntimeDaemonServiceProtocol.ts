@@ -1,19 +1,15 @@
 import { z } from 'zod';
-import {
-  ActionIdSchema,
-  ManagedExecutableRefSchema,
-  AgentSessionTeamProviderBindingV1Schema,
-  SessionEnvOverlayV1Schema,
-  SessionInputAdmissionResultV1Schema,
-  SessionPendingEnqueueByMachineRequestV1Schema,
-  SessionPendingExecutionRunEnqueueByMachineRequestV2Schema,
-  ProviderBrokerConsumerV1Schema,
-} from '@happier-dev/protocol';
-import {
-  ActionExecuteFailureSchema,
-  type ActionExecuteResult,
-} from '@happier-dev/protocol/actions/actionExecutionResult';
-import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ManagedExecutableRefSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
+import { AgentSessionTeamProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
+import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
+import { SessionInputAdmissionResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { ProviderBrokerConsumerV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 import {
   AgentRuntimeDaemonModelTransitionAuthorizationResultV1Schema,

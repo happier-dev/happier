@@ -5,7 +5,7 @@ import { resolveAgentRequestKind, type AgentRequestKind } from '@/agent/permissi
 import { logger } from '@/ui/logger';
 import { setBoundedMap } from '@/utils/collections/lru';
 
-import { summarizeToolInputForNotification } from '@happier-dev/protocol';
+import { summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { sendAgentRequestPushNotificationAsync, type PermissionRequestPushSender } from './permissionRequestPush';
 
 type Entry = {

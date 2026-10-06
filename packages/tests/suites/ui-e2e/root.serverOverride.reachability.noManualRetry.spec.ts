@@ -61,7 +61,26 @@ test.describe('ui e2e: server override reachability', () => {
     const url = `${uiBaseUrl}/?server=${encodeURIComponent(server.baseUrl)}`;
     await gotoDomContentLoadedWithPathFallback(page, url, '/');
 
-    await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId('welcome-retry-server')).toHaveCount(0);
+    const reachHomeWelcome = async () => {
+      const homeAddress = page.getByTestId('onboarding-wizard-relay-url-input');
+      await expect(page.getByTestId('welcome-primary-start').or(homeAddress).first()).toBeVisible({ timeout: 120_000 });
+      if (await homeAddress.isVisible()) {
+        const showcaseSkip = page.getByTestId('onboarding-showcase-story-skip');
+        if (await showcaseSkip.isVisible()) await showcaseSkip.click();
+        await page.getByTestId('onboarding-wizard-primary').click();
+      }
+    };
+    await reachHomeWelcome();
+    await expect(page.getByTestId('welcome-primary-start')).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByTestId('welcome-login-provider').first()).toBeVisible();
+    await expect(page.getByTestId('welcome-auth-blocked-retry')).toHaveCount(0);
+
+    // The persisted Home is already focused on reload. The supplied address
+    // must still identify a Home, not be mistaken for an optional sign-in service.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await reachHomeWelcome();
+    await expect(page.getByTestId('welcome-primary-start')).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByTestId('welcome-login-provider').first()).toBeVisible();
+    await expect(page.getByTestId('welcome-account-service-recovery')).toHaveCount(0);
   });
 });

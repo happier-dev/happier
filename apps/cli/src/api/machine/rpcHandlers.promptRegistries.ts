@@ -1,11 +1,6 @@
-import {
-  PromptRegistryInstallRequestV1Schema,
-  PromptRegistryListAdaptersResponseV1,
-  PromptRegistryListSourcesRequestV1Schema,
-  PromptRegistryListSourcesResponseV1,
-  PromptRegistryScanSourceRequestV1Schema,
-  RPC_METHODS,
-} from '@happier-dev/protocol';
+import { PromptRegistryInstallRequestV1Schema, PromptRegistryListSourcesRequestV1Schema, PromptRegistryScanSourceRequestV1Schema } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
+import type { PromptRegistryListAdaptersResponseV1, PromptRegistryListSourcesResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';

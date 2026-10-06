@@ -22,7 +22,15 @@ export type SessionListAttentionPlacementReason =
      * place it nowhere, so every reason above keeps its own placement and its
      * own ordering key.
      */
-    | 'standing';
+    | 'standing'
+    | 'reminder';
+
+/** Ordering survives acknowledgement without replaying the resolved status on the row. */
+export type SessionListAttentionPlacementOrdering = Readonly<{
+    reason: SessionListAttentionPlacementReason;
+    timestamp: number;
+}>;
+export type SessionListRetainedAttentionPlacement = SessionListAttentionPlacementOrdering & Readonly<{ key: string }>;
 
 /**
  * Item-level projection of a 'working' placement: 'working' means live

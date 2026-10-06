@@ -10,9 +10,7 @@ import {
   resolveConnectedAccountRequestAuthCapabilityPath,
   type ConnectedAccountRequestAuthCapabilityDocumentV2,
 } from '@happier-dev/agents/request-auth';
-import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
-} from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION } from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import {
   constantTimeEqualUtf8,

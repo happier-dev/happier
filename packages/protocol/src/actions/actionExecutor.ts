@@ -27,8 +27,9 @@ import { projectAccountRoleActionRefusalV1 } from '../prompts/roles/accountRoleA
 import { isWorkBoardActionIdV1 } from '../boards/actionIdsV1.js';
 import { WorkBoardActionInputSchemasV1 } from '../boards/actionsV1.js';
 import { HOME_HUB_LAYOUT_ACTION_IDS, HomeHubLayoutUpdateInputSchema } from './specs/homeHub.js';
-import { WidgetInstanceActionIdV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
-import { executeWidgetInstanceActionV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { WidgetInstanceActionIdV1Schema, WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1, readWidgetActionDestinationV1, readWidgetCatalogBoundSessionV1 } from '../widgets/actionsV1.js';
+import { executeWidgetInstanceActionV1, admitWidgetInstanceConfigurationV1, readWidgetActionSurfacePortV1 } from '../widgets/executeWidgetInstanceActionV1.js';
+import { clientActionUnavailable } from './clientDispatchV1.js';
 import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
 import { readWidgetDefinitionActionAccountV1, readWidgetDefinitionActionSessionV1 } from '../widgets/definitionActionsV1.js';
 import { admitWidgetActionSurfaceV1 } from '../widgets/widgetActionScopeV1.js';
@@ -107,6 +108,7 @@ import {
   SessionListActionInputV1Schema,
   SessionModelSetInputSchema,
   getActionSpec,
+  resolveActionExecutionPlacementForInput,
   listActionSpecs,
   isActionSpecSurfacedOn,
   isPluginActionCallerPolicySatisfied,
@@ -314,8 +316,7 @@ import type { SessionContinueWithReplayRpcParams } from '../sessions/continueWit
 import { SessionForkRpcParamsSchema } from '../sessions/fork.js';
 import { SpawnSessionErrorCodeSchema } from '../sessions/spawnSession.js';
 import { SessionControlErrorCodeSchema } from '../sessions/control/contract.js';
-import { readRpcErrorCode } from '../rpc/errors.js';
-import { RPC_ERROR_CODES } from '../rpc/index.js';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import {
   deriveSessionCreationTagV1,
   SessionCreationKeyV1Schema,
@@ -337,26 +338,12 @@ import {
   SessionCreationDirectoryApprovalV1Schema,
   type SessionCreationDirectoryApprovalV1,
 } from '../sessions/creation/sessionCreationTargetPreparationV1.js';
-import {
-  ExecutionRunActionResponseSchema,
-  ExecutionRunCancelTurnRequestSchema,
-  ExecutionRunCancelTurnResponseSchema,
-  ExecutionRunEnsureOrStartResponseSchema,
-  ExecutionRunEnsureResponseSchema,
-  ExecutionRunSendRequestSchema,
-  ExecutionRunSendResponseSchema,
-  readExecutionRunStartRunCreation,
-  ExecutionRunStartResponseSchema,
-  ExecutionRunStopResponseSchema,
-  ExecutionRunTurnStreamCancelResponseSchema,
-  ExecutionRunTurnStreamReadResponseSchema,
-  ExecutionRunTurnStreamStartResponseSchema,
-  ExecutionRunWaitResultSchema,
-  ExecutionRunWaitConditionSchema,
-  ExecutionRunGetResponseSchema,
-  withExecutionRunStartFailureDetails,
-  type ExecutionRunLaunchOrigin,
-} from '../execution/runs/index.js';
+import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSchema, ExecutionRunEnsureResponseSchema, ExecutionRunSendRequestSchema } from '../execution/runs/index.js';
+import { ExecutionRunCancelTurnRequestSchema, ExecutionRunCancelTurnResponseSchema } from '../execution/runs/cancelTurn.js';
+import { ExecutionRunSendResponseSchema, readExecutionRunStartRunCreation, ExecutionRunStartResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunWaitResultSchema, ExecutionRunGetResponseSchema, withExecutionRunStartFailureDetails } from '../execution/runs/responseSchemas.js';
+import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '../execution/runs/streaming.js';
+import { ExecutionRunWaitConditionSchema } from '../execution/runs/waitForTerminal.js';
+import { type ExecutionRunLaunchOrigin } from '../execution/runs/startRequest.js';
 import type {
   CheckpointCodeRollbackRequest,
   CheckpointCodeRollbackActionRequest,
@@ -373,7 +360,8 @@ import {
   resolveExecutionBackendTargetSelectionForValue,
 } from './resolveActionBackendTargetSelection.js';
 import { projectActionExecuteFailure } from './actionExecutionResult.js';
-import { dispatchRuntimeAction, type RuntimeActionExecute } from './executor/index.js';
+import { dispatchRuntimeAction } from './executor/dispatch.js';
+import { type RuntimeActionExecute } from './executor/types.js';
 import {
   TeamInvitationAcceptApprovalPrepareResultV1Schema,
   TeamInvitationAcceptInputV1Schema,
@@ -3497,9 +3485,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         });
       }
 
-      if (spec.executionPlacement === 'client' && deps.clientActionExecute) {
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      if (executionPlacement === 'client' && deps.clientActionExecute) {
         return await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx });
       }
+      if (executionPlacement === 'client' && actionId !== 'widgets.instance.refresh'
+        && WidgetInstanceActionIdV1Schema.safeParse(actionId).success
+        && !deps.widgetSurfaceActions?.companion) return clientActionUnavailable(actionId);
 
       if (SESSION_TRANSCRIPT_ACTION_ID_SET.has(actionId) && deps.sessionTranscriptAction) {
         const result = await deps.sessionTranscriptAction({
@@ -3839,9 +3831,25 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref) {
             const refusal = admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
             if (refusal) return refusal;
+            if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
+              let instance = intent.kind === 'widget_add' ? intent.instance : undefined;
+              if (intent.kind === 'widget_inputs') {
+                const port = readWidgetActionSurfacePortV1(deps, intent.ref.surface);
+                const read = port ? await port.read(intent.ref.surface, ctx, ctx.signal) : null;
+                const failed = readActionFailureEnvelope(read);
+                if (failed) return failed;
+                const state = WidgetSurfaceReadV1Schema.safeParse(read);
+                if (!state.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+                const existing = state.data.instances.find(entry => entry.instance.id === intent.ref.instanceId)?.instance;
+                if (!existing) return { ok: false, errorCode: 'widget_instance_not_found', error: 'widget_instance_not_found' };
+                instance = { ...existing, bindings: intent.bindings };
+              }
+              const admission = await admitWidgetInstanceConfigurationV1(deps, intent.ref, instance!, ctx);
+              if (admission) return admission;
+            }
           }
         }
-        return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId, parsed.data, ctx.signal);
+        return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId, parsed.data, ctx.signal, ctx);
       }
 
       const widgetActionId = WidgetInstanceActionIdV1Schema.safeParse(actionId);
@@ -3853,7 +3861,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'launch_profiles.publish') {
         if (!deps.launchProfilePublish) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const input = LaunchProfilePublishInputV1Schema.parse(parsed.data);
-        return { ok: true, result: await deps.launchProfilePublish(input, { ...(ctx.signal ? { signal: ctx.signal } : {}) }) };
+        return { ok: true, result: await deps.launchProfilePublish(input, { context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) }) };
       }
 
       if (isRoleActionIdV1(actionId)) {

@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { t, tLoose } from '@/text';
 import { Modal } from '@/modal';
-import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { sync } from '@/sync/sync';
 import {
@@ -147,7 +147,6 @@ export function useRemoteHostsGates() {
     const isDesktop = isDesktopHost();
     const runner = getDefaultSystemTaskRunner();
     const supportsRemoteHostManagementSurface = isDesktop || runner.mode === 'native';
-    useSettings(); // Ensure settings are hydrated for feature decisions.
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
     const setupSurfacePolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);

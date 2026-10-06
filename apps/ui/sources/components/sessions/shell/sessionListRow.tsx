@@ -13,6 +13,11 @@ import {
 } from './useSessionInlineDrag';
 import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { isSecondaryEntityRowControl } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
+import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
+import { EntityDropSettledFeedback, type EntityDropSettledMatch } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
+import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
+import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
+import { SESSION_LIST_ROW_CORNER_RADIUS } from './resolveSessionListDensityViewState';
 import { useSessionListStagedMoveKeyHandler } from './keyboardMove/SessionListStagedMoveDock';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
@@ -231,13 +236,33 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         </View>
     );
 
-    if (!touchPrimary && reorderGesture) {
-        return (
-            <GestureDetector gesture={reorderGesture}>
-                {rowNode}
-            </GestureDetector>
-        );
-    }
+    const row = !touchPrimary && reorderGesture ? (
+        <GestureDetector gesture={reorderGesture}>
+            {rowNode}
+        </GestureDetector>
+    ) : rowNode;
 
-    return rowNode;
+    // Lab ST4: a move its owner refused late (or could not confirm) stays under this row in words.
+    return (
+        <SessionListRowSettledFeedback sessionId={itemProps.session.id} serverId={itemServerId} testID={`session-list-row:${treeRowId}`}>
+            {row}
+        </SessionListRowSettledFeedback>
+    );
 });
+
+const ROW_FLASH_STYLE = { left: SESSION_LIST_SHEET_INSET_PX, right: SESSION_LIST_SHEET_INSET_PX, borderRadius: SESSION_LIST_ROW_CORNER_RADIUS } as const;
+const ROW_LINE_STYLE = { paddingHorizontal: SESSION_LIST_SHEET_INSET_PX } as const;
+
+function SessionListRowSettledFeedback(props: React.PropsWithChildren<Readonly<{ sessionId: string; serverId: string | null; testID: string }>>) {
+    const runtime = useEntityDragDropRuntime();
+    const { sessionId, serverId } = props;
+    const match = React.useMemo<EntityDropSettledMatch>(() => ({
+        item: (item: EntityDragItemV1) => item.kind === 'session' && item.address.sessionId === sessionId
+            && (serverId === null || item.address.serverId === serverId),
+    }), [serverId, sessionId]);
+    return (
+        <EntityDropSettledFeedback runtime={runtime} match={match} flashStyle={ROW_FLASH_STYLE} lineStyle={ROW_LINE_STYLE} testID={props.testID}>
+            {props.children}
+        </EntityDropSettledFeedback>
+    );
+}

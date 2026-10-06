@@ -14,7 +14,7 @@ import {
   type TerminalPromptInput,
   type TerminalSpecialKey,
 } from '@happier-dev/agents';
-import { encodeTerminalPasteInput } from '@happier-dev/protocol';
+import { encodeTerminalPasteInput } from '@happier-dev/protocol/terminal/inputEncoding';
 
 import {
   createTerminalHostDeadline,

@@ -19,6 +19,12 @@ export type {
   PluginUiSessionPartPresentation,
   PluginUiWidgetAreaPresentation,
 } from '../presentationHost/context.js';
+/** Private host composition: physical scrollers pass the incumbent activity owner to widgets. */
+export {
+  PluginUiScrollActivityProvider,
+  useOptionalPluginUiScrollActivityTracker,
+  type PluginUiScrollActivityTracker,
+} from '../presentationHost/scrollActivity.js';
 export {
   PluginHostApiProvider,
   type PluginHostApiProviderProps,
@@ -44,6 +50,7 @@ export {
 export {
   createPluginUiHostApiResourceClient,
   createPluginUiResourceStore,
+  isPluginUiResourceReadAuthorityLost,
   type PluginUiResourceAccountLifetime,
   type PluginUiResourceClient,
   type PluginUiResourceEntry,

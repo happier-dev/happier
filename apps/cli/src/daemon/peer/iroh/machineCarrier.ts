@@ -1,13 +1,8 @@
 import type { PeerTcpTunnelStreamConnection } from '@happier-dev/peer-transport';
 import { MACHINE_ALPN } from '@happier-dev/iroh-native/node';
-import {
-    IrohMachineHandshakeV1Schema,
-    IrohProviderBrokerHandshakeV1Schema,
-    type IrohMachineCarrierFlowV1,
-    type PeerFlowKindV1,
-    type IrohProviderBrokerHandshakeV1,
-    type RunnerBrokerReadinessRequestV1,
-} from '@happier-dev/protocol';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { IrohProviderBrokerHandshakeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { IrohMachineCarrierFlowV1, PeerFlowKindV1, IrohProviderBrokerHandshakeV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
 import {
     verifyDirectRouteGrantV2,
     type DirectRouteGrantTrustRoot,

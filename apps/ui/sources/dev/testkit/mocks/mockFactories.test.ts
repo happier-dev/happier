@@ -649,11 +649,15 @@ describe('UI testkit mock factories', () => {
 
         // The caller's own selector still reads the fixture state.
         expect((mock.storage as any)((value: typeof state) => value.marker)).toBe('callable-fixture');
-        expect(mock.storage.getState()).toBe(state as any);
-        expect(mock.getStorage().getState()).toBe(state as any);
+        const snapshot = mock.storage.getState();
+        expect(snapshot).toMatchObject(state);
+        expect(snapshot.sessions).toEqual({});
+        expect(snapshot.localSettings.sessionMruOrderV1).toEqual([]);
+        expect(mock.getStorage().getState()).toBe(snapshot);
+        expect(mock.storage((value) => value)).toBe(snapshot);
         expect(mock.storage.subscribe).toBeTypeOf('function');
         expect(mock.storage.subscribe(() => {})).toBeTypeOf('function');
-        expect(mock.storage.getInitialState()).toBe(state as any);
+        expect(mock.storage.getInitialState()).toBe(snapshot);
     });
 
     it('keeps a callable storage fixture own subscribe instead of substituting an inert one', async () => {

@@ -1,11 +1,7 @@
-import {
-  createProviderErrorV1,
-  parseSavedSecretRefV1,
-  resolveProviderSecretBindingIdV1,
-  type ProviderErrorV1,
-  type ProviderSettingsV1,
-  type ProviderCredentialTransportV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { ProviderErrorV1, ProviderSettingsV1, ProviderCredentialTransportV1 } from '@happier-dev/protocol';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderProbeCredential } from '../probe/client';

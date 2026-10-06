@@ -323,11 +323,16 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             if (currentAccountLifetimeRef.current !== accountLifetime) return;
             currentAccountLifetimeRef.current = null;
             currentAuthorityKeyRef.current = null;
-            setLoadedProjection((previous) => (
-                previous.accountLifetime !== accountLifetime
-                    ? previous
-                    : createEmptyLoadedProjectionState(null, null)
-            ));
+            // Capture may retire A while a sibling renders B. Fence authority
+            // immediately, then publish React state after that render. A late
+            // publication must not clear a successor's settled projection.
+            queueMicrotask(() => {
+                setLoadedProjection((previous) => (
+                    previous.accountLifetime !== accountLifetime
+                        ? previous
+                        : createEmptyLoadedProjectionState(null, null)
+                ));
+            });
         });
         return () => retirement.dispose();
     }, [accountLifetime]);

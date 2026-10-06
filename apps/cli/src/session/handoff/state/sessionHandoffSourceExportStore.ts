@@ -4,7 +4,7 @@ import { join, posix, relative, resolve, sep, win32 } from 'node:path';
 
 import { z } from 'zod';
 
-import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
+import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 
 import type { SessionHandoffAgentBundle } from '../types';
 import { writeSessionHandoffAgentBundleArtifact } from '../agentBundle/file';

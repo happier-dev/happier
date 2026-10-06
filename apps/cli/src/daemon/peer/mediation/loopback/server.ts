@@ -1,14 +1,9 @@
 import fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import {
-  PEER_MEDIATION_RECEIPTS,
-  PeerLoopbackEndpointCandidateV1Schema,
-  isLiteralLoopbackHostname,
-  normalizeHostnameForLoopbackCheck,
-  type DirectPeerRouteKindV1,
-  type PeerFlowKindV1,
-  type PeerLoopbackEndpointCandidateV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { DirectPeerRouteKindV1, PeerFlowKindV1, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
 
 import {
   createDaemonPeerMediationDirectFlowObserver,

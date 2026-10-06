@@ -7,9 +7,9 @@ import {
     type SessionOrganizationSnapshot,
 } from '@happier-dev/protocol';
 import {
-    SessionFoldersV1Schema,
+    SessionFoldersV1StoredSchema,
     type SessionFolderWorkspaceRefV1,
-} from '@/sync/domains/session/folders';
+} from '@happier-dev/protocol/sessions';
 import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 
 import {
@@ -154,7 +154,7 @@ function readLegacyFolders(params: {
     folders: ImportLegacySessionOrganizationRequest['folders'];
     folderIdsByLegacyId: ReadonlyMap<string, string>;
 } {
-    const parsed = SessionFoldersV1Schema.safeParse(params.value);
+    const parsed = SessionFoldersV1StoredSchema.safeParse(params.value);
     if (!parsed.success) {
         return { folders: [], folderIdsByLegacyId: new Map() };
     }
@@ -390,7 +390,7 @@ function shouldKeepLegacyOrderItemAfterImport(params: Readonly<{
 
 function currentServerFolderIdsFromLegacyFolders(serverId: string, value: unknown): ReadonlySet<string> {
     const ids = new Set<string>();
-    const parsed = SessionFoldersV1Schema.safeParse(value);
+    const parsed = SessionFoldersV1StoredSchema.safeParse(value);
     if (!parsed.success) return ids;
     for (const folder of parsed.data.folders) {
         const folderId = folder.id.trim();
@@ -407,7 +407,7 @@ function stripLegacyPinsForServer(serverId: string, value: unknown): string[] | 
 }
 
 function stripLegacyFoldersForServer(serverId: string, value: unknown): unknown {
-    const parsed = SessionFoldersV1Schema.safeParse(value);
+    const parsed = SessionFoldersV1StoredSchema.safeParse(value);
     if (!parsed.success) return value;
     const remaining = parsed.data.folders.filter((folder) => {
         const workspace = normalizeWorkspaceForServer(serverId, folder.workspace);

@@ -81,6 +81,7 @@ function snapshot(input: Readonly<{
 
 function Harness(props: Readonly<{
     snapshot: SessionBoardSnapshot;
+    serverId?: string;
     actions?: SessionBoardActionsPort | null;
     companionItemIds?: ReadonlySet<string>;
     onAddToCompanion?: (itemId: string) => void;
@@ -92,7 +93,7 @@ function Harness(props: Readonly<{
 }>): React.ReactElement {
     const controller = useSessionBoardController({
         sessionId: 'session-1',
-        serverId: 'home-1',
+        serverId: props.serverId ?? 'home-1',
         binding: { status: 'ready', snapshot: props.snapshot, refresh: props.refresh ?? (() => {}) },
         actions: props.actions === undefined ? OK_ACTIONS : props.actions,
         ...(props.onAskAgent ? { onAskAgent: props.onAskAgent } : {}),
@@ -101,7 +102,7 @@ function Harness(props: Readonly<{
     return (
         <SessionBoardSurface
             sessionId="session-1"
-            serverId="home-1"
+            serverId={props.serverId ?? 'home-1'}
             controller={controller}
             host={props.host ?? 'details'}
             resolvePrimaryHost={() => props.host ?? 'details'}
@@ -449,8 +450,7 @@ describe('SessionBoardSurface', () => {
         expect(screen.findByTestId('session-board-add-trigger')).not.toBeNull();
         expect(screen.findHostByTestId('session-board-add-note')).toBeNull();
         const popover = await openAddPopover(screen, 'session-board-add-trigger');
-        // Built-in Notes and session walkthroughs have real producers; plugin
-        // and hosted-HTML choices require their corresponding mounted runtime.
+        // Both built-in producers are available; no installed or hosted source exists here.
         expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['walkthrough', 'note']);
         expect(popover.ask).toBeDefined();
         await act(async () => { popover.ask?.onPick(); });
@@ -460,9 +460,10 @@ describe('SessionBoardSurface', () => {
 
     it('starts direct manipulation only from a visible move handle', async () => {
         const serverUrl = 'https://board-drag.example.test';
+        const serverId = 'srv_board_drag';
         await upsertServerProfile({ serverUrl, name: 'Board drag Home' });
-        await setServerProfileIdentityForUrl(serverUrl, 'home-1');
-        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: 'home-1' }, {
+        await setServerProfileIdentityForUrl(serverUrl, serverId);
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, {
             token: `e30.${Buffer.from(JSON.stringify({ sub: 'board-editor' })).toString('base64url')}.signature`,
         })).toBe(true);
         const screen = await renderScreen(
@@ -472,40 +473,35 @@ describe('SessionBoardSurface', () => {
                     { itemId: 'note-1', item: note('Plan') },
                     { itemId: 'note-2', item: note('Review') },
                 ],
-            })} />,
+            })} serverId={serverId} />,
         );
-
-        await vi.waitFor(() => expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull());
-        const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
-        const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
-        expect(firstHandle).not.toBeNull();
-        expect(secondHandle).not.toBeNull();
-        expect(firstHandle?.props.accessibilityLabel).toContain('Plan');
-        expect(secondHandle?.props.accessibilityLabel).toContain('Review');
-        expect(firstHandle?.props.accessibilityRole).toBe('button');
-        expect(secondHandle?.props.accessibilityRole).toBe('button');
-        expect(firstHandle?.props.onKeyDown).toBeTypeOf('function');
-        expect(secondHandle?.props.onKeyDown).toBeTypeOf('function');
-        expect(firstHandle?.props.tabIndex).toBe(0);
-        expect(secondHandle?.props.tabIndex).toBe(0);
-        expect(firstHandle?.props['aria-grabbed']).toBe(false);
-        expect(secondHandle?.props['aria-grabbed']).toBe(false);
-        expect(firstHandle?.parent?.props.gesture).toBeDefined();
-        expect(secondHandle?.parent?.props.gesture).toBeDefined();
-        expect(screen.findHostByTestId('session-board-item-note-1-body')?.props.gesture).toBeUndefined();
+        try {
+            await vi.waitFor(() => { expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull(); });
+            const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
+            const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
+            expect(firstHandle).not.toBeNull();
+            expect(secondHandle).not.toBeNull();
+            expect(firstHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Plan' }));
+            expect(secondHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Review' }));
+            expect(firstHandle?.props.accessibilityHint).toBe(t('entityDragDrop.keyboard.hintsA11y'));
+            expect(firstHandle?.props['aria-haspopup']).toBe('menu');
+            expect(screen.findHostByTestId('session-board-item-note-1-body')?.props.gesture).toBeUndefined();
+            await screen.pressByTestIdAsync('session-board-item-note-1-move-handle');
+            // The canonical DropdownMenu opens on its scheduled interaction frame.
+            await vi.waitFor(() => {
+                expect(screen.findHostByTestId('session-board-item-note-1-move-handle')?.props.accessibilityState.expanded).toBe(true);
+            });
+        } finally { await screen.unmount(); }
     });
 
-    it('withholds hosted HTML creation when the mounted caller has no HTML runtime', async () => {
+    it('offers the available built-in sources on an empty Board without advertising unavailable sources', async () => {
         const screen = await renderScreen(<Harness snapshot={snapshot({})} />);
 
-        // The empty state still offers the native Note producer.
+        // The empty-state shortcut still creates a note; the chooser offers both producers.
         expect(screen.findByTestId('session-board-empty-action')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('sessionBoard.empty.editor.addNote'));
-        // The chooser includes the built-in walkthrough producer, but withholds
-        // hosted HTML because this owner has no caller HTML runtime.
-        expect(screen.findByTestId('session-board-add-trigger')).not.toBeNull();
         const popover = await openAddPopover(screen, 'session-board-add-trigger');
-        expect(popover.sections.flatMap(section => section.entries.map(entry => entry.id))).toEqual(['walkthrough', 'note']);
+        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['walkthrough', 'note']);
         expect(screen.getTextContent()).not.toContain(t('sessionBoard.add.interactiveView'));
     });
 
@@ -808,7 +804,7 @@ describe('SessionBoardSurface', () => {
         expect(openBoard).toHaveBeenCalledOnce();
     });
 
-    it('opens a tapped sidebar card on the Details board without duplicating Companion chrome', async () => {
+    it('opens a tapped sidebar card on the Details board and keeps Companion membership out of its header', async () => {
         const openItem = vi.fn();
         const screen = await renderScreen(
             <PaneHarness
@@ -824,6 +820,7 @@ describe('SessionBoardSurface', () => {
 
         expect(screen.findHostByTestId('session-board-item-note-1-companion-mark')).toBeNull();
         expect(screen.findHostByTestId('session-board-item-note-2-companion-mark')).toBeNull();
+        expect(screen.findHostByTestId('session-board-item-note-1-title')).not.toBeNull();
         await screen.pressByTestIdAsync('session-board-item-note-2-open');
         expect(openItem).toHaveBeenCalledWith('note-2');
     });

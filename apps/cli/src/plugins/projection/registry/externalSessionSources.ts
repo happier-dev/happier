@@ -1,12 +1,7 @@
-import {
-  PluginBackendExternalSessionSourceDeclarationV1Schema,
-  ExternalSessionsSourceSchema,
-  parseExternalSessionsSourceForDeclaration,
-  resolveExternalSessionsSourceKeysForPersistedTagLookup,
-  resolveExternalSessionsSourceKeyForDeclaration,
-  type ExternalSessionsSource,
-  type PluginBackendExternalSessionSourceDeclarationV1,
-} from '@happier-dev/protocol';
+import { PluginBackendExternalSessionSourceDeclarationV1Schema } from '@happier-dev/protocol/plugins/backendDefinitionV1';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { parseExternalSessionsSourceForDeclaration, resolveExternalSessionsSourceKeysForPersistedTagLookup, resolveExternalSessionsSourceKeyForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { ExternalSessionsSource, PluginBackendExternalSessionSourceDeclarationV1 } from '@happier-dev/protocol';
 
 import type { ResolvedAgentContribution } from './types';
 

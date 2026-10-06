@@ -4,6 +4,7 @@ import { parseDevTargetsConfig } from './config.mjs';
 
 import {
   buildMutagenProjectArgs,
+  DEV_TARGET_MUTAGEN_IGNORE_PATHS,
   renderMutagenProject,
   resolveMutagenSessionName,
 } from './mutagen_project.mjs';
@@ -27,35 +28,37 @@ const targets = [
   },
 ];
 
-test('alpha polling follows configured runtime roles rather than command eligibility alone', () => {
-  const configuredTargets = ['server', 'expo', 'daemon', 'worker', 'unused'].map((name) => ({
+test('alpha watching follows service roles while command and captured-build workers use forced barriers', () => {
+  const configuredTargets = ['server', 'expo', 'daemon', 'qa', 'worker', 'unused'].map((name) => ({
     ...targets[0], name,
   }));
   const config = parseDevTargetsConfig({
     version: 3,
     targets: configuredTargets,
     runtimePlacement: {
+      build: { mode: 'prefer-target', targets: ['worker'] },
+      qa: { mode: 'auto', targets: ['qa'] },
       server: { mode: 'prefer-target', target: 'server' },
       expo: { mode: 'prefer-target', target: 'expo' },
       daemon: { mode: 'local-and-targets', targets: ['daemon'] },
     },
-    commandExecution: { mode: 'auto', targets: ['worker', 'expo'] },
+    commandExecution: { mode: 'auto', targets: ['worker', 'expo', 'qa'] },
   });
-  const renderIntervals = (config) => {
+  const renderModes = (config) => {
     const rendered = renderMutagenProject({ sourceDir: '/source', targets: configuredTargets, config });
     return Object.fromEntries(configuredTargets.map(({ name }) => {
       const session = rendered.split(`  ${resolveMutagenSessionName(name)}:\n`)[1].split('\n  happier-')[0];
-      return [name, Number(session.match(/pollingInterval: (\d+)/)?.[1])];
+      return [name, session.match(/configurationAlpha:\n\s+watch:\n\s+mode: "([^"]+)"/)?.[1]];
     }));
   };
-  assert.deepEqual(renderIntervals(config), { server: 10, expo: 10, daemon: 10, worker: 150, unused: 10 });
+  assert.deepEqual(renderModes(config), { server: 'portable', expo: 'portable', daemon: 'portable', qa: 'portable', worker: 'no-watch', unused: 'portable' });
   const moved = parseDevTargetsConfig({
     ...config,
     runtimePlacement: { ...config.runtimePlacement, expo: { mode: 'prefer-target', target: 'worker' } },
   });
-  assert.deepEqual(renderIntervals(moved), { server: 10, expo: 150, daemon: 10, worker: 10, unused: 10 });
+  assert.deepEqual(renderModes(moved), { server: 'portable', expo: 'no-watch', daemon: 'portable', qa: 'portable', worker: 'portable', unused: 'portable' });
   const legacy = parseDevTargetsConfig({ version: 1, targets: configuredTargets });
-  assert.deepEqual(renderIntervals(legacy), { server: 10, expo: 10, daemon: 10, worker: 10, unused: 10 });
+  assert.deepEqual(renderModes(legacy), { server: 'portable', expo: 'portable', daemon: 'portable', qa: 'portable', worker: 'portable', unused: 'portable' });
 });
 
 test('renderMutagenProject creates one-way source replicas while retaining target-local build state', () => {
@@ -75,6 +78,8 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     'one-way replicas must not watch target-local build and cache writes',
   );
   assert.match(rendered, /vcs: true/);
+  const ignores = rendered.split('\n').filter(line => line.startsWith('        - ')).map(line => JSON.parse(line.slice(10)));
+  assert.deepEqual(ignores, DEV_TARGET_MUTAGEN_IGNORE_PATHS);
   assert.ok(
     rendered.includes('- ".happier-plugin-ui-staging"'),
     'the canonical plugin UI staging parent must remain target-local during remote builds',

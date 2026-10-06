@@ -15,7 +15,7 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { sync } from '@/sync/sync';
-import { useProfile, useSettings, useSettingsVersion } from '@/sync/store/hooks';
+import { useProfile, useSettingsSelector, useSettingsVersion } from '@/sync/store/hooks';
 import { tLoose } from '@/text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -77,7 +77,12 @@ export function VoiceCredentialSourceField(props: Readonly<{
   onStatusChanged?: (status: VoiceCredentialSourceFieldStatus) => void;
   isCurrent?: () => boolean;
 }>) {
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      voiceSettingsV1: settings.voiceSettingsV1,
+      secrets: settings.secrets,
+      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+  }));
   const settingsVersion = useSettingsVersion();
   const expectedSettingsScope = useAccountSettingsScope();
   const savedSecretCatalog = useSavedSecretCatalog();

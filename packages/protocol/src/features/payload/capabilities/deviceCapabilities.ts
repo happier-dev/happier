@@ -1,11 +1,7 @@
 import { z } from 'zod';
 
-import {
-  normalizeSimulatorDeviceResourceVisibleCapabilitiesV1,
-  normalizeBackedSimulatorSidebandKindsV1,
-  SimulatorDeviceResourceV1Schema,
-  SimulatorPlatformV1Schema,
-} from '../../../devices/simulator/index.js';
+import { normalizeSimulatorDeviceResourceVisibleCapabilitiesV1, SimulatorDeviceResourceV1Schema, SimulatorPlatformV1Schema } from '../../../devices/simulator/v1.js';
+import { normalizeBackedSimulatorSidebandKindsV1 } from '../../../devices/simulator/actionBuilders.js';
 
 const BackedSimulatorSidebandKindsV1Schema = z
   .array(z.unknown())

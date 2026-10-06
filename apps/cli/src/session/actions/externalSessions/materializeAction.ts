@@ -1,29 +1,9 @@
 import { z } from 'zod';
 
-import {
-  EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1,
-  ExternalSessionOperationSemanticRequestV1Schema,
-  ExternalSessionOperationCancelInputV1Schema,
-  ExternalSessionOperationDiscardInputV1Schema,
-  ExternalSessionOperationResumeInputV1Schema,
-  ExternalSessionOperationRetryInputV1Schema,
-  ExternalSessionOperationStatusInputV1Schema,
-  projectExternalSessionOperationProgressV1,
-  resolveExternalSessionOperationTimelineV1,
-  validateExternalSessionOperationSocketBatchV1,
-  type ExternalSessionMaterializationPublicationV1,
-  type ExternalSessionOperationActionResponseV1,
-  type ExternalSessionOperationClaimV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionDestructiveQuiescenceResultV1,
-  type ExternalSessionOperationAuthorIntentV1,
-  type ExternalSessionRequiredItemFailuresV1,
-  type ExternalSessionRequiredItemDiagnosticV1,
-  type ExternalSessionOperationSocketCommandV1,
-  type ExternalSessionOperationSocketResponseV1,
-  type ExternalSessionPriorStableStorageV1,
-  type ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+import { canCancelExternalSessionOperationV1, EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1, ExternalSessionOperationSemanticRequestV1Schema, projectExternalSessionOperationProgressV1, resolveExternalSessionOperationTimelineV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationDiscardInputV1Schema, ExternalSessionOperationResumeInputV1Schema, ExternalSessionOperationRetryInputV1Schema, ExternalSessionOperationStatusInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { validateExternalSessionOperationSocketBatchV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
+import type { ExternalSessionMaterializationPublicationV1, ExternalSessionOperationActionResponseV1, ExternalSessionOperationClaimV1, ExternalSessionOperationRecordV1, ExternalSessionDestructiveQuiescenceResultV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionRequiredItemFailuresV1, ExternalSessionRequiredItemDiagnosticV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionPriorStableStorageV1, ExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol';
 
 import {
   ExternalSessionOperationClaimLostError,
@@ -120,6 +100,11 @@ export class ExternalSessionPersistedTakeoverPreflightError extends Error {
   }
 }
 
+export type ExternalSessionMaterializeContinuationContext = Readonly<{
+  /** Reports a committed, published running revision while continuation keeps driving the operation. */
+  onAdmitted?: (record: ExternalSessionOperationRecordV1) => void;
+}>;
+
 export type ExternalSessionMaterializeActionExecutor = Readonly<{
   start(
     input: unknown,
@@ -145,11 +130,12 @@ export type ExternalSessionMaterializeActionExecutor = Readonly<{
   ): Promise<ExternalSessionOperationActionResponseV1>;
   status(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
   cancel(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
-  resume(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
-  retry(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
+  resume(input: unknown, context?: ExternalSessionMaterializeContinuationContext): Promise<ExternalSessionOperationActionResponseV1>;
+  retry(input: unknown, context?: ExternalSessionMaterializeContinuationContext): Promise<ExternalSessionOperationActionResponseV1>;
   discard(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
   resumePersistedTakeover(
     input: unknown,
+    context?: ExternalSessionMaterializeContinuationContext,
   ): Promise<ExternalSessionOperationActionResponseV1>;
   cleanupTerminalStaging?(
     operationId: string,
@@ -1886,6 +1872,7 @@ export function createExternalSessionMaterializeActionExecutor(
     raw: unknown,
     intent: 'resume' | 'retry',
     operationKind: 'materialize' | 'persisted_takeover' = 'materialize',
+    context?: ExternalSessionMaterializeContinuationContext,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     const schema = intent === 'resume'
       ? ExternalSessionOperationResumeInputV1Schema
@@ -2196,6 +2183,7 @@ export function createExternalSessionMaterializeActionExecutor(
           );
         }
         record = admitted.record;
+        context?.onAdmitted?.(record);
 
         if (
           !stagingMissingAfterAcceptedCheckpoint
@@ -2294,6 +2282,7 @@ export function createExternalSessionMaterializeActionExecutor(
             ...(takeoverPreparation ? { destructiveQuiescence: takeoverPreparation.destructiveQuiescence } : {}),
           },
         }));
+        context?.onAdmitted?.(record);
         const result = await stageAndImport(
           record,
           source,
@@ -2437,8 +2426,6 @@ export function createExternalSessionMaterializeActionExecutor(
       if (current.revision !== parsed.data.revision) {
         return failure('stale_revision', 'Materialization operation revision is stale.');
       }
-      const isPersistedTakeover = current.request.plan === 'takeover'
-        && current.request.targetStorageMode === 'persisted';
       if (!isImportBearingRequest(current.request)) {
         return failure('invalid_state', 'Operation does not carry a historical import.');
       }
@@ -2455,38 +2442,8 @@ export function createExternalSessionMaterializeActionExecutor(
       if (discardingOperationIds.has(current.operationId)) {
         return failure('operation_conflict', 'Materialization discard is already active.');
       }
-      if (
-        current.status === 'completed'
-        || current.status === 'discarded'
-        || current.status === 'reconciliation_required'
-      ) {
-        return failure('not_allowed', 'Materialization cannot be cancelled from its terminal state.');
-      }
-      if (
-        isPersistedTakeover
-        && (
-          current.phase === 'admitting'
-          || current.phase === 'spawning'
-          || current.phase === 'finalizing'
-          || current.currentStorageState === 'snapshot_complete'
-        )
-      ) {
-        return failure(
-          'not_allowed',
-          'Persisted takeover cannot be cancelled after snapshot publication.',
-        );
-      }
-      if (
-        current.request.plan === 'materialize'
-        && current.priorStableStorage.state === 'snapshot_complete'
-        && current.phase === 'staging'
-        && current.bindings.privateStagingId !== undefined
-        && current.checkpoint.stagedItemCount === 0
-      ) {
-        return failure(
-          'not_allowed',
-          'An update materialization cannot be cancelled while its first staging checkpoint is unsettled.',
-        );
+      if (!canCancelExternalSessionOperationV1(current)) {
+        return failure('not_allowed', 'Materialization cannot be cancelled safely from its current phase.');
       }
       const requestedAtMs = nowMs();
       const requested = await mutateCommittedRecordAtRevision(
@@ -2527,16 +2484,16 @@ export function createExternalSessionMaterializeActionExecutor(
       return await finalizeCancellation(current.operationId);
     },
 
-    async resume(raw) {
-      return await continueExplicitly(raw, 'resume');
+    async resume(raw, context) {
+      return await continueExplicitly(raw, 'resume', 'materialize', context);
     },
 
-    async retry(raw) {
-      return await continueExplicitly(raw, 'retry');
+    async retry(raw, context) {
+      return await continueExplicitly(raw, 'retry', 'materialize', context);
     },
 
-    async resumePersistedTakeover(raw) {
-      return await continueExplicitly(raw, 'resume', 'persisted_takeover');
+    async resumePersistedTakeover(raw, context) {
+      return await continueExplicitly(raw, 'resume', 'persisted_takeover', context);
     },
 
     async discard(raw) {

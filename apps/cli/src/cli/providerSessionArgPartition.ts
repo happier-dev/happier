@@ -3,24 +3,17 @@ import chalk from 'chalk';
 import type { AgentId } from '@happier-dev/agents';
 import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import {
-  deserializeSessionCreationCorrespondenceV1,
-  deserializeSessionModelSelectionV1,
-  ProviderConnectionIdSchema,
-  MachinePoolSelectionOriginV1Schema,
-  readNonBlankOpaqueIdentifier,
-  SessionCreationTagV1Schema,
-  type SessionCreationCorrespondenceV1,
-  type MachinePoolSelectionOriginV1,
-  type SessionModelSelectionV1,
-  SESSION_PERMISSION_INTENT_INPUTS,
-  SecretReferenceOverlayV1Schema,
-  type SecretReferenceOverlayV1,
-} from '@happier-dev/protocol';
-import {
-  SessionTeamCredentialBindingIntentsV1Schema,
-  type SessionTeamCredentialBindingIntentListV1,
-} from '@happier-dev/protocol/teams';
+import { deserializeSessionCreationCorrespondenceV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { deserializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, SessionModelSelectionV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import { SESSION_PERMISSION_INTENT_INPUTS } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import {

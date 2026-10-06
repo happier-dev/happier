@@ -61,13 +61,13 @@ function didSegmentDurablyFlush(segment: SegmentRuntime, expectedState: SegmentS
 
 function buildFlushSummary(params: {
   flushedSegments: ReadonlyArray<SegmentRuntime>;
-  expectedState: SegmentState;
+  expectedState: (segment: SegmentRuntime) => SegmentState;
 }): StreamedTranscriptFlushSummary {
   const segments: StreamedTranscriptSegmentFlushSummary[] = params.flushedSegments.map((segment) => ({
     kind: segment.kind,
     sidechainId: segment.sidechainId,
     sawText: segment.accumulatedText.length > 0,
-    didDurablyFlush: didSegmentDurablyFlush(segment, params.expectedState),
+    didDurablyFlush: didSegmentDurablyFlush(segment, params.expectedState(segment)),
     lastCommittedState: segment.lastCommittedState,
   }));
 
@@ -119,7 +119,7 @@ export function createStreamedTranscriptWriter(params: {
 
   const findAppendableSegment = (key: SegmentKey): SegmentRuntime | null => {
     for (const segment of segments) {
-      if (segment.key === key && !segment.isTerminalizing) return segment;
+      if (segment.key === key && segment.terminalIntent === null) return segment;
     }
     return null;
   };
@@ -169,7 +169,7 @@ export function createStreamedTranscriptWriter(params: {
       liveDelivery: createLiveDeliveryState(),
       durableCheckpointTimer: null,
       liveSnapshotTimer: null,
-      isTerminalizing: false,
+      terminalIntent: null,
       isCommittingDurable: false,
       pendingDurableCommit: null,
       idleWaiters: [],
@@ -501,15 +501,18 @@ export function createStreamedTranscriptWriter(params: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;
   }): Promise<StreamedTranscriptFlushSummary> => {
-    const state: SegmentState = opts.reason === 'abort' ? 'interrupted' : 'complete';
     const drainPromises: Promise<void>[] = [];
     const flushedSegments = Array.from(segments);
 
     for (const segment of flushedSegments) {
-      segment.isTerminalizing = true;
+      segment.terminalIntent ??= {
+        state: opts.reason === 'abort' ? 'interrupted' : 'complete',
+        interruptedReason: opts.interruptedReason,
+      };
+      const { state, interruptedReason } = segment.terminalIntent;
       clearDurableCheckpointTimer(segment);
       clearLiveSnapshotTimer(segment);
-      requestLivePublication(segment, { state, interruptedReason: opts.interruptedReason });
+      requestLivePublication(segment, { state, interruptedReason });
       drainPromises.push((async () => {
         // A delayed ephemeral completion must settle before the same-localId durable terminal row.
         await waitForLiveDeliveryDrain(segment);
@@ -517,7 +520,7 @@ export function createStreamedTranscriptWriter(params: {
           await waitForSegmentDrain(segment);
         }
         if (!didSegmentDurablyFlush(segment, state)) {
-          commitDurableSnapshot(segment, { state, interruptedReason: opts.interruptedReason, force: true });
+          commitDurableSnapshot(segment, { state, interruptedReason, force: true });
           await waitForSegmentDrain(segment);
         }
         if (
@@ -525,19 +528,27 @@ export function createStreamedTranscriptWriter(params: {
           && didSegmentDurablyFlush(segment, state)
         ) {
           segments.delete(segment);
+        } else if (segments.has(segment)) {
+          logger.infoFile('[StreamedTranscriptWriter] Terminal snapshot delivery unresolved; retained for retry', {
+            localId: segment.segmentLocalId,
+            kind: segment.kind,
+            sidechainId: segment.sidechainId,
+            state,
+            textLength: segment.accumulatedText.length,
+          });
         }
       })());
     }
 
     await Promise.all(drainPromises);
-    return buildFlushSummary({ flushedSegments, expectedState: state });
+    return buildFlushSummary({ flushedSegments, expectedState: (segment) => segment.terminalIntent!.state });
   };
 
   const enableDurableCommits = () => {
     if (durableCommitsEnabled) return;
     durableCommitsEnabled = true;
     for (const segment of segments) {
-      if (segment.isTerminalizing) continue;
+      if (segment.terminalIntent) continue;
       maybeCommitDurableStreamingSnapshot(segment);
     }
   };
@@ -564,6 +575,7 @@ export function createStreamedTranscriptWriter(params: {
     overrideThinkingText: (text, opts) => overrideSegmentText('thinking', text, normalizeSidechainId(opts?.sidechainId)),
     enableDurableCommits,
     discard,
+    hasPendingSegments: () => segments.size > 0,
     flushAll,
   };
 }

@@ -1,9 +1,11 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent, decodeBase64, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { decryptWithDataKey } from '@/api/encryption';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { publishArtifactFromWorkspaceFile } from './publishArtifactFromWorkspaceFile';
@@ -13,8 +15,13 @@ vi.mock('axios', () => ({ default: http }));
 
 describe('explicit Artifact publication from the caller workspace', () => {
   let root: string;
-  const store = () => createAccountArtifactStore({ credentials: { token: 'test-token', encryption: null },
-    getAccountEncryptionMode: async () => 'plain' });
+  const secret = randomBytes(32);
+  const store = (mode: 'plain' | 'e2ee' = 'plain') => createAccountArtifactStore({ credentials: { token: 'test-token', encryption: mode === 'plain' ? null : {
+    type: 'dataKey', publicKey: x25519.getPublicKey(secret), machineKey: secret,
+  } }, savedBy: { kind: 'agent', accountId: 'owner', sessionId: 'session' }, getAccountEncryptionMode: async () => mode });
+  const open = (value: unknown, envelope?: unknown) => envelope
+    ? decryptWithDataKey(decodeBase64(String(value)), openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(String(envelope)), recipientSecretKeyOrSeed: secret })!)
+    : decodePlainArtifactStoredContent(String(value));
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'artifact-publication-'));
     await mkdir(join(root, 'workspace'));
@@ -56,20 +63,21 @@ describe('explicit Artifact publication from the caller workspace', () => {
     }
   });
 
-  it('publishes a completed multi-chunk text copy with host-owned provenance', async () => {
+  it.each(['plain', 'e2ee'] as const)('publishes a completed %s multi-chunk text copy without public source disclosure', async mode => {
     const text = 'Published output\n'.repeat(40_000);
     await writeFile(join(root, 'workspace', 'result.md'), text);
-    await expect(publishArtifactFromWorkspaceFile({ store: store(), caller: {
+    await expect(publishArtifactFromWorkspaceFile({ store: store(mode), caller: {
       sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace'), runId: 'run',
     }, input: { path: 'result.md', title: 'Result', mime: 'text/markdown' } }))
       .resolves.toMatchObject({ revision: { headerVersion: 1, bodyVersion: 1 } });
     const payload = http.post.mock.calls[0]?.[1];
-    expect(decodePlainArtifactStoredContent(payload.header)).toMatchObject({ title: 'Result', kind: 'published.v1',
-      mime: 'text/markdown', sizeBytes: Buffer.byteLength(text), source: {
+    expect(open(payload.header, mode === 'e2ee' ? payload.dataEncryptionKey : undefined)).toMatchObject({ title: 'Result', kind: 'published.v1', mime: 'text/markdown', sizeBytes: Buffer.byteLength(text) });
+    expect(open(payload.header, mode === 'e2ee' ? payload.dataEncryptionKey : undefined)).not.toHaveProperty('source');
+    expect(open(payload.provenance, mode === 'e2ee' ? payload.provenanceDataEncryptionKey : undefined)).toMatchObject({ provenance: { source: {
         sessionId: 'session', runId: 'run', machineId: 'machine', path: 'result.md',
         sha: createHash('sha256').update(text).digest('hex'),
-      } });
-    expect(decodePlainArtifactStoredContent(payload.body)).toEqual({ body: text });
+      } } });
+    expect(open(payload.body, mode === 'e2ee' ? payload.dataEncryptionKey : undefined)).toEqual({ body: text });
   });
 
   it('refuses parent traversal and symlink escapes before Artifact creation', async () => {
@@ -83,21 +91,23 @@ describe('explicit Artifact publication from the caller workspace', () => {
     expect(http.post).not.toHaveBeenCalled();
   });
 
-  it.each([{ mime: 'image/png', bytes: Buffer.from([0xff, 0xfe, 0, 42]) },
-    { mime: 'application/pdf', bytes: Buffer.from('%PDF-1.7\n1 0 obj\nendobj\n%%EOF') }])
-  ('publishes $mime files as private blob content with workspace provenance', async ({ bytes, mime }) => {
+  it.each([{ mode: 'plain' as const, mime: 'image/png', bytes: Buffer.from([0xff, 0xfe, 0, 42]) },
+    { mode: 'e2ee' as const, mime: 'image/png', bytes: Buffer.from([0xff, 0xfe, 0, 42]) },
+    { mode: 'plain' as const, mime: 'application/pdf', bytes: Buffer.from('%PDF-1.7\n1 0 obj\nendobj\n%%EOF') }])
+  ('publishes $mode $mime files as private blob content with workspace provenance', async ({ mode, bytes, mime }) => {
     await writeFile(join(root, 'workspace', 'binary'), bytes);
-    await expect(publishArtifactFromWorkspaceFile({ store: store(), caller: {
+    await expect(publishArtifactFromWorkspaceFile({ store: store(mode), caller: {
       sessionId: 'session', machineId: 'machine', directory: join(root, 'workspace'),
     }, input: { path: 'binary', mime } })).resolves.toMatchObject({ revision: { bodyVersion: 1 } });
     const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
     const blob = ArtifactBlobWriteV1Schema.parse(payload.blob);
-    expect(blob.content).toEqual({ t: 'plain', v: bytes.toString('base64') });
-    expect(decodePlainArtifactStoredContent(String(payload.body))).toMatchObject({ body: {
+    expect(blob.content).toMatchObject(mode === 'plain' ? { t: 'plain', v: bytes.toString('base64') } : { t: 'encrypted' });
+    expect(open(payload.body, mode === 'e2ee' ? payload.dataEncryptionKey : undefined)).toMatchObject({ body: {
       blobId: blob.blobId, mime, sizeBytes: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'),
     } });
-    expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ source: { path: 'binary', sessionId: 'session' } });
+    expect(open(payload.header, mode === 'e2ee' ? payload.dataEncryptionKey : undefined)).not.toHaveProperty('source');
+    expect(open(payload.provenance, mode === 'e2ee' ? payload.provenanceDataEncryptionKey : undefined)).toMatchObject({ provenance: { source: { path: 'binary', sessionId: 'session' } } });
   });
 
   it('does not create an Artifact when transfer fails or cancellation precedes it', async () => {

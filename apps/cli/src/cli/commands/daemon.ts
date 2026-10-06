@@ -1,4 +1,5 @@
-import { createServerUrlComparableKey, type RestartSessionRunnerResultV1 } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
+import type { RestartSessionRunnerResultV1 } from '@happier-dev/protocol';
 
 import {
   checkIfDaemonRunningAndCleanupStaleState,

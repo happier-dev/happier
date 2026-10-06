@@ -1,14 +1,8 @@
-import {
-  PROVIDER_CATALOG_LIMITS_V1,
-  ProviderCatalogCommandFallbackV1Schema,
-  ProviderEndpointUrlSyntaxSchema,
-  ProviderModelDescriptorV1Schema,
-  readBundledProviderCommandCatalogParserFactV1,
-  type BundledProviderCommandCatalogParserV1,
-  type ProviderCatalogCommandFallbackV1,
-  type ProviderCommandCatalogParserV1,
-  type ProviderModelDescriptorV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_CATALOG_LIMITS_V1 } from '@happier-dev/protocol/providers/catalog/limits';
+import { ProviderCatalogCommandFallbackV1Schema, readBundledProviderCommandCatalogParserFactV1 } from '@happier-dev/protocol/providers/detection/descriptorV1';
+import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import type { BundledProviderCommandCatalogParserV1, ProviderCatalogCommandFallbackV1, ProviderCommandCatalogParserV1, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 
 import type { ProviderCatalogFormatParser } from './parsers';
 

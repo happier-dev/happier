@@ -1,9 +1,7 @@
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import {
-    BUILT_IN_INSTALLABLES_REGISTRY,
-    type InstallablesRegistry,
-} from '@happier-dev/protocol/installables';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import type { InstallablesRegistry } from '@happier-dev/protocol/installables';
 
 import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistIds';
 import type { CapabilityDetectRequest } from './types';

@@ -1,15 +1,6 @@
-import {
-  ExternalAgentObservationEvidenceV1Schema,
-  ExternalAgentObservationSnapshotV1Schema,
-  ExternalAgentObservationTargetV1Schema,
-  reserveExternalSessionCompletedBoundaryV1,
-  type ExternalAgentObservationEvidenceV1,
-  type ExternalAgentObservationEvidenceClassV1,
-  type ExternalAgentObservationSnapshotV1,
-  type ExternalAgentObservationStatusV1,
-  type ExternalAgentObservationTargetV1,
-  type ExternalSessionCompletedBoundaryV1,
-} from '@happier-dev/protocol';
+import { ExternalAgentObservationEvidenceV1Schema, ExternalAgentObservationSnapshotV1Schema, ExternalAgentObservationTargetV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import { reserveExternalSessionCompletedBoundaryV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import type { ExternalAgentObservationEvidenceV1, ExternalAgentObservationEvidenceClassV1, ExternalAgentObservationSnapshotV1, ExternalAgentObservationStatusV1, ExternalAgentObservationTargetV1, ExternalSessionCompletedBoundaryV1 } from '@happier-dev/protocol';
 
 export type {
   ExternalAgentObservationEvidenceV1,

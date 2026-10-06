@@ -956,21 +956,21 @@ describe('the Session-start wire', () => {
         });
         expect(parsed.success).toBe(true);
         const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse({
-            ...spawn, directory: '/workspaces/example',
+            ...spawn, directory: { kind: 'path', path: '/workspaces/example' },
         });
         expect(draft.success).toBe(true);
         if (draft.success) expect(draft.data.profileId).toBe(profileId);
         expect(TriageStartEntrySessionSettledDraftV1Schema.parse({
-            ...spawn, directory: '/workspaces/example', profileId: ' profile-id ',
+            ...spawn, directory: { kind: 'path', path: '/workspaces/example' }, profileId: ' profile-id ',
         }).profileId).toBe('profile-id');
         expect(TriageStartEntrySessionSettledDraftV1Schema.safeParse({
-            ...spawn, directory: '/workspaces/example', profileId: `${profileId}p`,
+            ...spawn, directory: { kind: 'path', path: '/workspaces/example' }, profileId: `${profileId}p`,
         }).success).toBe(false);
         expect(TriageStartEntrySessionSettledDraftV1Schema.parse({
-            ...spawn, directory: '/workspaces/example', profileId: '🚀'.repeat(128),
+            ...spawn, directory: { kind: 'path', path: '/workspaces/example' }, profileId: '🚀'.repeat(128),
         }).profileId).toBe('🚀'.repeat(128));
         expect(TriageStartEntrySessionSettledDraftV1Schema.safeParse({
-            ...spawn, directory: '/workspaces/example', profileId: '🚀'.repeat(129),
+            ...spawn, directory: { kind: 'path', path: '/workspaces/example' }, profileId: '🚀'.repeat(129),
         }).success).toBe(false);
     });
 

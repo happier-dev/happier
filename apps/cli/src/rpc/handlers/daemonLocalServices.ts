@@ -1,45 +1,10 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonLocalServiceActionExecuteRequestV1Schema,
-    DaemonLocalServiceActionExecuteResponseV1Schema,
-    DaemonLocalServiceInventoryRefreshRequestV1Schema,
-    DaemonLocalServiceInventoryRefreshResponseV1Schema,
-    DaemonLocalServiceInventorySnapshotRequestV1Schema,
-    DaemonLocalServiceInventorySnapshotResponseV1Schema,
-    DaemonLocalServiceInventoryWatchRequestV1Schema,
-    DaemonLocalServiceInventoryWatchResponseV1Schema,
-    DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
-    DaemonLocalServiceLauncherLeafRequestV1Schema,
-    DaemonLocalServiceLauncherOpenPreviewResponseV1Schema,
-    DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
-    DaemonLocalServiceLauncherSnapshotRequestV1Schema,
-    DaemonLocalServiceLauncherSnapshotResponseV1Schema,
-    DaemonLocalServiceLauncherStartRequestV1Schema,
-    DaemonLocalServiceLauncherStartResponseV1Schema,
-    DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
-    DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
-    DaemonLocalServicePublicPreviewCreateRequestV1Schema,
-    DaemonLocalServicePublicPreviewCreateResponseV1Schema,
-    DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
-    DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
-    DaemonLocalServicePublicPreviewStatusRequestV1Schema,
-    DaemonLocalServicePublicPreviewStatusResponseV1Schema,
-    isLocalServicePublicPreviewCreateConfirmed,
-    type DaemonLocalServiceActionExecuteResponseV1,
-    type DaemonLocalServiceInventoryRefreshResponseV1,
-    type DaemonLocalServiceInventorySnapshotResponseV1,
-    type DaemonLocalServiceInventoryWatchResponseV1,
-    type DaemonLocalServiceLauncherHistoryClearResponseV1,
-    type DaemonLocalServiceLauncherOpenPreviewResponseV1,
-    type DaemonLocalServiceLauncherRegisterPreviewResponseV1,
-    type DaemonLocalServiceLauncherSnapshotResponseV1,
-    type DaemonLocalServiceLauncherStartResponseV1,
-    type DaemonLocalServicePublicPreviewCopyUrlResponseV1,
-    type DaemonLocalServicePublicPreviewCreateResponseV1,
-    type DaemonLocalServicePublicPreviewRevokeResponseV1,
-    type DaemonLocalServicePublicPreviewStatusResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonLocalServiceActionExecuteRequestV1Schema, DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { DaemonLocalServiceInventoryRefreshRequestV1Schema, DaemonLocalServiceInventoryRefreshResponseV1Schema, DaemonLocalServiceInventorySnapshotRequestV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema, DaemonLocalServiceInventoryWatchRequestV1Schema, DaemonLocalServiceInventoryWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
+import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherOpenPreviewResponseV1Schema, DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, isLocalServicePublicPreviewCreateConfirmed } from '@happier-dev/protocol/local/services/public/v1';
+import type { DaemonLocalServiceActionExecuteResponseV1, DaemonLocalServiceInventoryRefreshResponseV1, DaemonLocalServiceInventorySnapshotResponseV1, DaemonLocalServiceInventoryWatchResponseV1, DaemonLocalServiceLauncherHistoryClearResponseV1, DaemonLocalServiceLauncherOpenPreviewResponseV1, DaemonLocalServiceLauncherRegisterPreviewResponseV1, DaemonLocalServiceLauncherSnapshotResponseV1, DaemonLocalServiceLauncherStartResponseV1, DaemonLocalServicePublicPreviewCopyUrlResponseV1, DaemonLocalServicePublicPreviewCreateResponseV1, DaemonLocalServicePublicPreviewRevokeResponseV1, DaemonLocalServicePublicPreviewStatusResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { LocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
 import type { LocalServiceInventoryRoutes } from '@/daemon/local/services/inventory/routes';

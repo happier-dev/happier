@@ -1,19 +1,7 @@
-import {
-  ExternalSessionTakeoverStartInputV1Schema,
-  projectExternalSessionOperationProgressV1,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  resolveExternalSessionOperationTimelineV1,
-  type ExternalSessionOperationActionResponseV1,
-  type ExternalSessionOperationAuthorIntentV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationReferenceV1,
-  type ExternalSessionOperationSharedPresentationV1,
-  type ExternalSessionOperationSemanticRequestV1,
-  type ExternalSessionOperationSocketCommandV1,
-  type ExternalSessionOperationSocketResponseV1,
-  type ExternalSessionPriorStableStorageV1,
-  type ExternalSessionTakeoverStartInputV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionTakeoverStartInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { projectExternalSessionOperationProgressV1, resolveExternalSessionOperationTimelineV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionOperationActionResponseV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationRecordV1, ExternalSessionOperationReferenceV1, ExternalSessionOperationSharedPresentationV1, ExternalSessionOperationSemanticRequestV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionPriorStableStorageV1, ExternalSessionTakeoverStartInputV1 } from '@happier-dev/protocol';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { readStoredCredentials } from '@/persistence';

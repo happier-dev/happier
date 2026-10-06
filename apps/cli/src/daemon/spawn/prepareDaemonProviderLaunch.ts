@@ -6,10 +6,8 @@ import type {
     SessionModelSelectionV1,
     SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
-import {
-    ConnectedServiceBindingsV2IngressSchema,
-    createProviderErrorV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';

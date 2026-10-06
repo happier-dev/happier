@@ -383,6 +383,11 @@ export const POSTHOG_PLUGIN = definePlugin({
         [POSTHOG_ACTION_IDS.codeVariables]: {
             title: 'Reveal captured PostHog code variables',
             description: 'Rereads one selected occurrence and returns its captured variables after confirmation.',
+            dangerLevel: 'safe',
+            confirmation: {
+                title: { key: 'plugins.posthog.ui.codeVariables.confirmTitle', fallback: 'Reveal sensitive captured variables?' },
+                body: { key: 'plugins.posthog.ui.codeVariables.confirmDescription', fallback: 'Captured local variables can contain credentials, tokens, personal data, and request bodies.' },
+            },
             surfaces: ['ui', 'agent', 'mcp', 'cli'],
             placementBindings: [],
             inputSchema: PosthogCodeVariablesInputV1Schema.jsonSchema,

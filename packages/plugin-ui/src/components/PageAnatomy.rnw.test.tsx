@@ -153,6 +153,20 @@ describe('plugin page anatomy through the shared page owners', () => {
     mount.unmount();
   });
 
+  it('keeps each meta separator with the fact before it so a wrapped line never starts with one', () => {
+    const mount = mountPage(
+      <PageHeader
+        title="Run"
+        meta={[{ key: 'origin', text: 'Scheduled', testID: 'f1' }, { key: 'machine', text: 'mac', testID: 'f2' }, { key: 'time', text: '13:50', testID: 'f3' }]}
+        testID="header"
+      />,
+    );
+    // Each fact is one wrapping unit: a unit that began with "·" would orphan it at a line start.
+    expect(['f1', 'f2', 'f3'].map((id) => textOf(mount.container.querySelector(`[data-testid="${id}"]`))))
+      .toEqual(['Scheduled·', 'mac·', '13:50']);
+    mount.unmount();
+  });
+
   it('leaves the title to host chrome that already shows it and places the host back control', () => {
     const shown = mountPage(
       <PageHeader title="Sentry" description="Link Sentry issues." testID="header" />,

@@ -8,7 +8,8 @@ import {
   processGenerationMatches,
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
-import { getActionSpec, type ActionExecuteResult, type ActionExecutorContext } from '@happier-dev/protocol';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import {
   clearReplaceableDaemonLock,
@@ -27,7 +28,8 @@ import {
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { classifyDaemonLifecycleProcessByPid } from '@/daemon/doctor';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
-import { projectPath } from '@/projectPath';
+import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
+import { pathToFileURL } from 'node:url';
 import { readFileSync, statSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
@@ -52,34 +54,11 @@ import {
   type ForegroundAgentRuntimeSessionOptionsRequestV1,
   type ForegroundAgentRuntimeSessionOptionsResponseV1,
 } from './agentRuntime/foregroundAdmissionContract';
-import {
-  createProviderErrorV1,
-  normalizeSpawnSessionNonceResolution,
-  RestartAllSessionRunnersRequestV1Schema,
-  RestartAllSessionRunnersResultV1Schema,
-  RestartSessionRunnerRequestV1Schema,
-  RestartSessionRunnerRequestV2Schema,
-  RestartSessionRunnerResultV1Schema,
-  type ConnectedServiceBindingsV2,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceId,
-  type ConnectedServiceUsageSourceV1,
-  type ProviderAccountUsageSnapshotV1,
-  type RestartAllSessionRunnersRequestV1,
-  type RestartAllSessionRunnersResultV1,
-  type RestartSessionRunnerRequestV1,
-  type RestartSessionRunnerRequestV2,
-  type RestartSessionRunnerResultV1,
-  type SessionRunnerRestartModeV1,
-  type SessionMetadataPublisherPreconditionV1,
-  type SshTunnelEnsureRequest,
-  type SshTunnelEnsureResponse,
-  type SshTunnelListResponse,
-  type SshTunnelMutationResponse,
-  type SshTunnelProbeResponse,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  type SpawnSessionNonceResolution,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { RestartAllSessionRunnersRequestV1Schema, RestartAllSessionRunnersResultV1Schema, RestartSessionRunnerRequestV1Schema, RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
+import type { ConnectedServiceBindingsV2, ConnectedAccountServiceKey, ConnectedServiceId, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, RestartAllSessionRunnersRequestV1, RestartAllSessionRunnersResultV1, RestartSessionRunnerRequestV1, RestartSessionRunnerRequestV2, RestartSessionRunnerResultV1, SessionRunnerRestartModeV1, SessionMetadataPublisherPreconditionV1, SshTunnelEnsureRequest, SshTunnelEnsureResponse, SshTunnelListResponse, SshTunnelMutationResponse, SshTunnelProbeResponse, SessionUsageLimitRecoveryResumePromptModeV1, SpawnSessionNonceResolution } from '@happier-dev/protocol';
 import {
   StopSessionResultSchema,
   type StopSessionResult,
@@ -98,6 +77,9 @@ import {
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
+  CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  type ConnectedServiceRunRejectedStartRequest,
+  type ConnectedServiceRunRejectedStartResult,
   type ConnectedServiceRunMaterializeRequest,
   type ConnectedServiceRunReleaseRequest,
   type ConnectedServiceRunGenerationCurrentRequest,
@@ -123,10 +105,8 @@ import {
   type PluginChangeTerminalResult,
   type PluginPendingChangeEntry,
 } from '@/plugins/daemon/changeContract';
-import {
-  PluginChangePendingReviewResultSchema,
-  type PluginChangePendingReviewResult,
-} from '@happier-dev/protocol/marketplace/internal';
+import { PluginChangePendingReviewResultSchema } from '@happier-dev/protocol/marketplace/internal';
+import type { PluginChangePendingReviewResult } from '@happier-dev/protocol/marketplace/internal';
 import {
   PLUGIN_ACTION_EXECUTE_PATH,
   PLUGIN_CATALOG_READ_PATH,
@@ -607,7 +587,9 @@ export async function requestDaemonSignedRootActionExecution(
   options: DaemonControlRequestOptions = {},
 ): Promise<ActionExecuteResult> {
   if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-  const { sideEffectClass, executionPlacement } = getActionSpec(request.actionId);
+  const spec = getActionSpec(request.actionId);
+  const { sideEffectClass } = spec;
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, request.input);
   const result = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, request, {
     ...options,
     // Idle observation owns its deadline; client Actions may wait for approval
@@ -1144,6 +1126,15 @@ export async function releaseExecutionRunConnectedServices(
   });
 }
 
+export async function recoverExecutionRunConnectedServicesRejectedStart(
+  request: ConnectedServiceRunRejectedStartRequest,
+): Promise<ConnectedServiceRunRejectedStartResult | { ok?: false; error?: string; errorCode?: string; errorMessage?: string }> {
+  return await daemonPost(CONNECTED_SERVICE_RUN_REJECTED_START_PATH, request, {
+    authScope: 'connected-service-run-materialize',
+    timeoutMs: resolveExecutionRunConnectedServiceMaterializeTimeoutMs(),
+  });
+}
+
 export async function checkExecutionRunConnectedServicesGenerationCurrent(
   request: ConnectedServiceRunGenerationCurrentRequest,
 ): Promise<{ ok?: boolean; current?: boolean; error?: string }> {
@@ -1334,12 +1325,18 @@ async function assertForceStopIdentity(
     throw new DaemonStopIncompleteError({ reason: 'process_identity_unavailable', pid });
   }
   const isDaemonProcess = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
+  // Stop follows the published owner across CLI upgrades and immutable runner
+  // snapshots. The caller's runtime root is not the daemon's process identity.
+  // Scope, lifecycle lock and OS birth checks below remain mandatory.
+  const ownerRuntimeRoot = recordedState.startedWithRuntimeEntrypoint
+    ? projectPathFromModuleUrl(pathToFileURL(recordedState.startedWithRuntimeEntrypoint).href)
+    : projectPath();
   const matchesRecordedScope = !!proc
     && daemonProcessMatchesCurrentScope(proc, { requireRecordedScopeFacts: true });
   // Windows' supported CIM inventory provides an exact PID, command and
   // creation time but cannot read a process environment. State + structured
   // lifecycle lock + the exact process birth below establish the current
-  // lifecycle owner there; the long-lived current-runtime command excludes
+  // lifecycle owner there; the long-lived recorded-runtime command excludes
   // arbitrary Happy processes and transient wrappers without inventing a
   // parallel process registry.
   const matchesWindowsExactRuntime = !!proc
@@ -1348,7 +1345,7 @@ async function assertForceStopIdentity(
     // its inventory's documented inability to read any process environment,
     // never for a recorded mismatch or missing required scope fact.
     && !proc.daemonOwnershipEnvironmentVariables
-    && isDaemonProcessForCurrentRuntimeRoot(proc, projectPath());
+    && isDaemonProcessForCurrentRuntimeRoot(proc, ownerRuntimeRoot);
   if (
     !proc
     || proc.pid !== pid
@@ -1370,7 +1367,7 @@ async function assertForceStopIdentity(
     || typeof processStartedAtMs !== 'number'
     || !Number.isSafeInteger(processStartedAtMs)
     || processStartedAtMs < 0
-    || !isDaemonCommandForCurrentRuntimeRoot(processIdentity.command, projectPath())
+    || !isDaemonCommandForCurrentRuntimeRoot(processIdentity.command, ownerRuntimeRoot)
     || !processGenerationMatches(lockIdentity.processStartedAtMs, processStartedAtMs)
     || (lockFingerprint !== undefined && currentFingerprint !== lockFingerprint)
   ) {
@@ -1404,7 +1401,7 @@ async function assertForceStopIdentity(
   if (
     recheckedProcessIdentity.pid !== pid
     || recheckedProcessIdentity.processStartTimeMs !== processStartedAtMs
-    || !isDaemonCommandForCurrentRuntimeRoot(recheckedProcessIdentity.command, projectPath())
+    || !isDaemonCommandForCurrentRuntimeRoot(recheckedProcessIdentity.command, ownerRuntimeRoot)
   ) {
     throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
   }

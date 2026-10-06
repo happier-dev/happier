@@ -1,16 +1,11 @@
-import {
-  ExecutionRunTaskIntentInputV1Schema,
-  normalizePluginJsonSchema,
-} from '@happier-dev/protocol';
+import { ExecutionRunTaskIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type {
   ExecutionRunIntentProfile,
   ExecutionRunProfileBoundedCompleteResult,
 } from '../ExecutionRunIntentProfile';
-import {
-  buildExecutionRunResultContractPrompt,
-  decodeExecutionRunProfileResult,
-} from '@happier-dev/protocol';
+import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 
 function readTaskIntentInput(value: unknown) {
   return ExecutionRunTaskIntentInputV1Schema.parse(value ?? {});

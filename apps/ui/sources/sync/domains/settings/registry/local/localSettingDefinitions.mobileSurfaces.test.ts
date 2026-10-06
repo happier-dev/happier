@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveRightSidebarMobileProjection } from '@/components/appShell/rightSidebar/rightSidebarMobileProjection';
 import { resolveRightSidebarTabs } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 
 /**
  * Surfaces that exist without a right-sidebar tab behind them, so the registry projection
@@ -22,6 +23,10 @@ function declaredSessionMobileSurfaces(): readonly string[] {
 }
 
 describe('LOCAL_SETTING_DEFINITIONS mobile surfaces', () => {
+    it('stores shared placements with tolerant reads while preserving all known surface preferences', () => {
+        const stored = localSettingsParse({ navigationSurfacePlacementsV1: { appRail: { orderedIds: ['plugin:removed'], placements: { 'plugin:removed': 'hidden' }, future: true }, futureSurface: {} } });
+        expect(stored.navigationSurfacePlacementsV1).toEqual({ appRail: { orderedIds: ['plugin:removed'], placements: { 'plugin:removed': 'hidden' } } });
+    });
     it('persists every session mobile surface the right-sidebar registry declares', () => {
         const schema = LOCAL_SETTING_DEFINITIONS.sessionLastMobileSurfaceBySessionId.schema;
         const surfaces = [...NON_TAB_SESSION_SURFACES, ...declaredSessionMobileSurfaces()];

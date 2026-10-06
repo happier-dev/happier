@@ -32,6 +32,9 @@ import {
 import {
   stageExternalSessionHistoricalImportItem,
 } from '@/api/session/external/import/importExternalSessionTranscript';
+import { executeExternalSessionOperationContinuation } from '@/api/machine/rpcHandlers.externalSessions';
+import { createExternalSessionPersistedTakeoverPhaseRunner } from './takeoverPhaseRunner';
+import { logger } from '@/ui/logger';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 
@@ -5548,6 +5551,170 @@ describe('external session materialize action', () => {
     });
     await expect(restarted.discard(operationReference(discarded))).resolves.toEqual(discarded);
   });
+
+  it.each(['materialize_retry', 'materialize_resume', 'persisted_takeover_resume', 'materialize_retry_store_failure'] as const)(
+    'acknowledges %s before capture settles and preserves the canonical outcome',
+    async (scenario) => {
+      const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-continuation-admission-'));
+      roots.push(activeServerDir);
+      const operationExclusion = createExternalSessionOperationExclusion({
+        activeServerDir,
+        ownerId: 'continuation-admission-owner',
+      });
+      const staging = createExternalSessionOperationPrivateStagingStore({
+        activeServerDir,
+        limits: {
+          perOperation: { maxItems: 20, maxBytes: 50_000 },
+          aggregate: { maxItems: 40, maxBytes: 100_000 },
+        },
+      });
+      const validating = persistedTakeoverValidatingRecord();
+      const semanticRequest = scenario === 'persisted_takeover_resume'
+        ? validating.request
+        : { ...request(), source: validating.request.source };
+      const capturedSource = {
+        sourceIdentity: 'continuation-source',
+        sourceGeneration: semanticRequest.source.sourceGeneration,
+        revision: 'takeover-source-cursor-1',
+        boundary: 'continuation-boundary',
+      };
+      const stagingReference = scenario === 'materialize_resume'
+        ? await staging.beginOperation({
+          operationId: validating.operationId, representation: 'content', capturedSource,
+        })
+        : null;
+      if (stagingReference && stagingReference.status !== 'ready') {
+        throw new Error('Expected resumable private staging.');
+      }
+      const initial: ExternalSessionOperationRecordV1 = {
+        ...validating,
+        request: semanticRequest,
+        timeline: resolveExternalSessionOperationTimelineV1(semanticRequest),
+        ...(stagingReference?.status === 'ready' ? {
+          phase: 'staging',
+          retryTargetPhase: 'staging',
+          bindings: { ...validating.bindings, privateStagingId: stagingReference.stagingReference },
+        } : {}),
+      };
+      await writeExternalSessionOperationRecord(activeServerDir, initial);
+      let markCaptureWaiting!: () => void;
+      const captureWaiting = new Promise<void>((resolve) => { markCaptureWaiting = resolve; });
+      let releaseCapture!: () => void;
+      const captureReleased = new Promise<void>((resolve) => { releaseCapture = resolve; });
+      const sendHistoricalCommand = vi.fn(inspectOnlyCommandHandler(machineOnlyPriorStableStorage));
+      const executor = createExternalSessionMaterializeActionExecutor({
+        activeServerDir,
+        operationExclusion,
+        staging,
+        preparePersistedTakeover: async () => ({
+          workingDirectory: activeServerDir,
+          destructiveQuiescence: createStoppedTakeoverQuiescenceFixture(initial),
+          resumeFollowOnFailure: async () => undefined,
+        }),
+        describeSource: async () => ({
+          capturedSource,
+          priorStableStorage: machineOnlyPriorStableStorage,
+          linkedSessionRevision: 1,
+        }),
+        readNewestFirstPages: async function* () {
+          markCaptureWaiting();
+          await captureReleased;
+          yield {
+            groupId: 'must-not-be-staged',
+            items: [item('must-not-be-staged')],
+            sourceRead: {
+              availability: 'reachable',
+              sourceIdentity: 'continuation-source',
+              sourceGeneration: initial.request.source.sourceGeneration,
+              revision: capturedSource.revision,
+              relationshipToCapture: 'same',
+              eof: true,
+            },
+          } as const;
+        },
+        readFinalCatchUpPages: noFinalCatchUpPages,
+        sendHistoricalCommand,
+      });
+      const actionId = scenario.startsWith('materialize_retry')
+        ? 'sessions.external.operation.retry'
+        : 'sessions.external.operation.resume';
+      const continuing = executeExternalSessionOperationContinuation({
+        actionId,
+        raw: { sessionId: initial.request.sessionId, operationId: initial.operationId, revision: initial.revision },
+        record: initial,
+        materialize: executor,
+        takeoverPhaseRunner: createExternalSessionPersistedTakeoverPhaseRunner({ importExecutor: executor }),
+        externalLinkedTakeoverPhaseRunner: null,
+        takeoverAdmission: null,
+      });
+      const storageFailure = scenario === 'materialize_retry_store_failure';
+      const log = storageFailure ? vi.spyOn(logger, 'debug') : null;
+      let recordMadeUnreadable = false;
+      let observed: ExternalSessionOperationRecordV1 | null = null;
+      try {
+        await captureWaiting;
+        const acknowledgement = await Promise.race([
+          continuing.then((result) => ({ kind: 'acknowledged' as const, result })),
+          new Promise<{ kind: 'capture_still_running' }>((resolve) => {
+            setTimeout(() => resolve({ kind: 'capture_still_running' }), 0);
+          }),
+        ]);
+        expect(acknowledgement).toMatchObject({
+          kind: 'acknowledged',
+          result: { ok: true, result: { ok: true, progress: { operationId: initial.operationId, status: 'running' } } },
+        });
+        observed = await readExternalSessionOperationRecord(activeServerDir, initial.operationId);
+        if (!observed) throw new Error('Expected admitted operation.');
+        await expect(executor.status({
+          sessionId: initial.request.sessionId, operationId: initial.operationId, revision: observed.revision,
+        })).resolves.toMatchObject({ ok: true, progress: { status: 'running', phase: 'staging' } });
+        if (storageFailure) {
+          // Corrupt only this fixture's real filesystem boundary after admission.
+          const recordPath = join(
+            activeServerDir, 'external-session-operations', 'by-account',
+            `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex').slice(0, 32)}`,
+            'records', `${createHash('sha256').update(initial.operationId, 'utf8').digest('hex')}.json`,
+          );
+          await rm(recordPath);
+          await mkdir(recordPath);
+          recordMadeUnreadable = true;
+        }
+      } finally {
+        if (!recordMadeUnreadable) {
+          observed = await readExternalSessionOperationRecord(activeServerDir, initial.operationId);
+          if (observed) {
+            await executor.cancel({
+              sessionId: initial.request.sessionId, operationId: initial.operationId, revision: observed.revision,
+            });
+          }
+        }
+        releaseCapture();
+        await continuing;
+        await vi.waitFor(async () => {
+          if (recordMadeUnreadable) {
+            expect(log).toHaveBeenCalledWith('[externalSessions][internal_error]', expect.objectContaining({
+              context: 'operation.continue', errorCode: 'internal_error',
+            }));
+            if (!observed) throw new Error('Expected admitted operation.');
+            expect(await operationExclusion.inspectPassiveRepairClaim({
+              sessionId: initial.request.sessionId, operationClaimId: observed.bindings.operationClaimId,
+            })).toBe('inactive');
+            return;
+          }
+          const settled = await readExternalSessionOperationRecord(activeServerDir, initial.operationId);
+          expect(settled).toMatchObject({ status: 'cancelled', checkpoint: { stagedItemCount: 0, importedItemCount: 0 } });
+          if (!settled) throw new Error('Expected cancelled operation.');
+          expect(await operationExclusion.inspectPassiveRepairClaim({
+            sessionId: initial.request.sessionId, operationClaimId: settled.bindings.operationClaimId,
+          })).toBe('inactive');
+        });
+      }
+      if (!recordMadeUnreadable) {
+        await expect(staging.readReplayState(initial.operationId)).resolves.toMatchObject({ status: 'discard_required' });
+      }
+      expect(sendHistoricalCommand.mock.calls.map(([command]) => command.kind)).toEqual(['inspect']);
+    },
+  );
 
   it.each(['validating', 'quiescing'] as const)(
     'resumes a durable persisted takeover from %s through import and publication, then stops before admission even when projection publication fails',

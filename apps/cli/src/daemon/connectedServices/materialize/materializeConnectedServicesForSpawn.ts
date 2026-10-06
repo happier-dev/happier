@@ -2,15 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
-import {
-  qualifiedPurposeKey,
-  resolveConnectedServicesProviderStateSharingPolicyV1,
-  type AccountSettings,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountPurposeBindingV1,
-} from '@happier-dev/protocol';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { AccountSettings, ConnectedAccountServiceKey, ConnectedServiceCredentialRecordV1, ConnectedServiceId, QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol';
 import {
   resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';

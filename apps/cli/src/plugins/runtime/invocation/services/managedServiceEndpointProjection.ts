@@ -5,12 +5,9 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import {
-    managedServiceEndpointHostPolicyForMode,
-    PluginSourceCustodyV1Schema,
-    readManagedServiceEndpointUrl,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 
 import { readPrivateOwnerFileSync } from '@/daemon/privateBearerFile';
 

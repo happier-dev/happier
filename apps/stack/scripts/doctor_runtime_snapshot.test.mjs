@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -101,6 +101,27 @@ test('doctor --json reports the active runtime snapshot', async (t) => {
   assert.notEqual(parsed.uiBuildDir, join(fixture.stackDir, 'runtime', 'current', 'ui'));
   assert.equal(parsed.checks.uiBuildDir?.ok, true);
   assert.equal(parsed.checks.uiBuildDir?.path, join(fixture.snapshotDir, 'ui'));
+});
+
+test('doctor accepts the selected foreign server-only shared database snapshot', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t);
+  const manifestPath = join(fixture.snapshotDir, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.target = { platform: 'darwin', arch: 'arm64' };
+  delete manifest.components.web;
+  delete manifest.components.daemon;
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await appendFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev-source\n');
+  const res = await runNode([join(rootDir, 'scripts', 'doctor.mjs'), '--runtime', '--json'], {
+    cwd: rootDir,
+    env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+      HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'), HAPPIER_STACK_REPO_DIR: rootDir },
+  });
+  assert.equal(res.code, 0, res.stderr);
+  const parsed = JSON.parse(res.stdout);
+  assert.equal(parsed.runtime.valid, true, JSON.stringify(parsed.runtime.errors));
 });
 
 test('doctor --json reports source mode when no runtime snapshot is active', async (t) => {

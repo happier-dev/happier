@@ -6,6 +6,7 @@ import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from './hooks';
+import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
 
 beforeEach(async () => {
     getPersistenceStorage().clearAll();
@@ -31,4 +32,26 @@ it('does not recompute settings projections for other store domains', async () =
     });
     expect(hook.getCurrent().density).toBe(nextDensity);
     expect(computations).toBe(baseline + 1);
+});
+
+it('keeps the mounted Session list source stable for unrelated Account settings', async () => {
+    let renders = 0;
+    const input = { enabled: false, homes: [] } as const;
+    const hook = await renderHook(() => {
+        renders++;
+        return useSessionListQuerySourceState(input);
+    });
+    const before = renders;
+    const source = hook.getCurrent();
+    await act(async () => {
+        storage.getState().applySettingsLocal({ showLineNumbers: !storage.getState().settings.showLineNumbers });
+    });
+    console.info(`Session list unrelated-setting render delta: ${renders - before}`);
+    expect(renders - before).toBe(0);
+    expect(hook.getCurrent()).toBe(source);
+    await act(async () => {
+        storage.getState().applySettingsLocal({ sessionListActiveGroupingV1: 'date' });
+    });
+    expect(renders - before).toBe(1);
+    await hook.unmount();
 });

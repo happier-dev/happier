@@ -1,74 +1,22 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol';
+import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol/daemon/pluginCaptureSources';
 import type { MachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
 import { registerPluginCaptureSource } from '@/daemon/peer/mediation/stream/pluginCaptureSource';
-import { DaemonPluginStoredImageReadRequestSchema, DaemonPluginStoredImageReadResponseSchema } from '@happier-dev/protocol';
+import { DaemonPluginStoredImageReadRequestSchema, DaemonPluginStoredImageReadResponseSchema } from '@happier-dev/protocol/daemon/pluginStoredImage';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
-import {
-    DaemonContributionRegistryProjectionDescribeRequestSchema,
-    DaemonPluginUiTargetedContributionsReadRequestSchema,
-    DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema,
-    DaemonPluginUiTargetedSurfaceMountV1Schema,
-    DaemonPluginSettingsGetRequestSchema,
-    DaemonPluginSettingsGetResponseSchema,
-    DaemonPluginSettingsSetRequestSchema,
-    DaemonPluginSettingsSetResponseSchema,
-    DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS,
-    DaemonPluginSecretStatusRequestSchema,
-    DaemonPluginSecretStatusResponseSchema,
-    DaemonPluginSecretSetRequestSchema,
-    DaemonPluginSecretSetResponseSchema,
-    DaemonPluginSecretDeleteRequestSchema,
-    DaemonPluginSecretDeleteResponseSchema,
-    DaemonPluginUiResourceReadRequestSchema,
-    DaemonPluginUiResourceReadResponseSchema,
-    DaemonPluginUiResourceWatchOpenRequestSchema,
-    DaemonPluginUiResourceWatchOpenResponseSchema,
-    DaemonPluginUiResourceWatchNextRequestSchema,
-    DaemonPluginUiResourceWatchNextResponseSchema,
-    DaemonPluginUiResourceWatchCloseRequestSchema,
-    DaemonPluginUiResourceWatchCloseResponseSchema,
-    DaemonPluginStructuredMessageActionExecuteRequestSchema,
-    DaemonPluginStructuredMessageActionExecuteResponseSchema,
-    DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
-    DaemonPluginActionSchemasReadRequestSchema,
-    DaemonPluginActionSchemasReadResponseSchema,
-    DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema,
-    DaemonPluginComposerReferenceSearchRequestSchema,
-    DaemonPluginComposerReferenceSearchResponseSchema,
-    type DaemonPluginSettingsSnapshot,
-    DaemonPluginUiArtifactBytesReadRequestSchema,
-    DaemonPluginUiArtifactBytesReadResponseSchema,
-    type FeatureDecision,
-    type DaemonHostedWebFrameCapabilityV1,
-    type DaemonReactNativeHostRuntimeIdentityV1,
-    type ActionOperationDeclarationV1,
-    type DaemonContributionRegistryProjectionDescribeRequest,
-    type DaemonContributionRegistryProjectionDescribeResponse,
-    type DaemonPluginUiTargetedContributionsReadRequest,
-    type DaemonPluginUiTargetedContributionsReadResponse,
-    type PluginSettingFieldV2,
-    type DaemonPluginUiArtifactBytesReadResponse,
-    type DaemonPluginUiTargetedSurfaceMountV1,
-    type DaemonPluginStructuredMessageActionInvocationV1,
-    type MessageActionReferenceV1,
-    type MessageActionResolutionV1,
-    PluginMachineExecutionOriginV1Schema,
-    arePluginMachineMaterializationRefsEqual,
-    PluginUiResourceBindingCapabilityV1Schema,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionBrandAssetV2,
-    type PluginProjectionV2,
-    buildQualifiedPluginContributionKey,
-    readPluginSettingSecretCustody,
-    readPluginActionFailureAuthorPayload,
-} from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema, DaemonPluginUiTargetedSurfaceMountV1Schema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginComposerReferenceSearchRequestSchema, DaemonPluginComposerReferenceSearchResponseSchema, DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema, PluginUiResourceBindingCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import type { DaemonPluginSettingsSnapshot, FeatureDecision, DaemonHostedWebFrameCapabilityV1, DaemonReactNativeHostRuntimeIdentityV1, ActionOperationDeclarationV1, DaemonContributionRegistryProjectionDescribeRequest, DaemonContributionRegistryProjectionDescribeResponse, DaemonPluginUiTargetedContributionsReadRequest, DaemonPluginUiTargetedContributionsReadResponse, PluginSettingFieldV2, DaemonPluginUiArtifactBytesReadResponse, DaemonPluginUiTargetedSurfaceMountV1, DaemonPluginStructuredMessageActionInvocationV1, MessageActionReferenceV1, MessageActionResolutionV1, PluginMachineExecutionOriginV1, PluginProjectionBrandAssetV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import { PluginMachineExecutionOriginV1Schema, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readPluginSettingSecretCustody } from '@happier-dev/protocol/plugins/contributions/settings';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     isPluginError,
@@ -78,23 +26,13 @@ import {
 } from '@happier-dev/plugin-sdk';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
-import {
-    computePluginUiArtifactSha256DigestV1,
-    PluginUiSurfaceBindingV1Schema,
-    isPluginUiHermesBytecodeArtifactV1,
-    PluginUiTargetedContributionsV1Schema,
-    selectPluginUiRendererChainMemberV1,
-    verifyPluginUiArtifactFileSetIntegrityV1,
-    type PluginUiArtifactDigestV1,
-    type PluginUiArtifactsManifestEntryV2,
-    type PluginUiTargetedContributionsV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    DaemonPluginSettingsWatchRequestSchema,
-    DaemonPluginSettingsWatchResponseSchema,
-    RPC_METHODS,
-    type DaemonPluginSettingsWatchResponse,
-} from '@happier-dev/protocol/rpc';
+import { computePluginUiArtifactSha256DigestV1, isPluginUiHermesBytecodeArtifactV1, verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import { PluginUiSurfaceBindingV1Schema, selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
+import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
+import type { PluginUiArtifactDigestV1, PluginUiArtifactsManifestEntryV2, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
+import { DaemonPluginSettingsWatchRequestSchema, DaemonPluginSettingsWatchResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { DaemonPluginSettingsWatchResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     resolveMergedContributionRegistry,

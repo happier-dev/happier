@@ -1,7 +1,5 @@
-import {
-    AgentProviderBindingMaterializationV1Schema,
-    type AgentProviderBindingMaterializationV1,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import type { AgentProviderBindingMaterializationV1 } from '@happier-dev/protocol';
 
 import {
     readCredentialRedactionValues,

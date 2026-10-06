@@ -1,21 +1,9 @@
-import {
-  ACTION_IDS,
-  formatQualifiedPluginActionId,
-  type ActionId,
-  type QualifiedPluginActionId,
-} from '@happier-dev/protocol/actions';
-import {
-  projectPluginActionUnavailableOutcomeCode,
-  pluginActionRequiresPresentUserIntent,
-  type ActionsSettingsV1,
-  type JsonValue,
-  type MessageActionAvailableSnapshotV1,
-  type PluginMachineExecutionOriginV1,
-  type RehydratedPluginContributionPointOperationV1,
-  type TargetActionApprovalReplayPlacementV1,
-  UiContributedActionExecuteRequestV1Schema,
-  type UiContributedActionExecuteRequestV1,
-} from '@happier-dev/protocol';
+import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
+import { projectPluginActionUnavailableOutcomeCode, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { ActionsSettingsV1, JsonValue, MessageActionAvailableSnapshotV1, PluginMachineExecutionOriginV1, RehydratedPluginContributionPointOperationV1, TargetActionApprovalReplayPlacementV1, UiContributedActionExecuteRequestV1 } from '@happier-dev/protocol';
+import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -35,10 +23,8 @@ import type { ContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate'
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
 import type { TargetActionOperationProgressPort } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
-import {
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-} from '@happier-dev/protocol/actions';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 export type PluginActionExecutorResult = Readonly<
@@ -573,14 +559,31 @@ export async function executeContributedAction(params: Readonly<{
   if (runtimeRegistry && targetActionInvocations?.expects(pluginId, action.definition.id)) {
     // Occurrence admission precedes activation: a retired handle must not
     // activate its replacement or be reported as a missing handler.
-    if (expectedContributorOccurrenceId !== undefined
-      && !(await isExpectedPluginCurrent({
-        runtimeRegistry,
-        pluginId,
-        expectedOccurrenceId: expectedContributorOccurrenceId,
-        requireMaterialization: false,
-      }))) {
-      return { matched: true, result: admittedContributorOccurrenceRetired() };
+    const checkAdmittedCurrentness = async (): Promise<PluginActionExecutorResult | null> => {
+      if (expectedContributorOccurrenceId !== undefined
+        && !(await isExpectedPluginCurrent({
+          runtimeRegistry,
+          pluginId,
+          expectedOccurrenceId: expectedContributorOccurrenceId,
+          expectedMaterializationId: expectedContributorMaterializationId,
+          requireMaterialization: true,
+        }))) {
+        return admittedContributorOccurrenceRetired();
+      }
+      if (admittedTargetedOperation !== undefined
+        && !(await isExpectedPluginCurrent({
+          runtimeRegistry,
+          pluginId: admittedTargetedOperation.target.pluginId,
+          expectedOccurrenceId: admittedTargetedOperation.target.occurrenceId,
+          requireMaterialization: false,
+        }))) {
+        return admittedTargetOccurrenceRetired();
+      }
+      return null;
+    };
+    const beforeDemandCurrentness = await checkAdmittedCurrentness();
+    if (beforeDemandCurrentness !== null) {
+      return { matched: true, result: beforeDemandCurrentness };
     }
     if (!targetActionInvocations.has(pluginId, action.definition.id)) {
       let activationFailure: PluginActionExecutorResult | null;
@@ -684,29 +687,13 @@ export async function executeContributedAction(params: Readonly<{
         ),
       };
     }
-    // Final admission fence for the host-stamped contributor and targeted
-    // operation, after every await above (demand activation, execution
+    // Repeat the admission fence after every await above (demand activation, execution
     // origin, replay placement) and immediately before the target registry
     // admits the handler. The registry's post-approval re-check covers the
     // only later await on user input.
-    if (expectedContributorOccurrenceId !== undefined
-      && !(await isExpectedPluginCurrent({
-        runtimeRegistry,
-        pluginId,
-        expectedOccurrenceId: expectedContributorOccurrenceId,
-        expectedMaterializationId: expectedContributorMaterializationId,
-        requireMaterialization: true,
-      }))) {
-      return { matched: true, result: admittedContributorOccurrenceRetired() };
-    }
-    if (admittedTargetedOperation !== undefined
-      && !(await isExpectedPluginCurrent({
-        runtimeRegistry,
-        pluginId: admittedTargetedOperation.target.pluginId,
-        expectedOccurrenceId: admittedTargetedOperation.target.occurrenceId,
-        requireMaterialization: false,
-      }))) {
-      return { matched: true, result: admittedTargetOccurrenceRetired() };
+    const beforeHandlerCurrentness = await checkAdmittedCurrentness();
+    if (beforeHandlerCurrentness !== null) {
+      return { matched: true, result: beforeHandlerCurrentness };
     }
     const validatedInput = admittedTargetedOperation === undefined
       ? null

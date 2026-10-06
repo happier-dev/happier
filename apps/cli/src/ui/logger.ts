@@ -7,7 +7,7 @@
 
 import chalk from 'chalk'
 import { isPidPresent } from '@happier-dev/cli-common/process'
-import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports'
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { configuration } from '../configuration'
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -384,7 +384,7 @@ export class Logger {
 
   debug(message: string, ...args: unknown[]): void {
     if (!this.debugFileEnabled) return
-    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, args)
 
     // NOTE: @kirill does not think its a good ideas,
     // as it will break us using claude in interactive mode.
@@ -461,18 +461,18 @@ export class Logger {
     } catch {
       json = inspect(truncatedObject, { depth: 8, maxArrayLength })
     }
-    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, '\n', json)
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ['\n', json])
   }
   
   info(message: string, ...args: unknown[]): void {
     this.logToConsole('info', '', message, ...args)
     if (!this.infoFileEnabled) return
-    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, args)
   }
 
   infoFile(message: string, ...args: unknown[]): void {
     if (!this.infoFileEnabled) return
-    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, args)
   }
   
   infoDeveloper(message: string, ...args: unknown[]): void {
@@ -488,7 +488,13 @@ export class Logger {
   warn(message: string, ...args: unknown[]): void {
     this.logToConsole('warn', '', message, ...args)
     if (!this.warnFileEnabled) return
-    this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, ...args)
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, args)
+  }
+
+  /** Retain local paths, redact credentials, and bypass console and remote output. */
+  warnLocalFile(message: string, ...args: unknown[]): void {
+    if (!this.warnFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, args, false)
   }
 
   /**
@@ -742,7 +748,7 @@ export class Logger {
     }
   }
 
-  private logToFile(prefix: string, message: string, ...args: unknown[]): void {
+  private logToFile(prefix: string, message: string, args: readonly unknown[], allowRemote = true): void {
     const unredactedLogLine = `${prefix} ${message} ${args.map(arg => {
       if (typeof arg === 'string') return arg
       if (arg instanceof Error) return arg.stack || arg.message
@@ -754,12 +760,12 @@ export class Logger {
         return String(arg)
       }
     }).join(' ')}\n`
-    const logLine = this.redactFileOutput
+    const logLine = this.redactFileOutput || !allowRemote
       ? redactBugReportSensitiveText(unredactedLogLine)
       : unredactedLogLine
     
     // Send to remote server if configured
-    if (this.dangerouslyUnencryptedServerLoggingUrl) {
+    if (allowRemote && this.dangerouslyUnencryptedServerLoggingUrl) {
       // Determine log level from prefix
       let level = 'info'
       if (prefix.includes(this.localTimezoneTimestamp())) {

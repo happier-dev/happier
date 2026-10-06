@@ -1,8 +1,6 @@
-import {
-    MAX_AGENT_ROUTING_ID_BYTES,
-    PluginSourceCustodyV1Schema,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { MAX_AGENT_ROUTING_ID_BYTES } from '@happier-dev/protocol/agents/agentIdV1';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '@happier-dev/protocol/plugins/plugin-id';
 import type { AgentSessionRunnerFactoryLocatorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { z } from 'zod';

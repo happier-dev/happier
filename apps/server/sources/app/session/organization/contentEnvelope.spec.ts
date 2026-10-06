@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { SessionOrganizationContentEnvelopeSchema } from "@happier-dev/protocol";
 
 import type { SessionOrganizationTx } from "./types";
 import {
@@ -16,6 +17,17 @@ function createTx(account: unknown): SessionOrganizationTx {
 }
 
 describe("Session Organization content envelope", () => {
+    it.each([
+        { t: "plain", v: { name: "Work", savedBy: "document-author" } },
+        { t: "encrypted", c: "ciphertext" },
+    ])("drops unknown stored envelope fields while retaining canonical content and strict writes", (display) => {
+        const stored = { ...display, savedBy: "old-client" };
+        const parsed = parseSessionOrganizationDisplayEnvelope(JSON.stringify(stored));
+        expect(parsed).toEqual({ status: "ready", display });
+        if (parsed.status !== "ready") return;
+        expect(serializeSessionOrganizationDisplayEnvelope(parsed.display)).toBe(JSON.stringify(display));
+        expect(SessionOrganizationContentEnvelopeSchema.safeParse(stored).success).toBe(false);
+    });
     it("rejects encrypted display content for a plain Account", async () => {
         const allowed =
             await areSessionOrganizationDisplayEnvelopesAllowedForAccount({
@@ -58,6 +70,7 @@ describe("Session Organization content envelope", () => {
         "{",
         JSON.stringify({ t: "future", value: "unreadable" }),
         JSON.stringify({ t: "plain" }),
+        JSON.stringify({ t: "encrypted", c: 1, savedBy: "old-client" }),
     ])("preserves malformed stored display as typed unreadable state", (value) => {
         expect(parseSessionOrganizationDisplayEnvelope(value)).toEqual({
             status: "unreadable",

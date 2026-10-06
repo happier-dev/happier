@@ -1,5 +1,5 @@
-import { ExecutionRunWaitResultSchema, type AutomationRunLifecycleSource,
-  type AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol';
+import { ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { AutomationRunLifecycleSource, AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol';
 
 type Source = Extract<AutomationRunLifecycleSource, { kind: 'execution_run' }>;
 

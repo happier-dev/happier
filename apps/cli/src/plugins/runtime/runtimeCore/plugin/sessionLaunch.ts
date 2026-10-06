@@ -4,35 +4,21 @@ import type { AccountSettingsContext } from '@/settings/accountSettings/bootstra
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { SessionAttachSecret } from '@/agent/runtime/sessionAttach';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
-import {
-  AcpConfigOptionOverridesV1Schema,
-    AgentExecutionTargetV1Schema,
-    AgentSessionStartupInstructionsV1Schema,
-    BackendTargetRefV2Schema,
-    MachinePoolSelectionOriginV1Schema,
-    buildBackendTargetKeyV2,
-    normalizeBackendTargetRefV2InputToV2,
-    resolveSessionModelSelectionInputRefV1,
-    SessionModelSelectionResolutionError,
-    SessionModelSelectionV1Schema,
-    SessionCreationCorrespondenceV1Schema,
-    SessionCreationTagV1Schema,
-    SessionInitialAccessDraftV1Schema,
-    SessionSpawnNewInputV2Schema,
-    type BackendTargetRefV2Input,
-    type AcpConfigOptionOverridesV1,
-    type AgentSessionStartupInstructionsV1,
-    type MachinePoolSelectionOriginV1,
-    type SessionCreationCorrespondenceV1,
-    type SessionCreationTagV1,
-    type SessionModelSelectionV1,
-    type SessionInitialAccessDraftV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
-import {
-    SessionTeamCredentialBindingIntentsV1Schema,
-    type SessionTeamCredentialBindingIntentListV1,
-} from '@happier-dev/protocol/teams';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveSessionModelSelectionInputRefV1, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { BackendTargetRefV2Input, AcpConfigOptionOverridesV1, AgentSessionStartupInstructionsV1, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionModelSelectionV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import {
   NativeForkSourceSchema,

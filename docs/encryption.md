@@ -808,6 +808,13 @@ opens only that caller's recipient envelope; the private binding retains the
 owner Account, Run, purpose and, for progress, exact invocation identity.
 Plain Runs need no client encryption material or recipient-key rows.
 
+Automation-origin Runs materialize that accepted snapshot once, before root
+initialization. Later claims (including Continue after a human review hold)
+carry the canonical Run snapshot into the same coordinator used by direct Runs;
+they open the existing recipient envelope instead of generating a new per-run
+key or re-reading the live definition. Signed claim receipts retain no private
+accepted-snapshot copy: replay re-reads it from the transition-owned Run row.
+
 The server-visible Workflow structure is the same in plain and E2EE mode:
 
 - Invocation lifecycle `waiting_for_review` discloses a human-held step. Parent
@@ -819,9 +826,10 @@ The server-visible Workflow structure is the same in plain and E2EE mode:
   including draft publication while its lifecycle stays the same, not the new
   value or an integrity guarantee for the public index. Parent revision still
   governs Run state and control transitions.
-- Frozen nullable `sourceArtifactId` identifies the saved definition that
-  admitted the Run; it exposes source attribution, not definition content or an
-  access grant.
+- Frozen nullable `sourceArtifactId` identifies the saved definition used for
+  grant lineage. A reviewed inline draft can retain this binding while admitting
+  its on-screen content, without saving or substituting the saved definition.
+  It exposes source attribution, not definition content or an access grant.
 - Frozen nullable `visibleTeamId` identifies the Team selected to see the Run.
   Access still requires that Team's live source-Artifact grant and the caller's
   effective membership; the id alone grants nothing.
@@ -1074,6 +1082,24 @@ restore remain available when the device has no usable retained secret; the
 UI's existing recovery result links to restore even when Account encryption
 opt-out is disabled.
 
+### Native file sharing and recovery-key backups (v0.3 development)
+
+Native file exports share through one cache owner. Downloads, artifact and diagnostics
+exports, workflow and theme documents, usage exports, voice history, runner packages,
+and recovery-key backups write unique files under the app's private `happier-downloads`
+cache. Captured usage images are copied there before sharing, then the original capture
+is released. The owner grants the chosen recipient read access and reports whether the
+shared file must remain readable: Android retains it after chooser handoff because
+chooser completion does not establish that the recipient finished reading; iOS removes
+it after the share sheet finishes. Failed, canceled, or unavailable handoffs attempt
+cleanup; sharing and cleanup failures remain visible in the app logs.
+
+An explicit recovery-key **Share** writes a plaintext backup. Clearing an in-memory
+recovery key does not erase a backup already handed to a recipient or retained in
+Android's private cache. Android recipient completion and subsequent cache reclamation
+remain unresolved; these sharing paths have no time-based expiry or automatic
+reclamation policy.
+
 ### Encrypted socket RPC routing (v0.3 development)
 
 The shared `packages/sync-client/src/rpc/socketRpcCodec.ts` binds every E2EE
@@ -1274,8 +1300,9 @@ unpersisted defaults for invalid layout content. Transport and ownership
 refusals remain errors. The retired
 0.3 `homeHubLayoutV1` Settings document has no reader, writer or migration.
 Qualified instance refs identify placements, not access grants. Session Board
-content remains Session-owned, while direct Companion instances and private
-viewer-selection metadata stay in existing device-local preferences.
+content remains Session-owned, while direct Companion instances stay in existing
+device-local preferences. Viewer connection choices use Connect's existing
+purpose selection, not a per-widget selection store.
 
 Reusable 0.3 development widget definitions are Account-owned
 `widget-definition.v1` Artifacts. Their declaration bodies use the same plain/E2EE
@@ -1286,6 +1313,12 @@ into Session Board content before approval, without exposing the private
 Artifact reference or Connected Account selections. Frozen snapshots use the
 existing Session Board record encryption and upsert owner; their inert preview
 and as-of/provenance metadata are shared content, not credential material.
+
+These stored readers drop unknown fields after mode and ownership admission,
+without weakening required identities, private-selection checks or strict write
+admission. The [stored-reader policy](compatibility.md#widget-and-organization-stored-readers-03-development)
+also covers the generic Artifact body and separately bound private-revision
+envelope; stripping an obsolete body field never makes it private attribution.
 
 The in-progress 0.3 binary extension keeps the opened body inside this same
 envelope: it is either text/null or a strict `{ blobId, mime, sizeBytes, sha256 }`
@@ -1347,19 +1380,58 @@ envelope for the selected revision. Omitting it retains the previous restore
 contract. Plaintext replacements must preserve the selected body content; E2EE
 replacements remain opaque to the Home. Both paths retain the selected blob
 identity and use the existing grant, mode, quota and header/body CAS owner.
-Revision actor/restore metadata inside this envelope is unfinished development
-work: public Artifact links currently expose the live original envelope to their
-key holders, so this metadata must not be described as private from those
-recipients. Its publication treatment requires a product decision before the
-provenance feature can be completed.
+Development revision actor/restore metadata is stored separately from that
+shared body: `Artifact.provenance` and retained `ArtifactRevision.provenance`
+carry a versioned envelope bound to the Artifact id and body version. Writers
+stamp the admitted person or Agent/session; restore records the restoring actor
+and selected version. Missing metadata means unknown attribution, not the last
+known actor. Header-only edits do not invent a new body save.
 
-The Account encryption transition carries every retained body through the
-same signed Artifact migration item, checking the complete revision set and
-source body bytes before replacing the head, key and history atomically.
+The owner's persisted Account mode controls this private envelope. Plain mode
+uses the ordinary plain stored-content envelope and the server's existing
+at-rest sealing, without client key material. E2EE uses an independently generated
+data key: `Artifact.provenanceDataEncryptionKey` wraps it for the owner and
+`ArtifactKeyEnvelope.encryptedProvenanceDataKey` wraps it for authorized grants.
+It is never derived from or wrapped by the publicly shared content key. Public
+link responses contain neither the private envelope nor its key; owner/grant
+reads and history open it through their existing authorization boundary.
+If a grant has its content key but no delivered private key, the server omits
+private metadata for that caller; ordinary content remains usable with unknown
+attribution. Supplied but inconsistent private metadata fails closed.
+Authenticated header-only inventories carry the current body version and the
+same recipient-private envelope independently of whether document bodies are
+requested. The Artifacts browser opens this metadata on a cold list refresh;
+document bodies remain lazy. Public-link inventory/content paths do not gain
+this metadata or its key.
+Live Artifact create/update events carry the same private envelope and the
+recipient-qualified wrap projected by the existing access owner. An editing
+grant's wrap is not substituted for the owner's. An incomplete update without
+private metadata leaves an already-loaded attribution unchanged; a delivered
+envelope for a newer body revision replaces it after authenticated opening.
+Host-stamped workspace publication facts (Session, run, Machine, workspace path
+and source hash) are part of the same private revision provenance. The shared
+file-publication owner returns them separately from the public preview header;
+UI and CLI key holders preserve them through rewrite, restore and Account-mode
+conversion. The public header carries preview metadata such as title, kind,
+MIME and byte size. The Artifacts browser reads source attribution from the
+private envelope.
+Workflow's kind-owned public-header projection removes historical `savedBy`
+from new writes, restores and list results; private metadata alone owns saver
+attribution. Workflow write admission rejects that undeployed header field;
+stored readers discard it without making the remaining known header unreadable.
+Earlier unfinished 0.3 writers placed attribution inside shared content.
+The one-way 0.3 upgrade does not preserve or migrate these development
+intermediates, and this change cannot recall bytes already disclosed.
+
+The Account encryption transition carries every retained body and private
+revision envelope through the same signed Artifact migration item, checking the
+complete revision set and source bytes before replacing the head, independent
+keys, recipient wraps and history atomically.
 Older documents with no history supply an empty revision set. History is never
 silently discarded or interpreted under the target mode without conversion.
 The key-holding migration opens raw header metadata, not the Artifact viewer's
-display-normalized header. Crypto conversion preserves arbitrary metadata;
+display-normalized header. Crypto conversion preserves arbitrary metadata except
+the obsolete public Workflow saver field;
 strictly admitted Workflow headers advance their embedded revision with the
 physical head versions. Display defaults are not persisted by this migration.
 
@@ -2550,6 +2622,8 @@ External transcript authority is separate from the session's `e2ee | plain` cont
 The server applies the publication ceiling before ordinary pagination and derived projections, including counts, list previews, latest-turn/attention state, exports, notifications, and friend/public/share readers. Operation-private staging is never public. A failed or cancelled catch-up leaves the prior complete publication visible; only canonical publication advances the public ceiling.
 
 Server-readable publication metadata is limited to an opaque publication id, source observation time, and published server sequence. Raw Agent-source cursors and paths remain local or E2EE-owned, and content-derived watermark digests are not publication identities.
+
+In current 0.3 development, materialization Start and import-bearing Resume/Retry acknowledge the committed, published operation revision before capture and historical import finish. The originating daemon continues the operation; clients follow its canonical progress and status rather than holding an RPC open until completion. Cancel records durable cancellation intent and stops before the next capture or import effect once the current effect settles. Accepted historical records and the prior complete publication remain governed by the existing publication fence. Empty linked sessions keep the transcript footer visible, and the durable operation presentation keeps its progress and controls visible after linked metadata is converted. Shared Activity projects that durable owner through the [External Session activity contract](actions.md#external-session-activity-03-development); queued publication validates credential and snapshot Accounts against the pinned machine connection before encryption.
 
 Canonical owners:
 

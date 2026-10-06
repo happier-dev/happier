@@ -1,11 +1,7 @@
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { randomUUID } from 'node:crypto';
-import {
-  convertBackendTargetRefV2ToV1,
-  readBackendTargetRefV2,
-  type BackendTargetRefV1,
-  type SessionInputCausalPermissionAuthorityV1,
-} from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 
 import type { AttachRetainedRunSessionInput, ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunBackendController, ExecutionRunController } from '@/agent/executionRuns/controllers/types';

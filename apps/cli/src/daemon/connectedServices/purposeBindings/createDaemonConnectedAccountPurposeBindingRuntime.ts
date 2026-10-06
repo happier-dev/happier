@@ -1,22 +1,11 @@
-import {
-  ConnectedAccountUiProjectionEntryV1Schema,
-  ConnectedServiceIdSchema,
-  MAX_INTERACTION_TRANSIENT_CHOICES_V1,
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  isQualifiedConnectedAccountProfileActiveV4,
-  isQualifiedConnectedAccountProfileUsableV4,
-  resolveQualifiedConnectedAccountGroupActiveAccountV4,
-  sameQualifiedConnectedAccountRef,
-  type ConnectedServiceId,
-  type ConnectedServiceCredentialRevisionV1,
-  type PluginConnectedAccountAuthenticationV2,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { MAX_INTERACTION_TRANSIENT_CHOICES_V1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isQualifiedConnectedAccountProfileActiveV4, isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ConnectedServiceId, ConnectedServiceCredentialRevisionV1, PluginConnectedAccountAuthenticationV2, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   ConnectedAccountMaterializationRequest,

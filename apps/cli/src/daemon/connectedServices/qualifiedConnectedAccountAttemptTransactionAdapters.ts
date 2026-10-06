@@ -1,17 +1,12 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
-  PluginSourceCustodyV1Schema,
-  StoredJsonContentEnvelopeSchema,
-  isStoredJsonContentEnvelopeModeCompatible,
-  openQualifiedConnectedAccountContentEnvelope,
-  pluginSourceCustodyV1Equal,
-  sealQualifiedConnectedAccountContentEnvelope,
-  sameQualifiedConnectedAccountRef,
-  type StoredJsonContentEnvelope,
-} from '@happier-dev/protocol';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { StoredJsonContentEnvelopeSchema, isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import {

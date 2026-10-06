@@ -15,11 +15,7 @@
  * reference resolves model-facing context into a draft, while a search provider
  * returns host-rendered entities a reader opens or executes.
  */
-import {
-  PluginSearchItemV1Schema as canonicalPluginSearchItemV1Schema,
-  PluginSearchQueryV1Schema as canonicalPluginSearchQueryV1Schema,
-  PluginSearchResultV1Schema as canonicalPluginSearchResultV1Schema,
-} from '@happier-dev/protocol/plugins/contributions/search-providers';
+import { PluginSearchItemV1Schema as canonicalPluginSearchItemV1Schema, PluginSearchQueryV1Schema as canonicalPluginSearchQueryV1Schema, PluginSearchResultV1Schema as canonicalPluginSearchResultV1Schema } from '@happier-dev/protocol/plugins/contributions/search-providers';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import { projectProtocolValue } from './protocol/projectProtocolValue.js';
 import type {
@@ -27,14 +23,7 @@ import type {
   PluginUiSemanticCommandV1,
 } from './ui/publicContract.js';
 
-export {
-  MAX_PLUGIN_SEARCH_ITEMS_V1,
-  MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1,
-  MAX_PLUGIN_SEARCH_ITEM_ID_UTF8_BYTES_V1,
-  MAX_PLUGIN_SEARCH_QUERY_UTF8_BYTES_V1,
-  MAX_PLUGIN_SEARCH_SUBTITLE_CODE_POINTS_V1,
-  MAX_PLUGIN_SEARCH_TITLE_CODE_POINTS_V1,
-} from '@happier-dev/protocol/plugins/contributions/search-providers';
+export { MAX_PLUGIN_SEARCH_ITEMS_V1, MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1, MAX_PLUGIN_SEARCH_ITEM_ID_UTF8_BYTES_V1, MAX_PLUGIN_SEARCH_QUERY_UTF8_BYTES_V1, MAX_PLUGIN_SEARCH_SUBTITLE_CODE_POINTS_V1, MAX_PLUGIN_SEARCH_TITLE_CODE_POINTS_V1 } from '@happier-dev/protocol/plugins/contributions/search-providers';
 
 export type PluginSearchProviderContributionV1 = Readonly<{
   id: string;

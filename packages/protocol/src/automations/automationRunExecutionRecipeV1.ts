@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
@@ -87,6 +88,7 @@ export const AutomationRunTemplateV1Schema = z.object({
   mentions: z.array(MentionRefV1Schema).max(MENTION_BOUNDS.maxPerMessage).optional(),
 }).strict();
 export type AutomationRunTemplateV1 = z.infer<typeof AutomationRunTemplateV1Schema>;
+export const AutomationRunTemplateV1ReadSchema = createStoredReadSchema(AutomationRunTemplateV1Schema);
 
 /**
  * The immutable private Event evidence consumed by the one Run materializer.
@@ -123,6 +125,7 @@ export const AutomationRunTriggerEvidenceV1Schema = z.discriminatedUnion('kind',
 export type AutomationRunTriggerEvidenceV1 = z.infer<
   typeof AutomationRunTriggerEvidenceV1Schema
 >;
+const AutomationRunTriggerEvidenceV1ReadSchema = createStoredReadSchema(AutomationRunTriggerEvidenceV1Schema);
 
 /**
  * Why one frozen prompt program could not be materialized. Execution surfaces
@@ -386,11 +389,14 @@ function addAutomationExecutionRecipePlainTemplateTargetIssueV1(
     target: AutomationRunExecutionTargetV1;
   }>,
   context: z.RefinementCtx,
+  templateSchema: typeof AutomationRunTemplateV1Schema,
 ): void {
+  if (value.template.t !== 'plain') return;
+  const template = templateSchema.safeParse(value.template.v);
   if (
-    value.template.t === 'plain'
-    && validateAutomationRunTemplateForExecutionTargetV1({
-      template: value.template.v,
+    !template.success
+    || validateAutomationRunTemplateForExecutionTargetV1({
+      template: template.data,
       target: value.target,
     }).kind !== 'available'
   ) {
@@ -402,20 +408,54 @@ function addAutomationExecutionRecipePlainTemplateTargetIssueV1(
   }
 }
 
-export const AutomationRunExecutionRecipeV1Schema = z.object({
-  ...AutomationExecutionRecipeBaseShapeV1,
-  assignmentMachineIds: z.array(PluginMachineMaterializationMachineIdV1Schema),
-}).strict().superRefine((value, context) => {
-  addAutomationExecutionRecipeFramingIssueV1(value, context);
-  addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context);
-  if (new Set(value.assignmentMachineIds).size !== value.assignmentMachineIds.length) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['assignmentMachineIds'],
-      message: 'Automation Run assignment machine ids must be unique',
-    });
+function createAutomationRunExecutionRecipeV1Schema(templateSchema: typeof AutomationRunTemplateV1Schema) {
+  return z.object({
+    ...AutomationExecutionRecipeBaseShapeV1,
+    assignmentMachineIds: z.array(PluginMachineMaterializationMachineIdV1Schema),
+  }).strict().superRefine((value, context) => {
+    addAutomationExecutionRecipeFramingIssueV1(value, context);
+    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context, templateSchema);
+    if (new Set(value.assignmentMachineIds).size !== value.assignmentMachineIds.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['assignmentMachineIds'],
+        message: 'Automation Run assignment machine ids must be unique',
+      });
+    }
+  });
+}
+
+function projectAutomationExecutionRecipePlainContentV1<T extends Readonly<{
+  template: z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
+  triggerEvidence: z.infer<typeof AutomationStoredContentEnvelopeV1Schema> | null;
+}>>(recipe: T, context: z.RefinementCtx) {
+  const evidence = recipe.triggerEvidence?.t === 'plain'
+    ? AutomationRunTriggerEvidenceV1ReadSchema.safeParse(recipe.triggerEvidence.v)
+    : null;
+  if (evidence !== null && !evidence.success) {
+    for (const issue of evidence.error.issues) {
+      context.addIssue({ ...issue, path: ['triggerEvidence', 'v', ...issue.path] });
+    }
+    return z.NEVER;
   }
-});
+  return {
+    ...recipe,
+    template: recipe.template.t === 'plain'
+      ? AutomationStoredContentEnvelopeV1Schema.parse({
+        t: 'plain', v: AutomationRunTemplateV1ReadSchema.parse(recipe.template.v),
+      })
+      : recipe.template,
+    triggerEvidence: evidence?.success
+      ? AutomationStoredContentEnvelopeV1Schema.parse({ t: 'plain', v: evidence.data })
+      : recipe.triggerEvidence,
+  };
+}
+
+export const AutomationRunExecutionRecipeV1Schema = defineStoredReadProjection(
+  createAutomationRunExecutionRecipeV1Schema(AutomationRunTemplateV1Schema),
+  () => createStoredReadSchema(createAutomationRunExecutionRecipeV1Schema(AutomationRunTemplateV1ReadSchema))
+    .transform(projectAutomationExecutionRecipePlainContentV1),
+);
 export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecutionRecipeV1Schema>;
 
 /**
@@ -424,11 +464,12 @@ export type AutomationRunExecutionRecipeV1 = z.infer<typeof AutomationRunExecuti
  * definition authoring surface — the account-owner V3 route and the plugin
  * Conversation target Action — parses through this single owner.
  */
-export const AutomationStoredDefinitionExecutionRecipeV1Schema = z.object({
-  ...AutomationExecutionRecipeBaseShapeV1,
-}).strict().superRefine((value, context) => {
+function createAutomationStoredDefinitionExecutionRecipeV1Schema(templateSchema: typeof AutomationRunTemplateV1Schema) {
+  return z.object({
+    ...AutomationExecutionRecipeBaseShapeV1,
+  }).strict().superRefine((value, context) => {
     addAutomationExecutionRecipeFramingIssueV1(value, context);
-    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context);
+    addAutomationExecutionRecipePlainTemplateTargetIssueV1(value, context, templateSchema);
     if (value.triggerEvidence !== null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -437,9 +478,19 @@ export const AutomationStoredDefinitionExecutionRecipeV1Schema = z.object({
       });
     }
   });
+}
+
+export const AutomationStoredDefinitionExecutionRecipeV1Schema = defineStoredReadProjection(
+  createAutomationStoredDefinitionExecutionRecipeV1Schema(AutomationRunTemplateV1Schema),
+  () => createStoredReadSchema(createAutomationStoredDefinitionExecutionRecipeV1Schema(AutomationRunTemplateV1ReadSchema))
+    .transform(projectAutomationExecutionRecipePlainContentV1),
+);
 export type AutomationStoredDefinitionExecutionRecipeV1 = z.infer<
   typeof AutomationStoredDefinitionExecutionRecipeV1Schema
 >;
+
+export const AutomationRunExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationRunExecutionRecipeV1Schema);
+export const AutomationStoredDefinitionExecutionRecipeV1ReadSchema = createStoredReadSchema(AutomationStoredDefinitionExecutionRecipeV1Schema);
 
 export type AutomationStoredDefinitionExecutionRecipeSerializedV1Result =
   | Readonly<{
@@ -462,7 +513,7 @@ export function parseAutomationStoredDefinitionExecutionRecipeV1(
   } catch {
     return { kind: 'contentInvalid' };
   }
-  const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(value);
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1ReadSchema.safeParse(value);
   return recipe.success
     ? { kind: 'available', recipe: recipe.data, serialized }
     : { kind: 'contentInvalid' };
@@ -489,7 +540,7 @@ export type AutomationRunExecutionRecipeSerializedV1Result =
 
 /**
  * The canonical persistence parser for a frozen Automation recipe. Callers do
- * not JSON.parse recipe bytes themselves: this keeps strict shape, decoded
+ * not JSON.parse recipe bytes themselves: this keeps known-field validation, decoded
  * allocation, and UTF-8 framing limits at the Protocol owner.
  */
 export function parseAutomationRunExecutionRecipeV1(
@@ -507,7 +558,7 @@ export function parseAutomationRunExecutionRecipeV1(
   } catch {
     return { kind: 'contentInvalid' };
   }
-  const recipe = AutomationRunExecutionRecipeV1Schema.safeParse(value);
+  const recipe = AutomationRunExecutionRecipeV1ReadSchema.safeParse(value);
   if (!recipe.success) return { kind: 'contentInvalid' };
   return { kind: 'available', recipe: recipe.data, serialized };
 }
@@ -588,7 +639,7 @@ export function inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params: 
   recipe: unknown;
   accountCurrentness: unknown;
 }>): AutomationStoredDefinitionExecutionRecipeOuterInspectionResultV1 {
-  const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(params.recipe);
+  const recipe = AutomationStoredDefinitionExecutionRecipeV1ReadSchema.safeParse(params.recipe);
   const accountCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(
     params.accountCurrentness,
   );
@@ -604,6 +655,7 @@ export function validateAutomationStoredDefinitionExecutionRecipeOuterV1(params:
   recipe: unknown;
   accountCurrentness: unknown;
 }>): AutomationStoredDefinitionExecutionRecipeOuterValidationResultV1 {
+  if (!AutomationStoredDefinitionExecutionRecipeV1Schema.safeParse(params.recipe).success) return { kind: 'contentInvalid' };
   const inspected = inspectAutomationStoredDefinitionExecutionRecipeOuterV1(params);
   return inspected.kind === 'available' ? inspected : { kind: 'contentInvalid' };
 }
@@ -640,7 +692,7 @@ export function inspectAutomationRunExecutionRecipeOuterV1(params: Readonly<{
   recipe: unknown;
   accountCurrentness: unknown;
 }>): AutomationRunExecutionRecipeOuterInspectionResultV1 {
-  const recipe = AutomationRunExecutionRecipeV1Schema.safeParse(params.recipe);
+  const recipe = AutomationRunExecutionRecipeV1ReadSchema.safeParse(params.recipe);
   const accountCurrentness = AutomationAccountCurrentnessWitnessV1Schema.safeParse(
     params.accountCurrentness,
   );
@@ -712,7 +764,10 @@ function readRecipeContent(params: Readonly<{
     return { kind: 'contentInvalid' };
   }
   if (params.openedContent === undefined) return { kind: 'materialUnavailable' };
-  const openedContent = AutomationRunOpenedExecutionRecipeContentV1Schema.safeParse(params.openedContent);
+  const openedContent = createStoredReadSchema(AutomationRunOpenedExecutionRecipeContentV1Schema).safeExtend({
+    template: AutomationRunTemplateV1ReadSchema,
+    triggerEvidence: AutomationRunTriggerEvidenceV1ReadSchema.nullable(),
+  }).safeParse(params.openedContent);
   return openedContent.success
     ? { kind: 'available', content: openedContent.data }
     : { kind: 'contentInvalid' };

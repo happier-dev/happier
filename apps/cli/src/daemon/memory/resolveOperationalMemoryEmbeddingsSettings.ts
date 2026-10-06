@@ -1,10 +1,5 @@
-import {
-  resolveMemoryEmbeddingsConfig,
-  type MemoryEmbeddingsCustomConfig,
-  type MemoryEmbeddingsMode,
-  type MemoryEmbeddingsPresetId,
-  type MemorySettingsV1,
-} from '@happier-dev/protocol';
+import { resolveMemoryEmbeddingsConfig } from '@happier-dev/protocol/memory/resolveMemoryEmbeddingsConfig';
+import type { MemoryEmbeddingsCustomConfig, MemoryEmbeddingsMode, MemoryEmbeddingsPresetId, MemorySettingsV1 } from '@happier-dev/protocol';
 import {
   createUnavailableInferenceDiagnostics,
   type InferenceDiagnostics,

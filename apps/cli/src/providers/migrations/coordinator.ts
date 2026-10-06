@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Credentials } from '@/persistence';
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  type ProviderAccountSettingsMigrationContextV1,
-  type ProviderContributionV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import type { ProviderAccountSettingsMigrationContextV1, ProviderContributionV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import {
   awaitWithinProviderOperation,

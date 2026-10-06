@@ -435,7 +435,7 @@ describe('BundledSpeechSettings', () => {
       ...entry.providerSettings.defaultConfig,
       baseUrl: 'https://speech.example/v1', insecureLocalOriginConsent: '', insecureLocalConsentMachineId: '',
       model: 'tts-1', voiceName: 'alloy', format: 'mp3',
-    }), executionMachine: { mode: 'fixed' as const, machineId: 'machine-a', autoMachineId: null } };
+    }), executionMachine: { mode: 'fixed' as const, machineId: 'machine-a' } };
     settingsActionState.voice = voice;
     const setVoice = vi.fn();
     const rendered = await renderScreen(React.createElement(spec.Settings, {

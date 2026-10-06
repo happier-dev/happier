@@ -1,10 +1,6 @@
-import {
-    DaemonMachineLiveStreamRelayStartRequestV1Schema,
-    DaemonMachineLiveStreamRelayStartResponseV1Schema,
-    type DaemonMachineLiveStreamRelayStartResponseV1,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonMachineLiveStreamRelayStartRequestV1Schema, DaemonMachineLiveStreamRelayStartResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
+import type { DaemonMachineLiveStreamRelayStartResponseV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 

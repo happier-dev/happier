@@ -1,9 +1,7 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  readConnectedServiceLimitCategoryV1,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,

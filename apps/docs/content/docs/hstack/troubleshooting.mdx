@@ -129,7 +129,7 @@ current snapshot and source services in place; it does not restart consumers. Th
 In current development checkouts, explicit named-stack artifact builds also record their requested components'
 terminal outcomes in this producer projection, including failures during dependency preparation. Read the
 producer's `stack info --json` for the component error. Build progress and lock waits go to stderr, so they remain
-visible with `--json`. A successful artifact build still requires runtime activation before a consumer can load it.
+visible with `--json`. In 0.3 development, a successful component build returns a complete `snapshotId` for its target and advances the native producer pin when targets match; consumers adopt the newest complete snapshot for their target through `runtime select`, without rebuilding.
 
 Common fixes:
 
@@ -153,8 +153,8 @@ If `select` reports that no producer snapshot is active, request the required ar
 remembered consumer; the checkout authority owns and coalesces the publication:
 
 ```bash
-hstack stack build <stack> --server --daemon
-hstack stack runtime <stack> activate --all
+hstack stack build <stack> --all
+hstack stack runtime <stack> select
 ```
 
 If `selectedSnapshotId` and `loadedSnapshotId` differ, the stack is behaving as designed: snapshot
@@ -176,23 +176,23 @@ hstack stack runtime <stack> select
 Diagnose that runtime-backed path with `hstack stack doctor <stack> --runtime`; without the flag,
 the stack wrapper intentionally diagnoses source mode instead.
 
-If selection reports that the producer has no active snapshot, use the narrow consumer build plus
-`runtime activate --all` shown above. This resolves to the same repository authority; it does not
+If selection reports that the producer has no complete snapshot for this target, initialize it with
+the `--all` build and `runtime select` shown above. This resolves to the same repository authority; it does not
 create per-consumer artifacts or restart the producer. Run one request and let lock waiters reuse it.
 
-If you only rebuilt one component, remember that builds update artifacts, not the active runtime:
+To pick up newer fixes, build the changed component once and select the resulting producer snapshot. Other consumers use only `select`:
 
 ```bash
-# new web artifact exists, but the runtime still serves the old UI until activation
+# strict snapshot UI: select the publication, then deliberately load it
 hstack stack build <stack> --web
-hstack stack runtime <stack> activate --web
-# then reload the browser
+hstack stack runtime <stack> select
+# restart to load the selection, then reload the browser
 ```
 
 ```bash
-# server/daemon partial activation still requires a restart
+# server/daemon selection still requires an explicit restart
 hstack stack build <stack> --server
-hstack stack runtime <stack> activate --server
+hstack stack runtime <stack> select
 hstack stack service <stack> restart
 ```
 

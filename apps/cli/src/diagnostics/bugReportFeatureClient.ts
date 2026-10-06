@@ -1,7 +1,5 @@
-import {
-  DEFAULT_BUG_REPORTS_CAPABILITIES,
-  type BugReportsCapabilities,
-} from '@happier-dev/protocol';
+import { DEFAULT_BUG_REPORTS_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/bugReportsCapabilities';
+import type { BugReportsCapabilities } from '@happier-dev/protocol';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 

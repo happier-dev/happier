@@ -1,10 +1,6 @@
-import {
-  PromptAssetMutationResponseV1Schema,
-  PromptAssetReadRequestSchema,
-  RPC_METHODS,
-  type PromptAssetMutationResponseV1,
-  type PromptAssetReadRequest,
-} from '@happier-dev/protocol';
+import { PromptAssetMutationResponseV1Schema, PromptAssetReadRequestSchema } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { PromptAssetMutationResponseV1, PromptAssetReadRequest } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';

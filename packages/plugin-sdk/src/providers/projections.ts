@@ -30,18 +30,12 @@ import type {
     DaemonProviderProfileMigrationPreviewRequestV1,
     DaemonProviderProfileMigrationPreviewResponseV1,
 } from '@happier-dev/protocol/rpc';
-import {
-    resolveSessionModelSelectionIntentV1 as canonicalResolveSessionModelSelectionIntentV1,
-} from '@happier-dev/protocol/providers/model-selection';
-import {
-    resolveProviderBindingCompatibilityWithFingerprintV1 as canonicalResolveProviderBindingCompatibilityWithFingerprintV1,
-} from '@happier-dev/protocol/providers/binding-compatibility';
+import { resolveSessionModelSelectionIntentV1 as canonicalResolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+import { resolveProviderBindingCompatibilityWithFingerprintV1 as canonicalResolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type {
     ResolveProviderBindingCompatibilityInputV1,
 } from '@happier-dev/protocol/providers/binding-compatibility';
-import {
-    ProviderContributionV1Schema as canonicalProviderContributionV1Schema,
-} from '@happier-dev/protocol/providers/contributions';
+import { ProviderContributionV1Schema as canonicalProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 import type {
     ProviderContributionV1,
 } from '@happier-dev/protocol/providers/contributions';
@@ -53,18 +47,10 @@ export type {
 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { PluginCancellationOptions } from '../lifecycle.js';
 
-export {
-    areProviderContributionKeysEqualV1,
-} from '@happier-dev/protocol/providers/contribution-identity';
-export {
-    containsProviderRegisteredSensitiveValue,
-} from '@happier-dev/protocol/providers/sensitive-value-redaction';
-export {
-    normalizeProviderCredentialHeaderName,
-} from '@happier-dev/protocol/providers/credential-headers';
-export {
-    ProviderConnectionIdSchema,
-} from '@happier-dev/protocol/providers/ids';
+export { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+export { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
+export { normalizeProviderCredentialHeaderName } from '@happier-dev/protocol/providers/credential-headers';
+export { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 export type {
     ProviderConnectionId,
 } from '@happier-dev/protocol/providers/ids';
@@ -74,16 +60,9 @@ export const ProviderContributionV1Schema: Readonly<{
         | Readonly<{ success: true; data: ProviderContributionV1 }>
         | Readonly<{ success: false; error: unknown }>;
 }> = canonicalProviderContributionV1Schema;
-export {
-    ProviderEndpointUrlSyntaxSchema,
-} from '@happier-dev/protocol/providers/endpoint-url';
-export {
-    ProviderPublicHeadersV1Schema,
-} from '@happier-dev/protocol/providers/public-headers';
-export {
-    SessionModelSelectionResolutionError,
-    SessionModelSelectionV1Schema,
-} from '@happier-dev/protocol/providers/model-selection';
+export { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
+export { ProviderPublicHeadersV1Schema } from '@happier-dev/protocol/providers/public-headers';
+export { SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 export type {
     SessionModelSelectionResolutionErrorCode,
 } from '@happier-dev/protocol/providers/model-selection';

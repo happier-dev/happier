@@ -1,28 +1,14 @@
 import {
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
-import {
-  ConnectedServiceBindingsV2Schema,
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  TeamCredentialResourceEntitledPageV1Schema,
-  buildQualifiedPluginContributionKey,
-  projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
-  resolveAgentConnectedAccountPurposeDefaults,
-  type ActionExecutorDeps,
-  type AgentConnectedAccountPurposeDefault,
-  type QualifiedConnectedAccountPurposeV1,
-  type ConnectedServiceBindingSelectionV1,
-  type ConnectedServiceBindingSelectionV2,
-  type ConnectedServiceBindingsV2,
-  type TeamCredentialResourceCatalogEntryV1,
-  type TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
-import {
-  SessionTeamCredentialBindingIntentsV1Schema,
-  sessionTeamCredentialSlotKeyV1,
-  type SessionTeamCredentialBindingIntentListV1,
-  type SessionTeamCredentialBindingIntentV1,
-} from '@happier-dev/protocol/teams';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ActionExecutorDeps, AgentConnectedAccountPurposeDefault, QualifiedConnectedAccountPurposeV1, ConnectedServiceBindingSelectionV1, ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2, TeamCredentialResourceCatalogEntryV1, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
+import { SessionTeamCredentialBindingIntentsV1Schema, sessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams';
 
 import type { StoredCredentials } from '@/persistence';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';

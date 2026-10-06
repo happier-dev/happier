@@ -6,7 +6,7 @@ import {
   resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol';
-import { readSessionModesMetadata } from '@happier-dev/protocol';
+import { readSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 function metadataHasConcreteDefaultSessionMode(metadata: Metadata | null | undefined): boolean {
   return readSessionModesMetadata(metadata)?.availableModes.some((mode) => mode.id === 'default') ?? false;

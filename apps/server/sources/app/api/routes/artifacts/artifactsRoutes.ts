@@ -134,6 +134,7 @@ export function artifactsRoutes(app: Fastify) {
             : reply.code(503).send({ error: 'artifact_content_unavailable' });
         return reply.send({ retentionCount: result.retentionCount, revisions: result.revisions.map(revision => ({
             ...revision, body: privacyKit.encodeBase64(revision.body), createdAt: revision.createdAt.getTime(),
+            provenance: revision.provenance ? privacyKit.encodeBase64(revision.provenance) : null,
         })) });
     });
 
@@ -142,6 +143,7 @@ export function artifactsRoutes(app: Fastify) {
         schema: {
             params: z.object({ id: z.string(), bodyVersion: z.coerce.number().int().min(1) }),
             body: z.object({ header: z.string(), body: z.string().optional(),
+                provenance: z.string().nullable().optional(), provenanceDataEncryptionKey: z.string().nullable().optional(),
                 expectedHeaderVersion: z.number().int().min(1), expectedBodyVersion: z.number().int().min(1) }).strict(),
             response: {
                 200: z.union([
@@ -159,6 +161,8 @@ export function artifactsRoutes(app: Fastify) {
         const result = await restoreArtifactBodyRevision({ actorUserId: request.userId, artifactId: request.params.id,
             bodyVersion: request.params.bodyVersion, header: privacyKit.decodeBase64(request.body.header),
             ...(request.body.body !== undefined ? { body: privacyKit.decodeBase64(request.body.body) } : {}),
+            ...(request.body.provenance == null ? {} : { provenance: privacyKit.decodeBase64(request.body.provenance) }),
+            ...(request.body.provenanceDataEncryptionKey == null ? {} : { provenanceDataEncryptionKey: privacyKit.decodeBase64(request.body.provenanceDataEncryptionKey) }),
             expectedRevision: { headerVersion: request.body.expectedHeaderVersion,
                 bodyVersion: request.body.expectedBodyVersion } });
         if (!result.ok) {
@@ -171,12 +175,13 @@ export function artifactsRoutes(app: Fastify) {
             return reply.code(500).send({ error: 'Failed to restore artifact' });
         }
         if (!result.header || !result.body) return reply.code(500).send({ error: 'Failed to restore artifact' });
-        const recipient = result.ownerUpdate ?? { accountId: request.userId, cursor: result.cursor };
-        eventRouter.emitUpdate({ userId: recipient.accountId,
-            payload: buildUpdateArtifactUpdate(request.params.id, recipient.cursor, randomKeyNaked(12),
-                { value: privacyKit.encodeBase64(new Uint8Array(result.header.bytes)), version: result.header.version },
-                { value: privacyKit.encodeBase64(new Uint8Array(result.body.bytes)), version: result.body.version }),
-            recipientFilter: { type: 'user-scoped-only' } });
+        for (const recipient of result.recipientUpdates) {
+            eventRouter.emitUpdate({ userId: recipient.accountId,
+                payload: buildUpdateArtifactUpdate(request.params.id, recipient.cursor, randomKeyNaked(12),
+                    { value: privacyKit.encodeBase64(new Uint8Array(result.header.bytes)), version: result.header.version },
+                    { value: privacyKit.encodeBase64(new Uint8Array(result.body.bytes)), version: result.body.version }, recipient),
+                recipientFilter: { type: 'user-scoped-only' } });
+        }
         return reply.send({ success: true as const, headerVersion: result.header.version, bodyVersion: result.body.version });
     });
 
@@ -198,7 +203,9 @@ export function artifactsRoutes(app: Fastify) {
                     header: z.string(),
                     headerVersion: z.number(),
                     body: z.string().optional(),
-                    bodyVersion: z.number().optional(),
+                    bodyVersion: z.number(),
+                    provenance: z.string().nullable().optional(),
+                    provenanceDataEncryptionKey: z.string().nullable().optional(),
                     dataEncryptionKey: z.string(),
                     seq: z.number(),
                     createdAt: z.number(),
@@ -232,7 +239,10 @@ export function artifactsRoutes(app: Fastify) {
                     encryptionMode: artifact.encryptionMode,
                     header: privacyKit.encodeBase64(artifact.header),
                     headerVersion: artifact.headerVersion,
-                    ...(artifact.body === undefined ? {} : { body: privacyKit.encodeBase64(artifact.body), bodyVersion: artifact.bodyVersion }),
+                    ...(artifact.body === undefined ? {} : { body: privacyKit.encodeBase64(artifact.body) }),
+                    bodyVersion: artifact.bodyVersion,
+                    provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
+                    provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
                     dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
                     seq: artifact.seq,
                     createdAt: artifact.createdAt.getTime(),
@@ -263,6 +273,8 @@ export function artifactsRoutes(app: Fastify) {
                     headerVersion: z.number(),
                     body: z.string(),
                     bodyVersion: z.number(),
+                    provenance: z.string().nullable().optional(),
+                    provenanceDataEncryptionKey: z.string().nullable().optional(),
                     dataEncryptionKey: z.string(),
                     seq: z.number(),
                     createdAt: z.number(),
@@ -303,6 +315,8 @@ export function artifactsRoutes(app: Fastify) {
                 headerVersion: artifact.headerVersion,
                 body: privacyKit.encodeBase64(artifact.body),
                 bodyVersion: artifact.bodyVersion,
+                provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
+                provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
                 dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
                 seq: artifact.seq,
                 createdAt: artifact.createdAt.getTime(),
@@ -372,6 +386,8 @@ export function artifactsRoutes(app: Fastify) {
                 body: z.string(),
                 dataEncryptionKey: z.string(),
                 blob: ArtifactBlobWriteV1Schema.optional(),
+                provenance: z.string().nullable().optional(),
+                provenanceDataEncryptionKey: z.string().nullable().optional(),
             }).strict().refine(value => requiresBlob ? value.blob !== undefined : value.blob === undefined),
             response: {
                 200: z.object({
@@ -380,6 +396,8 @@ export function artifactsRoutes(app: Fastify) {
                     headerVersion: z.number(),
                     body: z.string(),
                     bodyVersion: z.number(),
+                    provenance: z.string().nullable().optional(),
+                    provenanceDataEncryptionKey: z.string().nullable().optional(),
                     dataEncryptionKey: z.string(),
                     seq: z.number(),
                     createdAt: z.number(),
@@ -420,6 +438,8 @@ export function artifactsRoutes(app: Fastify) {
                 expectedHeaderVersion: z.number().int().min(0).optional(),
                 body: z.string().optional(),
                 expectedBodyVersion: z.number().int().min(0).optional(),
+                provenance: z.string().nullable().optional(),
+                provenanceDataEncryptionKey: z.string().nullable().optional(),
                 blob: ArtifactBlobWriteV1Schema.nullable().optional(),
             }).strict().refine(value => requiresBlob ? value.blob !== undefined : value.blob === undefined),
             response: {

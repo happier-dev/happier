@@ -7,6 +7,19 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '../crypto/encryptedDataKeyEnvelo
 import { x25519 } from '@noble/curves/ed25519';
 
 describe('Artifact encryption transition directive', () => {
+  it('binds source and replacement private head and revision metadata independently of content keys', () => {
+    const item = { artifactId: '11111111-1111-4111-8111-111111111111', expectedHeaderVersion: 1, expectedBodyVersion: 3,
+      header: 'header', body: 'body', expectedDataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], blobs: [],
+      expectedProvenance: 'source-private-head', expectedProvenanceDataEncryptionKey: 'source-private-key',
+      provenance: 'target-private-head', provenanceDataEncryptionKey: null,
+      revisions: [{ bodyVersion: 1, expectedBody: 'source-body', body: 'target-body',
+        expectedProvenance: 'source-private-revision', provenance: 'target-private-revision' }] };
+    expect(AccountEncryptionMigrateArtifactsDirectiveSchema.parse({ action: 'migrate', items: [item] }))
+      .toEqual({ action: 'migrate', items: [item] });
+    expect(AccountEncryptionMigrateArtifactsDirectiveSchema.safeParse({ action: 'migrate', items: [{ ...item,
+      revisions: [{ ...item.revisions[0], publicProvenanceKey: 'never' }] }] }).success).toBe(false);
+  });
   it('accepts a complete owner census beyond one Artifact list page under the request byte budget', () => {
     const items = Array.from({ length: 501 }, (_, index) => ({
       artifactId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,

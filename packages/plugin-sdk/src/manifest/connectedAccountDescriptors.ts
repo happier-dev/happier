@@ -1,10 +1,4 @@
-export {
-  PluginConnectedAccountAuthenticationModeV2Schema,
-  PluginConnectedAccountAuthenticationV2Schema,
-  PluginConnectedAccountConfigurationFieldV2Schema,
-  PluginConnectedAccountConfigurationV2Schema,
-  PluginConnectedAccountDescriptorContributionV2Schema,
-} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+export { PluginConnectedAccountAuthenticationModeV2Schema, PluginConnectedAccountAuthenticationV2Schema, PluginConnectedAccountConfigurationFieldV2Schema, PluginConnectedAccountConfigurationV2Schema, PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 export type {
   PluginConnectedAccountAuthenticationModeV2,

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import {
   WorkflowContainerClosingV1Schema,
@@ -27,6 +30,24 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('retains classic nested JSON projection and refinement error identity', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(WorkflowProgressEnvelopeV1Schema, { target })).toMatchObject({
+        type: 'object', additionalProperties: false,
+        properties: {
+          invocationPath: { type: 'object', additionalProperties: false, required: ['blockId', 'scope'] },
+          attempt: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+        },
+      });
+    }
+    const invalid = WorkflowProgressEnvelopeV1Schema.safeParse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: '$root', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: 'invocation' });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error).toBeInstanceOf(z.ZodError);
+      expect(invalid.error.issues).toContainEqual(expect.objectContaining({ code: 'custom', path: ['invocationPath', 'blockId'] }));
+    }
+  });
   it('rejects the retired older-daemon input-admission update requirement', () => {
     expect(WorkflowActionFailureV1Schema.safeParse({ ok: false,
       errorCode: 'workflow_input_admission_update_required',

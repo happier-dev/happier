@@ -8,7 +8,7 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
-import { buildWidgetInstanceActions } from '@/components/widgets/frame/widgetFrameMenu';
+import { buildWidgetDefinitionActions, buildWidgetInstanceActions, orderWidgetMenu } from '@/components/widgets/frame/widgetFrameMenu';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
@@ -37,7 +37,7 @@ export type SessionCompanionInstanceControls = Readonly<{
     context: WidgetSurfaceContext;
     setInputs: (bindings: WidgetInputBindingsV1) => Promise<WidgetSetupSubmitResult>;
     /** `null` goes back to the widget's own name. */
-    rename: (displayName: string | null) => void;
+    rename: (displayName: string | null) => void | Promise<void>;
 }>;
 
 /** What the copy's body draws for those controls: the rename field in its title, and the repair line. */
@@ -104,16 +104,19 @@ function InstanceItemFrame(props: SessionCompanionItemFrameProps & Readonly<{ co
         testID: props.testID,
         onRename: (next) => {
             const displayName = next.length > 0 && next !== candidate?.title ? next : null;
-            if (displayName !== (instance.displayName ?? null)) rename(displayName);
+            if (displayName !== (instance.displayName ?? null)) return rename(displayName);
         },
     });
     const editInputs = inputs.editInputs;
     const beginRename = renaming.begin;
     const definition = useWidgetDefinitionFlows({ instance, scope, anchorRef: inputs.anchorRef, editInputs, testID: props.testID });
-    const actions = React.useMemo<readonly ItemAction[]>(() => [
-        ...buildWidgetInstanceActions({ editInputs, onRename: beginRename, onAbout: definition.about }),
-        ...props.actions,
-    ], [beginRename, definition.about, editInputs, props.actions]);
+    // The lab order (dbind E): this copy's entries, how it sits here, About, then Remove last.
+    const actions = React.useMemo<readonly ItemAction[]>(() => orderWidgetMenu({
+        instance: buildWidgetInstanceActions({ editInputs, onRename: beginRename }),
+        frame: props.actions.filter((action) => !isRemoval(action)),
+        definition: buildWidgetDefinitionActions({ onAbout: definition.about }),
+        remove: props.actions.filter(isRemoval),
+    }), [beginRename, definition.about, editInputs, props.actions]);
     const view = React.useMemo<SessionCompanionInstanceView>(() => ({
         titleEditor: renaming.field,
         ...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {}),
@@ -168,4 +171,9 @@ function ItemFrameBody(props: SessionCompanionItemFrameProps & Readonly<{
             <SessionSurfaceEntityTargetFeedback drag={drag} testID={props.testID} />
         </View>
     );
+}
+
+/** Removing this reference (or anything destructive) stays the menu's last entry. */
+function isRemoval(action: ItemAction): boolean {
+    return action.id === 'remove' || action.destructive === true;
 }

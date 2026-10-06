@@ -1,5 +1,6 @@
-import { ArtifactBlobStoredContentV1Schema, ArtifactBlobUploadInitV1Schema, decodeBase64,
-    type ArtifactBlobStoredContentV1, type ArtifactBlobUploadInitV1 } from '@happier-dev/protocol';
+import { ArtifactBlobStoredContentV1Schema, ArtifactBlobUploadInitV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import type { ArtifactBlobStoredContentV1, ArtifactBlobUploadInitV1 } from '@happier-dev/protocol';
 
 export const ARTIFACT_UPLOAD_CONTENT_TYPE_V1 = 'application/vnd.happier.artifact-upload-v1';
 export const ARTIFACT_UPLOAD_PATH_V1 = '/v1/artifacts/content/upload';

@@ -1,16 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import {
-  createDefaultCuratedMarketplaceSourceRegistryV1,
-  DEFAULT_CURATED_MARKETPLACE_SOURCE_URL,
-  MarketplaceSourceRegistryV1Schema,
-  type MarketplaceSourceRegistryMutationV1,
-  type MarketplaceSourceRegistryV1,
-  type MarketplaceSourceV1,
-  resolvePreferredMarketplaceSource,
-  createMarketplaceSourceV1,
-  normalizeMarketplaceSourceUrlV1,
-} from '@happier-dev/protocol';
+import { createDefaultCuratedMarketplaceSourceRegistryV1, DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, MarketplaceSourceRegistryV1Schema, resolvePreferredMarketplaceSource, createMarketplaceSourceV1, normalizeMarketplaceSourceUrlV1 } from '@happier-dev/protocol/marketplace/marketplaceSourceRegistryV1';
+import type { MarketplaceSourceRegistryMutationV1, MarketplaceSourceRegistryV1, MarketplaceSourceV1 } from '@happier-dev/protocol';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 

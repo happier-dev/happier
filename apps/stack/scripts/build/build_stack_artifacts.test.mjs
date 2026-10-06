@@ -32,6 +32,67 @@ test('server artifact identity includes a workspace dependency build script', ()
 });
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { collectBuildSourceMetadata } from './collect_build_source_metadata.mjs';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { writeManagedRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_layout.mjs';
+import { selectRuntimeSnapshot, selectActiveProducerRuntimeSnapshot } from './activate_runtime_snapshot.mjs';
+
+test('a component build publishes a complete selectable snapshot without activating its consumer', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-snapshot-currency-' });
+  const repoDir = fixture.path('repo');
+  const rootDir = join(repoDir, 'apps', 'stack');
+  mkdirSync(join(repoDir, 'apps', 'ui', 'sources'), { recursive: true });
+  writeFileSync(join(repoDir, 'apps', 'ui', 'package.json'), JSON.stringify({ name: '@happier-dev/ui' }));
+  writeFileSync(join(repoDir, 'apps', 'ui', 'sources', 'index.ts'), 'export const value = 1;');
+  const authority = {
+    producerStackName: 'producer', producerStackBaseDir: fixture.path('stacks', 'producer'),
+    consumerStackName: 'qa', consumerStackBaseDir: fixture.path('stacks', 'qa'),
+  };
+  const env = { ...process.env, HAPPIER_STACK_STACK: 'qa', HAPPIER_STACK_REPO_DIR: repoDir,
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_RUNTIME_BUILD_KEEP: '4' };
+  const old = await writeManagedRuntimeSnapshotLayout({ stackDir: authority.producerStackBaseDir, snapshotId: 'old' });
+  await selectRuntimeSnapshot({ ...authority, consumerStackBaseDir: authority.producerStackBaseDir, snapshotId: old.snapshotId });
+  const sourceMetadata = await collectBuildSourceMetadata({ rootDir, env });
+  const selection = { components: { web: true }, activateRuntime: false };
+  const identity = await resolveRuntimeBuildRequestIdentity({ rootDir, selection, sourceMetadata, env });
+  const artifactDir = join(authority.producerStackBaseDir, 'artifacts', 'web', identity.artifactFingerprints.web);
+  mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+  writeFileSync(join(artifactDir, 'payload', 'index.html'), '<html>new web</html>');
+  const stalePackages = [{ packageName: '@happier-dev/example', outputIdentity: 'last-green', diagnosticSummary: 'error TS2322' }];
+  const typeWarnings = [{ packageName: '@happier-dev/cli', diagnosticSummary: 'error TS2345', reason: 'typecheck' }];
+  writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({ version: 1, component: 'web',
+    artifactFingerprint: identity.artifactFingerprints.web, sourceFingerprint: sourceMetadata.sourceFingerprint,
+    payloadDir: 'payload', entrypoint: 'index.html', stalePackages }));
+  const daemonManifestPath = join(authority.producerStackBaseDir, 'artifacts', 'daemon', 'daemon-old', 'manifest.json');
+  const daemonManifest = JSON.parse(readFileSync(daemonManifestPath, 'utf8'));
+  writeFileSync(daemonManifestPath, JSON.stringify({ ...daemonManifest, stalePackages: typeWarnings }));
+
+  // A reusable compiler output is the build-process boundary. The explicit
+  // entrypoint, identity, builders, flight, publication and selection stay real.
+  const result = await buildModule.buildStackArtifacts({ rootDir, argv: ['--web'], env, authority });
+  assert.ok(result.snapshotId, 'every successful component build must return its complete snapshot');
+  assert.notEqual(result.snapshotId, old.snapshotId);
+  assert.equal(result.selected, false);
+  assert.equal(existsSync(join(authority.consumerStackBaseDir, 'runtime', 'current.json')), false);
+  const pointer = JSON.parse(readFileSync(join(authority.producerStackBaseDir, 'runtime', 'current.json'), 'utf8'));
+  assert.equal(pointer.snapshotId, result.snapshotId);
+  const manifest = JSON.parse(readFileSync(join(result.snapshotPath, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.components.web.artifactFingerprint, identity.artifactFingerprints.web);
+  assert.equal(manifest.components.server.artifactFingerprint, 'server-old');
+  assert.equal(manifest.components.daemon.artifactFingerprint, 'daemon-old');
+  assert.deepEqual(manifest.components.web.stalePackages, stalePackages);
+  assert.deepEqual(manifest.components.daemon.stalePackages, typeWarnings);
+  const repeated = await buildModule.buildStackArtifacts({ rootDir, argv: ['--web'], env, authority });
+  assert.equal(repeated.snapshotId, result.snapshotId, 'unchanged component outputs reuse their complete snapshot');
+  const selected = await selectActiveProducerRuntimeSnapshot({ ...authority });
+  assert.equal(selected.snapshotId, result.snapshotId);
+  // A real missing-source failure must leave both publication and selection intact.
+  const successPath = join(authority.producerStackBaseDir, 'runtime', 'publication-success.json');
+  const successBeforeFailure = readFileSync(successPath, 'utf8');
+  const pointerBeforeFailure = readFileSync(join(authority.producerStackBaseDir, 'runtime', 'current.json'), 'utf8');
+  await assert.rejects(buildModule.buildStackArtifacts({ rootDir, argv: ['--daemon'], env, authority }));
+  assert.equal(readFileSync(successPath, 'utf8'), successBeforeFailure);
+  assert.equal(readFileSync(join(authority.producerStackBaseDir, 'runtime', 'current.json'), 'utf8'), pointerBeforeFailure);
+});
 
 test('matching component inputs reuse artifacts before preparation, while missing outputs and source changes prepare', async (t) => {
   const repoDir = mkdtempSync(join(tmpdir(), 'runtime-build-warm-inputs-'));
@@ -743,7 +804,9 @@ test('daemon component publication retains a healthy plugin when an optional sib
       pruneComponentArtifactsImpl: async () => {},
     });
     assert.equal(result.artifacts.daemon.manifest.artifactFingerprint, 'daemon-a');
-    assert.deepEqual(published.map(({ workspaceNames }) => workspaceNames), [['plugins-healthy']]);
+    // The publisher retains evaluated manifest scope; failures separately
+    // exclude broken executable artifacts in the canonical generator.
+    assert.deepEqual(published.map(({ workspaceNames }) => workspaceNames), [['plugins-healthy', 'plugins-broken']]);
     assert.deepEqual(published[0].pluginFailures.map(({ packageName }) => packageName), [
       '@happier-dev/plugins-broken',
     ]);
@@ -830,7 +893,7 @@ test('repository snapshot publishes after a broken optional daemon plugin while 
       },
     });
     assert.equal(result.snapshotId, 'snapshot-a');
-    assert.deepEqual(observed[0].workspaceNames, ['plugins-healthy']);
+    assert.deepEqual(observed[0].workspaceNames, ['plugins-healthy', 'plugins-broken']);
     assert.deepEqual(observed[0].pluginFailures.map(({ packageName }) => packageName), [
       '@happier-dev/plugins-broken',
     ]);
@@ -841,10 +904,12 @@ test('repository snapshot publishes after a broken optional daemon plugin while 
 
 test('web-only publication recaptures component identity after preparing a cache miss', async () => {
   const events = [];
+  const target = { platform: 'linux', arch: 'arm64' };
   const sourceMetadata = { repoDir: '/repo', sourceFingerprint: 'source-a' };
   await buildModule.buildRuntimeArtifactComponents({
     rootDir: '/repo/apps/stack',
     stackBaseDir: '/stacks/repository-producer',
+    target,
     selection: {
       components: { web: true, server: false, daemon: false },
       activateRuntime: false,
@@ -854,12 +919,14 @@ test('web-only publication recaptures component identity after preparing a cache
     assertSelectedBuildPrerequisitesImpl: () => {},
     prepareBundledPluginPublicationInputsImpl: async () => { events.push('plugin-inputs'); },
     collectBuildSourceMetadataImpl: async () => { events.push('source-metadata'); return sourceMetadata; },
-    resolveRuntimeBuildRequestIdentityImpl: async () => {
+    resolveRuntimeBuildRequestIdentityImpl: async (input) => {
+      assert.deepEqual(input.target, target);
       events.push('identity');
       return { sourceMetadata, artifactFingerprints: { web: 'web-a' }, supportArtifactFingerprints: {} };
     },
     buildSelectedStackArtifactsImpl: async ({ buildComponent }) => ({
-      web: await buildComponent('web', async () => {
+      web: await buildComponent('web', async (input) => {
+        assert.deepEqual(input.target, target);
         events.push('web-build');
         return { artifactDir: '/artifact/web', manifest: { artifactFingerprint: 'web-a' } };
       }),

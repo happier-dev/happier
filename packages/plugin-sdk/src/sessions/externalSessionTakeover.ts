@@ -1,12 +1,8 @@
 /** @moduleRealm daemon */
-import {
-    ExternalSessionsSourceSchema,
-    PluginAgentExternalSessionLinkDataSchema,
-} from '@happier-dev/protocol/plugins/agents';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import {
-    RuntimeDescriptorV1Schema,
-} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type {

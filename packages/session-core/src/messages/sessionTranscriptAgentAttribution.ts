@@ -1,4 +1,4 @@
-import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
+import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 
 import type { AgentId } from '@happier-dev/agents';
 import type { Message } from "./messageTypes.js";

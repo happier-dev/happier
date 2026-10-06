@@ -1,6 +1,6 @@
 /** @moduleRealm daemon */
 /** @realm any */
-export { SecretStringV1Schema } from '@happier-dev/protocol/runtime';
+export { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
 
 export type SecretStatus = Readonly<{
     state: 'configured' | 'missing' | 'denied' | 'unavailable';

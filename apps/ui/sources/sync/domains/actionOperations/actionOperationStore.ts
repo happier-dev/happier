@@ -1,3 +1,4 @@
+import { canAdvanceActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionOperationSnapshotV1, ActionOperationStateV1 } from '@happier-dev/protocol';
 
 import {
@@ -67,10 +68,7 @@ const TERMINAL_STATES: ReadonlySet<ActionOperationStateV1> = new Set(['succeeded
 
 function canMergeSnapshot(current: ActionOperationSnapshotV1 | undefined, incoming: ActionOperationSnapshotV1): boolean {
     if (!current) return true;
-    if (incoming.revision <= current.revision) return false;
-    if (TERMINAL_STATES.has(current.state)) return false;
-    if (current.state === 'running' && incoming.state === 'accepted') return false;
-    return true;
+    return canAdvanceActionOperationSnapshotV1(current, incoming);
 }
 
 function operationKey(operation: QualifiedActionOperation): string {

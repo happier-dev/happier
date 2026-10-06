@@ -1,80 +1,66 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSettings';
 
-import { installVoiceStorageModuleMocks } from './installVoiceStorageModuleMocks';
-
-const applySettings = vi.fn();
-let state: any;
-
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  getSyncSingleton: () => ({ applySettings }),
-}));
-
-installVoiceStorageModuleMocks({
-  storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-      storage: {
-        getState: () => state,
-      },
-    });
-  },
-});
+const scope = { serverId: 'voice-home', accountId: 'voice-account' };
 
 describe('voiceAutoTargetMachineSettings', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    applySettings.mockReset();
-    state = {
-      settingsScope: { serverId: 'server-a', accountId: 'account-a' },
-      settings: {
-        voice: {
-          executionMachine: {
-            mode: ' auto ',
-            autoMachineId: '  machine-1  ',
-          },
-        },
-      },
+  beforeEach(async () => {
+    await storage.getState().activateSettingsScope(scope);
+    storage.getState().applySettings(settingsDefaults, 1);
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
+  });
+
+  it('ignores the never-shipped Account target and reads only scoped local memory', () => {
+    const state = {
+      settingsScope: scope,
+      settings: { voice: { executionMachine: { mode: 'auto', machineId: null, autoMachineId: 'stray-machine' } } },
     };
+    expect(readVoiceAutoTargetMachineId(state)).toBeNull();
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'local-machine');
+    expect(readVoiceAutoTargetMachineId(state)).toBe('local-machine');
+    expect(readVoiceAutoTargetMachineId({ settings: state.settings })).toBeNull();
   });
 
-  it('reads a trimmed sticky auto-target machine id when the mode is auto', async () => {
-    const { readVoiceAutoTargetMachineId } = await import('./voiceAutoTargetMachineSettings');
-
-    expect(readVoiceAutoTargetMachineId(state)).toBe('machine-1');
+  it('clears local target memory on recovery without changing an explicit fixed preference', () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'local-machine');
+    expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('local-machine');
+    const settings = storage.getState().settings;
+    persistVoiceAutoTargetMachineId(null, scope);
+    expect(readVoiceAutoTargetMachineId(storage.getState())).toBeNull();
+    expect(storage.getState().settings).toBe(settings);
+    storage.setState((state) => ({ settings: { ...state.settings, voice: voiceSettingsParse({
+      ...settingsDefaults.voice,
+      executionMachine: { mode: 'fixed', machineId: 'explicit-machine' },
+    }) } }));
+    const fixed = storage.getState().settings;
+    const memory = useVoiceTargetStore.getState();
+    persistVoiceAutoTargetMachineId('automatic-machine', scope);
+    expect(storage.getState().settings).toBe(fixed);
+    expect(useVoiceTargetStore.getState()).toBe(memory);
   });
 
-  it('persists a sticky auto-target machine id when the mode is auto even if it is padded', async () => {
-    const { persistVoiceAutoTargetMachineId } = await import('./voiceAutoTargetMachineSettings');
-
-    persistVoiceAutoTargetMachineId('  machine-2  ', {
-      serverId: 'server-a',
-      accountId: 'account-a',
-    });
-
-    expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({
-      voice: expect.objectContaining({
-        executionMachine: {
-          mode: 'auto',
-          machineId: null,
-          autoMachineId: 'machine-2',
-        },
-      }),
-    }), {
-      expectedSettingsScope: { serverId: 'server-a', accountId: 'account-a' },
-      source: 'ui',
-    });
+  it('remembers the auto target locally without an Account mutation and skips the same value', () => {
+    const settings = storage.getState().settings;
+    persistVoiceAutoTargetMachineId('  machine-2  ', scope);
+    expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('machine-2');
+    expect(storage.getState().settings).toBe(settings);
+    const memory = useVoiceTargetStore.getState();
+    persistVoiceAutoTargetMachineId('machine-2', scope);
+    expect(useVoiceTargetStore.getState()).toBe(memory);
   });
 
-  it('uses the pre-await captured scope for automatic machine persistence', async () => {
-    const { persistVoiceAutoTargetMachineId } = await import('./voiceAutoTargetMachineSettings');
-    const capturedScope = { serverId: 'server-a', accountId: 'account-a' };
-    state.settingsScope = { serverId: 'server-b', accountId: 'account-b' };
-
-    persistVoiceAutoTargetMachineId('machine-2', capturedScope);
-
-    expect(applySettings).toHaveBeenCalledWith(expect.any(Object), {
-      expectedSettingsScope: capturedScope,
-      source: 'ui',
-    });
+  it('keeps captured-scope memory isolated when the Account changes during selection', async () => {
+    const otherScope = { ...scope, accountId: 'voice-other-account' };
+    await storage.getState().activateSettingsScope(otherScope);
+    const settings = storage.getState().settings;
+    persistVoiceAutoTargetMachineId('machine-captured', scope);
+    expect(storage.getState().settings).toBe(settings);
+    expect(readVoiceAutoTargetMachineId(storage.getState())).toBeNull();
+    await storage.getState().activateSettingsScope(scope);
+    expect(readVoiceAutoTargetMachineId(storage.getState())).toBe('machine-captured');
   });
 });

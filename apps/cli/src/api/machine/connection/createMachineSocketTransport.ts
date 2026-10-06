@@ -2,10 +2,8 @@ import type { Socket } from 'socket.io-client';
 import { createHappierSocket } from '@happier-dev/sync-client';
 
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
-import {
-  buildMachineScopedSocketAuth,
-  type MachineInstallationProofV1,
-} from '@happier-dev/protocol';
+import { buildMachineScopedSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
+import type { MachineInstallationProofV1 } from '@happier-dev/protocol';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from '@/api/machine/socketTypes';
 import { buildCurrentCliClientCompatibilitySocketAuth } from '@/api/clientCompatibility/cliClientCompatibility';

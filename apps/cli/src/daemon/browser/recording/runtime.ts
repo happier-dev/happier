@@ -1,8 +1,6 @@
-import {
-  DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  DaemonBrowserRecordingStartInputV1Schema,
-  type BrowserRecordingCapabilities,
-} from '@happier-dev/protocol';
+import { DEFAULT_BROWSER_RECORDING_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import { DaemonBrowserRecordingStartInputV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import type { BrowserRecordingCapabilities } from '@happier-dev/protocol';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';

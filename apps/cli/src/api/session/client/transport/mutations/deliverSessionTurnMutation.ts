@@ -5,14 +5,9 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import {
-    ExactSessionTurnEndMutationV1Schema,
-    SessionTurnMutationReceiptV1Schema,
-    isExactSessionTurnMutationPositiveReceiptV1,
-    type ExactSessionTurnEndMutationV1,
-    type SessionTurnMutationDecisionV1,
-    type SessionTurnMutationV1,
-} from '@happier-dev/protocol';
+import { ExactSessionTurnEndMutationV1Schema, isExactSessionTurnMutationPositiveReceiptV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { SessionTurnMutationReceiptV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import type { ExactSessionTurnEndMutationV1, SessionTurnMutationDecisionV1, SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import type { SessionClientDurableMutationSocket } from './sessionClientDurableMutationTypes';
 

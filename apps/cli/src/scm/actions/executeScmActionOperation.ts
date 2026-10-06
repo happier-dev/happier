@@ -1,51 +1,11 @@
-import {
-    getActionSpec,
-    SCM_OPERATION_ERROR_CODES,
-    ScmOperationErrorCodeSchema,
-    ScmDiffSummaryErrorCodeSchema,
-    ScmDiffSummaryResultClearInputSchema,
-    type ScmDiffSummaryResultClearResponse,
-    type ScmComparisonCaptureInput,
-    type ScmActionExecute,
-    type ActionExecutorContext,
-    type ScmComparison,
-    type ScmReviewedMarkInput,
-    type ScmReviewedMarkResponse,
-    type ScmActionId,
-    type ScmHostingRepositoryDescribePublishTargetsRequest,
-    type ScmHostingRepositoryDescribePublishTargetsResponse,
-    type ScmHostingRepositoryPublishRequest,
-    type ScmHostingRepositoryPublishResponse,
-    type ScmPullRequestCheckoutRequest,
-    type ScmPullRequestCheckoutResponse,
-    type ScmPullRequestGetRequest,
-    type ScmPullRequestGetResponse,
-    type ScmPullRequestListRequest,
-    type ScmPullRequestListResponse,
-    type ScmPullRequestOpenComposeRequest,
-    type ScmPullRequestOpenComposeResponse,
-    type ScmPullRequestOpenOrReuseRequest,
-    type ScmPullRequestOpenOrReuseResponse,
-    type ScmPullRequestPrepareWorktreeRequest,
-    type ScmPullRequestPrepareWorktreeResponse,
-    type ScmPullRequestRunStackedRequest,
-    type ScmPullRequestRunStackedResponse,
-    type ScmReviewWorkspaceMaterializePreparedRequest,
-    type ScmReviewWorkspaceMaterializePreparedResponse,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-    type ScmRepositoryInitRequest,
-    type ScmRepositoryInitResponse,
-    type ScmRepositoryRemoveIndexLockRequest,
-    type ScmRepositoryRemoveIndexLockResponse,
-} from '@happier-dev/protocol';
-import {
-    admitScmRemotePolicy,
-    admitScmCommitPolicy,
-    admitScmCommitUndoLast,
-    normalizeScmOperationOutcome,
-    ScmOperationOutcomeSchema,
-} from '@happier-dev/protocol/scm';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
+import { ScmDiffSummaryErrorCodeSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryResultClearInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { ScmDiffSummaryResultClearResponse, ScmComparisonCaptureInput, ScmActionExecute, ActionExecutorContext, ScmComparison, ScmReviewedMarkInput, ScmReviewedMarkResponse, ScmActionId, ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse, ScmPullRequestGetRequest, ScmPullRequestGetResponse, ScmPullRequestListRequest, ScmPullRequestListResponse, ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse, ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse, ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse, ScmReviewWorkspaceMaterializePreparedRequest, ScmReviewWorkspaceMaterializePreparedResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
+import { admitScmRemotePolicy } from '@happier-dev/protocol/scm/remotePolicy';
+import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/protocol/scm/capabilities';
+import { normalizeScmOperationOutcome, ScmOperationOutcomeSchema } from '@happier-dev/protocol/scm/operationOutcome';
 import type * as scm from '@happier-dev/protocol/scm';
 import { parseScmRepositoryCloneRpcRequest, projectScmLegacyRpcResponse } from './scmRpcCompatibility';
 

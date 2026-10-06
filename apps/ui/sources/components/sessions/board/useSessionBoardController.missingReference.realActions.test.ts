@@ -50,6 +50,8 @@ describe('missing-reference recovery through the real Board Actions', () => {
             contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },
         });
         // Only the Home HTTP boundary is substituted; controller, executor, reducer and codec are real.
+        // Direct recovery uses the user's explicit waiver; shared Board writes
+        // otherwise require approval even on the UI surface.
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
             'session.board.layout.update': ['ui'],
         } });
@@ -58,8 +60,13 @@ describe('missing-reference recovery through the real Board Actions', () => {
             isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
         } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired'>;
         const executor = createActionExecutor(createActionExecutorBoundaryFixture(executorDeps));
+        let actionResult: Awaited<ReturnType<typeof executor.execute>> | undefined;
         const actions = createSessionBoardActionsPort({ ...session,
-            execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, authority: 'present_user' }),
+            execute: async (actionId, input, context) => {
+                const result = await executor.execute(actionId, input, { ...context, authority: 'present_user' });
+                actionResult = result;
+                return result;
+            },
         });
         const snapshot = projectSessionBoard({
             layout: { revision, outcome: { status: 'ready', value: originalLayout } }, items: new Map(),
@@ -75,6 +82,9 @@ describe('missing-reference recovery through the real Board Actions', () => {
         await act(async () => { await hook.getCurrent().run({ kind: 'item.remove', itemId: 'missing' }); });
         await hook.rerender();
 
+        expect(actionResult, JSON.stringify(actionResult)).toMatchObject(conflict
+            ? { ok: false, errorCode: 'session_board_revision_conflict' }
+            : { ok: true });
         expect(writes).toBe(1);
         expect(storedLayout).toEqual(conflict ? originalLayout : {
             v: 1,

@@ -72,11 +72,14 @@ describe('exact invoking-surface continuation', () => {
         boundary.request.mockImplementation(fixture.request);
     });
     afterEach(async () => {
-        await screen?.unmount(); screen = undefined;
+        await screen?.unmount();
+        screen = undefined;
         await cancelPendingDirectoryHomeEnrollment();
         await disconnectActiveServerConnection();
         resetServerFeaturesClientForTests();
-        locks.restore(); restore(); vi.unstubAllGlobals();
+        locks.restore();
+        restore();
+        vi.unstubAllGlobals();
     });
 
     it('requests exact service reauthentication rather than treating recovery as Back', async () => {

@@ -44,6 +44,7 @@ export function resolveServerPortFromEnv({ env = process.env, defaultPort = 3005
     }
   }
 
+  if (defaultPort === null) return null;
   const fallback = Number(defaultPort);
   return Number.isFinite(fallback) && fallback > 0 ? fallback : 3005;
 }

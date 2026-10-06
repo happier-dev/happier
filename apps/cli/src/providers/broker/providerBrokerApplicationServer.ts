@@ -2,13 +2,9 @@ import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { Readable } from 'node:stream';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol';
-import {
-    TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1,
-    TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1,
-    TeamCredentialProviderBrokerApplicationCarrierRequestV1Schema,
-    type TeamCredentialUsageLimitDenialV1,
-} from '@happier-dev/protocol/teams';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1, TeamCredentialProviderBrokerApplicationCarrierRequestV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import type { TeamCredentialUsageLimitDenialV1 } from '@happier-dev/protocol/teams';
 
 import { startFirstBytesLocalCapabilityProxy, type FirstBytesLocalCapabilityProxy } from '@/daemon/peer/mediation/loopback/firstBytesLocalCapability';
 import type {

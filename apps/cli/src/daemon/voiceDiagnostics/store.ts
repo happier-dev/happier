@@ -20,7 +20,7 @@ import type {
   VoiceSpeechDiagnosticsBackupPolicyV1,
   VoiceSpeechDiagnosticsSettingsV1,
 } from '@happier-dev/protocol';
-import { resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol';
+import { resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 
 export type VoiceDiagnosticPolicy = Readonly<Partial<VoiceSpeechDiagnosticsSettingsV1> & {
   enabled: boolean;

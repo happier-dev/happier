@@ -2,32 +2,11 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import axios from 'axios';
 
-import {
-  AutomationEventActionHttpPathsV1,
-  AutomationEventActionHttpRequestSchemasV1,
-  AutomationEventActionOutputSchemasV1,
-  AutomationEventAdmitHttpRequestV1Schema,
-  AutomationEventAdmitHttpResultV1Schema,
-  AutomationEventAdmitInputV1Schema,
-  AutomationEventAdmitResultV1Schema,
-  AutomationEventSourceStatusReportV1Schema,
-  AutomationEventSourcesListInputV1Schema,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginMachineMaterializationRefV1Schema,
-  type ActionExecutorDeps,
-  type AutomationEventActionHttpCallerV1,
-  type AutomationEventActionHttpRequestByIdV1,
-  type AutomationEventAdmitHttpRequestV1,
-  type AutomationEventAdmitItemResultV1,
-  type AutomationEventAdmitResultV1,
-  type AutomationAccountCurrentnessWitnessV1,
-  type AutomationEventActionIdV1,
-  type AutomationEventSourceStatusReportV1,
-  type AutomationEventSourcesListInputV1,
-  type AutomationEventSourcesListTransportV1,
-  type PluginMachineMaterializationRefV1,
-  type PluginWebhookInvocationReferenceV1,
-} from '@happier-dev/protocol';
+import { AutomationEventActionHttpPathsV1, AutomationEventActionHttpRequestSchemasV1, AutomationEventAdmitHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
+import { AutomationEventActionOutputSchemasV1, AutomationEventAdmitHttpResultV1Schema, AutomationEventAdmitInputV1Schema, AutomationEventAdmitResultV1Schema, AutomationEventSourceStatusReportV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import type { ActionExecutorDeps, AutomationEventActionHttpCallerV1, AutomationEventActionHttpRequestByIdV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitItemResultV1, AutomationEventAdmitResultV1, AutomationAccountCurrentnessWitnessV1, AutomationEventActionIdV1, AutomationEventSourceStatusReportV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 import { fetchChangesAccountId } from '@/api/changes';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

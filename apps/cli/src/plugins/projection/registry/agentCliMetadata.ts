@@ -5,10 +5,8 @@ import type {
     PluginAgentCliMetadata,
     QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
-import {
-    buildQualifiedPluginContributionKey,
-    isPluginAgentCliAuthBackgroundCheckSafe,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';

@@ -2,6 +2,7 @@ import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog
 import { UI_FONT_SCALE_PRESETS } from '@/components/ui/text/uiFontScale';
 import { themeModeStorageBinding } from './themeModeSettingBinding';
 import { glassIntensityStorageBinding, glassPresetStorageBinding, glassSurfaceStorageBinding } from './glassSettingBindings';
+import { navigationPlacementStorageBinding } from './navigationPlacementSettingBinding';
 
 /** Appearance's searchable settings. Rows render their labels from these declarations. */
 export const APPEARANCE_SETTINGS = defineSettingsPage({
@@ -40,6 +41,7 @@ export const APPEARANCE_SETTINGS = defineSettingsPage({
                 editorTabs: { titleKey: 'settingsAppearance.detailsPaneTabsBehavior', descriptionKey: 'settingsAppearance.detailsPaneTabsBehaviorDescription', storage: { scope: 'local', key: 'detailsPaneTabsBehavior', access: 'read_write' } },
                 rightPanels: { titleKey: 'settingsAppearance.multiPanePanels', descriptionKey: 'settingsAppearance.multiPanePanelsDescription', storage: { scope: 'local', key: 'uiMultiPanePanelsEnabled', access: 'read_write' } },
                 settingsSidebar: { titleKey: 'settingsAppearance.settingsNavSidebar', descriptionKey: 'settingsAppearance.settingsNavSidebarDescription', storage: { scope: 'local', key: 'settingsNavSidebarEnabled', access: 'read_write' } },
+                navigationPlacements: { titleKey: 'navigationPlacement.title', descriptionKey: 'navigationPlacement.description', storage: navigationPlacementStorageBinding },
             },
         },
         home: {

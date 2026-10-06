@@ -16,10 +16,14 @@ test('dedicated build checkout preserves the producer consumed-input identity', 
       await writeFile(join(repo, 'apps/cli/src/index.ts'), 'export const value = 1;');
     }
     const original = await readHappyCliRuntimeInputFreshness(join(producer, 'apps/cli'));
-    const relocated = await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer });
+    const inputEntries = {};
+    const relocated = await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer, inputEntries });
     assert.equal(relocated.fingerprint, original.fingerprint);
+    assert.ok(inputEntries['apps/cli/src/index.ts'], 'capture diagnostics name the consumed repo-relative file');
+    const beforeEntry = inputEntries['apps/cli/src/index.ts'];
     await writeFile(join(worker, 'apps/cli/src/index.ts'), 'export const value = 2;');
-    assert.notEqual((await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer })).fingerprint, original.fingerprint);
+    assert.notEqual((await readHappyCliRuntimeInputFreshness(join(worker, 'apps/cli'), { identityRepoDir: producer, inputEntries })).fingerprint, original.fingerprint);
+    assert.notEqual(inputEntries['apps/cli/src/index.ts'], beforeEntry);
   });
 });
 

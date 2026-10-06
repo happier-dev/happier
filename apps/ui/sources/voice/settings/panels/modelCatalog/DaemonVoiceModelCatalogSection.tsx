@@ -4,7 +4,6 @@ import type { ModelPackKind } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
@@ -103,7 +102,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
         client: props.client,
         enabled: !props.catalogController,
     });
-    const { state, refresh, install, acceptLicense, remove, cancel } = props.catalogController ?? ownedCatalog;
+    const { state, refresh, install, remove, cancel } = props.catalogController ?? ownedCatalog;
 
     // The daemon health is unknown whenever the status request failed. Forces
     // every row uninstallable so an install/remove can never fire against an
@@ -126,18 +125,8 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
     }, [refresh]);
 
     const handleInstall = React.useCallback((packId: string) => {
-        const review = state.statuses.find((status) => status.packId === packId)?.licenseReview;
-        fireAndForget(install(packId, review && !review.accepted ? async (isCurrent) => {
-            const accepted = await Modal.confirm(
-                review.licenseTitle,
-                review.licenseText,
-                { confirmText: t('common.continue') },
-            );
-            if (!accepted || !isCurrent()) return false;
-            await acceptLicense(review);
-            return isCurrent();
-        } : undefined), { tag: 'DaemonVoiceModelCatalogSection.install' });
-    }, [acceptLicense, install, state.statuses]);
+        fireAndForget(install(packId), { tag: 'DaemonVoiceModelCatalogSection.install' });
+    }, [install]);
 
     const handleRemove = React.useCallback((packId: string) => remove(packId), [remove]);
 

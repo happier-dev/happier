@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -20,6 +20,7 @@ import { startPluginDevelopmentSourceObserver } from '@/plugins/authoring/source
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { handlePluginsCommand } from '@/cli/commands/plugins';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import { bindProcessLogger, Logger } from '@/ui/logger';
 
 const temporaryDirectories: string[] = [];
 const packageRootObservation = {
@@ -45,6 +46,14 @@ describe('daemon plugin development root ownership', () => {
   it('returns the typed preparation failure for an explicit standalone root and retains its recovery status', async () => {
     const happyHomeDir = await createDirectory('happier-daemon-dev-install-failure-home-');
     const sourceRoot = await createDirectory('happier-daemon-dev-install-failure-source-');
+    const missingDependencyPath = join(sourceRoot, 'node_modules', 'missing-dependency');
+    const logPath = join(happyHomeDir, 'preparation.log');
+    const localLogger = new Logger({
+      logFilePath: logPath,
+      allowDangerousRemoteLogging: false,
+      pruneCurrentProcessLogs: false,
+    });
+    const restoreLogger = bindProcessLogger(localLogger);
     await mkdir(join(sourceRoot, '.happier-plugin'));
     await writeFile(join(sourceRoot, 'package.json'), '{"name":"standalone-plugin","version":"1.0.0"}\n');
     await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(
@@ -54,7 +63,11 @@ describe('daemon plugin development root ownership', () => {
       prepare: createDaemonPathPluginChangePreparer({
         happyHomeDir,
         runtimeLifecycle: { prepare: async () => { throw new Error('Failed dependencies cannot reach runtime adoption'); } },
-        runManagedPluginPnpm: async () => ({ ok: false, message: 'Fixture managed materializer refused dependencies' }),
+        // The managed tool boundary encounters a real missing local dependency.
+        runManagedPluginPnpm: async () => {
+          await lstat(missingDependencyPath);
+          throw new Error('Missing dependency unexpectedly exists');
+        },
       }),
     });
     const owner = createDaemonPluginDevelopmentRootsOwner({
@@ -77,12 +90,17 @@ describe('daemon plugin development root ownership', () => {
       await expect(owner.control({ kind: 'registerExplicit', rootPath: sourceRoot })).resolves.toMatchObject({
         kind: 'failed',
         code: 'plugin_dev_dependency_preparation_failed',
-        message: 'Fixture managed materializer refused dependencies',
+        message: expect.stringContaining('[REDACTED_PATH]'),
         status: { plugins: [expect.objectContaining({ sourceRootPath: sourceRoot, phase: 'unavailable' })] },
       });
       await expect(owner.readPersistedStateForTest()).resolves.toMatchObject({
         explicitRoots: [{ rootPath: sourceRoot }],
       });
+      localLogger.flushSync();
+      const log = await readFile(logPath, 'utf8');
+      expect(log).toContain('[WARN]');
+      expect(log).toContain('plugin_dev_dependency_preparation_failed');
+      expect(log).toContain(missingDependencyPath);
       for (const args of [
         ['install', sourceRoot, '--dev', '--json'],
         ['dev', sourceRoot, '--json'],
@@ -97,6 +115,7 @@ describe('daemon plugin development root ownership', () => {
             ok: false,
             error: { code: 'plugin_dev_dependency_preparation_failed' },
           });
+          expect(JSON.stringify(output.json())).not.toContain(missingDependencyPath);
           expect(process.exitCode).toBe(1);
         } finally {
           output.restore();
@@ -106,6 +125,7 @@ describe('daemon plugin development root ownership', () => {
     } finally {
       await owner.stop();
       await service.shutdown();
+      restoreLogger();
     }
   });
 

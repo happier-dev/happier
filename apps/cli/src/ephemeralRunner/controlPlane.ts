@@ -7,15 +7,10 @@ import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { RunnerActivationBindingV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
-import {
-  signRunnerClaimV1,
-  signRunnerEndpointFactsV1,
-  verifyRunnerClaimV1,
-  type RunnerClaimV1,
-  type RunnerEndpointFactsContentV1,
-  type RunnerEndpointFactsV1,
-} from '@happier-dev/protocol/ephemeralRunner/endpoint';
-import { signRunnerConsentV1, type RunnerConsentV1 } from '@happier-dev/protocol/ephemeralRunner/consent';
+import { signRunnerClaimV1, signRunnerEndpointFactsV1, verifyRunnerClaimV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';
+import type { RunnerClaimV1, RunnerEndpointFactsContentV1, RunnerEndpointFactsV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';
+import { signRunnerConsentV1 } from '@happier-dev/protocol/ephemeralRunner/consent';
+import type { RunnerConsentV1 } from '@happier-dev/protocol/ephemeralRunner/consent';
 import type { RunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
 import type { RunnerEndpointDeclineResponseV1 } from '@happier-dev/protocol/ephemeralRunner/endpointProjection';
 import type { PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';

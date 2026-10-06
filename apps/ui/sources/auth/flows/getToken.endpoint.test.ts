@@ -54,6 +54,7 @@ beforeEach(async () => {
     runtimeFetchMock.mockClear();
 });
 afterEach(() => {
+    vi.useRealTimers();
     runtimeFetchMock.mockReset();
     vi.restoreAllMocks();
     restoreLocks();
@@ -61,6 +62,42 @@ afterEach(() => {
 });
 
 describe('explicit endpoint authentication foundations', () => {
+    it.each([true, false])('waits for a slow identity-pinned endpoint before issuing a challenge (require v2: %s)', async (requireKeyChallengeV2) => {
+        const { authGetTokenAtEndpoint } = await import('./getToken');
+        vi.useFakeTimers();
+        const paths: string[] = [];
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            paths.push(new URL(url).pathname);
+            if (url.endsWith('/v1/features')) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
+                return jsonResponse(createRootLayoutFeaturesResponse({ capabilities: keyChallengeV2Capabilities('srv_slow_home') }));
+            }
+            if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
+                challengeId: 'slow-challenge', nonce: 'nonce',
+                issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                audience: { origin: 'https://slow.example.test', serverIdentityId: 'srv_slow_home' },
+            });
+            if (url.endsWith('/v1/auth')) return jsonResponse({ token: 'slow-home-token' });
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        let settled = false;
+        const result = authGetTokenAtEndpoint({
+            endpointUrl: 'https://slow.example.test', serverIdentityId: 'srv_slow_home',
+            secret: new Uint8Array(32).fill(7), requireKeyChallengeV2,
+        }).then((credentials) => { settled = true; return credentials; }, (error: unknown) => {
+            settled = true;
+            return error;
+        });
+        await vi.dynamicImportSettled();
+        await vi.advanceTimersByTimeAsync(800);
+        expect(settled).toBe(false);
+        expect(paths).toEqual(['/v1/features']);
+        await vi.advanceTimersByTimeAsync(700);
+        await expect(result).resolves.toEqual({ token: 'slow-home-token' });
+        expect(paths).toEqual(['/v1/features', '/v1/auth/challenge', '/v1/auth']);
+    });
+
     it('repairs retained 0.2 secret credentials during focused Account currentness without a restore action', async () => {
         const token = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
         const credentials = { token, secret: encodeBase64(new Uint8Array(32).fill(7)) };
@@ -497,7 +534,7 @@ describe('explicit endpoint authentication foundations', () => {
         expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
-    it('keeps explicit require-v2 authentication fail closed when feature discovery is unavailable', async () => {
+    it.each([true, false])('keeps identity-pinned authentication fail closed when feature discovery is unavailable (require v2: %s)', async (requireKeyChallengeV2) => {
         runtimeFetchMock.mockRejectedValue(new Error('feature endpoint unavailable'));
 
         const { authGetTokenAtEndpoint } = await import('./getToken');
@@ -506,7 +543,7 @@ describe('explicit endpoint authentication foundations', () => {
             canonicalServerUrl: 'https://home-b.example.test',
             serverIdentityId: 'srv_home_b',
             secret: new Uint8Array(32).fill(7),
-            requireKeyChallengeV2: true,
+            requireKeyChallengeV2,
         })).rejects.toMatchObject({
             name: 'HappyError',
             canTryAgain: true,

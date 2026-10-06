@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { VoiceModelPackIdentityV1Schema } from '@happier-dev/protocol';
+import { VoiceModelPackIdentityV1Schema } from '@happier-dev/protocol/voice/modelPacks/identityV1';
 import type {
   InstalledVoiceModelPackMetadataV1,
   VoiceModelPackArtifactBindingV1,

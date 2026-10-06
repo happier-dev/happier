@@ -6,19 +6,14 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod';
 
-import {
-  PluginAvailabilityPortableReleaseSourceClassV1Schema,
-  PluginIdSchema,
-  PluginInstallReviewPrincipalDigestSchema,
-  PluginInstallReviewPrincipalPresentationV1Schema,
-  PluginManifestV2Schema,
-  ManagedPluginSourceCustodyV1Schema,
-  PluginReleaseFactsV1Schema,
-  type PluginId,
-  type ParsedPluginManifestV2,
-  PluginUpdatePolicyV1Schema,
-  type PluginUpdatePolicyV1,
-} from '@happier-dev/protocol';
+import { PluginAvailabilityPortableReleaseSourceClassV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { ManagedPluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginId, ParsedPluginManifestV2, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
+import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 
 import { writeFileAtomically, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';

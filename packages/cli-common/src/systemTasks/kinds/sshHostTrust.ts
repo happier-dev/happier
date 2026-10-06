@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { resolveSshHostTrust } from '@happier-dev/protocol';
+import { resolveSshHostTrust } from '@happier-dev/protocol/ssh/hostTrust';
 
 export interface ParsedSshKnownHostLine {
   host: string;

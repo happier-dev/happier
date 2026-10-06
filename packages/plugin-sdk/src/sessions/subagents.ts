@@ -4,11 +4,9 @@ export type {
     SubagentRefV1,
     SubagentStatusV1,
 } from '@happier-dev/protocol/sessions/subagents';
-export {
-    parseParticipantMessageV1,
-    parseSubagentCommandV1,
-    parseSubagentLaunchV1,
-} from '@happier-dev/protocol/sessions/subagents';
+export { parseParticipantMessageV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+export { parseSubagentCommandV1 } from '@happier-dev/protocol/messages/structured/subagentCommandV1';
+export { parseSubagentLaunchV1 } from '@happier-dev/protocol/messages/structured/subagentLaunchV1';
 export type {
     ParticipantMessageV1,
     ParticipantRecipientV1,
@@ -30,7 +28,4 @@ export const isAsyncSubagentLaunchToolResult: (value: unknown) => boolean =
 export type {
     PluginExecutionRunProfileContributionV2 as ExecutionRunProfileContribution,
 } from '@happier-dev/protocol/sessions/subagents';
-import {
-    isAsyncSubAgentLaunchToolResult,
-    isGenericSubAgentToolName,
-} from '@happier-dev/protocol/tools/v2/subAgentFamilies';
+import { isAsyncSubAgentLaunchToolResult, isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2/subAgentFamilies';

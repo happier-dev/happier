@@ -2,15 +2,10 @@ import {
   resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
-import {
-  buildBackendTargetKeyV2,
-  type ModelSelectionApplyPolicy,
-  ProviderBoundModelRefSchema,
-  ProviderConnectionIdSchema,
-  SessionModelSelectionResolutionError,
-  SessionModelSelectionV1Schema,
-  type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ModelSelectionApplyPolicy, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 

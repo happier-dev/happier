@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     createNearViewportTracker,
+    createScrollViewNearViewportTracker,
     isSpanNearViewport,
     quantizeScrollOffset,
     resolveNearViewportWindow,
@@ -12,6 +13,12 @@ function scrollTo(tracker: ReturnType<typeof createNearViewportTracker>, y: numb
 }
 
 describe('near-viewport window', () => {
+    it('measures against the native inner view ref rather than its numeric native node handle', async () => {
+        const content = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, -100, 800, 6000) };
+        const card = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, 100, 400, 260) };
+        const tracker = createScrollViewNearViewportTracker({ current: { getInnerViewRef: () => content, getInnerViewNode: () => 42 } }, false);
+        expect(await tracker.measureSpan(card)).toEqual({ top: 200, height: 260 });
+    });
     it('uses the same demand window along a horizontal Canvas axis', () => {
         const tracker = createNearViewportTracker({ quantum: 24, initialViewportHeight: 0, axis: 'x' });
         tracker.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 200 } } } as never);

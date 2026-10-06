@@ -1,8 +1,5 @@
-import {
-  readBackendTargetRefV2,
-  type AgentExecutionTargetV1,
-  type BackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import {

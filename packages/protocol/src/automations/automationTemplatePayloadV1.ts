@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { AcpConfigOptionOverridesV1Schema, normalizeCodexBackendMode } from '../sessions/metadata/metadataOverridesV1.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { BackendTargetRefV2Schema, normalizeBackendTargetRefV2InputToV2 } from '../backends/targets/backendTargetRefV2.js';
@@ -145,7 +146,7 @@ export function decodeAutomationTemplate(payload: string): AutomationTemplate | 
     if (trimmed.length === 0) return null;
     try {
         const parsed = JSON.parse(trimmed);
-        return AutomationTemplateSchema.parse(parsed);
+        return createStoredReadSchema(AutomationTemplateSchema).parse(parsed);
     } catch {
         return null;
     }

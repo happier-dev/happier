@@ -1,25 +1,8 @@
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  type AccountSettings,
-  type ConnectedAccountServiceKey,
-  type BuiltInLegacyConnectedAccountOperation,
-  type ConnectedServiceCredentialHealthV1,
-  ConnectedServiceCredentialRecordV1Schema,
-  sealConnectedServiceCredentialCiphertext,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialMutationResponseV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceExecutionAuthorityV1,
-  type ConnectedServiceId,
-  type ConnectedServiceOauthCredentialRawMetadata,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { AccountSettings, ConnectedAccountServiceKey, BuiltInLegacyConnectedAccountOperation, ConnectedServiceCredentialHealthV1, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialMutationResponseV1, ConnectedServiceCredentialRevisionBoundaryV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, ConnectedServiceOauthCredentialRawMetadata, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { sealConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
 import type { ConnectedAccountHealthResult as PluginConnectedAccountHealthResult } from '@happier-dev/plugin-sdk/connected-accounts';
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';

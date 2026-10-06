@@ -3052,6 +3052,8 @@ model Artifact {
     headerVersion     Int      @default(0)
     body              Bytes // Encrypted body
     bodyVersion       Int      @default(0)
+    provenance        Bytes?
+    provenanceDataEncryptionKey Bytes?
     currentBlobId     String?
     deletedAt         DateTime?
     dataEncryptionKey Bytes // Encryption key for this artifact
@@ -3070,6 +3072,7 @@ model ArtifactRevision {
     artifactId String
     bodyVersion Int
     body Bytes
+    provenance Bytes?
     blobId String?
     createdAt DateTime @default(now())
     artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
@@ -3138,6 +3141,7 @@ model ArtifactKeyEnvelope {
     artifactId String
     recipientAccountId String
     encryptedDataKey Bytes
+    encryptedProvenanceDataKey Bytes?
     recipientContentPublicKeyFingerprint String
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt

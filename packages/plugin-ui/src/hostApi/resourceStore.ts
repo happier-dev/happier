@@ -235,6 +235,28 @@ function isRetryableResourceReadFailure(error: unknown): boolean {
   return candidate?.retryable !== false;
 }
 
+function hasLostResourceReadAuthority(error: PluginUiResourceError): boolean {
+  // Public subscription refusals and the daemon's exact contextual admission
+  // failures invalidate disclosed bytes. Retryability alone is not authority:
+  // a sleeping transport may be nonretryable for this invocation.
+  return [error.code, ...(error.diagnostics ?? [])].some(code =>
+    code === 'denied'
+    || code === 'permission_denied'
+    || code === 'stale_surface'
+    || code === 'expired_resource'
+    || code === 'plugin_resource_session_access_unavailable'
+    || code === 'plugin_resource_context_unavailable'
+    || code === 'plugin_resource_path_denied'
+    || code === 'plugin_generation_stale'
+    || code === 'plugin_surface_retired'
+    || code === 'plugin_resource_not_found');
+}
+
+/** Whether the Resource owner has withdrawn authority to disclose retained output. */
+export function isPluginUiResourceReadAuthorityLost(snapshot: PluginUiResourceSnapshot): boolean {
+  return snapshot.error !== undefined && hasLostResourceReadAuthority(snapshot.error);
+}
+
 function sameError(
   left: PluginUiResourceError | undefined,
   right: PluginUiResourceError | undefined,
@@ -397,6 +419,40 @@ export function createPluginUiResourceStore(input: Readonly<{
     settleRefreshWaiters(entry, true, 'plugin_resource_aborted');
   }
 
+  function publishResourceFailure(
+    entry: MutableEntry,
+    error: PluginUiResourceError,
+    subscription: PluginUiResourceSnapshot['subscription'],
+    pending: PluginUiResourceSnapshot['pending'] = 'idle',
+  ): void {
+    const authorityLost = hasLostResourceReadAuthority(error);
+    const previous = entry.snapshot;
+    if (authorityLost) {
+      // A pending read began under the withdrawn authority. Its late success
+      // cannot restore disclosure; only a newly admitted read may do that.
+      entry.readController?.abort();
+      entry.readController = null;
+      entry.reading = false;
+      entry.readQueued = false;
+      entry.readQueuedRetryOnFailure = false;
+      entry.readQueuedRetainsFreshSnapshot = false;
+      entry.readQueuedExpectedDigest = null;
+      stopWatch(entry, false);
+    }
+    const hasValue = !authorityLost && previous.value !== undefined;
+    publish(entry, {
+      ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
+      freshness: hasValue ? 'stale' : 'unknown',
+      pending: authorityLost ? 'idle' : pending,
+      error,
+      subscription: authorityLost ? 'ended' : subscription,
+    });
+    if (authorityLost) {
+      settleRefreshWaiters(entry);
+      settleRefreshWaiters(entry, true);
+    }
+  }
+
   function requestRead(
     entry: MutableEntry,
     requestedPending: 'initial' | 'refresh',
@@ -484,20 +540,12 @@ export function createPluginUiResourceStore(input: Readonly<{
       (error) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted) return;
         const previous = entry.snapshot;
-        const hasValue = previous.value !== undefined;
         const retryable = isRetryableResourceReadFailure(error);
-        publish(entry, {
-          ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
-          freshness: hasValue ? 'stale' : 'unknown',
-          pending: 'idle',
-          error: readError(error),
-          subscription: previous.subscription,
-        });
+        publishResourceFailure(entry, readError(error), previous.subscription);
         settleRefreshWaiters(entry);
         if (!retryable) {
           // A terminal read failure cannot be made current by replaying a
-          // queued invalidation. Drop that wakeup and its retry intent while
-          // retaining the last-known-good value for the author.
+          // queued invalidation. Drop that wakeup and its retry intent.
           entry.readQueued = false;
           entry.readQueuedRetryOnFailure = false;
           entry.readQueuedRetainsFreshSnapshot = false;
@@ -610,19 +658,13 @@ export function createPluginUiResourceStore(input: Readonly<{
       });
       return;
     }
-    publish(entry, {
-      ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
-      freshness: hasValue ? 'stale' : 'unknown',
-      pending: 'idle',
-      error: Object.freeze({
+    publishResourceFailure(entry, Object.freeze({
         ...(event.kind === 'error' ? { code: event.code } : {}),
         ...(event.kind === 'error' && event.diagnostics.length > 0
           ? { diagnostics: Object.freeze([...event.diagnostics]) }
           : {}),
         message: event.diagnostics.join(', ') || 'Plugin UI resource watch ended.',
-      }),
-      subscription: 'ended',
-    });
+      }), 'ended');
   }
 
   function scheduleWatchOpenRetry(entry: MutableEntry): void {
@@ -708,26 +750,26 @@ export function createPluginUiResourceStore(input: Readonly<{
         entry.watchController = null;
         entry.watchEstablishing = false;
         const failure = classifyWatchOpenFailure(error);
+        const resourceError = readError(error);
         entry.watchUnsupported = failure.unsupported;
         entry.watchFailureTerminal = !failure.unsupported && !failure.retryable;
         const previous = entry.snapshot;
         const hasValue = previous.value !== undefined;
-        publish(entry, {
-          ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
-          freshness: hasValue ? 'stale' : 'unknown',
-          pending: previous.pending,
-          ...(failure.unsupported ? {} : { error: readError(error) }),
-          subscription: failure.unsupported
-            ? 'unsupported'
-            : failure.retryable
-              ? 'reconnecting'
-              : 'ended',
-        });
+        if (!failure.unsupported) {
+          publishResourceFailure(entry, resourceError, failure.retryable ? 'reconnecting' : 'ended', previous.pending);
+        } else {
+          publish(entry, {
+            ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
+            freshness: hasValue ? 'stale' : 'unknown',
+            pending: previous.pending,
+            subscription: 'unsupported',
+          });
+        }
         // The mount started its canonical read independently of watch
         // admission. Do not queue a second read merely because opening the
         // invalidation channel failed: if that baseline is still pending it
         // remains current, and if it has settled it is already authoritative.
-        if (failure.unsupported || !failure.retryable) return;
+        if (failure.unsupported || !failure.retryable || hasLostResourceReadAuthority(resourceError)) return;
         // A transient live transport failure never makes Resource bytes
         // unavailable. Keep one LKG owner, refresh it canonically, and retry
         // only the failed initial open at a bounded rate.

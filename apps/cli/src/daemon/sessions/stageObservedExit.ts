@@ -1,7 +1,5 @@
-import {
-  ExactSessionTurnEndMutationV1Schema,
-  type ExactSessionTurnEndMutationV1,
-} from '@happier-dev/protocol';
+import { ExactSessionTurnEndMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import type { ExactSessionTurnEndMutationV1 } from '@happier-dev/protocol';
 
 import { resolveDaemonObservedExitMutationId } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 

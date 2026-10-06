@@ -10,7 +10,9 @@ import type {
   RemoteHostTrustResolution,
   SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
-import { redactBugReportSensitiveText, sanitizeBugReportArtifactPath, type SystemTaskJsonObject } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { sanitizeBugReportArtifactPath } from '@happier-dev/protocol/bugs/reports/sanitize';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol';
 import {
   resolvePublicReleaseRingIdForLabel,
   type PublicReleaseRingLabel,

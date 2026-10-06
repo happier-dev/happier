@@ -1,10 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc';
-import {
-  ExpectedMarketplaceListingV1Schema,
-} from '@happier-dev/protocol/marketplace/internal';
-import { PluginUpdatePolicyV1Schema, WorkflowRunStartedByV1Schema } from '@happier-dev/protocol';
+import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
+import { ExpectedMarketplaceListingV1Schema } from '@happier-dev/protocol/marketplace/internal';
+import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
+import { WorkflowRunStartedByV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import type { PluginActionExecutionAttempt } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import type { CurrentDaemonPluginCatalogSnapshot } from './currentCatalog';

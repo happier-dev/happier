@@ -1,4 +1,5 @@
-import { HomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import { IrohError } from './errors.js';
 import { loadIrohNodeNative } from './nodeNative.js';

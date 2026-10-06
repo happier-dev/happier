@@ -61,18 +61,65 @@ export function buildWidgetFrameStyleActions(input: Readonly<{
 }
 
 /**
+ * A widget's ⋯ in the lab's order (`dashboards` dbind E), the same on every surface: Edit inputs…
+ * and Rename (this copy), then how it sits (width, frame, movement), then About, then the surface's
+ * own entries, and Remove last. Each group exists only when its surface supplied it, so a control
+ * never appears without a producer behind it.
+ */
+export function orderWidgetMenu(groups: Readonly<{
+    instance?: readonly ItemAction[];
+    width?: readonly ItemAction[];
+    frame?: readonly ItemAction[];
+    move?: readonly ItemAction[];
+    /** About this widget (and, on a Session Board card, Save as your widget and Post a snapshot). */
+    definition?: readonly ItemAction[];
+    /** The surface's own entries (Open, Customize Home). */
+    surface?: readonly ItemAction[];
+    remove?: readonly ItemAction[];
+}>): ItemAction[] {
+    return [
+        ...(groups.instance ?? []),
+        ...(groups.width ?? []),
+        ...(groups.frame ?? []),
+        ...(groups.move ?? []),
+        ...(groups.definition ?? []),
+        ...(groups.surface ?? []),
+        ...(groups.remove ?? []),
+    ];
+}
+
+/**
+ * Moving a widget from its ⋯: one Move… where the surface has the Organize chooser (every place it
+ * can go, here or on another surface), else one step earlier or later — and only the steps that do
+ * something: nothing for a single widget, no "up" for the first.
+ */
+export function buildWidgetMoveActions(input: Readonly<{
+    index: number;
+    count: number;
+    /** The Organize chooser (the shared drag handle's keyboard/touch path). */
+    chooser?: (() => void) | undefined;
+    onMove?: ((delta: -1 | 1) => void) | undefined;
+    labels?: Readonly<{ earlier: string; later: string }>;
+}>): ItemAction[] {
+    // The chooser also lists other places it can go, so it stays for a single widget.
+    if (input.chooser) return [{ id: 'moveTo', title: t('widgetAdd.moveTo'), icon: 'arrows-down-up' as const, onPress: input.chooser }];
+    const onMove = input.onMove;
+    if (!onMove || input.count < 2) return [];
+    return [
+        ...(input.index > 0 ? [{ id: 'moveUp', title: input.labels?.earlier ?? t('common.moveUp'), icon: 'caret-up' as const, onPress: () => onMove(-1) }] : []),
+        ...(input.index < input.count - 1 ? [{ id: 'moveDown', title: input.labels?.later ?? t('common.moveDown'), icon: 'caret-down' as const, onPress: () => onMove(1) }] : []),
+    ];
+}
+
+/**
  * A configured copy's own entries in its ⋯ (lab `dashboards` dbind E), the same on every personal
- * surface: Edit inputs… repeating the current binding, then Rename. Each exists only when the surface
- * supplied its write, so a control never appears without a producer behind it.
+ * surface: Edit inputs… repeating the current binding, then Rename.
  */
 export function buildWidgetInstanceActions(input: Readonly<{
     editInputs?: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
     onRename?: (() => void) | undefined;
-    /** About this widget, for a copy of one of the Account's own widgets. */
-    onAbout?: (() => void) | undefined;
 }>): ItemAction[] {
     return [
-        ...buildWidgetDefinitionActions({ onAbout: input.onAbout }),
         ...(input.editInputs ? [{
             id: 'editInputs',
             title: t('widgetAdd.editInputs'),

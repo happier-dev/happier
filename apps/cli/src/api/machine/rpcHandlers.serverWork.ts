@@ -1,5 +1,5 @@
-import { DaemonServerWorkStatusV1Schema } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonServerWorkStatusV1Schema } from '@happier-dev/protocol/daemon/serverWorkStatus';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { DaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';

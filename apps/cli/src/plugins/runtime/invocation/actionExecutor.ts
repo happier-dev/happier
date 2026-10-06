@@ -1,12 +1,6 @@
 import { createHash } from 'node:crypto';
-import {
-  createPluginActionPresentUserGate,
-  projectPluginActionFailureCode,
-  type ApprovalExecutionOriginV1,
-  type PluginSourceCustodyV1,
-  type TargetActionApprovalReplayPlacementV1,
-  type PluginActionPresentUserGatePolicy,
-} from '@happier-dev/protocol';
+import { createPluginActionPresentUserGate, projectPluginActionFailureCode } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { ApprovalExecutionOriginV1, PluginSourceCustodyV1, TargetActionApprovalReplayPlacementV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
 import { isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginActionHandlerInvocation } from '@happier-dev/plugin-sdk/actions';
 

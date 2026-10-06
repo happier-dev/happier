@@ -66,3 +66,9 @@ describe('isBinaryContent', () => {
         expect(isBinaryContent('line 1\nline 2\tline 3\r\n')).toBe(false);
     });
 });
+
+
+it('classifies M4V and mixed-separator video paths as opaque binary files', () => {
+    expect(isKnownBinaryPath('assets/clip.m4v')).toBe(true);
+    expect(isKnownBinaryPath('C:\\project.mp4\\plain.txt')).toBe(false);
+});

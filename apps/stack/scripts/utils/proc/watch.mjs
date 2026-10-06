@@ -1,16 +1,35 @@
 import { watch } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-function safeWatch(path, handler, watchImpl = watch) {
+function skipWatchSubpathError(error, watchPath, logger) {
+  if (!['EACCES', 'ENOENT', 'EPERM'].includes(error?.code)) return false;
+  const failedPath = error?.path ?? error?.filename;
+  if (typeof failedPath !== 'string') return false;
+  const subpath = relative(resolve(watchPath), resolve(failedPath));
+  if (!subpath || subpath === '..' || subpath.startsWith(`..${sep}`) || isAbsolute(subpath)) return false;
+  logger.warn?.(`[local] watch: skipping subpath ${failedPath} (${error.code}).`);
+  return true;
+}
+
+function safeWatch(path, handler, { watchImpl, ignorePath, logger }) {
+  let watcher;
   try {
-    // Node supports recursive watching on macOS and Windows. On Linux this may throw; we fail closed by returning null.
-    return watchImpl(path, { recursive: true }, handler);
-  } catch {
+    watcher = watchImpl(path, { recursive: true, ...(ignorePath ? { ignore: ignorePath } : {}) }, handler);
+  } catch (error) {
+    // Retain the non-recursive fallback only for unsupported recursion or a skipped
+    // descendant. Resource exhaustion and failure of the watched root are fatal.
+    if (error?.code !== 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' && !skipWatchSubpathError(error, path, logger)) throw error;
     try {
-      return watchImpl(path, {}, handler);
-    } catch {
+      watcher = watchImpl(path, ignorePath ? { ignore: ignorePath } : {}, handler);
+    } catch (fallbackError) {
+      if (!skipWatchSubpathError(fallbackError, path, logger)) throw fallbackError;
       return null;
     }
   }
+  watcher.on?.('error', (error) => {
+    if (!skipWatchSubpathError(error, path, logger)) throw error;
+  });
+  return watcher;
 }
 
 /**
@@ -21,6 +40,8 @@ export function watchDebounced({
   paths,
   debounceMs = 500,
   shouldObserve = null,
+  ignorePath = null,
+  logger = console,
   onObservation = null,
   onChange,
   readSignature = null,
@@ -65,6 +86,7 @@ export function watchDebounced({
 
   const trigger = (eventType, filename, details = {}) => {
     if (closed) return;
+    if (filename != null && ignorePath?.(String(filename))) return;
     const observation = { eventType, filename, ...details };
     if (typeof shouldObserve === 'function' && !shouldObserve(observation)) return;
     try {
@@ -97,7 +119,7 @@ export function watchDebounced({
     const w = safeWatch(
       p,
       (eventType, filename) => trigger(eventType, filename, { watchPath: p }),
-      watchImpl,
+      { watchImpl, ignorePath, logger },
     );
     if (w) watchers.push(w);
   }

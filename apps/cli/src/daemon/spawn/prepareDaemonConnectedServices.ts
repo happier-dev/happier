@@ -1,9 +1,6 @@
-import {
-    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-    type ConnectedServiceBindingsV2,
-    type ConnectedServiceMaterializationIdentityV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type {

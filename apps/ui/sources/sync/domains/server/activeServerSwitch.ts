@@ -142,7 +142,12 @@ export async function upsertActivateAndSwitchServer(params: Readonly<{
 
         const active = getActiveServerSnapshot();
         const scope = params.scope ?? 'device';
-        if (canSkipActiveServerUrlSwitch({ activeServerUrl: active.serverUrl, targetServerUrl, scope })) return 'already_active';
+        if (canSkipActiveServerUrlSwitch({ activeServerUrl: active.serverUrl, targetServerUrl, scope })) {
+            // No connection change is needed, but choosing the seeded Home is
+            // still explicit intent. Welcome must not treat it as a service fallback.
+            if (active.isSelectionExplicit !== true) await setActiveServer({ serverId: active.serverId, scope });
+            return 'already_active';
+        }
 
         return await runGuardedActiveServerSwitch(async () => {
             const source = params.source ?? 'url';
@@ -187,7 +192,10 @@ export async function setActiveServerAndSwitch(params: Readonly<{
             targetServerId,
             scope,
             requireExactProfile: params.requireExactProfile === true,
-        })) return 'already_active';
+        })) {
+            if (active.isSelectionExplicit !== true) await setActiveServer({ serverId: targetServerId, scope });
+            return 'already_active';
+        }
 
         return await runGuardedActiveServerSwitch(async () => {
             await stageActiveServerAndSwitch(async () => {

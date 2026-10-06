@@ -1,4 +1,4 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -14,7 +14,7 @@ import {
 import type {
   AgentSessionRunnerBindingV1,
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { TrackedSession } from '@/daemon/types';
 import {
   updateSessionMarkerAgentRuntimeSessionOpenAttestation,

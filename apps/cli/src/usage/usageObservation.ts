@@ -1,10 +1,5 @@
-import {
-    SessionContextUsageSnapshotV1Schema,
-    type SessionContextUsageSnapshotV1,
-    type UsageObservationCost,
-    type UsageObservationScope,
-    type UsageObservationTokens,
-} from '@happier-dev/protocol';
+import { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
+import type { SessionContextUsageSnapshotV1, UsageObservationCost, UsageObservationScope, UsageObservationTokens } from '@happier-dev/protocol';
 import type { RuntimeOutboundTranscriptUsageObservationV1 } from '@happier-dev/agents';
 
 export type { UsageObservationScope } from '@happier-dev/protocol';

@@ -1,7 +1,5 @@
-import {
-  createRoleSourceReaderV1,
-  type PluginRoleContributionV1, type RoleActionEntryV1,
-} from '@happier-dev/protocol';
+import { createRoleSourceReaderV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import type { PluginRoleContributionV1, RoleActionEntryV1 } from '@happier-dev/protocol';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readPluginRoleSources } from '@/plugins/projection/registry/roles';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';

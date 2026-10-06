@@ -63,7 +63,8 @@ export type ProfilesCollection = {
  */
 export function useProfilesCollection(): ProfilesCollection {
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
-    const rawProfiles = useSetting('profiles');
+    // Retained settings bytes stay opaque until the canonical profile reader admits them.
+    const rawProfiles: unknown = useSetting('profiles');
     const launchProfiles = useAiLaunchProfiles(rawProfiles);
     const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');

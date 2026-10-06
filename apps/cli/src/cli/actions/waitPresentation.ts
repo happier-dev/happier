@@ -1,4 +1,4 @@
-import { WaitActionResultV1Schema } from '@happier-dev/protocol';
+import { WaitActionResultV1Schema } from '@happier-dev/protocol/actions/specs/wait';
 import type { ActionCliPresentation } from './commandPresentation';
 
 export const WAIT_PRESENTATION: ActionCliPresentation = {

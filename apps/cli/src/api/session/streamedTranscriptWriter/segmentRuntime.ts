@@ -30,7 +30,10 @@ export type StreamedTranscriptSegmentRuntime = {
   liveDelivery: LiveDeliveryState;
   durableCheckpointTimer: ReturnType<typeof setTimeout> | null;
   liveSnapshotTimer: ReturnType<typeof setTimeout> | null;
-  isTerminalizing: boolean;
+  terminalIntent: {
+    state: 'complete' | 'interrupted';
+    interruptedReason?: string;
+  } | null;
   isCommittingDurable: boolean;
   pendingDurableCommit: { state: StreamedTranscriptSegmentState; interruptedReason?: string } | null;
   idleWaiters: Array<() => void>;

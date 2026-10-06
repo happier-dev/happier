@@ -15,18 +15,10 @@ import type {
   RunnerActivationProgressPhaseV1,
 } from '@happier-dev/protocol/ephemeralRunner/progress';
 import type { RunnerActivationProgressUpdateV1 } from '@happier-dev/protocol/ephemeralRunner/progressProof';
-import {
-  RunnerEndpointDeclineResponseV1Schema,
-  RunnerEndpointProjectionResponseV1Schema,
-  type RunnerEndpointProjectionRequestV1,
-  type RunnerEndpointProjectionResponseV1,
-} from '@happier-dev/protocol/ephemeralRunner/endpointProjection';
-import {
-  computeRunnerLaunchManifestCommitmentV1,
-  deriveRunnerLaunchManifestAgentTargetKeyV1,
-  RunnerLaunchManifestV1Schema,
-  type RunnerLaunchManifestV1,
-} from '@happier-dev/protocol/ephemeralRunner/launchManifest';
+import { RunnerEndpointDeclineResponseV1Schema, RunnerEndpointProjectionResponseV1Schema } from '@happier-dev/protocol/ephemeralRunner/endpointProjection';
+import type { RunnerEndpointProjectionRequestV1, RunnerEndpointProjectionResponseV1 } from '@happier-dev/protocol/ephemeralRunner/endpointProjection';
+import { computeRunnerLaunchManifestCommitmentV1, deriveRunnerLaunchManifestAgentTargetKeyV1, RunnerLaunchManifestV1Schema } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
+import type { RunnerLaunchManifestV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
 import type {
   EphemeralRunnerConnectionState,
   EphemeralRunnerControlPlaneConnection,

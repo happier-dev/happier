@@ -92,7 +92,7 @@ vi.mock('@/sync/store/hooks', async () => {
         ...actual,
         useAllMachines: () => [{ id: 'machine-a', active: true }],
         useProfile: () => useProfileSpy(),
-        useSettings: () => useSettingsSpy(),
+        useSettingsSelector: <T,>(selector: (settings: ReturnType<typeof useSettingsSpy>) => T) => selector(useSettingsSpy()),
     };
 });
 

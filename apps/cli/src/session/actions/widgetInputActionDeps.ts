@@ -1,7 +1,18 @@
-import { createActionExecutor, getActionSpec, sameStrictJsonValue, sameQualifiedConnectedAccountRef, isQualifiedConnectedAccountProfileActiveV4, VoiceTrackedSessionAddressV1Schema, type ActionExecutorDeps, type AccountProfile, type ConnectedAccountUiProjectionEntryV1, type PluginContributionIdentityV1, type PluginProjectedResourceV2, type QualifiedConnectedAccountPurposeBindingsV1, type JsonValue, type PublicActionResultById } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
+import type { ActionExecutorDeps, AccountProfile, ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1, PluginProjectedResourceV2, QualifiedConnectedAccountPurposeBindingsV1, JsonValue, PublicActionResultById } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, createWidgetActionInputResolverV1, resolveConfiguredWidgetTargetInputV1, resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetCandidateIdentityV1, type WidgetActionInputResolverV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
-import { readInputPath } from '@happier-dev/protocol/inputs';
+import { readBuiltinWidgetDescriptorV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
+import { readWidgetDefinitionResourcesV1 } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
+import { createWidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets/widgetActionInputResolverV1';
+import { resolveConfiguredWidgetTargetInputV1 } from '@happier-dev/protocol/widgets/widgetInputAdmissionV1';
+import { resolveWidgetViewerPurposeValuesV1, resolveWidgetConnectedAccountOptionsV1 } from '@happier-dev/protocol/widgets/widgetViewerPurposeV1';
+import type { WidgetCandidateIdentityV1, WidgetActionInputResolverV1, WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 
 type Request = Parameters<WidgetActionInputResolverV1['resolve']>[0];
 type Descriptor = WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[]; resourceDeclarations?: readonly PluginProjectedResourceV2[];

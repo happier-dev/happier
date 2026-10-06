@@ -1,15 +1,6 @@
-import {
-  BrowserAutomationActionRequestV1Schema,
-  BrowserAutomationActionResultV1Schema,
-  resolveBrowserAutomationActionRequester,
-  BrowserAutomationCancelActiveResultV1Schema,
-  getActionSpec,
-  type BrowserAutomationActionResultV1,
-  type BrowserAutomationCancelActiveResultV1,
-  type ActionExecutorContext,
-  type BrowserAutomationTimelineV1,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, resolveBrowserAutomationActionRequester, BrowserAutomationCancelActiveResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { BrowserAutomationActionResultV1, BrowserAutomationCancelActiveResultV1, ActionExecutorContext, BrowserAutomationTimelineV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationDaemonService } from './service';
 import type { BrowserAutomationViewRef } from './owners';

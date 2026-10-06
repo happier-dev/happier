@@ -1,10 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import {
-    resolveHostedWebAssetPolicy,
-    type HostedWebAssetPolicyFailureCode,
-    type HostedWebAssetPolicyInput,
-} from '@happier-dev/protocol/plugins/ui';
+import { resolveHostedWebAssetPolicy } from '@happier-dev/protocol/plugins/ui/hostedWebAssetPolicy';
+import type { HostedWebAssetPolicyFailureCode, HostedWebAssetPolicyInput } from '@happier-dev/protocol/plugins/ui';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 export type HostedWebStaticAssetResolveFailureCode =

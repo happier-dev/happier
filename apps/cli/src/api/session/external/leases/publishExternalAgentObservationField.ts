@@ -2,12 +2,9 @@ import {
     readExternalAgentObservationSessionState,
     writeExternalAgentObservationSessionState,
 } from '@happier-dev/agents';
-import {
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-    reserveExternalSessionCompletedBoundaryV1,
-    type ExternalAgentObservationSnapshotV1,
-    type SessionMetadata,
-} from '@happier-dev/protocol';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { reserveExternalSessionCompletedBoundaryV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import type { ExternalAgentObservationSnapshotV1, SessionMetadata } from '@happier-dev/protocol';
 
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';

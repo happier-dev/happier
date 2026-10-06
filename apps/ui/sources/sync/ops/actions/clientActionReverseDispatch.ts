@@ -10,13 +10,13 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
     accountId: string;
     isCurrent(): boolean;
 }>) {
-    const executor = createDefaultActionExecutor({ admittedClientAction: true });
     const failure = (errorCode: string) => ({ v: 1 as const, execution: { ok: false as const, errorCode, error: errorCode } });
     return async (raw: unknown, context?: Readonly<{ signal: AbortSignal }>) => {
         const request = UiActionDispatchRequestV1Schema.safeParse(raw);
         if (!request.success) return failure('invalid_action_input');
         if (!binding.isCurrent() || !context || context.signal.aborted) return failure('target_unavailable');
         const { actionId, input, context: admitted } = request.data;
+        const executor = createDefaultActionExecutor({ admittedClientActionId: actionId });
         try {
             const execution = await executor.execute(actionId, input, {
                 ...admitted,

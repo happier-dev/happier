@@ -1,11 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { SessionSurfaceItemV1Schema, isSessionSurfaceItemSourceCompatible } from './item.js';
+import { SessionSurfaceItemV1Schema, SessionSurfaceItemV1StoredSchema, isSessionSurfaceItemSourceCompatible } from './item.js';
 import { createSessionSurfaceNoteDocumentV1, readSessionSurfaceNoteTextV1 } from './declarative/note.js';
 
 describe('Session surface items', () => {
   const note = { v: 1, title: '', frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'declarative', document: { version: 1, root: { kind: 'stack', children: [] } } } };
   it('accepts an explicitly saved blank native note', () => {
     expect(SessionSurfaceItemV1Schema.parse(note)).toEqual(note);
+  });
+  it('drops additive stored document fields without weakening required fields or snapshot inertness', () => {
+    const snapshot = { ...note, source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Frozen' } } },
+      snapshot: { asOf: '2026-09-05T00:00:00.000Z', provenance: [{ label: 'Status' }] } };
+    const stored = { ...snapshot, extra: true, height: { ...snapshot.height, extra: true }, source: { ...snapshot.source,
+      extra: true, document: { ...snapshot.source.document, extra: true, root: { ...snapshot.source.document.root, extra: true } } },
+      snapshot: { ...snapshot.snapshot, extra: true, provenance: [{ label: 'Status', extra: true }] } };
+    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual(snapshot);
+    expect(SessionSurfaceItemV1Schema.safeParse(stored).success).toBe(false);
+    for (const invalid of [
+      { ...stored, height: { mode: 'fixed' } },
+      { ...stored, source: { kind: 'unknown' } },
+      { ...stored, snapshot: { ...stored.snapshot, asOf: null } },
+      { ...stored, source: { kind: 'declarative', document: { version: 1, root: {
+        kind: 'action', hostAction: 'session.message.send', label: 'Send', input: { text: 'Hello' }, extra: true,
+      } } } },
+    ]) expect(SessionSurfaceItemV1StoredSchema.safeParse(invalid).success).toBe(false);
+  });
+  it('normalizes stored widget references while retaining shared-content privacy admission', () => {
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } },
+      bindings: { connection: { kind: 'viewer', purpose: 'metrics' } } };
+    const canonical = { ...note, source: { kind: 'widget', instance } };
+    const stored = { ...canonical, source: { ...canonical.source, extra: true, instance: { ...instance, extra: true,
+      definition: { ...instance.definition, extra: true, surface: { ...instance.definition.surface, extra: true } },
+      bindings: { connection: { ...instance.bindings.connection, extra: true } },
+    } } };
+    expect(SessionSurfaceItemV1StoredSchema.parse(stored)).toEqual(canonical);
+    expect(SessionSurfaceItemV1Schema.safeParse(stored).success).toBe(false);
+    expect(SessionSurfaceItemV1StoredSchema.safeParse({ ...stored, source: { kind: 'widget', instance: {
+      ...instance, definition: { kind: 'artifact', artifactId: 'private-definition', extra: true },
+    } } }).success).toBe(false);
+    expect(SessionSurfaceItemV1StoredSchema.safeParse({ ...stored, source: { kind: 'widget', instance: {
+      ...instance, bindings: { connection: { kind: 'value', value: {
+        service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'author-connection',
+      } } },
+    } } }).success).toBe(false);
   });
   it('persists only the walkthrough comparison selector, never frozen progress or result authority', () => {
     const item = { ...note, source: { kind: 'walkthrough', comparison: 'session' } };
@@ -49,6 +85,14 @@ describe('Session surface items', () => {
   it('requires viewer intent instead of pinning an author connection into shared content', () => {
     const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } }, bindings: { connection: { kind: 'value', value: { service: { pluginId: 'com.acme.test', localId: 'cloud' }, accountId: 'author-connection' } } } };
     expect(SessionSurfaceItemV1Schema.safeParse({ ...note, source: { kind: 'widget', instance } }).success).toBe(false);
+  });
+  it('recognizes private connection selections inside opaque values even with additive fields', () => {
+    const privateValue = { service: { pluginId: 'com.acme.test', localId: 'cloud', extra: true }, accountId: 'author-connection', extra: true };
+    const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'com.acme.test', localId: 'dashboard' } },
+      bindings: { connection: { kind: 'value', value: { nested: [privateValue] } } } };
+    const item = { ...note, source: { kind: 'widget', instance } };
+    expect(SessionSurfaceItemV1Schema.safeParse(item).success).toBe(false);
+    expect(SessionSurfaceItemV1StoredSchema.safeParse(item).success).toBe(false);
   });
   it('keeps source class and exact widget definition immutable while permitting instance input edits', () => {
     const previous = SessionSurfaceItemV1Schema.parse(note);

@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 
 import { createInferenceRuntimeLoader } from '@/daemon/inference/inferenceRuntimeLoader';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';

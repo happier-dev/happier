@@ -1,5 +1,5 @@
 import type { ComposerAttachmentInputV1 } from '@happier-dev/protocol';
-import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { deterministicStringify } from '@/utils/deterministicJson';

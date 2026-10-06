@@ -1,39 +1,32 @@
 import { z } from 'zod';
 import { SpawnSessionTerminalSchema } from '@happier-dev/protocol/spawnSession';
-import {
-  AcpConfigOptionOverridesV1Schema,
-  AgentExecutionTargetV1Schema,
-  AgentSessionStartupInstructionsV1Schema,
-  RuntimeDescriptorV1Schema,
-  ConnectedServiceMaterializationIdentityV1Schema,
-  SessionCreationCorrespondenceV1Schema,
-  SessionAttachMetadataIdentityPolicySchema,
-  SessionMcpSelectionV1Schema,
-  SessionInputRequestSchema,
-  SessionMessageProvenanceSchema,
-  SessionUserMessageSendRequestSchema,
-  SessionModelSelectionV1Schema,
-  SessionCreationTagV1Schema,
-  SessionInitialAccessDraftV1Schema,
-  SessionInitialTriggerAdmissionV1Schema,
-  SessionReportsToV1Schema,
-  SessionRolesV1Schema,
-  SessionInitialGoalRequestV1Schema,
-  SessionOriginKindV1Schema,
-  SessionIdSchema,
-  ExecutionRunIdSchema,
-  SessionWorkDepthV1Schema,
-  refineSessionCreateOriginFieldsV1,
-  MachinePoolSelectionOriginV1Schema,
-  NonBlankOpaqueIdentifierSchema,
-  SecretReferenceOverlayV1Schema,
-  SessionProviderBindingSecurityChangeConfirmationV1Schema,
-  SpawnSessionExecutionAuthorizationSchema,
-  buildBackendTargetKeyV2,
-  type AgentExecutionTargetV1,
-  type BackendTargetRefV2,
-} from '@happier-dev/protocol';
-import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import { SessionInitialTriggerAdmissionV1Schema } from '@happier-dev/protocol/sessions/creation/sessionInitialTriggerAdmissionV1';
+import { SessionOriginKindV1Schema, SessionWorkDepthV1Schema, refineSessionCreateOriginFieldsV1 } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
+import { SessionAttachMetadataIdentityPolicySchema } from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionInputRequestSchema, SessionMessageProvenanceSchema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { SessionIdSchema, ExecutionRunIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/protocol';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 import { PERMISSION_MODES } from '@/api/types';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

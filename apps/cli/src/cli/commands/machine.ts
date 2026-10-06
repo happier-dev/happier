@@ -13,13 +13,8 @@ import { isLoopbackServerHost } from '@/server/serverUrlClassification';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import {
-  parseApproveRemoteProvisioningPromptData,
-  type SystemTaskEvent,
-  type SystemTaskJsonObject,
-  type SystemTaskResult,
-  type SystemTaskSpec,
-} from '@happier-dev/protocol';
+import { parseApproveRemoteProvisioningPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
+import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
 
 import { showMachineHelp } from './machine/help';
 import {

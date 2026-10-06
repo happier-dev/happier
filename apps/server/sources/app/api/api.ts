@@ -65,7 +65,7 @@ import { resolveJoinScreenHomeIdentity } from "@/app/teams/invitations/joinScree
 import { registerAuthEmailApplicationLinkTarget, resolveAuthEmailReadiness } from "@/app/auth/email/resolveAuthEmailDelivery";
 import { createHomeAuthEmailDelivery, createHomeMailLinkTargetResolver } from "@/app/auth/email/homeAuthEmailDelivery";
 import type { AuthEmailDelivery } from "@/app/auth/email/authEmailDelivery";
-import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
+import { readHomeConfigEnv, readHomeConfigEnvInTx } from "@/app/home/settings/homeSettings";
 import { registerHomeSettingsRoutes } from "./routes/home/homeSettingsRoutes";
 import { registerHomeRetentionRoutes } from "./routes/home/homeRetentionRoutes";
 import { registerHomeReachabilityRoutes } from "./routes/home/homeReachabilityRoutes";
@@ -76,7 +76,7 @@ import { resolveHomeSearchRuntimeConfig } from "@/app/search/homeSearchCapabilit
 import { resolveHomeSearchDbPath } from "@/app/search/homeSearchDb";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import {
     SESSION_TRANSCRIPT_PUBLICATION_SELECT,
@@ -151,14 +151,15 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
         'homeConnectionDescriptorContinuityStore',
     );
     const resolveHomeConnectionDescriptor = hasLifecycleSelectedDescriptorOwner
-        ? async () => {
+        ? async (tx?: Tx) => {
             const continuityStore = params.homeConnectionDescriptorContinuityStore;
             if (!continuityStore) return undefined;
             // The live overlay carries a stored or inferred public address (plan §3.2).
             return readHomeConnectionDescriptor({
-                env: await readHomeConfigEnv(),
+                env: tx ? await readHomeConfigEnvInTx(tx) : await readHomeConfigEnv(),
                 continuityStore,
                 visibility: 'authenticated',
+                tx,
             });
         }
         : undefined;

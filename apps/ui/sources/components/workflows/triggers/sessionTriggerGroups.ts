@@ -7,6 +7,7 @@ import type { TriggerRowOutcome } from './TriggerRow';
 import { readTriggerThen } from './sessionTriggerForm';
 import { resolveTriggerEventGroup, type TriggerEventGroup } from './triggerEventGroups';
 import { formatTriggerSetSummary } from './formatTriggerSummary';
+import { workflowBlockReferenceLabel, workflowDefinitionPromptTitle } from '@/sync/domains/workflows/workflowBlockLabel';
 
 export type SessionTriggerRowModel = Readonly<{
     /** Row identity: the trigger set and the trigger. */
@@ -53,9 +54,10 @@ export function describeTriggerTarget(target: TriggerTargetV1 | undefined, resol
         case 'doAction':
             return t('workflows.triggers.then.doAction');
         case 'kept':
-            return target.kind === 'inline'
-                ? t('workflows.triggers.row.steps', { count: target.definition.blocks.length })
-                : t('workflows.triggers.then.runWorkflow');
+            if (target.kind !== 'inline') return t('workflows.triggers.then.runWorkflow');
+            return workflowDefinitionPromptTitle(target.definition)
+                ?? (target.definition.blocks[0] ? workflowBlockReferenceLabel(target.definition.blocks[0])
+                    : t('workflows.triggers.row.steps', { count: 0 }));
     }
 }
 

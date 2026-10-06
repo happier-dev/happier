@@ -100,6 +100,8 @@ function createMetadataUnavailableSession(id: string): SessionListRenderableSess
         thinkingAt: 0,
         presence: 1,
         metadataUnavailable: true,
+        encryptionMode: 'plain',
+        encryptedContentAvailability: 'ready',
     });
 }
 

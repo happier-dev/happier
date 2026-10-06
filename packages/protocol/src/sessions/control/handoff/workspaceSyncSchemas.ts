@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { HandoffTargetReplacementApprovalV1Schema } from './handoffTargetReplacementApprovalV1.js';
 
 const MAX_RELATIONSHIP_ID_LENGTH = 256;
@@ -14,22 +15,22 @@ const MAX_CONFLICTS = 1_000;
 export const WORKSPACE_SYNC_CONFLICT_PAGE_MAX_ITEMS = 100;
 export const WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES = 1024 * 1024;
 
-export const WorkspaceSyncModeV1Schema = z.enum([
+export const WorkspaceSyncModeV1Schema = lazyZodSchema(() => z.enum([
   'copy_once',
   'keep_synced',
   'mirror_exactly',
   'keep_both_in_sync',
-]);
+]));
 export type WorkspaceSyncModeV1 = z.infer<typeof WorkspaceSyncModeV1Schema>;
 
-export const WorkspaceSyncPersistentModeV1Schema = z.enum([
+export const WorkspaceSyncPersistentModeV1Schema = lazyZodSchema(() => z.enum([
   'keep_synced',
   'mirror_exactly',
   'keep_both_in_sync',
-]);
+]));
 export type WorkspaceSyncPersistentModeV1 = z.infer<typeof WorkspaceSyncPersistentModeV1Schema>;
 
-const WorkspaceContentPolicyV1FieldsSchema = z.object({
+const WorkspaceContentPolicyV1FieldsSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   selection: z.enum(['git_worktree', 'all_files']),
   extraIgnorePatterns: z.array(z.string().trim().min(1).max(WORKSPACE_SYNC_MAX_PATTERN_BYTES)
@@ -38,12 +39,12 @@ const WorkspaceContentPolicyV1FieldsSchema = z.object({
     .refine((value) => utf8ToBytes(value).byteLength <= WORKSPACE_SYNC_MAX_PATTERN_BYTES, 'pattern exceeds UTF-8 byte limit')
     .refine((value) => !value.startsWith('!'), 'include patterns must be positive')).max(WORKSPACE_SYNC_MAX_PATTERNS).readonly(),
   policyDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-}).strict();
-export const WorkspaceContentPolicyV1Schema = WorkspaceContentPolicyV1FieldsSchema.superRefine((value, context) => {
+}).strict());
+export const WorkspaceContentPolicyV1Schema = lazyZodSchema(() => WorkspaceContentPolicyV1FieldsSchema.superRefine((value, context) => {
   if (value.policyDigest !== computeWorkspaceSyncPolicyDigest(value)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['policyDigest'], message: 'policyDigest does not match content policy' });
   }
-});
+}));
 export type WorkspaceContentPolicyV1 = z.infer<typeof WorkspaceContentPolicyV1Schema>;
 
 /**
@@ -66,7 +67,7 @@ export function computeWorkspaceSyncPolicyDigest(
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }
 
-export const WorkspaceSyncRelationshipV1Schema = z
+export const WorkspaceSyncRelationshipV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1),
     relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
@@ -88,7 +89,7 @@ export const WorkspaceSyncRelationshipV1Schema = z
         message: 'alphaWorkspaceRefId and betaWorkspaceRefId must be distinct',
       });
     }
-  });
+  }));
 export type WorkspaceSyncRelationshipV1 = z.infer<typeof WorkspaceSyncRelationshipV1Schema>;
 
 type WorkspaceSyncRelationshipDefinitionV1 = Pick<
@@ -117,7 +118,7 @@ export function areWorkspaceSyncRelationshipDefinitionsEqual(
     && left.contentPolicy.policyDigest === right.contentPolicy.policyDigest;
 }
 
-export const WorkspaceSyncCopyOnceV1Schema = z.object({
+export const WorkspaceSyncCopyOnceV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
@@ -132,22 +133,22 @@ export const WorkspaceSyncCopyOnceV1Schema = z.object({
       message: 'alphaWorkspaceRefId and betaWorkspaceRefId must be distinct',
     });
   }
-});
+}));
 export type WorkspaceSyncCopyOnceV1 = z.infer<typeof WorkspaceSyncCopyOnceV1Schema>;
 
-export const WorkspaceSyncEndpointEntryKindV1Schema = z.enum(['missing', 'file', 'directory', 'symlink']);
+export const WorkspaceSyncEndpointEntryKindV1Schema = lazyZodSchema(() => z.enum(['missing', 'file', 'directory', 'symlink']));
 export type WorkspaceSyncEndpointEntryKindV1 = z.infer<typeof WorkspaceSyncEndpointEntryKindV1Schema>;
 
-const WorkspaceSyncConflictEndpointEntryKindV1Schema = z.enum([
+const WorkspaceSyncConflictEndpointEntryKindV1Schema = lazyZodSchema(() => z.enum([
   ...WorkspaceSyncEndpointEntryKindV1Schema.options,
   'unsupported',
-]);
-const WorkspaceSyncUnsupportedEntrySourceKindV1Schema = z.enum(['untracked', 'problematic', 'unknown']);
+]));
+const WorkspaceSyncUnsupportedEntrySourceKindV1Schema = lazyZodSchema(() => z.enum(['untracked', 'problematic', 'unknown']));
 
 // Mutagen synchronization v1 hashes file content with SHA-1 and exposes the
 // raw 20-byte digest as lowercase hexadecimal at the broker boundary.
-const WorkspaceSyncFileDigestV1Schema = z.string().regex(/^[a-f0-9]{40}$/u);
-const WorkspaceSyncDirectoryFingerprintV1Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const WorkspaceSyncFileDigestV1Schema = lazyZodSchema(() => z.string().regex(/^[a-f0-9]{40}$/u));
+const WorkspaceSyncDirectoryFingerprintV1Schema = lazyZodSchema(() => z.string().regex(/^[a-f0-9]{64}$/u));
 
 /**
  * An engine-relative path is identity-bearing data, not display/user input.
@@ -155,7 +156,7 @@ const WorkspaceSyncDirectoryFingerprintV1Schema = z.string().regex(/^[a-f0-9]{64
  * separator; the target filesystem owner applies any additional native rules
  * (notably Windows backslash separators and volume/ADS rejection).
  */
-const WorkspaceSyncRelativePathV1Schema = z.string().min(1).max(MAX_PATH_LENGTH).superRefine((value, context) => {
+const WorkspaceSyncRelativePathV1Schema = lazyZodSchema(() => z.string().min(1).max(MAX_PATH_LENGTH).superRefine((value, context) => {
   const components = value.split('/');
   if (
     value.includes('\0')
@@ -167,9 +168,9 @@ const WorkspaceSyncRelativePathV1Schema = z.string().min(1).max(MAX_PATH_LENGTH)
       message: 'workspace sync path must identify a safe root-relative descendant',
     });
   }
-});
+}));
 
-const WorkspaceSyncConflictEndpointV1Schema = z.object({
+const WorkspaceSyncConflictEndpointV1Schema = lazyZodSchema(() => z.object({
   kind: WorkspaceSyncConflictEndpointEntryKindV1Schema,
   digest: WorkspaceSyncFileDigestV1Schema.optional(),
   size: z.number().int().nonnegative().optional(),
@@ -194,17 +195,17 @@ const WorkspaceSyncConflictEndpointV1Schema = z.object({
       message: 'unsupported conflict entries cannot claim file metadata',
     });
   }
-});
+}));
 
-export const WorkspaceSyncConflictV1Schema = z.object({
+export const WorkspaceSyncConflictV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
   alpha: WorkspaceSyncConflictEndpointV1Schema,
   beta: WorkspaceSyncConflictEndpointV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictV1 = z.infer<typeof WorkspaceSyncConflictV1Schema>;
 
-export const WorkspaceSyncConflictListV1Schema = z
+export const WorkspaceSyncConflictListV1Schema = lazyZodSchema(() => z
   .object({
     relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
     totalCount: z.number().int().nonnegative(),
@@ -237,17 +238,17 @@ export const WorkspaceSyncConflictListV1Schema = z
         });
       }
     }
-  });
+  }));
 export type WorkspaceSyncConflictListV1 = z.infer<typeof WorkspaceSyncConflictListV1Schema>;
 
-export const WorkspaceSyncConflictPageRequestV1Schema = z.object({
+export const WorkspaceSyncConflictPageRequestV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   cursor: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
   limit: z.number().int().positive().max(WORKSPACE_SYNC_CONFLICT_PAGE_MAX_ITEMS),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictPageRequestV1 = z.infer<typeof WorkspaceSyncConflictPageRequestV1Schema>;
 
-const WorkspaceSyncConflictPageDataV1Schema = z.object({
+const WorkspaceSyncConflictPageDataV1Schema = lazyZodSchema(() => z.object({
   status: z.literal('page'),
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   totalCount: z.number().int().nonnegative(),
@@ -270,15 +271,15 @@ const WorkspaceSyncConflictPageDataV1Schema = z.object({
       });
     }
   }
-});
+}));
 
-export const WorkspaceSyncConflictPageV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncConflictPageV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   WorkspaceSyncConflictPageDataV1Schema,
   z.object({
     status: z.literal('cursor_invalidated'),
     relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncConflictPageV1 = z.infer<typeof WorkspaceSyncConflictPageV1Schema>;
 
 /**
@@ -286,7 +287,7 @@ export type WorkspaceSyncConflictPageV1 = z.infer<typeof WorkspaceSyncConflictPa
  * Preview availability is intentionally absent: display bounds never weaken the
  * identity that a reviewed resolution approves.
  */
-export const WorkspaceSyncEntryExpectationV1Schema = z.discriminatedUnion('kind', [
+export const WorkspaceSyncEntryExpectationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('missing') }).strict(),
   z.object({
     kind: z.literal('file'),
@@ -302,24 +303,24 @@ export const WorkspaceSyncEntryExpectationV1Schema = z.discriminatedUnion('kind'
     kind: z.literal('directory'),
     fingerprint: WorkspaceSyncDirectoryFingerprintV1Schema,
   }).strict(),
-]);
+]));
 export type WorkspaceSyncEntryExpectationV1 = z.infer<typeof WorkspaceSyncEntryExpectationV1Schema>;
 
-const WorkspaceSyncResolutionEndpointV1Schema = z.object({
+const WorkspaceSyncResolutionEndpointV1Schema = lazyZodSchema(() => z.object({
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   expected: WorkspaceSyncEntryExpectationV1Schema,
-}).strict();
+}).strict());
 
-const WorkspaceSyncConflictResolutionBaseV1Schema = z.object({
+const WorkspaceSyncConflictResolutionBaseV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   hubWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
   source: WorkspaceSyncResolutionEndpointV1Schema,
   targets: z.array(WorkspaceSyncResolutionEndpointV1Schema).min(1).readonly(),
   relationshipIds: z.array(z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH)).min(1).readonly(),
-});
+}));
 
-export const WorkspaceSyncConflictResolutionV1Schema = z.discriminatedUnion('strategy', [
+export const WorkspaceSyncConflictResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('strategy', [
   WorkspaceSyncConflictResolutionBaseV1Schema.extend({ strategy: z.literal('use_source') }).strict(),
   WorkspaceSyncConflictResolutionBaseV1Schema.extend({
     strategy: z.literal('keep_both'),
@@ -336,7 +337,7 @@ export const WorkspaceSyncConflictResolutionV1Schema = z.discriminatedUnion('str
       }).strict(),
     }).strict()).min(1).readonly(),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncConflictResolutionV1 = z.infer<typeof WorkspaceSyncConflictResolutionV1Schema>;
 
 /** Fixed, native-safe identity for one captured source or confined destination effect. */
@@ -383,7 +384,7 @@ export function deriveWorkspaceSyncConflictAsidePaths(
   return paths;
 }
 
-export const WorkspaceSyncConflictResolutionEndpointResultV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncConflictResolutionEndpointResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH), status: z.literal('applied') }).strict(),
   z.object({ workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH), status: z.literal('applied_paused') }).strict(),
   z.object({ workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH), status: z.literal('changed') }).strict(),
@@ -400,10 +401,10 @@ export const WorkspaceSyncConflictResolutionEndpointResultV1Schema = z.discrimin
     status: z.literal('recovery_needed'),
     recoveryPath: z.string().min(1).max(MAX_PATH_LENGTH),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncConflictResolutionEndpointResultV1 = z.infer<typeof WorkspaceSyncConflictResolutionEndpointResultV1Schema>;
 
-export const WorkspaceSyncConflictResolutionResultV1Schema = z.object({
+export const WorkspaceSyncConflictResolutionResultV1Schema = lazyZodSchema(() => z.object({
   endpoints: z.array(WorkspaceSyncConflictResolutionEndpointResultV1Schema).min(1).readonly(),
   preserved: z.array(z.object({
     alternativeIndex: z.number().int().nonnegative(),
@@ -424,7 +425,7 @@ export const WorkspaceSyncConflictResolutionResultV1Schema = z.object({
       z.object({ status: z.literal('recovery_needed'), recoveryPath: z.string().min(1).max(MAX_PATH_LENGTH) }).strict(),
     ]),
   }).strict()).readonly().optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictResolutionResultV1 = z.infer<typeof WorkspaceSyncConflictResolutionResultV1Schema>;
 
 /**
@@ -432,12 +433,12 @@ export type WorkspaceSyncConflictResolutionResultV1 = z.infer<typeof WorkspaceSy
  * existing opaque cursor and bounds are preserved; no aggregate global
  * cursor or unbounded fan-out is representable.
  */
-export const WorkspaceSyncConflictsListActionInputV1Schema = z.object({
+export const WorkspaceSyncConflictsListActionInputV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   cursor: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
   limit: z.number().int().positive().max(WORKSPACE_SYNC_CONFLICT_PAGE_MAX_ITEMS),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictsListActionInputV1 = z.infer<typeof WorkspaceSyncConflictsListActionInputV1Schema>;
 
 /**
@@ -453,19 +454,19 @@ export type WorkspaceSyncConflictResolveActionInputV1 = z.infer<typeof Workspace
  * The receipt and its exact Action subject travel together so the daemon can
  * revalidate the persisted approval before performing the destructive write.
  */
-export const WorkspaceSyncConflictResolveRpcInputV1Schema = z.object({
+export const WorkspaceSyncConflictResolveRpcInputV1Schema = lazyZodSchema(() => z.object({
   actionReceiptId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   actionInput: WorkspaceSyncConflictResolveActionInputV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictResolveRpcInputV1 = z.infer<typeof WorkspaceSyncConflictResolveRpcInputV1Schema>;
 
-export const WorkspaceSyncRelationshipIdV1Schema = z.object({
+export const WorkspaceSyncRelationshipIdV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
-}).strict();
+}).strict());
 export type WorkspaceSyncRelationshipIdV1 = z.infer<typeof WorkspaceSyncRelationshipIdV1Schema>;
 
 /** Private two-phase target effect: transfer/capture settles before engine pause. */
-export const WorkspaceSyncTargetConflictStageV1Schema = z.object({
+export const WorkspaceSyncTargetConflictStageV1Schema = lazyZodSchema(() => z.object({
   actionReceiptId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   actionInput: WorkspaceSyncConflictResolveActionInputV1Schema,
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
@@ -479,20 +480,20 @@ export const WorkspaceSyncTargetConflictStageV1Schema = z.object({
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   targetExpected: WorkspaceSyncEntryExpectationV1Schema,
   path: WorkspaceSyncRelativePathV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetConflictStageV1 = z.infer<typeof WorkspaceSyncTargetConflictStageV1Schema>;
 
 /** Release private source material after every reviewed destination has staged or failed. */
-export const WorkspaceSyncConflictCaptureReleaseV1Schema = z.object({
+export const WorkspaceSyncConflictCaptureReleaseV1Schema = lazyZodSchema(() => z.object({
   actionReceiptId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   actionInput: WorkspaceSyncConflictResolveActionInputV1Schema,
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   sourceMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   sourceWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictCaptureReleaseV1 = z.infer<typeof WorkspaceSyncConflictCaptureReleaseV1Schema>;
 
-export const WorkspaceSyncTargetConflictApplyV1Schema = z.object({
+export const WorkspaceSyncTargetConflictApplyV1Schema = lazyZodSchema(() => z.object({
   actionReceiptId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   actionInput: WorkspaceSyncConflictResolveActionInputV1Schema,
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
@@ -501,38 +502,38 @@ export const WorkspaceSyncTargetConflictApplyV1Schema = z.object({
   targetMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetConflictApplyV1 = z.infer<typeof WorkspaceSyncTargetConflictApplyV1Schema>;
 
-export const WorkspaceSyncTargetConflictApplyResultV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncTargetConflictApplyResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('installed') }).strict(),
   z.object({ status: z.literal('restored') }).strict(),
   z.object({ status: z.literal('recovery_needed'), recoveryPath: z.string().min(1).max(MAX_PATH_LENGTH) }).strict(),
-]);
+]));
 export type WorkspaceSyncTargetConflictApplyResultV1 = z.infer<typeof WorkspaceSyncTargetConflictApplyResultV1Schema>;
 
 /** Reconcile retained confined replacement evidence before a touching engine runs. */
-export const WorkspaceSyncTargetConflictRecoverV1Schema = z.object({
+export const WorkspaceSyncTargetConflictRecoverV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   targetMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetConflictRecoverV1 = z.infer<typeof WorkspaceSyncTargetConflictRecoverV1Schema>;
 
-export const WorkspaceSyncTargetConflictRecoverResultV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncTargetConflictRecoverResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('settled') }).strict(),
   z.object({ status: z.literal('recovery_needed'), recoveryPath: z.string().min(1).max(MAX_PATH_LENGTH) }).strict(),
-]);
+]));
 export type WorkspaceSyncTargetConflictRecoverResultV1 = z.infer<typeof WorkspaceSyncTargetConflictRecoverResultV1Schema>;
 
-export const ReadWorkspaceSyncFileV1Schema = z.object({
+export const ReadWorkspaceSyncFileV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   side: z.enum(['alpha', 'beta']),
   path: WorkspaceSyncRelativePathV1Schema,
   expectedDigest: WorkspaceSyncFileDigestV1Schema.optional(),
   maxBytes: z.number().int().positive().max(WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES)
     .default(WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES),
-}).strict();
+}).strict());
 export type ReadWorkspaceSyncFileV1 = z.infer<typeof ReadWorkspaceSyncFileV1Schema>;
 
 /**
@@ -541,9 +542,9 @@ export type ReadWorkspaceSyncFileV1 = z.infer<typeof ReadWorkspaceSyncFileV1Sche
  * workspace reference from its current Account settings. A caller-controlled
  * filesystem root is deliberately absent.
  */
-const WorkspaceSyncHexDigestV1Schema = z.string().regex(/^[a-f0-9]{64}$/u);
+const WorkspaceSyncHexDigestV1Schema = lazyZodSchema(() => z.string().regex(/^[a-f0-9]{64}$/u));
 
-export const WorkspaceSyncTargetBootstrapOwnerV1Schema = z.discriminatedUnion('kind', [
+export const WorkspaceSyncTargetBootstrapOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('relationship'),
     relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
@@ -552,10 +553,10 @@ export const WorkspaceSyncTargetBootstrapOwnerV1Schema = z.discriminatedUnion('k
     kind: z.literal('copy_once'),
     operation: WorkspaceSyncCopyOnceV1Schema,
   }).strict(),
-]);
+]));
 export type WorkspaceSyncTargetBootstrapOwnerV1 = z.infer<typeof WorkspaceSyncTargetBootstrapOwnerV1Schema>;
 
-export const HandoffTargetReplacementPreflightV1Schema = z.object({
+export const HandoffTargetReplacementPreflightV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   serverId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   machineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
@@ -575,16 +576,16 @@ export const HandoffTargetReplacementPreflightV1Schema = z.object({
    * for a different intent.
    */
   destinationIntent: z.enum(['use_existing', 'materialize_from_source_workspace']).optional(),
-}).strict();
+}).strict());
 export type HandoffTargetReplacementPreflightV1 = z.infer<typeof HandoffTargetReplacementPreflightV1Schema>;
 
-export const HandoffTargetReplacementPreflightResultV1Schema = z.discriminatedUnion('type', [
+export const HandoffTargetReplacementPreflightResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({ type: z.literal('not_required') }).strict(),
   z.object({
     type: z.literal('approval_required'),
     approval: HandoffTargetReplacementApprovalV1Schema,
   }).strict(),
-]);
+]));
 export type HandoffTargetReplacementPreflightResultV1 = z.infer<typeof HandoffTargetReplacementPreflightResultV1Schema>;
 
 /**
@@ -592,7 +593,7 @@ export type HandoffTargetReplacementPreflightResultV1 = z.infer<typeof HandoffTa
  * target root and bootstrap source root from its current Account settings; a
  * caller-supplied path, credential or grant is deliberately not representable.
  */
-export const WorkspaceSyncTargetBootstrapPrepareV1Schema = z.object({
+export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   bootstrapOperationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   owner: WorkspaceSyncTargetBootstrapOwnerV1Schema,
@@ -681,11 +682,11 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = z.object({
       message: 'transient relationship does not match the exact bootstrap authority',
     });
   }
-});
+}));
 export type WorkspaceSyncTargetBootstrapPrepareV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareV1Schema>;
 
 /** Strict, root-free prepare result: authority fingerprints, never a local handle. */
-export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = z.object({
+export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   bootstrapOperationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
@@ -693,36 +694,36 @@ export const WorkspaceSyncTargetBootstrapPrepareResultV1Schema = z.object({
   created: z.boolean(),
   rootFingerprint: WorkspaceSyncHexDigestV1Schema,
   policyDigest: WorkspaceSyncHexDigestV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetBootstrapPrepareResultV1 = z.infer<typeof WorkspaceSyncTargetBootstrapPrepareResultV1Schema>;
 
-export const WorkspaceSyncTargetBootstrapReleaseV1Schema = z.object({
+export const WorkspaceSyncTargetBootstrapReleaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   bootstrapOperationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   reason: z.enum(['abort', 'copy_committed', 'relationship_committed']),
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetBootstrapReleaseV1 = z.infer<typeof WorkspaceSyncTargetBootstrapReleaseV1Schema>;
 
-export const WorkspaceSyncTargetBootstrapReleaseResultV1Schema = z.object({
+export const WorkspaceSyncTargetBootstrapReleaseResultV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   released: z.boolean(),
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetBootstrapReleaseResultV1 = z.infer<typeof WorkspaceSyncTargetBootstrapReleaseResultV1Schema>;
 
-export const WorkspaceSyncTargetFileReadV1Schema = z.object({
+export const WorkspaceSyncTargetFileReadV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
   expectedDigest: WorkspaceSyncFileDigestV1Schema.optional(),
   maxBytes: z.number().int().positive().max(WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES)
     .default(WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES),
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetFileReadV1 = z.infer<typeof WorkspaceSyncTargetFileReadV1Schema>;
 
-const WorkspaceSyncFileSizeV1Schema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const WorkspaceSyncFileSizeV1Schema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
-export const ReadWorkspaceSyncFileResultV1Schema = z.discriminatedUnion('status', [
+export const ReadWorkspaceSyncFileResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('text'),
     text: z.string().max(WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES),
@@ -744,7 +745,7 @@ export const ReadWorkspaceSyncFileResultV1Schema = z.discriminatedUnion('status'
     status: z.literal('changed'),
     actualDigest: WorkspaceSyncFileDigestV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type ReadWorkspaceSyncFileResultV1 = z.infer<typeof ReadWorkspaceSyncFileResultV1Schema>;
 
 /**
@@ -755,34 +756,34 @@ export type ReadWorkspaceSyncFileResultV1 = z.infer<typeof ReadWorkspaceSyncFile
  * previews. The result is coverage for one observation, never a snapshot or
  * an approval capability.
  */
-export const WorkspaceSyncTargetEntryObserveV1Schema = z.object({
+export const WorkspaceSyncTargetEntryObserveV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetEntryObserveV1 = z.infer<typeof WorkspaceSyncTargetEntryObserveV1Schema>;
 
-const WorkspaceSyncConflictInspectPreviewSelectorV1Schema = z.object({
+const WorkspaceSyncConflictInspectPreviewSelectorV1Schema = lazyZodSchema(() => z.object({
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   expected: WorkspaceSyncEntryExpectationV1Schema,
-}).strict();
+}).strict());
 
-export const WorkspaceSyncConflictInspectActionInputV1Schema = z.object({
+export const WorkspaceSyncConflictInspectActionInputV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH).optional(),
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
   preview: WorkspaceSyncConflictInspectPreviewSelectorV1Schema.optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictInspectActionInputV1 = z.infer<typeof WorkspaceSyncConflictInspectActionInputV1Schema>;
 
-export const WorkspaceSyncConflictInspectRpcRequestV1Schema = z.object({
+export const WorkspaceSyncConflictInspectRpcRequestV1Schema = lazyZodSchema(() => z.object({
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
   preview: WorkspaceSyncConflictInspectPreviewSelectorV1Schema.optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncConflictInspectRpcRequestV1 = z.infer<typeof WorkspaceSyncConflictInspectRpcRequestV1Schema>;
 
-export const WorkspaceSyncPathSelectionV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncPathSelectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('included') }).strict(),
   z.object({
     status: z.literal('excluded'),
@@ -792,7 +793,7 @@ export const WorkspaceSyncPathSelectionV1Schema = z.discriminatedUnion('status',
     status: z.literal('unknown'),
     reason: z.enum(['endpoint_unavailable', 'selection_unavailable']),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncPathSelectionV1 = z.infer<typeof WorkspaceSyncPathSelectionV1Schema>;
 
 /**
@@ -801,11 +802,11 @@ export type WorkspaceSyncPathSelectionV1 = z.infer<typeof WorkspaceSyncPathSelec
  * caller never supplies a root. The decision comes from the endpoint-local
  * engine evaluator, never from configuration guesses.
  */
-export const WorkspaceSyncSelectionDiagnoseV1Schema = z.object({
+export const WorkspaceSyncSelectionDiagnoseV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   side: z.enum(['alpha', 'beta']),
   path: WorkspaceSyncRelativePathV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncSelectionDiagnoseV1 = z.infer<typeof WorkspaceSyncSelectionDiagnoseV1Schema>;
 
 /**
@@ -813,20 +814,20 @@ export type WorkspaceSyncSelectionDiagnoseV1 = z.infer<typeof WorkspaceSyncSelec
  * controller before forwarding, and the receiving daemon evaluates it at its
  * retained endpoint root through the same engine producer.
  */
-export const WorkspaceSyncTargetSelectionDiagnoseV1Schema = z.object({
+export const WorkspaceSyncTargetSelectionDiagnoseV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncTargetSelectionDiagnoseV1 = z.infer<typeof WorkspaceSyncTargetSelectionDiagnoseV1Schema>;
 
-const WorkspaceSyncConflictInspectSelectionV1Schema = z.object({
+const WorkspaceSyncConflictInspectSelectionV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   side: z.enum(['alpha', 'beta']),
   decision: WorkspaceSyncPathSelectionV1Schema,
-}).strict();
+}).strict());
 
-export const WorkspaceSyncConflictInspectEndpointV1Schema = z.object({
+export const WorkspaceSyncConflictInspectEndpointV1Schema = lazyZodSchema(() => z.object({
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   outcome: z.enum(['observed', 'changed', 'unreachable', 'unsupported', 'revoked']),
   observation: WorkspaceSyncEntryExpectationV1Schema.optional(),
@@ -845,10 +846,10 @@ export const WorkspaceSyncConflictInspectEndpointV1Schema = z.object({
       message: 'only an observed endpoint carries a verified entry observation',
     });
   }
-});
+}));
 export type WorkspaceSyncConflictInspectEndpointV1 = z.infer<typeof WorkspaceSyncConflictInspectEndpointV1Schema>;
 
-const WorkspaceSyncConflictInspectVersionV1Schema = z.object({
+const WorkspaceSyncConflictInspectVersionV1Schema = lazyZodSchema(() => z.object({
   endpointWorkspaceRefIds: z.array(z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH)).min(1).readonly(),
   entry: WorkspaceSyncEntryExpectationV1Schema,
   preview: z.object({
@@ -863,7 +864,7 @@ const WorkspaceSyncConflictInspectVersionV1Schema = z.object({
       message: 'a version preview must come from one of its grouped endpoints',
     });
   }
-});
+}));
 
 export function areWorkspaceSyncEntryExpectationsEqual(
   left: WorkspaceSyncEntryExpectationV1,
@@ -882,7 +883,7 @@ export function areWorkspaceSyncEntryExpectationsEqual(
   }
 }
 
-export const WorkspaceSyncConflictInspectRpcResultV1Schema = z.object({
+export const WorkspaceSyncConflictInspectRpcResultV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   hubWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   path: WorkspaceSyncRelativePathV1Schema,
@@ -951,22 +952,22 @@ export const WorkspaceSyncConflictInspectRpcResultV1Schema = z.object({
       });
     }
   }
-});
+}));
 export type WorkspaceSyncConflictInspectRpcResultV1 = z.infer<typeof WorkspaceSyncConflictInspectRpcResultV1Schema>;
 
 /** The same domain projection serves the Action and its controller transport. */
 export const WorkspaceSyncConflictInspectActionOutputV1Schema = WorkspaceSyncConflictInspectRpcResultV1Schema;
 export type WorkspaceSyncConflictInspectActionOutputV1 = z.infer<typeof WorkspaceSyncConflictInspectActionOutputV1Schema>;
 
-export const WorkspaceSyncEndpointStatusV1Schema = z.object({
+export const WorkspaceSyncEndpointStatusV1Schema = lazyZodSchema(() => z.object({
   connected: z.boolean(),
   scanned: z.boolean(),
   scanProblemCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   transitionProblemCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-}).strict();
+}).strict());
 export type WorkspaceSyncEndpointStatusV1 = z.infer<typeof WorkspaceSyncEndpointStatusV1Schema>;
 
-export const WorkspaceSyncStatusV1Schema = z.object({
+export const WorkspaceSyncStatusV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   state: z.enum([
@@ -990,7 +991,7 @@ export const WorkspaceSyncStatusV1Schema = z.object({
   conflictCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   lastCycleObservedAtMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   errorCode: z.string().trim().min(1).max(MAX_ERROR_CODE_LENGTH).optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncStatusV1 = z.infer<typeof WorkspaceSyncStatusV1Schema>;
 
 /**
@@ -1000,17 +1001,17 @@ export type WorkspaceSyncStatusV1 = z.infer<typeof WorkspaceSyncStatusV1Schema>;
  * it, including same-Account discovery references to relationships owned by
  * another controller whose live status stays unknown until queried there.
  */
-export const WorkspaceSyncRelationshipsListRpcRequestV1Schema = z.object({
+export const WorkspaceSyncRelationshipsListRpcRequestV1Schema = lazyZodSchema(() => z.object({
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH).optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncRelationshipsListRpcRequestV1 = z.infer<typeof WorkspaceSyncRelationshipsListRpcRequestV1Schema>;
 
-const WorkspaceSyncRelationshipWithStatusV1Schema = z.object({
+const WorkspaceSyncRelationshipWithStatusV1Schema = lazyZodSchema(() => z.object({
   definition: WorkspaceSyncRelationshipV1Schema,
   status: WorkspaceSyncStatusV1Schema.nullable(),
-}).strict();
+}).strict());
 
-const WorkspaceSyncRemoteRelationshipV1Schema = z.object({
+const WorkspaceSyncRemoteRelationshipV1Schema = lazyZodSchema(() => z.object({
   definition: WorkspaceSyncRelationshipV1Schema,
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
 }).strict().superRefine((value, context) => {
@@ -1021,15 +1022,15 @@ const WorkspaceSyncRemoteRelationshipV1Schema = z.object({
       message: 'remote relationship controller must match its definition',
     });
   }
-});
+}));
 
-const WorkspaceSyncDerivedSetV1Schema = z.object({
+const WorkspaceSyncDerivedSetV1Schema = lazyZodSchema(() => z.object({
   hubWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   relationshipIds: z.array(z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH)).min(1).readonly(),
-}).strict();
+}).strict());
 
-export const WorkspaceSyncRelationshipsListRpcResultV1Schema = z.object({
+export const WorkspaceSyncRelationshipsListRpcResultV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH),
   sets: z.array(WorkspaceSyncDerivedSetV1Schema).readonly(),
   relationships: z.array(WorkspaceSyncRelationshipWithStatusV1Schema).readonly(),
@@ -1083,7 +1084,7 @@ export const WorkspaceSyncRelationshipsListRpcResultV1Schema = z.object({
       seenRelationshipIds.add(relationshipId);
     }
   }
-});
+}));
 export type WorkspaceSyncRelationshipsListRpcResultV1 = z.infer<typeof WorkspaceSyncRelationshipsListRpcResultV1Schema>;
 
 /**
@@ -1091,7 +1092,7 @@ export type WorkspaceSyncRelationshipsListRpcResultV1 = z.infer<typeof Workspace
  * knows it; otherwise the executor queries the session machine. At least one
  * of the two is required so the request always names its authority scope.
  */
-export const WorkspaceSyncRelationshipsListActionInputV1Schema = z.object({
+export const WorkspaceSyncRelationshipsListActionInputV1Schema = lazyZodSchema(() => z.object({
   controllerMachineId: z.string().trim().min(1).max(MAX_MACHINE_ID_LENGTH).optional(),
   workspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH).optional(),
 }).strict().superRefine((value, context) => {
@@ -1101,7 +1102,7 @@ export const WorkspaceSyncRelationshipsListActionInputV1Schema = z.object({
       message: 'relationships.list requires a controller or a workspace member',
     });
   }
-});
+}));
 export type WorkspaceSyncRelationshipsListActionInputV1 = z.infer<typeof WorkspaceSyncRelationshipsListActionInputV1Schema>;
 
 /** The same domain projection serves the Action and its controller transport. */
@@ -1116,10 +1117,10 @@ export type WorkspaceSyncRelationshipsListActionOutputV1 = z.infer<typeof Worksp
  * an exact replica is possible either way, and its continuing target-only
  * deletion is approved as its own consequence.
  */
-export const WorkspaceSyncDestinationIntentV1Schema = z.enum([
+export const WorkspaceSyncDestinationIntentV1Schema = lazyZodSchema(() => z.enum([
   'use_existing',
   'materialize_from_source_workspace',
-]);
+]));
 export type WorkspaceSyncDestinationIntentV1 = z.infer<typeof WorkspaceSyncDestinationIntentV1Schema>;
 
 /**
@@ -1144,7 +1145,7 @@ function exactBoundedString(max: number) {
  * stay daemon-owned: a caller can neither mint a relationship id, pin a
  * settings version, nor name a physical root.
  */
-export const WorkspaceSyncRelationshipCreateActionInputV1Schema = z.object({
+export const WorkspaceSyncRelationshipCreateActionInputV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   sourceWorkspaceRefId: exactBoundedString(MAX_WORKSPACE_REF_ID_LENGTH),
   targetMachineId: exactBoundedString(MAX_MACHINE_ID_LENGTH),
@@ -1152,7 +1153,7 @@ export const WorkspaceSyncRelationshipCreateActionInputV1Schema = z.object({
   mode: WorkspaceSyncPersistentModeV1Schema,
   contentPolicy: WorkspaceContentPolicyV1Schema,
   destinationIntent: WorkspaceSyncDestinationIntentV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncRelationshipCreateActionInputV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateActionInputV1Schema
 >;
@@ -1164,7 +1165,7 @@ export type WorkspaceSyncRelationshipCreateActionInputV1 = z.infer<
  * conflicts from attaching a divergent existing checkout are a successful link
  * that needs attention, not a failed creation.
  */
-export const WorkspaceSyncRelationshipCreateResultV1Schema = z.object({
+export const WorkspaceSyncRelationshipCreateResultV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   created: z.boolean(),
@@ -1172,7 +1173,7 @@ export const WorkspaceSyncRelationshipCreateResultV1Schema = z.object({
   sourceWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_WORKSPACE_REF_ID_LENGTH),
   status: WorkspaceSyncStatusV1Schema,
-}).strict();
+}).strict());
 export type WorkspaceSyncRelationshipCreateResultV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateResultV1Schema
 >;
@@ -1184,7 +1185,7 @@ export type WorkspaceSyncRelationshipCreateResultV1 = z.infer<
  * step. `operationId` is the admitted Action request identity, never a
  * caller-minted relationship id.
  */
-export const WorkspaceSyncRelationshipCreateRpcRequestV1Schema = z.object({
+export const WorkspaceSyncRelationshipCreateRpcRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   operationId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   actionInput: WorkspaceSyncRelationshipCreateActionInputV1Schema,
@@ -1199,18 +1200,18 @@ export const WorkspaceSyncRelationshipCreateRpcRequestV1Schema = z.object({
       message: 'target replacement approval requires its Action receipt',
     });
   }
-});
+}));
 export type WorkspaceSyncRelationshipCreateRpcRequestV1 = z.infer<
   typeof WorkspaceSyncRelationshipCreateRpcRequestV1Schema
 >;
 
-const WorkspaceSyncReadyComponentV1Schema = z.object({ state: z.literal('ready') }).strict();
-const WorkspaceSyncUnavailableComponentV1Schema = z.object({
+const WorkspaceSyncReadyComponentV1Schema = lazyZodSchema(() => z.object({ state: z.literal('ready') }).strict());
+const WorkspaceSyncUnavailableComponentV1Schema = lazyZodSchema(() => z.object({
   state: z.literal('unavailable'),
   errorCode: z.string().trim().min(1).max(MAX_ERROR_CODE_LENGTH),
-}).strict();
+}).strict());
 
-export const WorkspaceSyncRuntimeReadinessV1Schema = z.object({
+export const WorkspaceSyncRuntimeReadinessV1Schema = lazyZodSchema(() => z.object({
   engine: z.discriminatedUnion('state', [
     z.object({ state: z.literal('starting') }).strict(),
     WorkspaceSyncReadyComponentV1Schema,
@@ -1223,7 +1224,7 @@ export const WorkspaceSyncRuntimeReadinessV1Schema = z.object({
       errorCode: z.literal('machine_carrier_unavailable'),
     }).strict(),
   ]),
-}).strict();
+}).strict());
 export type WorkspaceSyncRuntimeReadinessV1 = z.infer<typeof WorkspaceSyncRuntimeReadinessV1Schema>;
 
 /**
@@ -1234,11 +1235,11 @@ export type WorkspaceSyncRuntimeReadinessV1 = z.infer<typeof WorkspaceSyncRuntim
  * daemon-state version provides ordering and this event carries no independent
  * cursor or persisted history.
  */
-export const WorkspaceSyncRuntimeEventV1Schema = z.object({
+export const WorkspaceSyncRuntimeEventV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   readiness: WorkspaceSyncRuntimeReadinessV1Schema,
   status: WorkspaceSyncStatusV1Schema.optional(),
-}).strict();
+}).strict());
 export type WorkspaceSyncRuntimeEventV1 = z.infer<typeof WorkspaceSyncRuntimeEventV1Schema>;
 
 /**
@@ -1246,13 +1247,13 @@ export type WorkspaceSyncRuntimeEventV1 = z.infer<typeof WorkspaceSyncRuntimeEve
  * published; only a best-effort release failed, so this is reported rather than
  * turned into a failure.
  */
-export const WorkspaceSyncCleanupWarningV1Schema = z.object({
+export const WorkspaceSyncCleanupWarningV1Schema = lazyZodSchema(() => z.object({
   code: z.string().trim().min(1).max(MAX_ERROR_CODE_LENGTH),
   message: z.string().trim().min(1).max(2048),
-}).strict();
+}).strict());
 export type WorkspaceSyncCleanupWarningV1 = z.infer<typeof WorkspaceSyncCleanupWarningV1Schema>;
 
-export const WorkspaceSyncLegacyStateInspectionV1Schema = z.discriminatedUnion('status', [
+export const WorkspaceSyncLegacyStateInspectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('absent') }).strict(),
   z.object({
     status: z.literal('legacy_workspace_sync_state_unsupported'),
@@ -1265,7 +1266,7 @@ export const WorkspaceSyncLegacyStateInspectionV1Schema = z.discriminatedUnion('
     path: z.string().trim().min(1).max(MAX_PATH_LENGTH),
     reason: z.string().trim().min(1).max(MAX_ERROR_CODE_LENGTH),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncLegacyStateInspectionV1 = z.infer<typeof WorkspaceSyncLegacyStateInspectionV1Schema>;
 
 /**
@@ -1276,7 +1277,7 @@ export type WorkspaceSyncLegacyStateInspectionV1 = z.infer<typeof WorkspaceSyncL
  * daemon observed at commit, and any post-commit cleanup debt. The UI renders
  * this Action result directly and keeps no second workspace-outcome store.
  */
-export const HandoffWorkspaceOutcomeV1Schema = z.discriminatedUnion('kind', [
+export const HandoffWorkspaceOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
   z.object({
     kind: z.literal('copied'),
@@ -1301,10 +1302,10 @@ export const HandoffWorkspaceOutcomeV1Schema = z.discriminatedUnion('kind', [
     }).strict()).max(2).readonly(),
     cleanupWarning: WorkspaceSyncCleanupWarningV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type HandoffWorkspaceOutcomeV1 = z.infer<typeof HandoffWorkspaceOutcomeV1Schema>;
 
-export const HandoffWorkspaceActionV1Schema = z.discriminatedUnion('kind', [
+export const HandoffWorkspaceActionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('none') }).strict(),
   z.object({
     kind: z.literal('copy_once'),
@@ -1322,21 +1323,21 @@ export const HandoffWorkspaceActionV1Schema = z.discriminatedUnion('kind', [
     flushBeforeCommit: z.boolean(),
   }).strict(),
   z.object({ kind: z.literal('linked_workspace') }).strict(),
-]);
+]));
 export type HandoffWorkspaceActionV1 = z.infer<typeof HandoffWorkspaceActionV1Schema>;
 
-export const WorkspaceSyncPrepareBetweenRequestV1Schema = z.object({
+export const WorkspaceSyncPrepareBetweenRequestV1Schema = lazyZodSchema(() => z.object({
   sourceWorkspaceRefId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   targetWorkspaceRefId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
-}).strict();
+}).strict());
 export type WorkspaceSyncPrepareBetweenRequestV1 = z.infer<typeof WorkspaceSyncPrepareBetweenRequestV1Schema>;
 
-const WorkspaceSyncTraversedRelationshipV1Schema = z.object({
+const WorkspaceSyncTraversedRelationshipV1Schema = lazyZodSchema(() => z.object({
   relationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH),
   policyDigest: z.string().trim().min(1).max(256),
   status: WorkspaceSyncStatusV1Schema,
-}).strict();
-export const WorkspaceSyncPrepareBetweenResultV1Schema = z.discriminatedUnion('ok', [
+}).strict());
+export const WorkspaceSyncPrepareBetweenResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
   z.object({
     ok: z.literal(true),
     traversed: z.array(WorkspaceSyncTraversedRelationshipV1Schema).max(2).readonly(),
@@ -1348,5 +1349,5 @@ export const WorkspaceSyncPrepareBetweenResultV1Schema = z.discriminatedUnion('o
     blockedRelationshipId: z.string().trim().min(1).max(MAX_RELATIONSHIP_ID_LENGTH).optional(),
     blockedStatus: WorkspaceSyncStatusV1Schema.optional(),
   }).strict(),
-]);
+]));
 export type WorkspaceSyncPrepareBetweenResultV1 = z.infer<typeof WorkspaceSyncPrepareBetweenResultV1Schema>;

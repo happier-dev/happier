@@ -40,7 +40,7 @@ function normalizeSuccessorDistClosureFingerprint(value) {
 
 export async function daemonControlPost({ httpPort, path, body = {}, controlToken = '', timeoutMs = DEFAULT_DAEMON_CONTROL_POST_TIMEOUT_MS }) {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), Math.max(100, timeoutMs));
+  const t = timeoutMs === null ? null : setTimeout(() => ctl.abort(), Math.max(100, timeoutMs));
   try {
     const headers = { 'content-type': 'application/json' };
     const token = String(controlToken ?? '').trim();
@@ -57,7 +57,7 @@ export async function daemonControlPost({ httpPort, path, body = {}, controlToke
     }
     return text.trim() ? JSON.parse(text) : null;
   } finally {
-    clearTimeout(t);
+    if (t !== null) clearTimeout(t);
   }
 }
 

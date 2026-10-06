@@ -1,17 +1,10 @@
-import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    type AccountScopedCryptoMaterialSnapshotV1,
-} from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { AccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol';
 import { requireAccountEncryptionCredentials } from '@/api/client/encryptionKey';
 import type { StoredCredentials } from '@/persistence';
 
-export {
-    isAvailableE2eeAutomationAccountEncryptionV1,
-    resolveValidatedAutomationAccountEncryptionV1,
-    type AvailableE2eeAutomationAccountEncryptionV1,
-    type AvailableAutomationAccountEncryptionV1,
-    type ValidatedAutomationAccountEncryptionV1,
-} from '@happier-dev/protocol';
+export { isAvailableE2eeAutomationAccountEncryptionV1, resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+export type { AvailableE2eeAutomationAccountEncryptionV1, AvailableAutomationAccountEncryptionV1, ValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol';
 
 /**
  * Captures the Account-content owner material for one prospective Automation

@@ -26,7 +26,9 @@ describe('AI launch profile migration safety', () => {
         };
         const future = { v: 99, id: 'future-profile', opaque: { preserve: ['exactly'] } };
         const malformed = { v: 2, id: '', malformed: true };
-        const rawProfiles = [legacy, slim, future, malformed] as const;
+        const rawProfiles = [legacy, slim, future, malformed, ...Array.from({ length: 253 }, (_, index) => ({
+            ...legacy, id: `legacy-${index}`,
+        }))];
         const rawBindings = {
             'azure-openai': { AZURE_OPENAI_API_KEY: 'secret-azure' },
             'future-profile': { FUTURE_API_KEY: 'secret-future' },
@@ -39,6 +41,11 @@ describe('AI launch profile migration safety', () => {
                 { id: 'secret-azure', name: 'Azure', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'YQ' } }, createdAt: 1, updatedAt: 1 },
                 { id: 'secret-future', name: 'Future', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Yg' } }, createdAt: 1, updatedAt: 1 },
                 { id: 'secret-company', name: 'Company', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Yw' } }, createdAt: 1, updatedAt: 1 },
+                ...Array.from({ length: 254 }, (_, index) => ({
+                    id: `legacy-secret-${index}`, name: `Legacy ${index}`, kind: 'apiKey',
+                    encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'x'.repeat(600) } },
+                    createdAt: 1, updatedAt: 1,
+                })),
             ],
             secretBindingsByProfileId: rawBindings,
             providerSettingsV1: {
@@ -52,6 +59,9 @@ describe('AI launch profile migration safety', () => {
         const afterUnrelatedWrite = applySettings(parsed, { useProfiles: true });
 
         expect(afterUnrelatedWrite.profiles).toEqual(rawProfiles);
+        expect(afterUnrelatedWrite.secrets).toEqual(parsed.secrets);
+        expect(afterUnrelatedWrite.secrets).toHaveLength(257);
+        expect(settingsParse(JSON.parse(JSON.stringify(afterUnrelatedWrite))).secrets).toEqual(parsed.secrets);
         expect(readRetainedSecretBindingsByProfileId(afterUnrelatedWrite)).toEqual(rawBindings);
     });
 });

@@ -1,4 +1,5 @@
-import { ScmDiffSummaryGenerateOutputSchema, type ScmDiffSummarySevenDayCost } from '@happier-dev/protocol';
+import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummarySevenDayCost } from '@happier-dev/protocol';
 import type { RetainedExecutionRunRecord } from '@/agent/runtime/bridges/executionRun/retainedState';
 
 type CostRecord = Pick<RetainedExecutionRunRecord['state'], 'intent' | 'startedAtMs' | 'finishedAtMs' | 'structuredMeta'>;

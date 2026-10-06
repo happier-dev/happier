@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { selectAllHomes } from '@/sync/domains/server/selection/homeViewSelectionState';
-import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { useUsableHomeServerIds } from '@/sync/domains/scope/usableHomeServerIds';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { offerThisComputerConnectionToHome } from '@/components/serverProfiles/offerThisComputerConnectionToHome';
@@ -52,10 +53,6 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
         setCompletion(null);
         setPane((current) => transitionAddHomePane(current, { kind: 'connect_as_home', address }));
     }, []);
-    const homeConnected = React.useCallback((profile: ServerProfile) => {
-        setCompletion(null);
-        setPane((current) => transitionAddHomePane(current, { kind: 'home_connected', profile }));
-    }, []);
     const back = React.useCallback(() => {
         setCompletion(null);
         setPane((current) => transitionAddHomePane(current, { kind: 'back' }));
@@ -81,6 +78,18 @@ export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
         setCompletion(result);
         return result;
     }, [shouldFocusNewHome]);
+    const homeConnected = React.useCallback(async (profile: ServerProfile) => {
+        setCompletion(null);
+        const credentials = await TokenStorage.getCredentialsForServerUrl(
+            profile.canonicalServerUrl ?? profile.serverUrl,
+            { serverId: resolveServerProfileScopeId(profile) },
+        );
+        if (credentials) {
+            await onConnected(profile);
+            return;
+        }
+        setPane((current) => transitionAddHomePane(current, { kind: 'home_connected', profile }));
+    }, [onConnected]);
     const openConnectedHome = React.useCallback(async (profile: ServerProfile) => {
         const switched = await setActiveServerAndSwitch({
             serverId: profile.id,

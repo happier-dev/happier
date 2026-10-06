@@ -1,15 +1,7 @@
-import {
-  ComposerContentDisplayNameV1Schema,
-  ComposerContentMediaKindV1Schema,
-  ComposerContentMimeTypeV1Schema,
-  PluginContributionIdentityV1Schema,
-  SessionExecutionTargetV1Schema,
-  type ComposerContentHandleV1,
-  type ComposerContentMediaKindV1,
-  type ComposerContentMimeTypeV1,
-  type PluginContributionIdentityV1,
-  type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { ComposerContentDisplayNameV1Schema, ComposerContentMediaKindV1Schema, ComposerContentMimeTypeV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { ComposerContentHandleV1, ComposerContentMediaKindV1, ComposerContentMimeTypeV1, PluginContributionIdentityV1, SessionExecutionTargetV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import {

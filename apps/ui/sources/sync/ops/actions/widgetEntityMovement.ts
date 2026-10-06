@@ -120,13 +120,14 @@ export function projectWidgetEntityMovementResult(result: ActionExecuteResult, e
     return { status: unknown ? 'unknown' : 'refused', reason: { code, message: `${message} (${diagnostic})` } };
 }
 
-export async function executeWidgetEntityMovement(effect: EntityDropEffectV1, scope: Readonly<{ serverId: string; accountId: string }>): Promise<EntityDropOutcomeV1> {
+export async function executeWidgetEntityMovement(effect: EntityDropEffectV1, scope: Readonly<{ serverId: string; accountId: string }>, widgetAreaContext?: ActionExecutorContext['widgetAreaContext']): Promise<EntityDropOutcomeV1> {
     const parsed = WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(effect.input);
     if (effect.actionId !== 'widgets.instance.move' || !parsed.success) return { status: 'refused', reason: { code: 'invalid_parameters', message: t('entityDragDrop.reasons.generic') } };
     try {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const result = await createDefaultActionExecutor().execute('widgets.instance.move', parsed.data, {
             surface: 'ui', actionCaller: { kind: 'host' }, serverId: scope.serverId, expectedAccountId: scope.accountId,
+            ...(widgetAreaContext ? { widgetAreaContext } : {}),
         });
         return projectWidgetEntityMovementResult(result, effect);
     } catch {

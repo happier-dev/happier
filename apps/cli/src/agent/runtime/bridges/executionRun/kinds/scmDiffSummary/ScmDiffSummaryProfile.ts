@@ -1,18 +1,11 @@
-import {
-  ExecutionRunScmDiffSummaryInputV1Schema,
-  SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
-  ScmDiffSummaryGenerateOutputSchema,
-  ScmComparisonSchema,
-  ScmDiffSummaryOutputKindSchema,
-  ScmDiffSummaryMetadataSchema,
-  ScmDiffSummaryGeneratorSelectionSchema,
-  type ScmDiffSummaryGenerateOutput,
-  type ScmDiffSummaryOutputs,
-  ProviderBoundModelRefSchema,
-  serializeModelVisibilityRefV1,
-  buildBackendTargetKeyV2,
-  readBackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { ExecutionRunScmDiffSummaryInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ScmDiffSummaryGeneratorSelectionSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema, serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ExecutionRunIntentProfile, ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 
 import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';

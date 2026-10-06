@@ -5,11 +5,8 @@
  * machine/workspace bindings behave consistently under symlinks.
  */
 
-import {
-  resolveEffectiveServersV1,
-  type McpServersSettingsV1,
-  type ResolveEffectiveServersV1Result,
-} from '@happier-dev/protocol';
+import { resolveEffectiveServersV1 } from '@happier-dev/protocol/mcp/servers/resolveEffectiveServersV1';
+import type { McpServersSettingsV1, ResolveEffectiveServersV1Result } from '@happier-dev/protocol';
 import { createRealpathNormalizer } from './createRealpathNormalizer';
 
 export function resolveEffectiveMcpServersForDirectory(params: Readonly<{

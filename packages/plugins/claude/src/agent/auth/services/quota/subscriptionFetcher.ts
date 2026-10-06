@@ -1,4 +1,4 @@
-import { CLAUDE_USAGE_WINDOW_LABELS as WINDOW_LABELS, resolveClaudeUsageWindowLabel } from '../usage/windowLabel.js';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
 import type {
     AgentAccountUsageMeter,
     AgentAccountUsageSnapshot,
@@ -17,6 +17,11 @@ import { resolveClaudeCodeUsageUserAgent } from './userAgent.js';
 export const CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 
 const DEFAULT_BETA_HEADER_VALUE = 'oauth-2025-04-20';
+
+// The endpoint's established placeholder inventory is separate from display-label resolution.
+const DEFAULT_USAGE_WINDOW_IDS = [
+    'five_hour', 'seven_day', 'seven_day_oauth_apps', 'seven_day_sonnet', 'seven_day_opus', 'iguana_necktie',
+] as const;
 
 type ClaudeRuntimeFetchRequest = Readonly<{
     url: string;
@@ -464,7 +469,7 @@ function buildUsageWindowMeter(
     const limit = window ? readFiniteNumberProperty(window, USAGE_WINDOW_LIMIT_KEYS) : null;
     return {
         meterId,
-        label: resolveClaudeUsageWindowLabel(meterId),
+        label: resolveConnectedServiceQuotaMeterLabel(meterId),
         providerLimitId: meterId,
         ...(meterId === 'seven_day' || meterId.startsWith('seven_day_')
             ? { windowDurationMs: 7 * 24 * 60 * 60 * 1000 }
@@ -502,7 +507,7 @@ function collectUsageWindowMeterEntries(
         windowsByMeterId.set(meterId, window);
     };
 
-    for (const meterId of Object.keys(WINDOW_LABELS)) {
+    for (const meterId of DEFAULT_USAGE_WINDOW_IDS) {
         setWindow(meterId, isRecord(data[meterId]) ? data[meterId] : null);
     }
 
@@ -775,8 +780,8 @@ export function createClaudeSubscriptionQuotaFetcher(params?: Readonly<{
                     staleAfterMs,
                     planLabel,
                     accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
-                    meters: Object.entries(WINDOW_LABELS).map(([meterId, label]) =>
-                        buildQuotaUnknownMeter(meterId, label),
+                    meters: DEFAULT_USAGE_WINDOW_IDS.map((meterId) =>
+                        buildQuotaUnknownMeter(meterId, resolveConnectedServiceQuotaMeterLabel(meterId)),
                     ),
                 });
             }

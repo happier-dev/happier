@@ -52,7 +52,7 @@ import {
     useProjectForSession,
     useSessionListPreferredMetadata,
     useSetting,
-    useSettings,
+    useSettingsSelector,
     useSettingsVersion,
     useWorkspaceReviewCommentsDrafts,
     useWorkspaceScmCommitSelectionPatches,
@@ -303,7 +303,9 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     filePath: string;
     host: WorkspaceFileOpenableContentViewerHost | undefined;
 }>): React.ReactElement | null {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        workspaceFileViewerPreferencesV1: settings.workspaceFileViewerPreferencesV1,
+    }));
     const settingsVersion = useSettingsVersion();
     const stage = usePluginDetailsDestinationLaunchStaging();
     const host = props.host;
@@ -964,7 +966,8 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         setDisplayMode('diff');
     }, [displayMode, previewTooLarge]);
 
-    const imagePreviewMime = fileContent?.binaryMime ?? null;
+    const imagePreviewMime = fileContent?.binaryMime?.startsWith('image/') ? fileContent.binaryMime : null;
+    const videoPreviewMime = fileContent?.binaryMime?.startsWith('video/') ? fileContent.binaryMime : null;
     const imagePreviewCacheKey = React.useMemo(() => {
         if (!imagePreviewMime) return null;
         return [
@@ -1238,6 +1241,10 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                             theme={theme}
                             filePath={filePath}
                             imagePreviewUri={imagePreviewUri}
+                            workspaceScope={scope}
+                            videoMimeType={videoPreviewMime}
+                            binaryPreviewRevision={fileContent?.binaryPreviewRevision}
+                            isActive={isActive}
                         />
                     </ScrollView>
                 ) : (

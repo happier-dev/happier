@@ -1,11 +1,5 @@
-import {
-    DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES,
-    MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX,
-    MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
-    normalizeMachineTransferServerRoutedMaxBytes,
-    readMachineTransferServerRoutedMaxBytes,
-    type FeaturesResponse,
-} from '@happier-dev/protocol';
+import { DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES, MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX, MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes, readMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol/features/payload/capabilities/machineTransferCapabilities';
+import type { FeaturesResponse } from '@happier-dev/protocol';
 
 export const SESSION_ROUTED_FILE_TRANSFER_TOO_LARGE_ERROR = 'File exceeds the server-routed transfer size limit';
 

@@ -1,10 +1,7 @@
-import {
-  getActionContextualDefaults,
-  getActionSpec,
-  RuntimeActionIdV1Schema,
-  resolveRuntimeActionExecutionFamily,
-  type ActionContextualDefaults,
-} from '@happier-dev/protocol';
+import { getActionContextualDefaults, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
+import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import type { ActionContextualDefaults } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';

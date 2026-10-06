@@ -1,7 +1,5 @@
-import {
-  convertBackendTargetRefV2ToV1,
-  type ExecutionRunLifecycleV1,
-} from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ExecutionRunLifecycleV1 } from '@happier-dev/protocol';
 
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { areExecutionRunBackendTargetsEqual } from './backendTargets';

@@ -1,37 +1,10 @@
 import { z } from 'zod';
-import {
-  decodeBase64,
-  encodeBase64,
-  SessionIdSchema,
-  SessionOrganizationPlacementV1Schema,
-  SessionCreationTerminalSpawnErrorDetailSchema,
-  SpawnSessionErrorCodeSchema,
-  isSessionCreationTerminalSpawnErrorDetail,
-  SessionTurnProviderCheckpointV1Schema,
-  TurnIdSchema,
-  type AcpConfigOptionOverridesV1,
-  type AgentExecutionTargetV1,
-  type AgentSessionStartupInstructionsV1,
-  type BackendTargetRefV2,
-  type CallerInputConstraintsV1,
-  type MachinePoolSelectionOriginV1,
-  type ConnectedServiceMaterializationIdentityV1,
-  type RuntimeDescriptorV1,
-  type SessionAttachMetadataIdentityPolicy,
-  type SessionMcpSelectionV1,
-  type SessionInitialAccessDraftV1,
-  type SessionReportsToV1,
-  type SessionRolesV1,
-  type SessionInitialGoalRequestV1,
-  type SessionCreateOriginFieldsV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-  type SessionProviderBindingSecurityChangeConfirmationV1,
-  type SecretReferenceOverlayV1,
-  type SpawnSessionExecutionAuthorization,
-  type SpawnSessionErrorCode,
-  type SpawnSessionErrorDetail,
-} from '@happier-dev/protocol';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { SessionIdSchema, TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionCreationTerminalSpawnErrorDetailSchema, SpawnSessionErrorCodeSchema, isSessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import type { AcpConfigOptionOverridesV1, AgentExecutionTargetV1, AgentSessionStartupInstructionsV1, BackendTargetRefV2, CallerInputConstraintsV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1, SessionAttachMetadataIdentityPolicy, SessionMcpSelectionV1, SessionInitialAccessDraftV1, SessionReportsToV1, SessionRolesV1, SessionInitialGoalRequestV1, SessionCreateOriginFieldsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1, SecretReferenceOverlayV1, SpawnSessionExecutionAuthorization, SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
 import type { PermissionMode, SessionCreationOutcome } from '@/api/types';
 import type {
@@ -40,7 +13,7 @@ import type {
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
-export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
 export const AGENT_SESSION_CONTINUATION_UNREACHABLE_ERROR_NAME =

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { TerminalConnectSurface } from '@/components/terminalConnect/TerminalConnectSurface';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -19,6 +19,7 @@ import {
     buildTerminalConnectAuthRedirectHref,
     buildTerminalConnectDeepLink,
     parseTerminalConnectUrl,
+    TERMINAL_CONNECT_WEB_PATH,
     resolveTerminalConnectPreAuthTarget,
     type ParsedTerminalConnectUrl,
     type TerminalConnectPreAuthTargetDecision,
@@ -42,6 +43,8 @@ function scrubTerminalConnectHashIfResumable(request: ParsedTerminalConnectUrl |
 
 export default function TerminalConnectScreen() {
     const router = useRouter();
+    const routeHash = useLocalSearchParams<{ '#': string }>()['#'];
+    const processedRouteHashRef = React.useRef<string | undefined>(undefined);
     const [publicKey, setPublicKey] = React.useState<string | null>(null);
     const [serverUrlFromHash, setServerUrlFromHash] = React.useState<string | null>(null);
     const [serverIdentityId, setServerIdentityId] = React.useState<string | null>(null);
@@ -77,11 +80,16 @@ export default function TerminalConnectScreen() {
     });
 
     React.useEffect(() => {
-        if (Platform.OS !== 'web' || typeof window === 'undefined' || hashProcessed) {
+        if (Platform.OS !== 'web' || typeof window === 'undefined') {
             return;
         }
 
-        let sourceUrl = window.location.href;
+        if (hashProcessed && (!routeHash || processedRouteHashRef.current === routeHash)) return;
+        processedRouteHashRef.current = routeHash;
+        // Router state can arrive before browser history moves to this route.
+        let sourceUrl = routeHash
+            ? new URL(`${TERMINAL_CONNECT_WEB_PATH}#${routeHash}`, window.location.href).href
+            : window.location.href;
         let parsed = parseTerminalConnectUrl(sourceUrl);
         if (!parsed) {
             try {
@@ -90,7 +98,7 @@ export default function TerminalConnectScreen() {
                     : null;
                 if (bootstrappedHash) {
                     const suffix = bootstrappedHash.startsWith('#') ? bootstrappedHash : `#${bootstrappedHash}`;
-                    sourceUrl = `${window.location.href}${suffix}`;
+                    sourceUrl = new URL(`${TERMINAL_CONNECT_WEB_PATH}${suffix}`, window.location.href).href;
                     parsed = parseTerminalConnectUrl(sourceUrl);
                 }
             } catch {
@@ -99,6 +107,9 @@ export default function TerminalConnectScreen() {
         }
 
         if (parsed?.publicKeyB64Url) {
+            authRedirectTriggeredRef.current = false;
+            setPreAuthTarget(null);
+            setRequiresUpdate(false);
             if (parsed.compatibility?.admission === 'update_required') {
                 window.history.replaceState(null, '', window.location.pathname);
                 setRequiresUpdate(true);
@@ -142,7 +153,7 @@ export default function TerminalConnectScreen() {
         }
 
         setHashProcessed(true);
-    }, [auth.isAuthenticated, hashProcessed, processParsedAuthUrl]);
+    }, [auth.isAuthenticated, hashProcessed, processParsedAuthUrl, routeHash]);
 
     React.useEffect(() => {
         if (!hashProcessed || !publicKey || requiresUpdate) return;

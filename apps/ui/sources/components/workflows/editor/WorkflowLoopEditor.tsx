@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, type HappierPressableStyleState } from '@happier-dev/plugin-ui/presentation';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -23,13 +24,14 @@ import {
 
 import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
-import { formatWorkflowConditionSentence, WorkflowConditionEditor } from './WorkflowConditionEditor';
+import { formatWorkflowConditionLead, formatWorkflowConditionSentence, WorkflowConditionArmLines, WorkflowConditionEditor } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowFailurePolicyControl, WorkflowMaxConcurrentControl } from './WorkflowGroupEditor';
 import { WorkflowNumberField } from './WorkflowNumberField';
 import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 type LoopBlock = Extract<WorkflowBlock, Readonly<{ kind: 'loop' }>>;
 
@@ -141,9 +143,9 @@ export function WorkflowLoopOptions(props: Readonly<{
         current.kind === 'until' || current.kind === 'evaluate' ? { ...current, maxIterations } : current
     ));
     const numberInputNames = draft.inputs.filter((input) => input.valueType === 'number').map((input) => input.name);
-    const pressStyle = (state: Parameters<typeof workflowPressFeedbackStyle>[0]) => [
+    const pressStyle = (state: HappierPressableStyleState) => [
         workflowEditorStyles.actionTarget,
-        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
     ];
 
     return (
@@ -333,8 +335,9 @@ export function WorkflowLoopEditor(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const { block, testIDPrefix } = props;
-    const displayName = `${t('workflows.editor.unnamedLoop')} ${props.ordinal}`;
+    const displayName = workflowBlockReferenceLabel(block);
     const idPrefix = `${testIDPrefix}-loop-${block.id}`;
+    const stopWhen = block.repetition.kind === 'until' ? block.repetition.stopWhen : null;
 
     return (
         <View testID={idPrefix} style={workflowEditorStyles.blockBody}>
@@ -349,14 +352,17 @@ export function WorkflowLoopEditor(props: Readonly<{
             />
             <WorkflowContainerSummary
                 sentence={formatWorkflowLoopSentence(props.draft, block)}
-                sentenceContent={<WorkflowReferenceSentence draft={props.draft} sentence={formatWorkflowLoopSentence(props.draft, block)}
+                sentenceContent={<WorkflowReferenceSentence draft={props.draft}
+                    sentence={stopWhen === null ? formatWorkflowLoopSentence(props.draft, block)
+                        : t('workflows.page.inspector.repeatUntil', { condition: formatWorkflowConditionLead(props.draft, stopWhen) })}
                     references={block.repetition.kind === 'count' ? [block.repetition.count]
                         : block.repetition.kind === 'items' ? [block.repetition.items]
-                            : block.repetition.kind === 'until' ? collectWorkflowConditionValueReferences(block.repetition.stopWhen) : []} />}
+                            : stopWhen !== null ? collectWorkflowConditionValueReferences(stopWhen) : []} />}
                 {...(props.onOpenOptions === undefined ? {} : { onOpenOptions: props.onOpenOptions })}
                 optionsLabel={t('workflows.page.inspector.options')}
                 testID={`${idPrefix}-summary`}
             />
+            {stopWhen === null ? null : <WorkflowConditionArmLines draft={props.draft} condition={stopWhen} testID={`${idPrefix}-summary-arms`} />}
 
             <Text style={workflowEditorStyles.branchLabel}>{t('workflows.editor.loopBody')}</Text>
             {props.renderBody()}

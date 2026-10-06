@@ -372,6 +372,18 @@ function conversationRun() {
 }
 
 describe("Automation API projections", () => {
+    it("opens unknown stored result fields through exact Run detail without widening structural lists", () => {
+        const run = { ...eventRun(), executionInputEnvelope: strictEventExecutionRecipe() };
+        const envelope = JSON.parse(run.resultEnvelope);
+        const stored = { ...run, resultEnvelope: JSON.stringify({ ...envelope, extra: true,
+            v: { ...envelope.v, extra: true, correspondence: { ...envelope.v.correspondence, extra: true },
+                result: { ...envelope.v.result, extra: true } } }) };
+        expect(toAutomationRunV3DetailApiDto(stored, "plain").resultEnvelope).toBe(stored.resultEnvelope);
+        expect(toAutomationRunV3ListApiDto(stored)).not.toHaveProperty("resultEnvelope");
+        expect(() => toAutomationRunV3DetailApiDto({ ...stored,
+            resultEnvelope: JSON.stringify({ ...envelope, v: { ...envelope.v, correspondence: { ...envelope.v.correspondence, runId: null } } }) }, "plain"))
+            .toThrow();
+    });
     it.each(["prComment", "ciFailed"] as const)("projects %s selection privately through detail only", (kind) => {
         const base = scheduleAutomation();
         const triggerId = AutomationTriggerIdSchema.parse("pr-trigger");

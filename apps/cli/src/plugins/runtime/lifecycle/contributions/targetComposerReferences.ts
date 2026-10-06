@@ -1,14 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ComposerReferenceRuntime, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import {
-    ComposerReferenceCandidatePageV1Schema,
-    ComposerReferenceResolutionV1Schema,
-    normalizeComposerReferenceQueryV1,
-    type ComposerReferenceCandidatePageV1,
-    type ComposerReferenceResolutionV1,
-    type ComposerReferenceTriggerV1,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ComposerReferenceCandidatePageV1Schema, ComposerReferenceResolutionV1Schema, normalizeComposerReferenceQueryV1 } from '@happier-dev/protocol/plugins/contributions/composer-reference-providers';
+import type { ComposerReferenceCandidatePageV1, ComposerReferenceResolutionV1, ComposerReferenceTriggerV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import type { ResolvedComposerReferenceContribution } from '@/plugins/projection/registry/types';

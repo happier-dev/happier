@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INTERNAL_CLAUDE_EVENT_TYPES } from '../../../../packages/plugins/claude/src/agent/transcripts/internalEventTypes';
 import * as piDefinition from '../../../../packages/plugins/pi/src/agent/definition';
@@ -10,6 +10,7 @@ import * as claudeDefinition from '../../../../packages/plugins/claude/src/agent
 import * as ohMyPiDefinition from '../../../../packages/plugins/ohmypi/src/agent/definition';
 import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures, parsePreparedGeneratorPublication } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
+import { renderBundledPluginTranslationsTs } from './bundledPlugins/agentUi.ts';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceRuntimeEntriesTs } from './bundledPlugins/voice.ts';
 import { readBundledAgentNativeHomeEnvironmentKeys } from '../../../stack/scripts/utils/env/scrub_env.mjs';
 import { readAgentNativeHomeEnvironmentKeys } from '../../src/plugins/authoring/agentNativeHomeEnvironmentKeys';
@@ -27,7 +28,8 @@ import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '../../../../pa
 import { collectBundledAgentContributionIdentities } from './generateBundledPluginEntries.ts';
 import { renderAgentIdsTs } from './bundledPlugins/agentFacts.ts';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../../src/plugins/projection/registry/sources/generatedBundledPluginManifests';
-import { readGeneratorAuthoringSourceFingerprint } from './generateBundledPluginEntries.ts';
+import { readGeneratorAuthoringSourceFingerprint, readGeneratorHostProjectionCurrentness } from './generateBundledPluginEntries.ts';
+import { readGeneratorCliPreparationFingerprint } from './bundledPlugins/authoringInputs.mjs';
 import { withGeneratorSingleFlight } from './bundledPlugins/publication.ts';
 
 const generatorSource = readFileSync(new URL('./generateBundledPluginEntries.ts', import.meta.url), 'utf8');
@@ -50,6 +52,39 @@ describe('bundled generator preparation process boundary', () => {
       writeFileSync(author, 'export const author = 2;');
       expect(readGeneratorAuthoringSourceFingerprint(root)).not.toBe(first);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it('does not invalidate completed generator preparation for an unrelated CLI resource edit', () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'bundled-cli-preparation-inputs-'));
+    const root = join(repoDir, 'apps/cli');
+    const author = join(root, 'src/plugins/authoring/sourceModule.ts');
+    const resource = join(root, 'src/mcp/resources/watchSubscriptions.ts');
+    mkdirSync(dirname(author), { recursive: true });
+    mkdirSync(dirname(resource), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }));
+    writeFileSync(author, 'export const author = 1;');
+    writeFileSync(resource, 'export const resource = 1;');
+    try {
+      const first = readGeneratorCliPreparationFingerprint(root);
+      writeFileSync(resource, 'export const resource = 2;');
+      expect(readGeneratorCliPreparationFingerprint(root)).toBe(first);
+      writeFileSync(author, 'export const author = 2;');
+      expect(readGeneratorCliPreparationFingerprint(root)).not.toBe(first);
+      const authored = readGeneratorCliPreparationFingerprint(root);
+      const missingOutputs = readGeneratorHostProjectionCurrentness(repoDir);
+      const generated = join(root, 'src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
+      mkdirSync(dirname(generated), { recursive: true });
+      writeFileSync(generated, 'export const generated = [];');
+      expect(readGeneratorCliPreparationFingerprint(root)).toBe(authored);
+      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(missingOutputs);
+      const ui = join(repoDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
+      mkdirSync(dirname(ui), { recursive: true });
+      const beforeUi = readGeneratorHostProjectionCurrentness(repoDir);
+      writeFileSync(ui, 'export const generated = [];');
+      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(beforeUi);
+      const beforeUiDependencies = readGeneratorHostProjectionCurrentness(repoDir);
+      writeFileSync(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ dependencies: {} }));
+      expect(readGeneratorHostProjectionCurrentness(repoDir)).not.toBe(beforeUiDependencies);
+    } finally { rmSync(repoDir, { recursive: true, force: true }); }
   });
   it('preserves optional-plugin exclusions and dependency currentness across child serialization', () => {
     const prepared = {
@@ -275,6 +310,22 @@ describe('generator workspace lock policy', () => {
       'generatedCompilerInputMode: preparationPolicy.generatedCompilerInputMode,',
     );
     expect(synchronization).not.toContain("generatedCompilerInputMode: 'write',");
+  });
+
+  it('admits the final combined authoring closure rather than an earlier partial preparation', () => {
+    const synchronization = sourceBetween(
+      'async function synchronizeGeneratorAuthoringRuntimeClosure(',
+      'function captureGeneratorDependencyCurrentness(',
+    );
+
+    // The final host pass also prepares the SDK's transitive dependencies.
+    // Its recorded publication must cover both scopes; the earlier SDK-only
+    // stamp can be superseded by that same invocation's later package builds.
+    expect(synchronization).toContain('workspaceNames: generatorPublicationDependencyNames(),');
+    expect(synchronization).toContain('stampPath: GENERATOR_STAGE_PREP_STAMP_PATH,');
+    expect(synchronization).not.toContain('[GENERATOR_BUILD_PREP_STAMP_PATH,');
+    expect(synchronization).toContain('requireExactOutputs: true,');
+    expect(synchronization).toContain('verifyMaterializedOutputs: true,');
   });
 
   it('carries the publication lease into packaged-runtime workspace preparation', () => {
@@ -852,6 +903,34 @@ describe('bundled plugin installed runtime publication', () => {
 });
 
 describe('bundled plugin UI translation aggregation', () => {
+  it('emits large translation declarations without serializing values or widening translation keys', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bundled-translations-declarations-'));
+    const messages = Object.fromEntries(Array.from({ length: 600 }, (_, index) => [
+      `plugins.example.message${index}`, `${index}: ${'translated text '.repeat(40)}`,
+    ]));
+    const source = renderBundledPluginTranslationsTs({ en: messages, fr: { 'plugins.example.frenchOnly': 'Bonjour' } });
+    const generated = join(root, 'translations.ts');
+    const consumer = join(root, 'consumer.ts');
+    writeFileSync(generated, source);
+    writeFileSync(consumer, [
+      "import { BUNDLED_PLUGIN_TRANSLATIONS, type BundledPluginTranslationKey } from './translations';",
+      'type Assert<T extends true> = T;',
+      "type Known = Assert<'plugins.example.message599' extends BundledPluginTranslationKey ? true : false>;",
+      "type OtherLocale = Assert<'plugins.example.frenchOnly' extends BundledPluginTranslationKey ? true : false>;",
+      "type Unknown = Assert<'plugins.example.missing' extends BundledPluginTranslationKey ? false : true>;",
+      "export const translated: string = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.message599'];",
+    ].join('\n'));
+    try {
+      execFileSync(process.execPath, [
+        'scripts/workspaces/runTypeScriptCli.mjs', '--declaration', '--emitDeclarationOnly',
+        '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler',
+        '--skipLibCheck', '--outDir', join(root, 'declarations'), generated, consumer,
+      ], { cwd: new URL('../../../../', import.meta.url), stdio: 'pipe' });
+      const declaration = readFileSync(join(root, 'declarations/translations.d.ts'), 'utf8');
+      expect(declaration.length).toBeLessThan(source.length / 4);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   const sharedTriageTranslation = Object.freeze({
     contributes: {
       ui: {

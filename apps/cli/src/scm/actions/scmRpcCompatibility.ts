@@ -1,5 +1,5 @@
-import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol';
-import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm';
+import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol/scm/repositoryClone';
+import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 
 // Clone's public Action input is strictly domain-only. Machine/session RPC
 // transports also carry validated SCM envelope fields; consume them only here.

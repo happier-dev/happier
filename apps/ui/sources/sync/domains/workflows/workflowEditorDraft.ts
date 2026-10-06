@@ -1,8 +1,26 @@
-import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { collectWorkflowBlockIds, copyWorkflowBlocks, createWorkflowBlock, createWorkflowLeafBlock, findWorkflowBlockListRef, getWorkflowBlockList, insertWorkflowBlock, resolvePreviousResultInputForInsertion, type WorkflowBlockKind, type WorkflowBlockListRef, type WorkflowLeafBlockSeed, type WorkflowDefinitionDraftV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowBlock, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { pluginJsonValuesEqual, type WorkflowStarterExampleV1 } from '@happier-dev/protocol';
 
 export type WorkflowEditorDraft = WorkflowDefinitionDraftV1 & Readonly<{ draftId: string }>;
+
+/** Every editor Add entry point uses the same scope-aware creation and previous-result default. */
+export function insertWorkflowEditorBlock(draft: WorkflowEditorDraft, params: Readonly<{
+  request: Readonly<{ kind: WorkflowBlockKind }> | WorkflowLeafBlockSeed;
+  list: WorkflowBlockListRef;
+  afterBlockId?: string;
+}>): Readonly<{ draft: WorkflowEditorDraft; block: WorkflowBlock }> {
+  const { request, list, afterBlockId } = params;
+  const takenIds = collectWorkflowBlockIds(draft);
+  const created = request.kind === 'action' || request.kind === 'workflow' || request.kind === 'wait'
+    ? createWorkflowLeafBlock(request, takenIds)
+    : createWorkflowBlock(request.kind, takenIds);
+  const position = { list, ...(afterBlockId === undefined ? {} : { afterBlockId }) };
+  const previousResult = created.kind === 'step' ? resolvePreviousResultInputForInsertion(draft, position) : null;
+  const block: WorkflowBlock = previousResult === null || created.kind !== 'step'
+    ? created : { ...created, input: [previousResult] };
+  return { draft: insertWorkflowBlock(draft, { ...position, block }), block };
+}
 
 export type WorkflowEditorViewState = Readonly<{
   /** The one selected block, shared by Steps, Flow and the inspector. */

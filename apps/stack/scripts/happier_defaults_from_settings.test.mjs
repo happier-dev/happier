@@ -10,10 +10,10 @@ import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 import { createHappierCliMonorepoFixture } from './testkit/happier_cli_monorepo_testkit.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
-async function createMonorepoFixture(t, { prefix }) {
+async function createMonorepoFixture(t, { prefix, distIndexScript }) {
   return createHappierCliMonorepoFixture(t, {
     prefix,
-    distIndexScript: [
+    distIndexScript: distIndexScript ?? [
       "// Parse --server-url from argv",
       "let serverUrlFromArg = null;",
       "for (let i = 0; i < process.argv.length; i++) {",
@@ -39,6 +39,70 @@ async function createMonorepoFixture(t, { prefix }) {
     ].join('\n'),
   });
 }
+
+test('stack-scoped invocations initialize a canonical profile and use loopback only for transport', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  // The selected CLI is a child-process boundary. Simulate its existing
+  // server-set persistence contract, then observe the forwarded command.
+  const fixture = await createMonorepoFixture(t, {
+    prefix: 'hstack-happier-canonical-profile-',
+    distIndexScript: [
+      "import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';",
+      "import { join } from 'node:path';",
+      "const args = process.argv.slice(2);",
+      "const flag = (name) => args[args.indexOf(name) + 1];",
+      "const settingsPath = join(process.env.HAPPIER_HOME_DIR, 'settings.json');",
+      "if (args[0] === 'server' && args[1] === 'set') {",
+      "  const id = flag('--server-id');",
+      "  mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });",
+      "  writeFileSync(settingsPath, JSON.stringify({ schemaVersion: 6, activeServerId: id, servers: {",
+      "    [id]: { id, serverUrl: flag('--server-url'), localServerUrl: flag('--local-server-url'), webappUrl: flag('--webapp-url') }",
+      "  } }));",
+      "} else {",
+      "  console.log(JSON.stringify({ serverUrl: process.env.HAPPIER_SERVER_URL,",
+      "    publicServerUrl: process.env.HAPPIER_PUBLIC_SERVER_URL, localServerUrl: process.env.HAPPIER_LOCAL_SERVER_URL,",
+      "    activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,",
+      "    settings: JSON.parse(readFileSync(settingsPath, 'utf8')) }));",
+      "}",
+    ].join('\n'),
+  });
+  const storageDir = join(fixture.dir, 'storage');
+  const stackDir = join(storageDir, 'test-stack');
+  const port = await reserveUnusedPort();
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(join(stackDir, 'env'), '', 'utf8');
+  const env = createHappierCommandEnv({ fixtureDir: fixture.dir, storageDir });
+  env.HAPPIER_STACK_ENV_FILE = join(stackDir, 'env');
+  env.HAPPIER_STACK_SERVER_PORT = String(port);
+  env.HAPPIER_PUBLIC_SERVER_URL = `http://happier-test-stack.localhost:${port}`;
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', 'server', 'current', '--json'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout.trim());
+  const id = buildStackStableScopeId({ stackName: 'test-stack', cliIdentity: 'default' });
+  assert.equal(parsed.publicServerUrl, `http://happier-test-stack.localhost:${port}`);
+  assert.equal(parsed.serverUrl, `http://127.0.0.1:${port}`);
+  assert.equal(parsed.localServerUrl, `http://127.0.0.1:${port}`);
+  assert.equal(parsed.activeServerId, id);
+  assert.equal(parsed.settings.activeServerId, id);
+  assert.equal(parsed.settings.servers[id].serverUrl, parsed.publicServerUrl);
+  assert.equal(parsed.settings.servers[id].localServerUrl, parsed.localServerUrl);
+});
+
+test('a fresh stack CLI home fails closed when the CLI does not persist its profile', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createMonorepoFixture(t, { prefix: 'hstack-happier-missing-profile-' });
+  const storageDir = join(fixture.dir, 'storage');
+  const stackDir = join(storageDir, 'test-stack');
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(join(stackDir, 'env'), '', 'utf8');
+  const env = createHappierCommandEnv({ fixtureDir: fixture.dir, storageDir });
+  env.HAPPIER_STACK_ENV_FILE = join(stackDir, 'env');
+  env.HAPPIER_STACK_SERVER_PORT = String(await reserveUnusedPort());
+  const res = await runNodeCapture([hstackBinPath(rootDir), 'happier', 'server', 'current', '--json'], { cwd: rootDir, env });
+  assert.notEqual(res.code, 0);
+  assert.equal(res.stdout.trim(), '', 'the requested command must not launch without its stack profile');
+  assert.match(res.stderr, /did not apply the requested stack relay profile/);
+});
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));

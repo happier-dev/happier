@@ -1,7 +1,5 @@
-import {
-  BUILT_IN_INSTALLABLES_REGISTRY,
-  type InstallablesRegistry,
-} from '@happier-dev/protocol/installables';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import type { InstallablesRegistry } from '@happier-dev/protocol/installables';
 
 import { createInstallableCapability } from '@/capabilities/deps/installables';
 import type { Capability } from '@/capabilities/service';

@@ -17,7 +17,7 @@ import {
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import { pickPermissionOutcome } from './permissions/permissionMapping';
 import type { AcpClientConnectionHandlers } from './connection/types';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { LegacyAcpToolRuntime } from './toolCalls/legacy/runtime';
 import { isWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import {

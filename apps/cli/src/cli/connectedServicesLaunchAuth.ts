@@ -1,9 +1,5 @@
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  ConnectedServiceBindingsV2Schema,
-  type ConnectedServiceBindingSelectionV2,
-  type ConnectedServiceBindingsV2,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 
 export type ConnectedServicesLaunchAuthIntent =
   | Readonly<{ kind: 'default' }>

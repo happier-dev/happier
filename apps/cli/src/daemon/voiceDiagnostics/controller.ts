@@ -1,10 +1,5 @@
-import {
-  VoiceSpeechDiagnosticsSettingsV1Schema,
-  type VoiceSpeechDiagnosticArtifactSummaryV1,
-  type VoiceSpeechDiagnosticsBackupPolicyV1,
-  type VoiceSpeechDiagnosticsHealthV1,
-  type VoiceSpeechDiagnosticsSettingsV1,
-} from '@happier-dev/protocol';
+import { VoiceSpeechDiagnosticsSettingsV1Schema } from '@happier-dev/protocol/voice/diagnostics';
+import type { VoiceSpeechDiagnosticArtifactSummaryV1, VoiceSpeechDiagnosticsBackupPolicyV1, VoiceSpeechDiagnosticsHealthV1, VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol';
 
 import {
   createVoiceDiagnosticStore,

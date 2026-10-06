@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from './index.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
@@ -56,10 +56,35 @@ describe('configured widget Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'widget_refresh_unavailable' });
     expect(await executor.execute('widgets.instance.list', { surface: { ...surface,
       owner: { kind: 'companion', sessionId: 'session' } } }, context))
-      .toMatchObject({ ok: false, errorCode: 'unsupported_widget_surface' });
+      .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
     for (const id of ['widgets.instance.viewerInputs.get', 'widgets.instance.viewerInputs.set', 'widgets.instance.viewerInputs.reset'] as const) {
       expect(ActionIdSchema.safeParse(id).success, id).toBe(false);
     }
+  });
+
+  it('delivers Companion reads and transfers through the answering client while Home stays Account-owned', async () => {
+    const companion = { ...surface, owner: { kind: 'companion', sessionId: 'session' } } as const;
+    const readSpec = getActionSpec('widgets.instance.inputs.get');
+    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface: companion, instanceId: 'checks' } }))).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface, instanceId: 'checks' } }))).toBe('account');
+    const bindings = { count: { kind: 'value', value: 7 } } as const;
+    // The connected-client hop is a transport boundary; admission/placement are real.
+    const executor = createActionExecutor({
+      widgetAccountScope: () => ({ serverId: surface.serverId, accountId: surface.accountId }),
+      clientActionExecute: async ({ actionId, input }) => actionId === 'widgets.instance.inputs.get'
+        ? { ok: true, result: { ref: { surface: companion, instanceId: 'checks' }, bindings } }
+        : { ok: false, errorCode: 'answering_client', error: JSON.stringify(input) },
+    });
+    const context = { surface: 'mcp', serverId: surface.serverId, bypassApprovals: true } as const;
+    expect(await executor.execute('widgets.instance.inputs.get', { ref: { surface: companion, instanceId: 'checks' } }, context))
+      .toEqual({ ok: true, result: { ref: { surface: companion, instanceId: 'checks' }, bindings } });
+    for (const [from, to] of [[surface, companion], [companion, surface]] as const) {
+      const input = { ref: { surface: from, instanceId: 'checks' }, to: { surface: to, index: 0 } };
+      expect(await executor.execute('widgets.instance.move', input, context))
+        .toEqual({ ok: false, errorCode: 'answering_client', error: JSON.stringify(input) });
+    }
+    expect(await executor.execute('widgets.instance.inputs.get', { ref: { surface, instanceId: 'checks' } }, context))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_widget_surface' });
   });
 
   it('requires configurable approval for the shared Board content writer used by snapshots', () => {

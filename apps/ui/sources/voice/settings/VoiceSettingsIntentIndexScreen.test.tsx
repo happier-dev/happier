@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { AuthProvider } from '@/auth/context/AuthContext';
+import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
+import type { DestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { Text } from '@/components/ui/text/Text';
 
 const routerMock = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 
@@ -19,6 +22,37 @@ vi.mock('@/utils/navigation/useNavigationFocusReturn', () => ({
 }));
 
 describe('VoiceSettingsIntentIndexScreen', () => {
+  it('opens intent cards in the workspace that hosts the hub', async () => {
+    const { VoiceSettingsIntentIndexScreen } = await import('./VoiceSettingsIntentIndexScreen');
+    for (const [testID, route] of [
+      ['settings.voice.intent.dictation', SETTINGS_ROUTES.voiceDictation],
+      ['settings.voice.intent.conversations', SETTINGS_ROUTES.voiceConversations],
+      ['settings.voice.intent.privacy', SETTINGS_ROUTES.voicePrivacy],
+      ['settings.voice.intent.advanced', SETTINGS_ROUTES.voiceAdvanced],
+      ['settings.voice.intent.history', SETTINGS_ROUTES.voiceHistory],
+    ] as const) {
+      function HostedHub() {
+        const [destination, setDestination] = React.useState('/settings/voice');
+        const navigation = React.useMemo<DestinationNavigation>(() => ({
+          push: (href) => setDestination(String(href)),
+          replace: (href) => setDestination(String(href)),
+          back: () => setDestination('/settings/voice'),
+        }), []);
+        return <DestinationInstanceHost tabId="voice-qa-tab" ref={{ kind: 'voice', params: {} }}
+          pathname={destination} focused visible navigation={navigation}>
+          {destination === '/settings/voice' ? <VoiceSettingsIntentIndexScreen />
+            : <Text testID="voice-qa-open-destination">{destination}</Text>}
+        </DestinationInstanceHost>;
+      }
+      const screen = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+        <HostedHub />
+      </AuthProvider>);
+      await screen.pressByTestIdAsync(testID);
+      expect(screen.findByTestId('voice-qa-open-destination')?.props.children).toBe(route);
+      await screen.unmount();
+    }
+  });
+
   it('shows both modes as pipelines and opens every Voice destination', async () => {
     const { VoiceSettingsIntentIndexScreen } = await import('./VoiceSettingsIntentIndexScreen');
     // Signed-in credentials are the real auth boundary the hub's passive readiness reads.

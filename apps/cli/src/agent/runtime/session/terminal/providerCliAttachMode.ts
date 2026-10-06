@@ -6,8 +6,9 @@ import type { RuntimeTurnOperations, RuntimeTurnDisposeReason, RuntimeTurnSessio
 import { createAgentRuntimeSwitchState } from '@/agent/runtime/mode/switching/createSwitchState';
 import type { HostProviderCliAttachSurface, HostProviderCliAttachRequest } from '@/session/attach/providerCliAttach';
 import { logger } from '@/ui/logger';
-import { SessionProviderCliAttachPrepareRequestV1Schema, SessionTerminalMetadataSchema,
-    type SessionProviderCliAttachPrepareRequestV1, type SessionProviderCliAttachPrepareResultV1 } from '@happier-dev/protocol';
+import { SessionProviderCliAttachPrepareRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1';
+import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import type { SessionProviderCliAttachPrepareRequestV1, SessionProviderCliAttachPrepareResultV1 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { configuration } from '@/configuration';
 import { createHerdrClient, type HerdrClient } from '@/integrations/herdr/client';

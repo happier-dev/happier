@@ -1,14 +1,6 @@
-import {
-    getMachineLiveStreamPayloadDecodedByteLength,
-    PEER_MEDIATION_RECEIPTS,
-    type MachineLiveStreamCapsV1,
-    type MachineLiveStreamCodecIdV1,
-    type MachineLiveStreamControlSidebandV1,
-    type MachineLiveStreamFrameV1,
-    type MachineLiveStreamPayloadKindV1,
-    type MachineLiveStreamReceiptV1,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import type { MachineLiveStreamCapsV1, MachineLiveStreamCodecIdV1, MachineLiveStreamControlSidebandV1, MachineLiveStreamFrameV1, MachineLiveStreamPayloadKindV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
 import type {
     MachineLiveStreamCaptureAdapter,

@@ -88,6 +88,8 @@ export function ActionInputFields(props: Readonly<{
     resolveFieldOptions: ResolveSessionActionFieldOptions;
     onPatch: (patch: Record<string, unknown>) => void;
     resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
+    /** `none`: an enclosing row already names the field, so the control draws no label of its own. */
+    frame?: 'field' | 'none';
     getChipAccessibilityLabel?: (args: Readonly<{
         field: EffectiveActionInputField;
         option: ActionFieldOption;
@@ -144,6 +146,7 @@ export function ActionInputFields(props: Readonly<{
                         keyForOption={(option) => actionInputOptionValueKey(option.value)}
                         {...(toggleLabel === undefined ? {} : { toggleLabel })}
                         {...(widget === 'boolean' ? {} : { controlTestID: props.resolveFieldTestID?.(field) })}
+                        {...(props.frame === undefined ? {} : { frame: props.frame })}
                         style={FIELD_STYLE}
                         theme={presentationTheme}
                         onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}

@@ -1,21 +1,19 @@
 import { z } from 'zod';
 
-import {
-  AgentIdV1Schema,
-  BackendTargetRefV2Schema,
-  ProviderErrorV1Schema,
-  PluginSourceCustodyV1Schema,
-  SecretReferenceOverlayV1Schema,
-  SessionModelSelectionV1Schema,
-  SessionProviderBindingMetadataV1Schema,
-  StrictJsonValueSchema,
-} from '@happier-dev/protocol';
+import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
+import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
   AgentCliSessionCommandBuildInputV1,
   AgentCliSessionCommandOptionsV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { AgentRuntimeDaemonSessionDescriptorV1Schema } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
 import { ConnectedServicesBindingsIngressSchema } from '@/daemon/connectedServices/parseConnectedServicesBindings';
 

@@ -1,17 +1,8 @@
 import axios from 'axios';
 
-import {
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginAvailabilityActionHttpPathsV1,
-  PluginAvailabilityMaterializationsReportActionInputV1Schema,
-  PluginAvailabilityMaterializationsReportActionOutputV1Schema,
-  PluginAvailabilityReleasePublishActionInputV1Schema,
-  PluginAvailabilityReleasePublishActionOutputV1Schema,
-  type PluginAvailabilityMaterializationsReportActionInputV1,
-  type PluginAvailabilityMaterializationsReportActionOutputV1,
-  type PluginAvailabilityReleasePublishActionInputV1,
-  type PluginAvailabilityReleasePublishActionOutputV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityMaterializationsReportActionOutputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityReleasePublishActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import type { PluginAvailabilityMaterializationsReportActionInputV1, PluginAvailabilityMaterializationsReportActionOutputV1, PluginAvailabilityReleasePublishActionInputV1, PluginAvailabilityReleasePublishActionOutputV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';

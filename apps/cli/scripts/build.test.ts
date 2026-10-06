@@ -24,6 +24,129 @@ function writeBuildPackageManifest(packageRoot: string) {
 }
 
 describe('buildCliDist', () => {
+  it.each([0, 18874367, 18874368])('admits QA checking/bundling overlap only with measured memory headroom (%s KiB)', async (availableKiB) => {
+    const packageRoot = createTempDirSync('happier-cli-memory-overlap-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      const compiler = join(packageRoot, 'compiler.cjs');
+      const checked = join(packageRoot, 'checked');
+      // Checking runs in a real compiler child; pkgroll is replaced at its
+      // compiler boundary. The marker detects overlap before checking ends.
+      writeFileSync(compiler, `setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(checked)}, 'done'); process.stderr.write("src/index.ts(1,1): error TS0001: diagnostic\\n"); process.exit(1); }, 50);`);
+      let overlapped = false;
+      await buildCliDist({
+        packageRoot, repoRoot: packageRoot, lockPath: join(packageRoot, 'build.lock'),
+        env: { HAPPIER_CLI_BUILD_OUTPUT_DIR: '', HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'build:prepared' },
+        readBuildMemoryImpl: () => ({ availableKiB, requiredKiB: 18874368 }),
+        resolveTypeScriptCliInvocationImpl: () => ({ argsPrefix: [compiler] }),
+        runPkgrollBuildImpl: ({ outputDir }: { outputDir: string }) => {
+          overlapped = !existsSync(checked);
+          mkdirSync(join(packageRoot, outputDir), { recursive: true });
+          writeFileSync(join(packageRoot, outputDir, 'index.mjs'), 'export const runtime = 42;\n');
+        },
+      });
+      expect(overlapped).toBe(availableKiB >= 18874368);
+      expect(existsSync(checked)).toBe(true);
+      expect(JSON.parse(readFileSync(join(packageRoot, 'dist', '.build-manifest.json'), 'utf8')).stalePackages).toEqual([
+        expect.objectContaining({ reason: 'typecheck', errorCount: 1 }),
+      ]);
+    } finally { rmSync(packageRoot, { recursive: true, force: true }); }
+  });
+  it.each(['strict', 'qa-runtime', 'release'] as const)('records CLI type errors only in QA publication (%s)', async (mode) => {
+    const packageRoot = createTempDirSync('happier-cli-qa-typecheck-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      mkdirSync(join(packageRoot, 'src'));
+      writeFileSync(join(packageRoot, 'src', 'index.ts'), 'export const invalid: string = 42;\n');
+      writeFileSync(join(packageRoot, 'tsconfig.build.json'), JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true, types: [], skipLibCheck: true },
+        include: ['src/index.ts'],
+      }));
+      const options = {
+        packageRoot, repoRoot: packageRoot, lockPath: join(packageRoot, 'build.lock'),
+        env: { HAPPIER_CLI_BUILD_OUTPUT_DIR: '', HAPPIER_WORKSPACE_BUILD_MODE: mode === 'strict' ? 'strict' : 'qa-runtime',
+          npm_lifecycle_event: mode === 'release' ? 'prepack' : 'build:prepared' },
+        // Keep the real TypeScript process, source snapshot, lock and manifest.
+        // Pkgroll is the external compiler boundary.
+        runPkgrollBuildImpl: ({ packageJsonPath, outputDir }: { packageJsonPath: string; outputDir: string }) => {
+          const output = join(dirname(packageJsonPath), outputDir);
+          mkdirSync(output, { recursive: true });
+          writeFileSync(join(output, 'index.mjs'), 'export const runtime = 42;\n');
+        },
+      };
+      if (mode === 'qa-runtime') {
+        await buildCliDist(options);
+        const manifest = JSON.parse(readFileSync(join(packageRoot, 'dist', '.build-manifest.json'), 'utf8'));
+        expect(manifest.stalePackages).toEqual([expect.objectContaining({
+          packageName: '@happier-dev/build-fixture', reason: 'typecheck', errorCount: 1, files: ['src/index.ts'],
+          diagnosticSummary: expect.stringContaining('TS2322'),
+        })]);
+        // Recovering clears the same degradation record; metadata does not
+        // change the fingerprint when pkgroll emits identical runtime bytes.
+        writeFileSync(join(packageRoot, 'src', 'index.ts'), 'export const valid: number = 42;\n');
+        await buildCliDist(options);
+        const recovered = JSON.parse(readFileSync(join(packageRoot, 'dist', '.build-manifest.json'), 'utf8'));
+        expect(recovered.stalePackages).toBeUndefined();
+        expect(recovered.fingerprint).toBe(manifest.fingerprint);
+      } else {
+        await expect(buildCliDist(options)).rejects.toThrow('exited with status 1');
+        expect(existsSync(join(packageRoot, 'dist'))).toBe(false);
+      }
+    } finally { rmSync(packageRoot, { recursive: true, force: true }); }
+  });
+
+  it.each(['strict', 'qa-runtime'])('fails a bundler error and drains parallel checking before cleanup (%s)', async (mode) => {
+    const packageRoot = createTempDirSync('happier-cli-qa-bundler-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      let checking = false;
+      let checked = false;
+      await expect(buildCliDist({
+        packageRoot, repoRoot: packageRoot, lockPath: join(packageRoot, 'build.lock'),
+        env: { HAPPIER_CLI_BUILD_OUTPUT_DIR: '', HAPPIER_WORKSPACE_BUILD_MODE: mode, npm_lifecycle_event: 'build:prepared' },
+        readBuildMemoryImpl: () => ({ availableKiB: 18874368, requiredKiB: 18874368 }),
+        runTypecheckImpl: async () => {
+          checking = true;
+          await new Promise((done) => setTimeout(done, 30));
+          checked = true;
+        },
+        runPkgrollBuildImpl: () => {
+          expect(checking).toBe(true);
+          if (mode === 'qa-runtime') expect(checked).toBe(false);
+          throw new Error('pkgroll failed');
+        },
+      })).rejects.toThrow('pkgroll failed');
+      expect(checked).toBe(true);
+      expect(existsSync(join(packageRoot, 'dist'))).toBe(false);
+    } finally { rmSync(packageRoot, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    ['non-diagnostic', 18874367], ['non-diagnostic', 18874368],
+    ['non-typecheck-exit', 18874367], ['non-typecheck-exit', 18874368],
+  ] as const)('does not downgrade a compiler process failure in QA (%s, %s KiB)', async (failure, availableKiB) => {
+    const packageRoot = createTempDirSync('happier-cli-qa-process-failure-');
+    try {
+      writeBuildPackageManifest(packageRoot);
+      const compiler = join(packageRoot, 'compiler.cjs');
+      writeFileSync(compiler, failure === 'non-diagnostic'
+        ? 'process.stderr.write("Compiler startup failed\\n"); process.exit(1);'
+        : 'process.stderr.write("src/index.ts(1,1): error TS0001: fixture diagnostic\\n"); process.exit(2);');
+      await expect(buildCliDist({
+        packageRoot, repoRoot: packageRoot, lockPath: join(packageRoot, 'build.lock'),
+        env: { HAPPIER_CLI_BUILD_OUTPUT_DIR: '', HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'build:prepared' },
+        readBuildMemoryImpl: () => ({ availableKiB, requiredKiB: 18874368 }),
+        // Execute a real failing process at the compiler boundary.
+        resolveTypeScriptCliInvocationImpl: () => ({ argsPrefix: [compiler] }),
+        runPkgrollBuildImpl: ({ outputDir }: { outputDir: string }) => {
+          mkdirSync(join(packageRoot, outputDir), { recursive: true });
+          writeFileSync(join(packageRoot, outputDir, 'index.mjs'), 'export const runtime = 42;\n');
+        },
+      })).rejects.toThrow(`exited with status ${failure === 'non-diagnostic' ? 1 : 2}`);
+      expect(existsSync(join(packageRoot, 'dist'))).toBe(false);
+    } finally { rmSync(packageRoot, { recursive: true, force: true }); }
+  });
+
   it('keeps explicit compiler emission out of the TypeScript source tree', () => {
     const packageRoot = createTempDirSync('happier-cli-compiler-output-contract-');
     try {

@@ -1,6 +1,4 @@
-import {
-  TranscriptRawAgentEventV1Schema,
-} from '@happier-dev/protocol';
+import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 
 import type { DaemonSessionMutationCustody } from '../usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 

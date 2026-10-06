@@ -1,15 +1,6 @@
 import { definitionList, ok } from '@happier-dev/cli-common/output';
-import {
-  SessionDiscussionCreateResultV1Schema,
-  SessionDiscussionDetailsResultV1Schema,
-  SessionDiscussionListResultV1Schema,
-  SessionDiscussionPostResultV1Schema,
-  SessionDiscussionReadResultV1Schema,
-  SessionDiscussionReadStateResultV1Schema,
-  type SessionDiscussionMessageContentV1,
-  type SessionDiscussionOpenedMessageV1,
-  type SessionDiscussionOpenedSummaryV1,
-} from '@happier-dev/protocol';
+import { SessionDiscussionCreateResultV1Schema, SessionDiscussionDetailsResultV1Schema, SessionDiscussionListResultV1Schema, SessionDiscussionPostResultV1Schema, SessionDiscussionReadResultV1Schema, SessionDiscussionReadStateResultV1Schema } from '@happier-dev/protocol/sessions/discussions/actions';
+import type { SessionDiscussionMessageContentV1, SessionDiscussionOpenedMessageV1, SessionDiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
 
 import type {
   ActionCliPresentation,

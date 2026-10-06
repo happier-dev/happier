@@ -256,14 +256,16 @@ export function RealtimeProviderFields(props: Readonly<{
       const value = typeof current === 'number' ? current
         : typeof field.defaultValue === 'number' ? field.defaultValue
           : typeof field.reset === 'number' ? field.reset : field.min;
+      const defaultValue = typeof field.defaultValue === 'number' ? field.defaultValue
+        : typeof field.reset === 'number' ? field.reset : null;
       const format = (number: number) => `${typeof field.fractionDigits === 'number' ? number.toFixed(field.fractionDigits) : number}${typeof field.valueSuffix === 'string' ? field.valueSuffix : ''}`;
       return <Item key={key} testID={fieldTestId(field)} title={translate(title)} subtitle={translate(subtitle)}
         subtitleLines={0} showChevron={false} accessoryLayout="adaptive" rightElementOutsidePressable
         rightElement={<View style={{ gap: 4, minWidth: 180, flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <Text style={{ ...Typography.default(), fontVariant: ['tabular-nums'], color: theme.colors.text.secondary }}>{format(value)}</Text>
-            <RoundButton testID={`${fieldTestId(field)}.default`} title={t('common.default')} size="small" display="inverted"
-              onPress={() => { if (field.nullable === true) write(field, null, props.providerId); else commitNumber(field, current, ''); }} />
+            {value !== defaultValue ? <RoundButton testID={`${fieldTestId(field)}.default`} title={t('common.default')} size="small" display="inverted"
+              onPress={() => { if (field.nullable === true) write(field, null, props.providerId); else commitNumber(field, current, ''); }} /> : null}
           </View>
           <Slider testID={`${fieldTestId(field)}.slider`} value={value} min={field.min} max={field.max} step={field.step}
             accessibilityLabel={translate(title)} formatValueText={format}

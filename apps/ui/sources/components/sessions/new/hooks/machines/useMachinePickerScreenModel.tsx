@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -113,7 +113,11 @@ export function useMachinePickerScreenModel() {
         () => buildNewSessionPickerFallbackHref(currentRouteParams),
         [currentRouteParams],
     );
-    const accountSettings = useSettings();
+    const accountSettings = useSettingsSelector((settings) => ({
+        serverSelectionGroups: settings.serverSelectionGroups,
+        serverSelectionActiveTargetKind: settings.serverSelectionActiveTargetKind,
+        serverSelectionActiveTargetId: settings.serverSelectionActiveTargetId,
+    }));
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
     const settings = React.useMemo(() => ({ ...accountSettings, ...homeViewSelectionSettings }), [accountSettings, homeViewSelectionSettings]);
     const activeServerSource = useNewSessionActiveServerSource();

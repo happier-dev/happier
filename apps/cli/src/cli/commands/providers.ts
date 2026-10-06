@@ -1,4 +1,4 @@
-import { ProviderErrorV1Schema } from '@happier-dev/protocol';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { errorFrame } from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';

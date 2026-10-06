@@ -1,12 +1,5 @@
-import {
-    PeerMediationObservabilityEventV1Schema,
-    type PeerFlowKindV1,
-    type PeerMediationObservabilityEventKindV1,
-    type PeerMediationObservabilityEventV1,
-    type PeerMediationObservabilityFlowRefV1,
-    type PeerMediationObservabilityScopeV1,
-    type PeerRouteKindV1,
-} from '@happier-dev/protocol';
+import { PeerMediationObservabilityEventV1Schema } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
+import type { PeerFlowKindV1, PeerMediationObservabilityEventKindV1, PeerMediationObservabilityEventV1, PeerMediationObservabilityFlowRefV1, PeerMediationObservabilityScopeV1, PeerRouteKindV1 } from '@happier-dev/protocol';
 
 import {
     redactDaemonPeerMediationObservabilityMetadata,

@@ -1,13 +1,6 @@
-import {
-    computeContentPublicKeyFingerprint,
-    signMachineInstallationProof,
-    type ContentPublicKeyFingerprint,
-    type MachineInstallationIdentityV1,
-    type MachineInstallationProofPayloadV1,
-    type MachineInstallationProofV1,
-    type MachineReplacementReason,
-    type MachineReplacementRegistrationIntent,
-} from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import type { ContentPublicKeyFingerprint, MachineInstallationIdentityV1, MachineInstallationProofPayloadV1, MachineInstallationProofV1, MachineReplacementReason, MachineReplacementRegistrationIntent } from '@happier-dev/protocol';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 

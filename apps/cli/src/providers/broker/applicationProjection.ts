@@ -1,10 +1,5 @@
-import {
-  type ProviderBrokerApplicationBindingV1,
-  type ProviderWireProtocol,
-  type ProviderEndpointTemplateV1,
-  type ResolvedProviderManagedRuntimeDeclarationV1,
-  resolveProviderManagedRuntimeDeclarationV1,
-} from '@happier-dev/protocol';
+import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol, ProviderEndpointTemplateV1, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { getProviderContribution, type ProviderContributionRegistryView, type ResolvedProviderConnectionRecord } from '@/providers/registry';
 

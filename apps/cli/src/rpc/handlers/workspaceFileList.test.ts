@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -25,7 +28,55 @@ function createHandler(): RpcHandler {
 }
 
 describe('registerWorkspaceFileListHandler', () => {
+    let fixtureRoot: string | undefined;
+    let deniedDirectory: string | undefined;
     beforeEach(() => runRipgrepMock.mockReset());
+    afterEach(async () => {
+        if (deniedDirectory) await chmod(deniedDirectory, 0o700);
+        if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+        deniedDirectory = undefined;
+        fixtureRoot = undefined;
+    });
+
+    it('finds files beneath a matching directory with the real ripgrep path', async () => {
+        fixtureRoot = await mkdtemp(join(tmpdir(), 'workspace-file-list-'));
+        await mkdir(join(fixtureRoot, 'search-fixture'));
+        await writeFile(join(fixtureRoot, 'search-fixture', 'target.txt'), 'fixture');
+        for (const excluded of ['node_modules', '.git']) {
+            await mkdir(join(fixtureRoot, excluded, 'search-fixture'), { recursive: true });
+            await writeFile(join(fixtureRoot, excluded, 'search-fixture', 'target.txt'), 'fixture');
+        }
+        const { run } = await vi.importActual<typeof import('@/integrations/ripgrep/index')>('@/integrations/ripgrep/index');
+        runRipgrepMock.mockImplementation(run);
+
+        await expect(createHandler()({ rootPath: fixtureRoot, query: 'search-fixture' })).resolves.toEqual({
+            ok: true, paths: ['search-fixture/target.txt'], truncated: false,
+        });
+    });
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+        'retains readable real-ripgrep matches when a sibling directory denies traversal', async () => {
+            fixtureRoot = await mkdtemp(join(tmpdir(), 'workspace-file-list-'));
+            await writeFile(join(fixtureRoot, 'needle.txt'), 'fixture');
+            deniedDirectory = join(fixtureRoot, 'denied');
+            await mkdir(deniedDirectory);
+            await writeFile(join(deniedDirectory, 'hidden.txt'), 'fixture');
+            await chmod(deniedDirectory, 0);
+            const { run } = await vi.importActual<typeof import('@/integrations/ripgrep/index')>('@/integrations/ripgrep/index');
+            const observed = await run(['--files', '--null', '--iglob', '*needle*'], { cwd: fixtureRoot });
+            expect(observed.exitCode).toBe(2);
+            expect(observed.stderr).toMatch(/Permission denied/);
+            expect(observed.stdout).toBe('needle.txt\0');
+            runRipgrepMock.mockImplementation(run);
+
+            await expect(createHandler()({ rootPath: fixtureRoot, query: 'needle' })).resolves.toEqual({
+                ok: true, paths: ['needle.txt'], truncated: true,
+            });
+            await expect(createHandler()({ rootPath: fixtureRoot, query: 'absent' })).resolves.toEqual({
+                ok: false, errorCode: 'ripgrep_failed', exitCode: 2,
+            });
+        },
+    );
 
     it('rejects raw argv and cwd instead of forwarding caller-controlled process options or paths', async () => {
         const handler = createHandler();
@@ -55,13 +106,15 @@ describe('registerWorkspaceFileListHandler', () => {
                 '--no-config',
                 '--files',
                 '--hidden',
-                '--glob',
-                '!**/.git/**',
-                '--glob',
-                '!**/node_modules/**',
                 '--null',
                 '--iglob',
                 '*a*',
+                '--iglob',
+                '**/*a*/**',
+                '--iglob',
+                '!**/.git/**',
+                '--iglob',
+                '!**/node_modules/**',
             ],
             expect.objectContaining({
                 cwd: '/repo',

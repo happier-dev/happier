@@ -1,9 +1,5 @@
-import {
-  resolveManagedSessionMcpSelectionV1,
-  type McpServersSettingsV1,
-  type ResolveManagedSessionMcpSelectionV1Result,
-  type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { resolveManagedSessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/resolveManagedSessionMcpSelectionV1';
+import type { McpServersSettingsV1, ResolveManagedSessionMcpSelectionV1Result, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import { createRealpathNormalizer } from './createRealpathNormalizer';
 
 export function resolveManagedSessionMcpSelectionForDirectory(params: Readonly<{

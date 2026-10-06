@@ -1,4 +1,5 @@
-import { ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, SignedRootActionIdSchema } from '@happier-dev/protocol';
+import { ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { z } from 'zod';
 
 export const SIGNED_ROOT_ACTION_EXECUTE_PATH = '/actions/root/execute';

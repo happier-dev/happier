@@ -1,9 +1,11 @@
 import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   PLUGIN_SDK_PACKAGE_NAME,
@@ -44,22 +46,55 @@ async function writePackagedRuntimeFixture(params: Readonly<{
 }
 
 describe('host plugin SDK resolution', () => {
-  it('resolves physical bundled packages through the runtime-owned shared support tree', async () => {
+  it.each(['hostSdkResolution.ts', 'typescriptConfigBoundary.ts'])(
+    'keeps the TypeScript API unloaded when importing %s before authoring demand',
+    async (moduleName) => {
+      const moduleUrl = new URL(`./${moduleName}`, import.meta.url).href;
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        '--import', 'tsx', '--input-type=module', '-e',
+        `import { createRequire } from 'node:module';
+         const require = createRequire(import.meta.url);
+         const compilerPath = require.resolve('typescript');
+         await import(${JSON.stringify(moduleUrl)});
+         console.log(JSON.stringify({ compilerLoaded: Boolean(require.cache[compilerPath]) }));`,
+      ], { cwd: fileURLToPath(new URL('../../../', import.meta.url)) });
+      expect(JSON.parse(stdout)).toEqual({ compilerLoaded: false });
+    },
+  );
+
+  it.each([
+    ['direct', ['code', 'payload'], 'module'],
+    ['runner-snapshot', ['.runner-snapshots', 'runtime'], 'module'],
+    ['launched-runner-snapshot', ['.runner-snapshots', 'runtime'], 'launch'],
+    ['legacy-runner-snapshot', ['dist', '.runner-snapshots', 'runtime'], 'module'],
+  ] as const)('resolves %s bundled packages from shared support with a manifest-free daemon home and cwd', async (_layout, segments, evidence) => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-host-sdk-shared-support-'));
-    const root = join(parent, 'code', 'payload');
+    const root = join(parent, ...segments);
     const supportRoot = join(parent, 'support', 'payload');
+    const originalCwd = process.cwd();
+    const originalArgv = process.argv;
     try {
       await writePackagedRuntimeFixture({ root, declareSdk: true });
       await mkdir(supportRoot, { recursive: true });
       await rename(join(root, 'node_modules'), join(supportRoot, 'node_modules'));
       await symlink(join(supportRoot, 'node_modules'), join(root, 'node_modules'),
         process.platform === 'win32' ? 'junction' : 'dir');
-      const runtimeModuleUrl = pathToFileURL(join(root, 'dist', 'plugins', 'entry.js')).href;
+      const runtimeModuleUrl = evidence === 'launch'
+        ? 'file:///$bunfs/root/chunk.js'
+        : pathToFileURL(join(root, 'dist', 'plugins', 'entry.js')).href;
+      if (evidence === 'launch') {
+        process.argv = [process.execPath, join(root, 'dist', 'index.mjs')];
+      }
+      vi.stubEnv('HAPPIER_HOME_DIR', parent);
+      process.chdir(parent);
 
       expect(resolveHostPluginSdkPackageRoot({ runtimeModuleUrl })).toBe(
         await realpath(join(supportRoot, 'node_modules', '@happier-dev', 'plugin-sdk')),
       );
     } finally {
+      process.chdir(originalCwd);
+      process.argv = originalArgv;
+      vi.unstubAllEnvs();
       await rm(parent, { recursive: true, force: true });
     }
   });

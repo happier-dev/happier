@@ -13,6 +13,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { focusNativeAccessibilityTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import {
     HostedHtmlSurfaceAdapter,
@@ -41,7 +42,8 @@ import { WidgetSnapshotCaptureContext } from '@/components/widgets/definitions/w
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
-import type { WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { projectWidgetDefinitionPromotionBindingsV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
+import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
@@ -130,7 +132,7 @@ export type SessionWidgetHostProps = Readonly<{
     onManagePlugin?: () => void;
     onPrepareEncryption?: () => void;
     /** Inline rename; commits on Enter/blur, Escape restores. Full density only. */
-    onRename?: (title: string) => void;
+    onRename?: (title: string) => void | Promise<void>;
     /**
      * A configured widget's Edit inputs… and in-card repair (lab `dashboards` dbind E): this copy's
      * new bindings, through the Board's item owner. Editors only.
@@ -167,11 +169,9 @@ export type SessionWidgetHostProps = Readonly<{
     onHeadingFocusHandled?: (requestId: number) => void;
     /** Host-specific truthful navigation label (for example, Open in Details). */
     openActionLabel?: string;
-    /** This viewer keeps the item beside chat; the card carries a small Companion mark. */
-    inCompanion?: boolean;
     /**
-     * `section` places the item in the Companion column (lab F1): the Companion's metrics, with a
-     * Board glyph in the meta slot saying the record lives on the Board.
+     * `section` places the item in the Companion column (lab F1) with the Companion's metrics; the
+     * header stays quiet (widgets-polish): no mark says where the record lives.
      */
     frame?: 'card' | 'section';
     /**
@@ -289,9 +289,8 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     });
     const canOpenElsewhere = props.onOpenHere !== undefined;
     const embeddedPresentation = props.expanded === true ? 'fill' as const : 'content' as const;
-    // Source availability has ONE owner (`createSessionBoardSourceAvailabilityResolver`),
-    // supplied by the mounted controller. The item shell does not resolve plugin
-    // projections a second time.
+    // This resolver proves renderer presence only. Both executable bodies and
+    // inert widget references delegate exact-target admission to WidgetSurface.
     const presentation = resolveSessionBoardItemPresentation({
         state,
         // `density` is visual chrome; whether this placement runs the item is answered
@@ -341,18 +340,19 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         title,
         testID,
         // An empty or unchanged title keeps the one it had.
-        ...(renameEnabled ? { onRename: (next: string) => { if (next.length > 0 && next !== title) onRename?.(next); } } : {}),
+        ...(renameEnabled ? { onRename: (next: string) => { if (next.length > 0 && next !== title) return onRename?.(next); } } : {}),
     });
     const beginRename = rename.begin;
 
     // A configured widget's inputs: Edit inputs… in the menu and the card's repair line open the
     // same step, for this copy only. The Board fills "This session" with its own Session.
     const widgetInstance = state.kind === 'ready' && state.item.source.kind === 'widget' ? state.item.source.instance : null;
-    const widgetDescriptor = React.useMemo(
+    const installedDescriptor = React.useMemo(
         () => (widgetInstance ? readWidgetDescriptor(appRuntime.pluginUiProjection, widgetInstance.definition) : null),
         [appRuntime.pluginUiProjection, widgetInstance],
     );
     const boardSurface = useSessionWidgetSurface({ owner: 'sessionBoard', serverId: props.serverId, sessionId: props.sessionId, session: props.session ?? null });
+    const widgetDescriptor = useWidgetInstanceDescriptor(boardSurface.scope, widgetInstance, installedDescriptor);
     const inputs = useWidgetInputsEditor({
         instance: widgetInstance,
         candidate: widgetDescriptor,
@@ -366,21 +366,32 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     // About this widget, Save as your widget and Post a snapshot (lab dagent G2/G3, dscope VS):
     // one shared owner, anchored at the same ⋯ as Edit inputs.
     const readyItem = state.kind === 'ready' ? state.item : null;
+    // The source's own mark (a widget's glyph), the same on the card and in its flows.
+    const itemMark = widgetDescriptor?.icon ?? sessionWidgetMark(state);
     const sessionItem = React.useMemo((): WidgetDefinitionSessionItem | null => {
         if (!readyItem || props.density === 'preview') return null;
         const fields = widgetDescriptor?.inputs?.fields ?? [];
         const bindings = readyItem.source.kind === 'widget' ? readyItem.source.instance.bindings : {};
+        const promoted = projectWidgetDefinitionPromotionBindingsV1(widgetDescriptor ?? {}, bindings);
         return {
             itemId: props.item.itemId,
             title,
             savable: readyItem.source.kind === 'widget' || readyItem.source.kind === 'declarative',
             canEdit: props.canEdit,
-            converted: Object.entries(bindings).flatMap(([path, binding]) => (binding.kind === 'value' ? [] : [{
+            converted: Object.entries(promoted).flatMap(([path, binding]) => (binding.kind === 'value' ? [] : [{
                 path, title: fields.find((field) => field.path === path)?.title ?? path, becomes: binding.kind,
             }])),
             sourceLabel: widgetDescriptor?.pluginName ?? title,
+            mark: itemMark,
+            renderPreview: () => readyItem.source.kind === 'declarative'
+                ? <SessionBoardDeclarativeContent testID={`${testID}.save.document`} document={readyItem.source.document}
+                    snapshot={readyItem.snapshot !== undefined} actionBinding={null} />
+                : readyItem.source.kind === 'widget' && boardSurface.scope && props.item.revision
+                    ? <WidgetSurface scope={boardSurface.scope} providedContext={{ session: [{ serverId: boardSurface.scope.serverId, sessionId: props.sessionId }] }}
+                        instance={readyItem.source.instance} descriptor={widgetDescriptor} appRuntime={appRuntime} presentation="content"
+                        recordRevision={props.item.revision} testID={`${testID}.save.widget`} /> : null,
         };
-    }, [props.canEdit, props.density, props.item.itemId, readyItem, title, widgetDescriptor]);
+    }, [props.canEdit, props.density, props.item.itemId, props.item.revision, props.sessionId, readyItem, title, widgetDescriptor, appRuntime, boardSurface.scope, testID, itemMark]);
     const definitionFlows = useWidgetDefinitionFlows({
         instance: widgetInstance,
         scope: boardSurface.scope,
@@ -503,6 +514,15 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
             ? t('sessionBoard.board.stale')
             : t('sessionBoard.board.unavailable.reason');
 
+    const previewAction = presentation.kind === 'preview' ? presentation.actionKind : null;
+    const openReference = previewAction === 'openHere' ? (
+        <View style={styles.actions}>
+            <RoundButton size="small" display="inverted" testID={`${testID}-open-here`}
+                title={props.openActionLabel ?? actionLabel('openHere')} onPress={() => runAction('openHere')} />
+        </View>
+    ) : null;
+    const configuredReference = presentation.kind === 'preview' && widgetInstance !== null;
+
     const body = executablePaused
         ? (
             <SurfaceStateCard
@@ -554,18 +574,13 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     actionBinding={presentation.kind === 'content' ? props.actionBinding ?? null : null}
                 />
             )
-            : presentation.kind === 'content'
+            : (presentation.kind === 'content' || configuredReference)
                 && state.kind === 'ready'
                 && state.item.source.kind === 'widget'
                 && props.item.revision !== null
                 ? (
-                    // Only a content presentation reaches here, so a preview or
-                    // non-primary placement never instantiates an executable
-                    // plugin frame, subscription or Host API binding.
-                    //
-                    // A Session projection that has not hydrated yet is that
-                    // component's own loading state; naming it here would report
-                    // an installed, projected widget as an unsupported renderer.
+                    // The same admission owner checks the exact bound target for
+                    // both modes. A reference replaces the body before execution.
                     viewerScope && viewerScope.serverId === props.serverId ? <WidgetSnapshotCaptureContext.Provider value={definitionFlows.snapshotSlot}><WidgetSurface
                         testID={testID}
                         scope={{ ...viewerScope, owner: { kind: 'sessionBoard', sessionId: props.sessionId } }}
@@ -577,6 +592,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                         // host composition, not persisted outer card chrome.
                         presentation={embeddedPresentation}
                         appRuntime={appRuntime}
+                        {...(configuredReference ? { reference: openReference } : {})}
                         onIntrinsicHeightChange={setHostedFrameReportedHeight}
                         {...(props.onManagePlugin ? { onManagePlugin: props.onManagePlugin } : {})}
                         {...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {})}
@@ -609,12 +625,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     )
                 : presentation.kind === 'preview'
                     ? (
-                        // An inert reference to an executable item: the title,
-                        // provenance and Open above are the whole preview. Drawing
-                        // an "unavailable" card here would report a healthy widget
-                        // that simply runs in another placement as broken, and
-                        // rendering a miniature duplicate would start a second
-                        // executable frame purely to look busy.
+                        // Other executable sources retain their inert reference.
                         null
                     )
                     : (
@@ -631,8 +642,6 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                             accessibilitySemantics="status"
                         />
                     );
-
-    const previewAction = presentation.kind === 'preview' ? presentation.actionKind : null;
 
     // Frameless and full-bleed items reach the frame's real edge; the card clips them to its corner.
     const bodyReachesEdge = state.kind === 'ready'
@@ -736,7 +745,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 testID={testID}
                 frameStyle={frameStyle}
                 placement={placement}
-                mark={sessionWidgetMark(state)}
+                mark={itemMark}
                 title={heading}
                 {...(source ? { source } : {})}
                 meta={meta}
@@ -751,19 +760,11 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                                 testID={`${testID}-body`}
                                 style={[styles.body, resolvedHeight ? { height: resolvedHeight.height } : null]}
                             >
-                                {body}
+                                {configuredReference ? (
+                                    <SurfaceStateSizeProvider size={props.expanded ? 'pane' : 'line'}>{body}</SurfaceStateSizeProvider>
+                                ) : body}
                             </View>
-                            {previewAction === 'openHere' ? (
-                                <View style={styles.actions}>
-                                    <RoundButton
-                                        size="small"
-                                        display="inverted"
-                                        testID={`${testID}-open-here`}
-                                        title={props.openActionLabel ?? actionLabel('openHere')}
-                                        onPress={() => runAction('openHere')}
-                                    />
-                                </View>
-                            ) : null}
+                            {configuredReference ? null : openReference}
                         </>
                     ),
                 }}

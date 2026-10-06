@@ -1,17 +1,11 @@
-import {
-  AgentExecutionTargetV1Schema,
-  HandoffWorkspaceActionV1Schema,
-  HandoffTargetReplacementApprovalV1Schema,
-  normalizeSpawnSessionNonceResolution,
-  readRuntimeDescriptorV1,
-  SpawnSessionExecutionAuthorizationSchema,
-  type ActionExecuteResult,
-  type SessionHandoffPrepareTargetResponse,
-  type SessionHandoffStorageMode,
-  type WorkspaceRefV1,
-  type WorkspaceSyncRelationshipV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { HandoffWorkspaceActionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { HandoffTargetReplacementApprovalV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
+import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStorageMode, WorkspaceRefV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import type { StoredCredentials } from '@/persistence';

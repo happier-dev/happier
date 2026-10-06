@@ -1,10 +1,5 @@
-import {
-    CHROMIUM_FOR_TESTING_PRODUCT_SOURCE,
-    resolveChromiumForTestingPlatform,
-    resolveChromiumForTestingAssetVersion,
-    type BrowserSidecarBinaryProvenanceV1,
-    type ChromiumForTestingPlatformAsset,
-} from '@happier-dev/protocol';
+import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE, resolveChromiumForTestingPlatform, resolveChromiumForTestingAssetVersion } from '@happier-dev/protocol/browser/sidecar/chromiumForTesting';
+import type { BrowserSidecarBinaryProvenanceV1, ChromiumForTestingPlatformAsset } from '@happier-dev/protocol';
 
 import { resolveInstalledChromiumForTestingExecutable } from '@/packagedRuntime/installables/sourceAdapters/chromiumForTesting';
 import type { SidecarBrowserBinaryCandidate } from './binary';

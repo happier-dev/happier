@@ -258,7 +258,6 @@ export function useSessionImagePreview(input: Readonly<{
                         mimeType: mime,
                         maxBytes: maxPreviewBytes,
                         expectedSizeBytes: sizeBytes,
-                        cacheIdentity: cacheKey,
                         signal: controller.signal,
                     });
                 if (!res.ok) {

@@ -20,7 +20,7 @@ vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit');
+    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
     return createTokenStorageModuleMock({
         importOriginal: importOriginal as <T = typeof import('@/auth/storage/tokenStorage')>() => Promise<T>,
         tokenStorage: { getCredentialsForServerUrl: getCredentialsForServerUrlMock },
@@ -372,7 +372,7 @@ describe('teamsDirectoryEngine', () => {
         const snapshot = getTeamsDirectorySnapshot(scope, queryKey);
         expect(snapshot?.data?.map((entry) => entry.id)).toEqual(['t1']);
         expect(snapshot?.stale).toBe(true);
-        expect(snapshot?.error).toEqual({ kind: 'unreachable', retryable: true });
+        expect(snapshot?.error).toEqual({ kind: 'unreachable', retryable: true, code: null });
         release();
     });
 

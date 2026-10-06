@@ -1,13 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import {
-  MarketplaceIndexQueryResultV1Schema,
-  MarketplaceIndexQueryV1Schema,
-  type MarketplaceIndexQueryResultV1,
-  type MarketplaceIndexQueryV1,
-  type MarketplaceIndexSourceKindV1,
-} from '@happier-dev/protocol';
-import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace/internal';
+import { MarketplaceIndexQueryResultV1Schema, MarketplaceIndexQueryV1Schema } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import type { MarketplaceIndexQueryResultV1, MarketplaceIndexQueryV1, MarketplaceIndexSourceKindV1 } from '@happier-dev/protocol';
+import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace/expectedMarketplaceListingV1';
 
 import { createMarketplaceSourceRegistryStore } from './sources/store';
 import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';

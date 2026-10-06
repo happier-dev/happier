@@ -1762,6 +1762,87 @@ describe('createCliActionExecutor', () => {
     expect(spawnMachineSession).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { created: true, abort: false },
+    { created: true, abort: true },
+    { created: false, abort: false },
+  ])('compensates only a created checkout after a known initial-trigger birth refusal ($created, aborted=$abort)', async ({ created, abort }) => {
+    const controller = new AbortController();
+    const machineRpc = callMachineRpc.getMockImplementation();
+    if (!machineRpc) throw new Error('Expected the Machine transport boundary fixture');
+    callMachineRpc.mockImplementation(async (call: MachineRpcCall) => {
+      if (call.method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) {
+        return {
+          ok: true,
+          directory: '/repo/.dev/worktree/initial-trigger',
+          directoryKind: 'path',
+          directoryCreationRequired: false,
+          checkout: {
+            kind: 'git_worktree',
+            finalDirectory: '/repo/.dev/worktree/initial-trigger',
+            baseRef: null,
+            branchMode: created ? 'new' : 'existing',
+            created,
+          },
+        };
+      }
+      if (call.method === RPC_METHODS.SCM_WORKTREE_REMOVE) return { success: true };
+      return await machineRpc(call);
+    });
+    spawnMachineSession.mockImplementation(async () => {
+      if (abort) controller.abort();
+      return {
+        error: 'Session initial trigger admission was refused',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorDetail: { kind: 'session_creation_initial_trigger_refused', code: 'feature_disabled' },
+      };
+    });
+
+    const result = await createPlainExecutor().execute('session.spawn_new', createSessionSpawnInput(), {
+      surface: 'cli', defaultSessionId: 'sess-1', signal: controller.signal,
+    });
+
+    expect(result).toEqual({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
+    const compensations = callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE);
+    if (created) {
+      expect(compensations).toEqual([[expect.objectContaining({
+        machineId: 'machine-1',
+        request: expect.objectContaining({
+          cwd: '/repo/.dev/worktree/initial-trigger',
+          worktreePath: '/repo/.dev/worktree/initial-trigger',
+          confirmed: true,
+        }),
+      })]]);
+    } else {
+      expect(compensations).toEqual([]);
+    }
+    expect(fetchSessionById).not.toHaveBeenCalled();
+    expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('retains a created checkout when the spawn transport outcome is unknown (aborted=%s)', async (abort) => {
+    const controller = new AbortController();
+    callMachineRpc.mockResolvedValueOnce({
+      ok: true,
+      directory: '/repo/.dev/worktree/uncertain',
+      directoryKind: 'path',
+      directoryCreationRequired: false,
+      checkout: {
+        kind: 'git_worktree', finalDirectory: '/repo/.dev/worktree/uncertain',
+        baseRef: null, branchMode: 'new', created: true,
+      },
+    });
+    spawnMachineSession.mockImplementation(async () => {
+      if (abort) controller.abort();
+      throw Object.assign(new Error('The spawn response was lost'), { code: 'MACHINE_RPC_TIMEOUT' });
+    });
+
+    await expect(createPlainExecutor().execute('session.spawn_new', createSessionSpawnInput(), {
+      surface: 'cli', defaultSessionId: 'sess-1', signal: controller.signal,
+    })).resolves.toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } });
+    expect(callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE)).toEqual([]);
+  });
+
   it('enforces the live Account Agent spawn policy before daemon Session creation', async () => {
     setActiveAccountSettingsSnapshot({
       source: 'network',

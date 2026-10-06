@@ -50,7 +50,7 @@ import {
     TEAM_GITHUB_APP_SETTINGS,
     TEAM_MANAGED_OIDC_SETTINGS,
 } from '@/components/settings/identity/identitySettings';
-import { CONNECTED_SERVICES_SETTINGS } from '@/components/settings/connectedServices/connectedServicesSettings';
+import { CONNECTED_SERVICES_SETTINGS, CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } from '@/components/settings/connectedServices/connectedServicesSettings';
 import { TEAM_AUTHENTICATION_SETTINGS, TEAM_IDENTITY_CONNECTION_SETTINGS } from '@/components/settings/teams/identity/teamAuthenticationSettings';
 import { DIRECTORY_SETTINGS, DIRECTORY_SOURCE_SETTINGS } from '@/components/settings/teams/identity/directorySettings';
 import { HOME_AUTHENTICATION_SETTINGS } from '@/components/settings/home/governance/homeAuthenticationSettings';
@@ -145,6 +145,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     DIAGNOSIS_SETTINGS,
     ATTACHMENTS_SETTINGS,
     CONNECTED_SERVICES_SETTINGS,
+    CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS,
     VOICE_DICTATION_SETTINGS,
     VOICE_CONVERSATIONS_SETTINGS,
     VOICE_PRIVACY_SETTINGS,

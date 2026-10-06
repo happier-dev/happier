@@ -2,49 +2,21 @@ import axios from 'axios';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1 } from '@happier-dev/transfers';
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-  ARTIFACT_PLAIN_DATA_KEY_MARKER,
-  decodePlainArtifactStoredContent,
-  encodePlainArtifactStoredContent,
-  isPlainArtifactDataKeyMarker,
-  openEncryptedDataKeyEnvelopeV1,
-  sealEncryptedDataKeyEnvelopeV1,
-  ArtifactAccessErrorCodeV1Schema,
-  ArtifactAccessGrantsListResponseV1Schema,
-  ArtifactAccessGrantMutationResponseV1Schema,
-  ArtifactAccessRecipientCensusResponseV1Schema,
-  ArtifactRecipientKeyEnvelopeCommitResponseV1Schema,
-  runArtifactRecipientKeyPreparationV1,
-  type ArtifactCallerAccessV1,
-  type ArtifactAccessGrantSetInputV1,
-  type ArtifactAccessGrantRemoveInputV1,
-  ArtifactQuotaExceededV1Schema,
-  ArtifactRevisionListResponseV1Schema,
-  ArtifactStorageUsageV1Schema,
-  prepareArtifactHeaderForRevisionV1,
-  prepareArtifactHeaderForBodyV1,
-  withArtifactExcerptV1,
-  artifactKindRequiresTextBodyV1,
-  createArtifactPublicLinkActionsV1,
-  type ArtifactPublicLinkActionIdV1,
-  type ArtifactPublicLinkIssuedV1,
-  ArtifactBodyV1Schema,
-  ArtifactBlobReferenceV1Schema,
-  ArtifactBlobReadResponseV1Schema,
-  frameSessionDataKeyBundleV0,
-  readSessionDataKeyBundleV0,
-  sealAesGcmPayloadWebCrypto,
-  openAesGcmPayloadWebCrypto,
-  type ArtifactBodyV1,
-  type ArtifactBlobWriteV1,
-  artifactHtmlBundleFromBodyV1,
-  ArtifactHtmlPreviewResponseV1Schema,
-  buildArtifactHtmlPreviewUrlV1,
-  isArtifactHtmlHeaderV1,
-  type ArtifactHtmlBundleV1,
-  listArtifactHeadersV1,
-  type ArtifactListSelectionOptionsV1,
-} from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { openEncryptedDataKeyEnvelopeV1, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactHtmlBundleV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
+import { ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
+import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
+import { artifactKindRequiresTextBodyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { createArtifactPublicLinkActionsV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactPrivateRevisionMetadataV1Schema, ArtifactPrivateRevisionMetadataV1StoredSchema, ArtifactBlobReferenceV1Schema, ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { frameSessionDataKeyBundleV0, readSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { sealAesGcmPayloadWebCrypto, openAesGcmPayloadWebCrypto } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
+import { artifactHtmlBundleFromBodyV1, ArtifactHtmlPreviewResponseV1Schema, buildArtifactHtmlPreviewUrlV1, isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
@@ -59,6 +31,7 @@ import {
 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { deriveKey } from '@/utils/deriveKey';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 
 export type AccountArtifactRevision = Readonly<{ headerVersion: number; bodyVersion: number }>;
@@ -69,6 +42,7 @@ export type AccountArtifact = Readonly<{
   artifactId: string;
   header: Readonly<Record<string, unknown>>;
   body: ArtifactBodyV1 | null;
+  provenance?: ArtifactRevisionProvenanceV1;
   revision: AccountArtifactRevision;
   seq: number;
   createdAt: number;
@@ -80,6 +54,7 @@ export type AccountArtifactHeader = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number;
   seq: number; createdAt: number; updatedAt: number;
   body?: ArtifactBodyV1 | null; bodyVersion?: number;
+  provenance?: ArtifactRevisionProvenanceV1;
 }>;
 export function encodeAccountArtifactListCursor(item: Pick<AccountArtifactHeader, 'artifactId' | 'updatedAt'>): string {
   return Buffer.from(JSON.stringify({ updatedAt: item.updatedAt, id: item.artifactId }), 'utf8').toString('base64url');
@@ -91,6 +66,7 @@ type StoredArtifact = Readonly<{
   encryptionMode: 'plain' | 'e2ee';
   id: string; header: string; headerVersion: number; body: string; bodyVersion: number;
   dataEncryptionKey: string; seq: number; createdAt: number; updatedAt: number;
+  provenance?: string | null; provenanceDataEncryptionKey?: string | null;
 }>;
 
 type Codec = Readonly<{
@@ -196,10 +172,9 @@ function decode(codec: Codec, value: string): unknown {
 
 function decodeBody(codec: Codec, value: string): ArtifactBodyV1 | null {
   const decoded = decode(codec, value);
-  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new ArtifactEncryptionMaterialUnavailableError();
-  const parsed = ArtifactBodyV1Schema.nullable().safeParse(Reflect.get(decoded, 'body'));
+  const parsed = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decoded);
   if (!parsed.success) throw new ArtifactEncryptionMaterialUnavailableError();
-  return parsed.data;
+  return parsed.data.body;
 }
 
 type ArtifactWriteContent = Readonly<{ body: ArtifactBodyV1; binary?: never } | {
@@ -239,8 +214,15 @@ function parseStoredArtifact(raw: unknown): StoredArtifact | null {
   const createdAt = readNonnegativeSafeInteger(value.createdAt);
   const updatedAt = readNonnegativeSafeInteger(value.updatedAt);
   if (headerVersion === null || bodyVersion === null || seq === null || createdAt === null || updatedAt === null) return null;
+  if ((value.provenance != null && typeof value.provenance !== 'string')
+    || (value.provenanceDataEncryptionKey != null && typeof value.provenanceDataEncryptionKey !== 'string')) {
+    throw new ArtifactEncryptionMaterialUnavailableError();
+  }
   return { id: value.id, header: value.header, headerVersion, body: value.body,
-    bodyVersion, dataEncryptionKey: value.dataEncryptionKey, seq, createdAt, updatedAt, ...readStoredAccess(value) };
+    bodyVersion, dataEncryptionKey: value.dataEncryptionKey, seq, createdAt, updatedAt,
+    ...(typeof value.provenance === 'string' ? { provenance: value.provenance } : {}),
+    ...(typeof value.provenanceDataEncryptionKey === 'string' ? { provenanceDataEncryptionKey: value.provenanceDataEncryptionKey } : {}),
+    ...readStoredAccess(value) };
 }
 
 const artifactAuthorityProjectionSchema = ArtifactAccessRecipientCensusResponseV1Schema.pick({ ownerAccountId: true, access: true, encryptionMode: true });
@@ -255,6 +237,7 @@ function readStoredAccess(value: Record<string, unknown>): Pick<StoredArtifact, 
 export function createAccountArtifactStore(params: Readonly<{
   credentials: StoredCredentials;
   getAccountEncryptionMode: () => Promise<ConnectedServiceAccountEncryptionMode>;
+  savedBy?: ArtifactSavedByV1;
 }>) {
   // Axios chooses the media type from actual request data. Bodyless GET/DELETE
   // requests must not advertise JSON; binary uploads set their own media type.
@@ -281,7 +264,10 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const prepare = async (stored: StoredArtifact, codec: Codec, signal?: AbortSignal) => {
     if (codec.mode === 'plain') return;
+    const provenanceCodec = stored.provenanceDataEncryptionKey
+      ? await openCodec(params.credentials, stored.provenanceDataEncryptionKey, stored.encryptionMode) : null;
     await runArtifactRecipientKeyPreparationV1({ artifactId: stored.id, dataKey: codec.dataKey,
+      provenanceDataKey: provenanceCodec?.dataKey, openedProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
       openedDataEncryptionKey: stored.dataEncryptionKey, randomBytes: getRandomBytes, ...(signal ? { signal } : {}),
       readCensus: async () => ArtifactAccessRecipientCensusResponseV1Schema.parse(requireAccessResponse(
         await axios.get(accessUrl(stored.id, 'recipients'), accessConfig(signal)))),
@@ -299,6 +285,70 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return openCodec(params.credentials, stored.dataEncryptionKey, stored.encryptionMode);
   };
+  const openProvenanceCodec = async (stored: Pick<StoredArtifact, 'encryptionMode' | 'provenanceDataEncryptionKey'>): Promise<Codec | null> => {
+    if (stored.encryptionMode === 'plain') return openCodec(params.credentials, ARTIFACT_PLAIN_DATA_KEY_MARKER, 'plain');
+    return stored.provenanceDataEncryptionKey
+      ? openCodec(params.credentials, stored.provenanceDataEncryptionKey, 'e2ee') : null;
+  };
+  const readProvenance = (codec: Codec | null, value: string | null | undefined, artifactId: string, bodyVersion: number) => {
+    if (value == null) return undefined;
+    if (!codec) throw new ArtifactEncryptionMaterialUnavailableError();
+    const parsed = ArtifactPrivateRevisionMetadataV1StoredSchema.safeParse(decode(codec, value));
+    if (!parsed.success || parsed.data.artifactId !== artifactId || parsed.data.bodyVersion !== bodyVersion) {
+      throw new ArtifactEncryptionMaterialUnavailableError();
+    }
+    return parsed.data.provenance;
+  };
+  const writeProvenance = async (input: Readonly<{ artifactId: string; bodyVersion: number; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal }>, stored?: StoredArtifact, contentCodec?: Codec): Promise<Readonly<{
+    wire: Readonly<{ provenance?: string; provenanceDataEncryptionKey?: string }>;
+    prepareRecipients?: () => Promise<void>;
+  }>> => {
+    const savedBy = input.savedBy ?? params.savedBy;
+    if (!savedBy) return { wire: {} };
+    const existing = stored ? await openProvenanceCodec(stored) : null;
+    const codec = existing ?? await createCodec({ credentials: params.credentials,
+      mode: stored?.encryptionMode ?? await params.getAccountEncryptionMode() });
+    const metadata = ArtifactPrivateRevisionMetadataV1Schema.parse({ v: 1, artifactId: input.artifactId, bodyVersion: input.bodyVersion,
+      provenance: { savedBy, ...(input.source ? { source: input.source } : {}), ...(input.restoredFromBodyVersion === undefined ? {} : { restoredFromBodyVersion: input.restoredFromBodyVersion }) } });
+    let ownerEnvelope = codec.dataEncryptionKey;
+    let prepareRecipients: (() => Promise<void>) | undefined;
+    if (!existing && codec.mode === 'e2ee' && stored) {
+      const contentDataKey = contentCodec?.dataKey;
+      if (!contentDataKey) throw new ArtifactEncryptionMaterialUnavailableError();
+      const readCensus = async () => ArtifactAccessRecipientCensusResponseV1Schema.parse(requireAccessResponse(
+        await axios.get(accessUrl(stored.id, 'recipients'), accessConfig(input.signal))));
+      const census = await readCensus();
+      if (census.artifactId !== stored.id || census.callerDataEncryptionKey !== stored.dataEncryptionKey || census.provenanceDataEncryptionKey) {
+        throw new ArtifactEncryptionMaterialUnavailableError();
+      }
+      if (stored.access !== 'owner') {
+        const owner = prepareArtifactRecipientKeyEnvelopesV1({ dataKey: contentDataKey, provenanceDataKey: codec.dataKey,
+          recipients: census.recipients.filter(recipient => recipient.recipientAccountId === stored.ownerAccountId), randomBytes: getRandomBytes,
+          replaceExisting: true })[0];
+        if (!owner?.encryptedProvenanceDataKey) throw new ArtifactEncryptionMaterialUnavailableError();
+        ownerEnvelope = owner.encryptedProvenanceDataKey;
+      }
+      const expectedOwnerEnvelope = ownerEnvelope;
+      prepareRecipients = async () => {
+        input.signal?.throwIfAborted();
+        const current = await readCensus();
+        if (current.artifactId !== stored.id || current.callerDataEncryptionKey !== stored.dataEncryptionKey
+          || current.provenanceDataEncryptionKey !== expectedOwnerEnvelope || !current.dataEncryptionKey) {
+          throw new ArtifactEncryptionMaterialUnavailableError();
+        }
+        const recipientKeyEnvelopes = prepareArtifactRecipientKeyEnvelopesV1({ dataKey: contentDataKey, provenanceDataKey: codec.dataKey,
+          recipients: current.recipients.filter(recipient => recipient.recipientAccountId !== current.ownerAccountId), randomBytes: getRandomBytes });
+        if (!recipientKeyEnvelopes.length) return;
+        ArtifactRecipientKeyEnvelopeCommitResponseV1Schema.parse(requireAccessResponse(await axios.post(accessUrl(stored.id, 'key-envelopes'), {
+          artifactId: stored.id, expectedDataEncryptionKey: current.dataEncryptionKey,
+          expectedProvenanceDataEncryptionKey: expectedOwnerEnvelope, recipientKeyEnvelopes,
+        }, accessConfig(input.signal))));
+      };
+    }
+    return { wire: { provenance: codec.encode(metadata),
+      ...(!existing && codec.mode === 'e2ee' ? { provenanceDataEncryptionKey: ownerEnvelope } : {}) },
+      ...(prepareRecipients ? { prepareRecipients } : {}) };
+  };
   const prepareCurrent = async (artifactId: string, signal?: AbortSignal) => {
     const stored = await fetchStored(artifactId, signal);
     if (!stored) throw Object.assign(new Error('artifact_not_found'), { code: 'artifact_not_found' });
@@ -311,6 +361,7 @@ export function createAccountArtifactStore(params: Readonly<{
     const codec = await openStored(stored);
     const header = decode(codec, stored.header);
     const body = decodeBody(codec, stored.body);
+    const provenance = readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion);
     if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
     requireBodyForArtifactKind(header as Readonly<Record<string, unknown>>, body);
     await prepare(stored, codec, options?.signal);
@@ -318,6 +369,7 @@ export function createAccountArtifactStore(params: Readonly<{
     return { artifactId: stored.id, header: header as Readonly<Record<string, unknown>>,
       ownerAccountId: stored.ownerAccountId, access: stored.access,
       body,
+      ...(provenance ? { provenance } : {}),
       revision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
       seq: stored.seq, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
   };
@@ -436,14 +488,17 @@ export function createAccountArtifactStore(params: Readonly<{
         }
         const parsed = ArtifactRevisionListResponseV1Schema.safeParse(response.data);
         if (!parsed.success) throw new ArtifactEncryptionMaterialUnavailableError();
+        const provenanceCodec = await openProvenanceCodec(stored);
         const revisions = parsed.data.revisions.map((value) => {
-          return { ...value, body: decodeBody(codec, value.body) };
+          const provenance = readProvenance(provenanceCodec, value.provenance, input.artifactId, value.bodyVersion);
+          const { provenance: _sealedProvenance, ...revision } = value;
+          return { ...revision, body: decodeBody(codec, value.body), ...(provenance ? { provenance } : {}) };
         });
         await prepare(stored, codec, signal);
         signal?.throwIfAborted();
         return { artifactId: input.artifactId, revisions, retentionCount: parsed.data.retentionCount };
       },
-      restore: async (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: AccountArtifactRevision }>, signal?: AbortSignal) => {
+      restore: async (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: AccountArtifactRevision; savedBy?: ArtifactSavedByV1 }>, signal?: AbortSignal) => {
         signal?.throwIfAborted();
         const stored = await fetchStored(input.artifactId, signal);
         if (!stored) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
@@ -460,15 +515,19 @@ export function createAccountArtifactStore(params: Readonly<{
           header: header as Readonly<Record<string, unknown>>, body: retained.body, expectedRevision: input.expectedRevision,
           nextRevision: { headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion + 1 } });
         signal?.throwIfAborted();
+        const provenance = await writeProvenance({ artifactId: input.artifactId, bodyVersion: stored.bodyVersion + 1,
+          savedBy: input.savedBy, source: retained.provenance?.source, restoredFromBodyVersion: input.bodyVersion, signal }, stored, codec);
         const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(input.artifactId)}/revisions/${input.bodyVersion}/restore`,
           { expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion,
-            header: codec.encode(withArtifactExcerptV1(nextHeader, retained.body)) }, accessConfig(signal));
+            header: codec.encode(withArtifactExcerptV1(nextHeader, retained.body)),
+            ...provenance.wire }, accessConfig(signal));
         const quota = readQuotaFailure(response);
         if (quota) return quota;
         if (response.status === 409 || response.data?.error === 'version-mismatch') {
           return { ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' } as const;
         }
         if (response.status === 404) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
+        if (response.status >= 200 && response.status < 300 && response.data?.success === true) await provenance.prepareRecipients?.();
         return response.status >= 200 && response.status < 300 && response.data?.success === true
           ? { ok: true, revision: readAcknowledgedRevision(response.data) } as const
           : { ok: false, errorCode: 'restore_failed', error: 'artifact_restore_failed' } as const;
@@ -526,14 +585,21 @@ export function createAccountArtifactStore(params: Readonly<{
           throw error;
         }
         if (!header || typeof header !== 'object' || Array.isArray(header)) continue;
-        let content: Pick<AccountArtifactHeader, 'body' | 'bodyVersion'> = {};
+        let content: Pick<AccountArtifactHeader, 'body' | 'bodyVersion' | 'provenance'> = {};
         if (options?.includeBody) {
           const bodyVersion = readNonnegativeSafeInteger(value.bodyVersion);
           if (typeof value.body === 'string' && bodyVersion !== null) {
             try {
               const body = decodeBody(codec, value.body);
               requireBodyForArtifactKind(header as Readonly<Record<string, unknown>>, body);
-              content = { body, bodyVersion };
+              if ((value.provenance != null && typeof value.provenance !== 'string')
+                || (value.provenanceDataEncryptionKey != null && typeof value.provenanceDataEncryptionKey !== 'string')) {
+                throw new ArtifactEncryptionMaterialUnavailableError();
+              }
+              const provenance = readProvenance(await openProvenanceCodec({ encryptionMode: access.encryptionMode,
+                provenanceDataEncryptionKey: typeof value.provenanceDataEncryptionKey === 'string' ? value.provenanceDataEncryptionKey : null }),
+                typeof value.provenance === 'string' ? value.provenance : null, value.id, bodyVersion);
+              content = { body, bodyVersion, ...(provenance ? { provenance } : {}) };
             } catch (error) {
               if (!(error instanceof ArtifactEncryptionMaterialUnavailableError)
                 && (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'artifact_content_unavailable')) throw error;
@@ -554,7 +620,7 @@ export function createAccountArtifactStore(params: Readonly<{
         : undefined;
       return { items, coverage: items.length === response.data.length ? 'complete' : 'partial', ...(nextCursor ? { nextCursor } : {}) };
     },
-    create: async (input: Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; signal?: AbortSignal }> & ArtifactWriteContent) => {
+    create: async (input: Readonly<{ artifactId?: string; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1; source?: ArtifactWorkspaceSourceV1; signal?: AbortSignal }> & ArtifactWriteContent) => {
       input.signal?.throwIfAborted();
       const codec = await createCodec({ credentials: params.credentials, mode: await params.getAccountEncryptionMode() });
       const artifactId = input.artifactId ?? randomUUID();
@@ -564,13 +630,14 @@ export function createAccountArtifactStore(params: Readonly<{
       input.signal?.throwIfAborted();
       const header = codec.encode(withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(input.header, content.body), content.body));
       const body = codec.encode({ body: content.body });
+      const provenance = (await writeProvenance({ artifactId, bodyVersion: 1, savedBy: input.savedBy, source: input.source, signal: input.signal })).wire;
       const response = content.blob?.content
         ? await axios.post(`${resolveServerHttpBaseUrl()}${ARTIFACT_UPLOAD_PATH_V1}`, Buffer.from(encodeArtifactUploadFrameV1({
-          kind: 'create', artifactId, blobId: content.blob.blobId, header, body, dataEncryptionKey: codec.dataEncryptionKey,
+          kind: 'create', artifactId, blobId: content.blob.blobId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
         }, content.blob.content)), { headers: { ...headers(), 'Content-Type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
           ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true })
         : await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts${content.blob ? '/content/binary' : ''}`, {
-        id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey,
+        id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
         ...(content.blob ? { blob: content.blob } : {}),
       }, { headers: headers(), timeout: 15_000, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
       const quota = readQuotaFailure(response);
@@ -582,7 +649,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const revision = readAcknowledgedRevision(response.data);
       return { artifactId, revision, ...await previewFromBundle(artifactId, bundle, input.signal) };
     },
-    update: async (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; signal?: AbortSignal }> & ArtifactWriteContent) => {
+    update: async (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }> & ArtifactWriteContent) => {
       const stored = await fetchStored(input.artifactId, input.signal);
       if (!stored) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
       const codec = await openStored(stored);
@@ -594,15 +661,18 @@ export function createAccountArtifactStore(params: Readonly<{
       input.signal?.throwIfAborted();
       const header = codec.encode(withArtifactExcerptV1(prepareArtifactHeaderForBodyV1(input.header, content.body), content.body));
       const body = codec.encode({ body: content.body });
+      const source = readProvenance(await openProvenanceCodec(stored), stored.provenance, stored.id, stored.bodyVersion)?.source;
+      const provenance = await writeProvenance({ artifactId: input.artifactId, bodyVersion: input.expectedRevision.bodyVersion + 1, savedBy: input.savedBy, source, signal: input.signal }, stored, codec);
       const response = blob?.content
         ? await axios.post(`${resolveServerHttpBaseUrl()}${ARTIFACT_UPLOAD_PATH_V1}`, Buffer.from(encodeArtifactUploadFrameV1({
-          kind: 'update', artifactId: input.artifactId, blobId: blob.blobId, header, body,
+          kind: 'update', artifactId: input.artifactId, blobId: blob.blobId, header, body, ...provenance.wire,
           expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion,
         }, blob.content)), { headers: { ...headers(), 'Content-Type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
           ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true })
         : await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(input.artifactId)}${blob !== undefined ? '/content/binary' : ''}`, {
         header, expectedHeaderVersion: input.expectedRevision.headerVersion,
         body, expectedBodyVersion: input.expectedRevision.bodyVersion,
+        ...provenance.wire,
         ...(blob !== undefined ? { blob } : {}),
       }, { headers: headers(), timeout: 15_000, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true });
       const quota = readQuotaFailure(response);
@@ -610,6 +680,7 @@ export function createAccountArtifactStore(params: Readonly<{
       if (response.status === 404) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' } as const;
       if (response.status < 200 || response.status >= 300) return { ok: false, errorCode: 'update_failed', error: 'artifact_update_failed' } as const;
       if (response.data?.success === false && response.data?.error === 'version-mismatch') return { ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' } as const;
+      if (response.data?.success === true) await provenance.prepareRecipients?.();
       return response.data?.success === true
         ? { ok: true, revision: readAcknowledgedRevision(response.data),
           ...await previewFromBundle(input.artifactId, bundle, input.signal) } as const
@@ -639,9 +710,11 @@ export function createAccountArtifactStore(params: Readonly<{
 
 export function createCredentialedAccountArtifactStore(credentials: StoredCredentials) {
   const accountModeApi = createConnectedServiceCredentialApi(credentials);
+  const accountId = readAccountIdFromToken(credentials.token);
   return createAccountArtifactStore({
     credentials,
     getAccountEncryptionMode: () => accountModeApi.getAccountEncryptionMode(),
+    ...(accountId ? { savedBy: { kind: 'person', accountId } as const } : {}),
   });
 }
 

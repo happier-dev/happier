@@ -1,25 +1,7 @@
-import {
-    PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
-    PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-    PluginHostedWebBridgeBootstrapEnvelopeV1Schema,
-    PluginHostedWebBridgeBootstrapConfigV1Schema,
-    PluginHostedWebBridgeEnvelopeV1Schema,
-    PluginHostedWebBridgeHostMessageEnvelopeV1Schema,
-    PluginHostedWebBridgeResponseEnvelopeV1Schema,
-    PluginHostedWebAccountDataBridgeOperationV1Schema,
-    PluginHostedWebAccountDataBridgeResponseV1Schema,
-    PluginUiHostApiWireEnvelopeV1Schema,
-    pluginUiHostApiWireIdentitiesEqual,
-    readPluginHostedWebBridgeFrameOriginV1,
-    type PluginHostedWebAccountDataBridgeChangeV1,
-    type PluginHostedWebAccountDataBridgeOperationV1,
-    type PluginHostedWebAccountDataBridgeResponseV1,
-    type PluginHostedWebBridgeBootstrapPayloadV1,
-    type PluginHostedWebBridgeBootstrapConfigV1,
-    type PluginHostedWebBridgeEnvelopeV1,
-    type PluginUiHostApiWireEnvelopeV1,
-    type PluginUiHostApiWireIdentityV1,
-} from '@happier-dev/protocol/plugins/ui/client';
+import { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1, PluginHostedWebAccountDataBridgeOperationV1Schema, PluginHostedWebAccountDataBridgeResponseV1Schema } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
+import { PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PluginHostedWebBridgeBootstrapEnvelopeV1Schema, PluginHostedWebBridgeHostMessageEnvelopeV1Schema, PluginUiHostApiWireEnvelopeV1Schema, pluginUiHostApiWireIdentitiesEqual, readPluginHostedWebBridgeFrameOriginV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginHostedWebBridgeBootstrapConfigV1Schema, PluginHostedWebBridgeEnvelopeV1Schema, PluginHostedWebBridgeResponseEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
+import type { PluginHostedWebAccountDataBridgeChangeV1, PluginHostedWebAccountDataBridgeOperationV1, PluginHostedWebAccountDataBridgeResponseV1, PluginHostedWebBridgeBootstrapPayloadV1, PluginHostedWebBridgeBootstrapConfigV1, PluginHostedWebBridgeEnvelopeV1, PluginUiHostApiWireEnvelopeV1, PluginUiHostApiWireIdentityV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { PluginUiHostApiClientError } from './clientTransport.js';
 import {

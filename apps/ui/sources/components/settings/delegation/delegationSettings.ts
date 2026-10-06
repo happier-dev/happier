@@ -1,4 +1,5 @@
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { DELEGATION_SETTING_DECLARATIONS_V1 } from '@happier-dev/protocol';
 
 /** The searchable settings of the `delegation` page. Rows render their labels from these declarations. */
 export const DELEGATION_SETTINGS = defineSettingsPage({
@@ -7,13 +8,13 @@ export const DELEGATION_SETTINGS = defineSettingsPage({
         approvalReviewer: {
             titleKey: 'roles.delegation.approvalReviewer',
             settings: {
-                approvalReviewerEnabled: { storage: { scope: 'account', key: 'approvalReviewerEnabled', access: 'read_write' }, titleKey: 'roles.delegation.approvalReviewer', descriptionKey: 'roles.delegation.approvalReviewerDescription' },
+                approvalReviewerEnabled: DELEGATION_SETTING_DECLARATIONS_V1.approvalReviewerEnabled,
             },
         },
         workDepth: {
             titleKey: 'roles.delegation.depthTitle',
             settings: {
-                workDepthLimit: { storage: { scope: 'account', key: 'workDepthLimit', access: 'read_write' }, titleKey: 'roles.delegation.depthSetting', keywordKeys: ['roles.delegation.ladderRefused'] },
+                workDepthLimit: DELEGATION_SETTING_DECLARATIONS_V1.workDepthLimit,
             },
         },
     },

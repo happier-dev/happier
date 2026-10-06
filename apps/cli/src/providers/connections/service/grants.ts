@@ -1,8 +1,6 @@
-import {
-  ProviderSettingsV1Schema,
-  readOwnRecordValue,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export function bindProviderConnectionSecret(input: Readonly<{
   settings: ProviderSettingsV1;

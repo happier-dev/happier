@@ -1,9 +1,6 @@
 import type { ScmDiffFileRequest, ScmDiffFileResponse, ScmStatusSnapshotRequest, ScmStatusSnapshotResponse, ScmWorkingSnapshot } from '@happier-dev/protocol';
-import {
-  ExecutionRunScmCommitMessageScopeV1Schema,
-  ScmDiffFileResponseSchema,
-  ScmStatusSnapshotResponseSchema,
-} from '@happier-dev/protocol';
+import { ExecutionRunScmCommitMessageScopeV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ScmDiffFileResponseSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 
 import {
   createNonRepositoryScmSnapshotResponse,

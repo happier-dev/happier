@@ -19,6 +19,7 @@ import { t } from '@/text';
 import type { WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import {
     WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
+    workflowInputToFieldHint,
 } from '@happier-dev/protocol/workflows/workflowV1';
 import {
     findWorkflowBlock,
@@ -39,6 +40,7 @@ import type { WorkflowRunAsTarget, WorkflowRunAsTargetKind } from '../run/workfl
 import { formatWorkflowContinuitySummary, WorkflowContinuityControls } from './WorkflowContinuityControls';
 import { WorkflowFinalOutputEditor } from './WorkflowFinalOutputEditor';
 import { WorkflowInputsEditor } from './WorkflowInputsEditor';
+import { formatWorkflowFieldLabel } from './WorkflowStepDataEditor';
 import { WorkflowRolesEditor } from './WorkflowRolesEditor';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from './WorkflowProjectTargetControl';
 import { WorkflowBlockOptions } from './WorkflowBlockOptions';
@@ -105,8 +107,8 @@ export type WorkflowInspectorProps = Readonly<{
     testIDPrefix: string;
 }>;
 
-/** The fields the Agent and model summary reads, in the chips' order. */
-const AGENT_SUMMARY_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'modelSelection', 'permissionMode'];
+/** Workflow settings expose the shared engine picker and Permissions (04 §5.2). */
+const WORKFLOW_AGENT_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'modelSelection', 'permissionMode'];
 
 
 export function WorkflowInspector(props: WorkflowInspectorProps): React.ReactElement | null {
@@ -142,7 +144,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
     }) ?? t('workflows.page.inspector.whereMissing');
 
     const agentSummary = useSessionAuthoringFieldSummary({
-        fields: AGENT_SUMMARY_FIELDS,
+        fields: WORKFLOW_AGENT_FIELDS,
         values: defaultAuthoringValues,
         ...(props.authoringFacts === undefined ? {} : { facts: props.authoringFacts }),
     });
@@ -188,6 +190,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 </View>
                 {props.runAsTargets === undefined || props.onChangeExecutionTarget === undefined ? null : (
                     <SegmentedChoiceItem<WorkflowRunAsTargetKind>
+                        accessoryLayout="stacked"
                         disabled={readOnly}
                         testIDPrefix={`${testIDPrefix}-run-as`}
                         title={t('workflows.page.sections.eachStepRunsIn')}
@@ -217,17 +220,15 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
                 groupId="agent"
                 title={t('workflows.page.sections.agentTitle')}
                 summary={agentSummary.join(' · ')}
+                description={t('workflows.page.sections.agentDescription')}
                 attention={issuesUnder(issues, WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.map((field) => `/defaults/${field}`))}
                 valueSet={agentValueSet}
                 testID={`${testIDPrefix}-group-agent`}
             >
-                <SectionContentRow testID={`${testIDPrefix}-agent-description-row`}>
-                    <Text style={workflowEditorStyles.metaText}>{t('workflows.page.sections.agentDescription')}</Text>
-                </SectionContentRow>
                 <SessionAuthoringControls
                     disabled={readOnly}
                     presentation="fields"
-                    fields={WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS}
+                    fields={WORKFLOW_AGENT_FIELDS}
                     values={defaultAuthoringValues} engine={draft.defaults.engine} workflowRoles={draft.roles}
                     onChangeEngine={(engine) => { if (!readOnly) onChange({ ...draft, defaults: withWorkflowAuthoringEngine(draft.defaults, engine) }); }}
                     onChangeFields={(fields) => {
@@ -312,7 +313,7 @@ function WorkflowSettingsContent(props: WorkflowInspectorProps): React.ReactElem
             >
                 <SectionContentRow testID={`${testIDPrefix}-inputs-row`}>
                     {readOnly ? draft.inputs.map(input => <Text key={input.name} style={workflowEditorStyles.metaText}>
-                        {input.description ?? input.name}
+                        {formatWorkflowFieldLabel(input.name, workflowInputToFieldHint(input).title)}
                     </Text>) : <WorkflowInputsEditor
                         inputs={draft.inputs}
                         onChange={(inputs) => onChange(setWorkflowInputs(draft, inputs))}

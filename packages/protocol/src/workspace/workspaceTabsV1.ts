@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 const id = z.string().min(1);
 
@@ -36,3 +37,4 @@ export const WorkspaceTabsV1Schema = z.object({
 });
 
 export type WorkspaceTabsV1 = z.infer<typeof WorkspaceTabsV1Schema>;
+export const WorkspaceTabsV1StoredSchema = createStoredReadSchema(WorkspaceTabsV1Schema);

@@ -7,7 +7,7 @@ import type {
     ExternalAgentObservationSnapshotV1,
     ExternalAgentObservationTargetV1,
 } from '@happier-dev/protocol';
-import { attachExternalAgentObservationTargetV1 } from '@happier-dev/protocol';
+import { attachExternalAgentObservationTargetV1 } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
 
 import { deepEqual } from '@/utils/deterministicJson';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';

@@ -1,11 +1,7 @@
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
-import {
-  doesRunnerBrokerReadinessResponseMatchRequestV1,
-  RunnerBrokerReadinessResponseV1Schema,
-  type RunnerBrokerReadinessRequestV1,
-  type TeamCredentialResourceReadinessV1,
-} from '@happier-dev/protocol/teams';
+import { doesRunnerBrokerReadinessResponseMatchRequestV1, RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import type { RunnerBrokerReadinessRequestV1, TeamCredentialResourceReadinessV1 } from '@happier-dev/protocol/teams';
 import type { IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 
 import { createDaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';

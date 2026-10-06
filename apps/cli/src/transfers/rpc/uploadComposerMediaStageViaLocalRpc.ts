@@ -1,12 +1,6 @@
-import {
-  ComposerContentHandleV1Schema,
-  type ComposerContentHandleV1,
-  type ComposerContentMediaKindV1,
-  type ComposerContentMimeTypeV1,
-  type PluginContributionIdentityV1,
-  type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { ComposerContentHandleV1, ComposerContentMediaKindV1, ComposerContentMimeTypeV1, PluginContributionIdentityV1, SessionExecutionTargetV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';

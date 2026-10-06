@@ -1,15 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  DaemonVoiceClientAccountOperationRequestV1Schema,
-  DaemonVoiceClientAccountOperationResponseV1Schema,
-  deriveVoiceCredentialBindingIdentityV1,
-  resolveAccountSettingsVoiceCredentialSource,
-  sameQualifiedConnectedAccountRef,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
+import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
+import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { classifyVoiceProviderHttpFailure } from '@happier-dev/plugin-sdk/voice';
 

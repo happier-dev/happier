@@ -313,6 +313,8 @@ async function createHarness(mode: 'plain' | 'e2ee' = 'plain', options: Readonly
                 artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
                 dataEncryptionKey: mode === 'plain' ? null : artifact.dataEncryptionKey,
                 callerDataEncryptionKey: mode === 'plain' ? null : artifact.dataEncryptionKey,
+                provenanceDataEncryptionKey: mode === 'plain' ? null : artifact.provenanceDataEncryptionKey,
+                callerProvenanceDataEncryptionKey: mode === 'plain' ? null : artifact.provenanceDataEncryptionKey,
                 recipients: [],
             }));
         }

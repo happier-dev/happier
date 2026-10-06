@@ -1,6 +1,4 @@
-import {
-    evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy,
-} from '@happier-dev/protocol/scm';
+import { evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy } from '@happier-dev/protocol/scm';
 
 import type {
     ScmOperationErrorCode,

@@ -9,7 +9,7 @@ import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { buildForkSessionMetadata } from '@/session/fork/providerNativeForkDispatch';
 import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 

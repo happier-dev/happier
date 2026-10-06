@@ -17,7 +17,7 @@ export type RunPluginBuildUiCliInputV1 = Readonly<{
     onSuccess?: (result: BuildUniversalPluginUiArtifactsResult) => void;
 }>;
 
-type ParsedArgs = Readonly<{ projectRoot: string; help: boolean }>;
+type ParsedArgs = Readonly<{ projectRoot: string; manifestPath?: string; help: boolean }>;
 
 function helpText(): string {
     return [
@@ -26,7 +26,7 @@ function helpText(): string {
         'Builds universal CommonJS Plugin UI artifacts under dist/happier-plugin-ui.',
         '',
         'Usage:',
-        '  happier-plugin-build-ui [--project-root <dir>]',
+        '  happier-plugin-build-ui [--project-root <dir>] [--manifest-path <file>]',
         '  happier-plugin-build-ui --help',
         '',
         'Executable artifacts are discovered from the emitted plugin manifest and exact',
@@ -36,21 +36,24 @@ function helpText(): string {
 
 function parseArgs(argv: readonly string[], cwd: string): ParsedArgs {
     let projectRoot = cwd;
+    let manifestPath: string | undefined;
     for (let index = 0; index < argv.length; index += 1) {
         const arg = argv[index]!;
         if (arg === '--help' || arg === '-h') return { projectRoot: cwd, help: true };
-        if (arg !== '--project-root') {
+        if (arg !== '--project-root' && arg !== '--manifest-path') {
             throw new PluginUiBuildError('unknown_flag', `Unknown argument: ${arg}`);
         }
         const value = argv[index + 1];
         if (!value || value.startsWith('--')) {
-            throw new PluginUiBuildError('missing_flag_value', 'Missing value for --project-root');
+            throw new PluginUiBuildError('missing_flag_value', `Missing value for ${arg}`);
         }
-        projectRoot = value;
+        if (arg === '--project-root') projectRoot = value;
+        else manifestPath = value;
         index += 1;
     }
     return {
         projectRoot: isAbsolute(projectRoot) ? projectRoot : resolve(cwd, projectRoot),
+        ...(manifestPath ? { manifestPath: resolve(cwd, manifestPath) } : {}),
         help: false,
     };
 }
@@ -70,7 +73,7 @@ export async function runPluginBuildUiCli(input: RunPluginBuildUiCliInputV1): Pr
         return 0;
     }
     try {
-        const result = await buildUniversalPluginUiArtifacts(parsed.projectRoot);
+        const result = await buildUniversalPluginUiArtifacts(parsed.projectRoot, parsed.manifestPath);
         input.onSuccess?.(result);
         return 0;
     } catch (cause) {

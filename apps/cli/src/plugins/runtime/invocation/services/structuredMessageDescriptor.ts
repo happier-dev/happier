@@ -1,11 +1,9 @@
 import { z } from 'zod';
 
-import {
-    normalizePluginJsonSchema,
-    PluginContributionLocalIdSchema,
-    PluginIdSchema,
-    type PluginJsonSchemaV2,
-} from '@happier-dev/protocol/plugins/manifest';
+import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/manifest';
 
 import { asHostProtocolZod } from '../../protocolComposableZodAdapter';
 

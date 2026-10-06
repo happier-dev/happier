@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 import { createHash } from "node:crypto";
 import { request as requestHttp } from 'node:http';
@@ -14,6 +14,7 @@ import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
 import { readArtifactRecipientCensusInTx } from "./artifactAccessService";
 import { createArtifact } from './artifactWriteService';
+import { storePlainArtifactDbBytes } from './artifactStoredContent';
 import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 
 describe("Artifact revisions and storage budgets (real SQLite)", () => {
@@ -33,6 +34,39 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
     const headers = (accountId: string) => ({ "x-test-user-id": accountId,
         "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) });
     const body = (value: string) => encodePlainArtifactStoredContent({ body: value });
+
+    it.each(['Retained Board content', null])('restores stored envelope extensions while keeping replacement admission strict (%s)', async value => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        const header = encodePlainArtifactStoredContent({ title: 'Retained document' });
+        const canonicalBody = encodePlainArtifactStoredContent({ body: value });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            expect((await app.inject({ method: 'POST', url: '/v1/artifacts', headers: headers(owner.id), payload: {
+                id, header, body: canonicalBody, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            } })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}`, headers: headers(owner.id), payload: {
+                body: body('Current content'), expectedBodyVersion: 1,
+            } })).statusCode).toBe(200);
+            // Retained bytes predate strict write admission; use the real at-rest owner to seed that storage boundary.
+            const retained = storePlainArtifactDbBytes({ accountId: owner.id, artifactId: id, field: 'body',
+                content: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: value,
+                    provenance: { savedBy: { kind: 'person', accountId: 'untrusted-actor' } }, extension: true })) });
+            if (!retained) throw new Error('Expected retained at-rest body');
+            await db.artifactRevision.update({ where: { artifactId_bodyVersion: { artifactId: id, bodyVersion: 1 } },
+                data: { body: retained } });
+            const restore = (replacement: string) => app.inject({ method: 'POST',
+                url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(owner.id),
+                payload: { header, body: replacement, expectedHeaderVersion: 1, expectedBodyVersion: 2 } });
+            expect((await restore(body('Different content'))).statusCode).toBe(400);
+            expect((await restore(encodePlainArtifactStoredContent({ body: value, provenance: { savedBy: 'untrusted' } }))).statusCode).toBe(400);
+            expect((await db.artifact.findUniqueOrThrow({ where: { id } })).bodyVersion).toBe(2);
+            const restored = await restore(canonicalBody);
+            expect(restored.statusCode, restored.body).toBe(200);
+            const current = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}`, headers: headers(owner.id) });
+            expect(current.json()).toMatchObject({ headerVersion: 2, bodyVersion: 3, provenance: null });
+            expect(decodePlainArtifactStoredContent(current.json().body)).toEqual({ body: value });
+        });
+    });
 
     it('rejects unsupported private keys for legacy Artifact ids before recording cleanup custody', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -510,8 +544,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/content/binary`, headers: headers(owner.id),
                 payload: { body: replacementBody, expectedBodyVersion: 1, blob: null } })).statusCode).toBe(200);
             expect((await get()).json()).toEqual({ blobId, content });
-            const restoredBody = mode === "plain" ? encodePlainArtifactStoredContent({ body: reference,
-                provenance: { savedBy: { kind: 'person', accountId: owner.id }, restoredFromBodyVersion: 1 } })
+            const restoredBody = mode === "plain" ? encodePlainArtifactStoredContent({ body: reference })
                 : privacyKit.encodeBase64(Uint8Array.of(4, 5));
             const restore = (overrides: Readonly<Record<string, unknown>> = {}) => app.inject({ method: "POST",
                 url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(owner.id),

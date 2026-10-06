@@ -1,10 +1,5 @@
-import {
-  BUILT_IN_INSTALLABLES_REGISTRY,
-  type CapabilityId,
-  type InstallableKey,
-  type InstallablesRegistry,
-  type InstallableDependencyDescriptor,
-} from '@happier-dev/protocol';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import type { CapabilityId, InstallableKey, InstallablesRegistry, InstallableDependencyDescriptor } from '@happier-dev/protocol';
 import type { AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';

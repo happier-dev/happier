@@ -1,15 +1,16 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Popover } from '@/components/ui/popover/Popover';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * Per-block overflow actions.
@@ -40,8 +41,11 @@ export function WorkflowBlockActionsMenu(props: Readonly<{
     return (
         <>
             <View ref={anchorRef} collapsable={false}>
-            <HappierPressable
+            <IconButton
                 testID={props.testID}
+                iconName="dots-three"
+                iconSize={18}
+                variant="plain"
                 accessibilityRole="button"
                 // This is the block's overflow menu, not Add. Announcing "Add a
                 // block to this workflow" told every screen-reader user the
@@ -51,14 +55,7 @@ export function WorkflowBlockActionsMenu(props: Readonly<{
                 onPress={() => setOpen((value) => !value)}
                 expanded={open}
                 hasPopup="menu"
-                style={(state) => [
-                    workflowEditorStyles.actionTarget,
-                    workflowEditorStyles.iconTarget,
-                    workflowPressFeedbackStyle(state, theme.colors.border.focus),
-                ]}
-            >
-                <Icon name="dots-three" size={18} color={theme.colors.text.secondary} />
-            </HappierPressable>
+            />
             </View>
             <Popover
                 open={open}
@@ -82,7 +79,7 @@ export function WorkflowBlockActionsMenu(props: Readonly<{
                                 }}
                                 style={(state) => [
                                     workflowEditorStyles.menuRow,
-                                    workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                                    state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                                 ]}
                             >
                                 <Text style={action.destructive === true

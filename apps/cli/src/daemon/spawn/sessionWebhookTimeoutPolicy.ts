@@ -1,4 +1,4 @@
-export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol';
+export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 
 function resolveBoundedTimeout(
   raw: string | undefined,

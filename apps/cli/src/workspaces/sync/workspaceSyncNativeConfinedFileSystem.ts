@@ -4,11 +4,8 @@ import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
-import {
-  WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES,
-  WorkspaceSyncEntryExpectationV1Schema,
-  type WorkspaceSyncEntryExpectationV1,
-} from '@happier-dev/protocol';
+import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 

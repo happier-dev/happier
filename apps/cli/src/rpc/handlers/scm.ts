@@ -80,9 +80,10 @@ import type {
     ScmWorktreeRemoveResponse,
 } from '@happier-dev/protocol';
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
-import { SCM_OPERATION_ERROR_CODES, ScmLogListRequestSchema } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { ScmLogListRequestSchema } from '@happier-dev/protocol/scm';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';

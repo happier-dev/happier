@@ -1,5 +1,6 @@
 import type { PublicActionInputById, PublicActionResultById } from '../actions/generated.js';
-import { buildBackendTargetKeyV2, type SessionListQueryV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionListQueryV1 } from '@happier-dev/protocol';
 import type { FollowTranscriptOptions, HappierTranscriptItem } from '../subscriptions.js';
 import type { HappierSessionController, HappierSessionLiveOptions } from '../live/types.js';
 import type { ActionExecute, ActionExecutionOptions, ActionTarget } from '../types.js';

@@ -30,6 +30,32 @@ import {
 export type TriageBulkSessionExecutionHostV1 = TriageSessionStartHostV1
     & Partial<Pick<PluginUiHostApi, 'selectActionInput'>>;
 
+/** The exact unit request retained before dispatch; authorization is added only when used. */
+export function projectTriageBulkEntrySessionStartInputV1(input: Readonly<{
+    action: TriageActionV1;
+    unit: TriageBulkSessionUnitV1<TriageBulkSelectedEntryV1>;
+    destination: Exclude<TriageBulkSessionDestinationV1, 'attachAllToNewSession'>;
+    sessionDestination: TriageStartEntrySessionInputV1['destination'];
+    promptText: string | null;
+}>): TriageStartEntrySessionInputV1 {
+    const first = input.unit.entries[0];
+    if (first === undefined) throw new Error('triage:bulk:emptyUnit');
+    if (input.promptText === null || input.promptText.trim().length === 0) throw new Error('triage:bulk:instructionRequired');
+    return {
+        v: 1, workspaceMode: input.action.workspaceMode, entryRef: first.entryRef,
+        display: first.display, destination: input.sessionDestination,
+        finalOpen: input.destination === 'oneSessionForAllEntries' ? 'deferred' : 'suppressed',
+        // Direct bulk overrides a single-entry compose default. Author-first
+        // Attach all to New Session never reaches this executor.
+        ...(input.action.target.kind === 'agent' ? { delivery: {
+            kind: 'send' as const, text: input.promptText,
+            attachments: input.unit.entries.map((entry) => ({ entryRef: entry.entryRef, display: entry.display,
+                sourceInstanceId: entry.sourceInstance.sourceInstanceId, title: entry.presentation.label })),
+            idempotencyKey: input.unit.creationKey,
+        } } : {}),
+    };
+}
+
 type TriageBulkStartedSessionOutcomeV1 = Readonly<{
     start: TriageStartEntrySessionResultV1;
     entries: readonly TriageBulkEntryOutcomeV1[];
@@ -120,10 +146,12 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     /** The planned destination decides who, if anyone, performs final navigation. */
     destination: TriageBulkSessionDestinationV1;
     promptText: string | null;
-    settlement: unknown;
+    settlement?: unknown;
     /** Per-unit settled host choice for the independent-placement destination. */
     settlementForUnit?: (unit: TriageBulkSessionUnitV1<TriageBulkSelectedEntryV1>) => unknown;
     placementCandidatesForUnit?: (unit: TriageBulkSessionUnitV1<TriageBulkSelectedEntryV1>) => readonly PluginUiSessionPlacementCandidateV1[];
+    /** Exact request retained once by the controller, including not-started units. */
+    inputForUnit?: (unit: TriageBulkSessionUnitV1<TriageBulkSelectedEntryV1>) => TriageStartEntrySessionInputV1;
     onPreparationCancelled?: () => void;
     signal: AbortSignal;
     onStarted?: () => void;
@@ -139,9 +167,6 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     if (promptText === null || promptText.trim().length === 0) {
         throw new Error('triage:bulk:instructionRequired');
     }
-    const finalOpen = input.destination === 'oneSessionForAllEntries'
-        ? 'deferred' as const
-        : 'suppressed' as const;
     return await runTriageBulkEntrySessions<TriageBulkStartedSessionOutcomeV1, TriageBulkSelectedEntryV1>({
         units: input.units,
         signal: input.signal,
@@ -151,15 +176,19 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
             const settlement = input.settlementForUnit === undefined
                 ? input.settlement
                 : input.settlementForUnit(unit);
-            const destination = projectTriageNewSessionDestinationV1({
+            const retained = input.inputForUnit?.(unit);
+            const destination = retained === undefined ? projectTriageNewSessionDestinationV1({
                 workspaceMode: input.action.workspaceMode,
                 creationKey: unit.creationKey,
                 settlement,
                 ...(input.action.profileId === null ? {} : { profileId: input.action.profileId }),
                 ...(first.reviewWorkspace === undefined ? {} : { reviewWorkspace: first.reviewWorkspace.preparation }),
                 placementCandidates: input.placementCandidatesForUnit?.(unit) ?? [],
-            });
+            }) : { status: 'settled' as const, destination: retained.destination };
             if (destination.status === 'refused') throw new Error('triage:bulk:destinationRefused');
+            const start = retained ?? projectTriageBulkEntrySessionStartInputV1({ action: input.action, unit,
+                destination: input.destination as Exclude<TriageBulkSessionDestinationV1, 'attachAllToNewSession'>,
+                sessionDestination: destination.destination, promptText });
             const previous = input.previousResults?.find(
                 (candidate) => candidate.unit.creationKey === unit.creationKey,
             );
@@ -190,33 +219,8 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
                 startOptions = { ...authorization.options, signal: input.signal };
             }
             const result = await submitTriageEntrySessionStart(input.host, {
-                v: 1,
-                workspaceMode: input.action.workspaceMode,
-                entryRef: first.entryRef,
-                display: first.display,
-                destination: destination.destination,
-                finalOpen,
+                ...start,
                 ...(preparationSelection === undefined ? {} : { prepareReviewWorkspaceSelection: preparationSelection }),
-                // The direct bulk destination is the reader's explicit choice.
-                // It overrides a single-entry compose default and therefore
-                // uses the one canonical structured Session-input delivery;
-                // Attach all to New Session remains the explicit author-first
-                // destination and never enters this executor.
-                ...(input.action.target.kind === 'agent'
-                    ? {
-                        delivery: {
-                            kind: 'send' as const,
-                            text: promptText,
-                            attachments: unit.entries.map((entry) => ({
-                                entryRef: entry.entryRef,
-                                display: entry.display,
-                                sourceInstanceId: entry.sourceInstance.sourceInstanceId,
-                                title: entry.presentation.label,
-                            })),
-                            idempotencyKey: unit.creationKey,
-                        },
-                    }
-                    : {}),
                 ...(resume === undefined ? {} : { resume }),
             }, startOptions);
             input.onStarted?.();

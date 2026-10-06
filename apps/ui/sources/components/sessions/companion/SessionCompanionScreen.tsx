@@ -72,12 +72,13 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
         ...input,
     }), [controller, noticeKeyPrefix]);
     const addBoard = useSessionCompanionBoardAdd(mountedBoard);
-    const addItem = React.useCallback((item: SessionCompanionItemRefV1) => {
-        mutateCompanion({
+    const addItem = React.useCallback(async (item: SessionCompanionItemRefV1) => {
+        const outcome = mutateCompanion({
             kind: 'companion.item.add',
             message: t('sessionBoard.companion.notices.added'),
             apply: (companion) => companion.addItem(item),
         });
+        if (!outcome) throw new Error('session_companion_write_refused');
     }, [mutateCompanion]);
     const boardSnapshot = mountedBoard?.binding.status === 'ready' ? mountedBoard.binding.snapshot : null;
     const navAddBinding = React.useMemo(() => ({

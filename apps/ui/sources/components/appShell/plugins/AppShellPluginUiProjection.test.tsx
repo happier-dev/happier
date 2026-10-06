@@ -119,7 +119,6 @@ const storageState = vi.hoisted(() => ({
     voiceExecutionMachine: {
         mode: 'auto' as 'auto' | 'fixed',
         machineId: null as string | null,
-        autoMachineId: null as string | null,
     },
     activeServer: { serverId: 'server-1', serverUrl: 'https://server.example.test', generation: 1 },
     endpointConnectivity: {
@@ -369,7 +368,6 @@ afterEach(async () => {
     storageState.voiceExecutionMachine = {
         mode: 'auto',
         machineId: null,
-        autoMachineId: null,
     };
     storageState.activeServer = { serverId: 'server-1', serverUrl: 'https://server.example.test', generation: 1 };
     storageState.endpointConnectivity = { status: 'online', lastConnectedAt: 1 };
@@ -1251,7 +1249,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         storageState.voiceExecutionMachine = {
             mode: 'fixed',
             machineId: 'machine-b',
-            autoMachineId: null,
         };
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
             supported: true,
@@ -1313,7 +1310,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         storageState.voiceExecutionMachine = {
             mode: 'fixed',
             machineId: 'machine-b',
-            autoMachineId: null,
         };
         projectionDescribeSpy.mockResolvedValue({
             supported: true,
@@ -1358,7 +1354,6 @@ describe('AppShellPluginUiProjectionProvider', () => {
         storageState.voiceExecutionMachine = {
             mode: 'fixed',
             machineId: 'machine-b',
-            autoMachineId: null,
         };
         const pluginId = 'acme.app-shell-action-without-voice';
         const actionId = 'open-client-action';

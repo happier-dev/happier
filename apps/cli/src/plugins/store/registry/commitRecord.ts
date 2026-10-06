@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod';
 
-import { PluginIdSchema } from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';

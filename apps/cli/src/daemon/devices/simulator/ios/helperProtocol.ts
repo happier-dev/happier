@@ -4,10 +4,8 @@ import type {
     MachineLiveStreamInputControlKindV1,
     MachineLiveStreamPayloadKindV1,
 } from '@happier-dev/protocol';
-import {
-    getMachineLiveStreamPayloadDecodedByteLength,
-    MachineLiveStreamControlSidebandV1Schema,
-} from '@happier-dev/protocol';
+import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import { MachineLiveStreamControlSidebandV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 type HelperSeverity = 'info' | 'warning' | 'error';
 type HelperControlAckStatus = 'accepted' | 'rejected' | 'unavailable';

@@ -1,6 +1,7 @@
 import { spawn as spawnChild } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { lstat, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -26,9 +27,11 @@ import {
   readBundledWorkspacePackageNames,
   resolveWorkspaceBundlesFromPackageJson,
 } from '@happier-dev/cli-common/workspaces';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 import { readPluginManifest } from '@/plugins/manifest/read';
+import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
+import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import {
   findPluginDiagnosticSourceLocation,
   type PluginDiagnosticSourceLocation,
@@ -43,6 +46,7 @@ import {
   cleanupPluginAuthorActionContracts,
   generatePluginActionContracts,
 } from './actionContracts';
+import { isPluginAuthorTransientWorkspaceConfig, PLUGIN_AUTHOR_TRANSIENT_PNPM_WORKSPACE_MARKER } from './developmentDependencyInputs';
 import {
   cleanupPluginDaemonOutputManifest,
   PLUGIN_DAEMON_OUTPUT_MANIFEST_RELATIVE_PATH,
@@ -214,26 +218,76 @@ function resolveMaterializedPrepublicationAuthorPackageRoots(
   }));
 }
 
-async function materializePrepublicationAuthorWorkspacePackages(params: Readonly<{
+export async function materializePrepublicationAuthorWorkspacePackages(params: Readonly<{
+  projectRoot: string;
   bundles: ReadonlyArray<PrepublicationWorkspaceBundle>;
   packageNames: readonly string[];
 }>): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const materializationRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-author-packages-'));
+  let installRoot: string | undefined;
   try {
     const bundles = remapWorkspaceBundleDestinations({ materializationRoot, bundles: params.bundles });
     materializePrepublicationWorkspacePackageRoots({
       bundles,
       rootPackageNames: params.packageNames,
     });
+    // pnpm includes the file override's pathname in its virtual-store identity.
+    // Hash the complete physical closure (including package identity/version),
+    // never the random staging path, so unchanged preparations reuse that entry.
+    const hash = createHash('sha256');
+    const hashDirectory = async (path: string, relativePath: string): Promise<void> => {
+      const entries = await readdir(path, { withFileTypes: true });
+      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+      for (const entry of entries) {
+        const entryPath = join(path, entry.name);
+        const entryRelativePath = `${relativePath}/${entry.name}`;
+        if (entry.isDirectory()) await hashDirectory(entryPath, entryRelativePath);
+        else if (entry.isFile()) {
+          const bytes = await readFile(entryPath);
+          hash.update(JSON.stringify(['file', entryRelativePath, bytes.length]));
+          hash.update(bytes);
+        } else if (entry.isSymbolicLink()) {
+          hash.update(JSON.stringify(['link', entryRelativePath, await readlink(entryPath)]));
+        } else throw new Error('Plugin author package closure contains an unsupported file type');
+      }
+    };
+    await hashDirectory(materializationRoot, '');
+    const cacheSegments = ['node_modules', '.cache', 'happier', 'plugin-author-packages', hash.digest('hex')];
+    let cachePath = params.projectRoot;
+    for (const segment of cacheSegments) {
+      cachePath = join(cachePath, segment);
+      try {
+        const metadata = await lstat(cachePath);
+        if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+          throw new Error('Plugin author package cache must contain only physical directories');
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
+        await mkdir(cachePath);
+      }
+    }
+    installRoot = cachePath;
+    await cp(materializationRoot, installRoot, { recursive: true });
+    await rm(materializationRoot, { recursive: true, force: true });
     return Object.freeze({
       packageRootsByName: resolveMaterializedPrepublicationAuthorPackageRoots(
-        materializationRoot,
+        installRoot,
         params.packageNames,
       ),
-      cleanup: async () => await rm(materializationRoot, { recursive: true, force: true }),
+      cleanup: async () => {
+        try {
+          await rm(installRoot!, { recursive: true, force: true });
+        } finally {
+          await rm(materializationRoot, { recursive: true, force: true });
+        }
+      },
     });
   } catch (error) {
-    await rm(materializationRoot, { recursive: true, force: true });
+    try {
+      if (installRoot) await rm(installRoot, { recursive: true, force: true });
+    } finally {
+      await rm(materializationRoot, { recursive: true, force: true });
+    }
     throw error;
   }
 }
@@ -241,8 +295,10 @@ async function materializePrepublicationAuthorWorkspacePackages(params: Readonly
 async function materializeSourceCliBundledPrepublicationPackages(
   runtimeRoot: string,
   packageNames: readonly string[],
+  projectRoot: string,
 ): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   return await materializePrepublicationAuthorWorkspacePackages({
+    projectRoot,
     bundles: resolveWorkspaceBundlesFromPackageJson({
       repoRoot: findRepoRoot(runtimeRoot),
       hostPackageDir: runtimeRoot,
@@ -270,8 +326,10 @@ async function materializePackagedCliBundledPrepublicationPackages(params: Reado
   runtimeRoot: string;
   runtimePackageJson: RuntimePackageJson;
   packageNames: readonly string[];
+  projectRoot: string;
 }>): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   return await materializePrepublicationAuthorWorkspacePackages({
+    projectRoot: params.projectRoot,
     bundles: resolvePackagedCliBundledWorkspaceBundles(params),
     packageNames: params.packageNames,
   });
@@ -279,6 +337,7 @@ async function materializePackagedCliBundledPrepublicationPackages(params: Reado
 
 async function materializeBundledPrepublicationPackages(
   packageNames: readonly string[],
+  projectRoot: string,
 ): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const runtimeAuthority = resolveAuthoritativePackagedRuntimeProjectRoot();
   if (!runtimeAuthority) {
@@ -288,12 +347,13 @@ async function materializeBundledPrepublicationPackages(
   assertPluginAuthorPrepublicationRuntimeDeclarations(runtimeRoot, packageNames);
   const runtimePackageJson = readRuntimePackageJson(runtimeRoot);
   if (isSourceRuntimeAuthority(runtimeAuthority)) {
-    return await materializeSourceCliBundledPrepublicationPackages(runtimeRoot, packageNames);
+    return await materializeSourceCliBundledPrepublicationPackages(runtimeRoot, packageNames, projectRoot);
   }
   return await materializePackagedCliBundledPrepublicationPackages({
     runtimeRoot,
     runtimePackageJson,
     packageNames,
+    projectRoot,
   });
 }
 
@@ -344,6 +404,11 @@ async function writeTransientBundledPrepublicationWorkspaceConfig(params: Readon
 }>): Promise<() => Promise<void>> {
   const workspaceConfigPath = join(params.projectRoot, TRANSIENT_PNPM_WORKSPACE_FILE_NAME);
   const contents = [
+    PLUGIN_AUTHOR_TRANSIENT_PNPM_WORKSPACE_MARKER,
+    // These overrides are preparation-owned and their source roots are released
+    // immediately. Retaining obsolete virtual-store closures for seven days
+    // caused the observed author-store leak; pnpm owns pruning its unused graph.
+    'modulesCacheMaxAge: 0',
     'overrides:',
     ...[...params.packageRootsByName]
       .sort(([left], [right]) => left.localeCompare(right))
@@ -352,15 +417,25 @@ async function writeTransientBundledPrepublicationWorkspaceConfig(params: Readon
       )),
     '',
   ].join('\n');
+  let flag: 'wx' | 'w' = 'wx';
   try {
-    await lstat(workspaceConfigPath);
-    throw new Error('Public author package resolution refuses to replace an author-owned pnpm workspace configuration');
+    const existingStat = await lstat(workspaceConfigPath);
+    if (!existingStat.isFile() || existingStat.isSymbolicLink()) {
+      throw new Error('Public author package resolution refuses to replace an author-owned pnpm workspace configuration');
+    }
+    const existingContents = await readFile(workspaceConfigPath, 'utf8');
+    if (!isPluginAuthorTransientWorkspaceConfig(existingContents)) {
+      throw new Error('Public author package resolution refuses to replace an author-owned pnpm workspace configuration');
+    }
+    // Reclaim our interrupted install's file, including a zero-byte file left
+    // by a crash before its contents reached disk. Never follow a source link.
+    flag = 'w';
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code !== 'ENOENT') throw error;
   }
 
   try {
-    await writeFile(workspaceConfigPath, contents, { encoding: 'utf8', flag: 'wx' });
+    await writeFile(workspaceConfigPath, contents, { encoding: 'utf8', flag });
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'EEXIST') {
       throw new Error('Public author package resolution refuses to replace an author-owned pnpm workspace configuration');
@@ -416,7 +491,7 @@ async function prepareBundledPrepublicationResolution(params: Readonly<{
       })),
     });
     return Object.freeze({
-    args: withTransientBundledAuthorPackageInstallArgs(params.args),
+      args: withTransientBundledAuthorPackageInstallArgs(params.args),
       cleanup: async () => {
         try {
           await cleanupWorkspaceConfig();
@@ -561,7 +636,6 @@ const defaultDeps: PluginAuthorToolchainDeps = {
   managedJavaScriptRuntimeBinPath,
   resolveNativeTypeScriptBin,
   resolvePluginUiBuildBin,
-  materializeBundledPrepublicationPackages,
   generatePluginActionContracts,
   bundlePluginDaemonRuntime,
   spawn,
@@ -576,7 +650,7 @@ export type ManagedPluginPnpmRunResult =
  * The sole author-root dependency preparation owner. Every author command
  * that resolves project-local tooling reaches this function before evaluation,
  * compilation, testing, or packing begins. Daemon development materialization
- * intentionally owns a separate preparation of its isolated candidate copy.
+ * uses this same owner against the trusted author root in place.
  */
 export type PluginAuthorDependencyPreparationResult =
   | Readonly<{
@@ -623,7 +697,8 @@ export async function runManagedPluginPnpm(
     registryOrigin,
     args: params.args,
     ...(params.signal ? { signal: params.signal } : {}),
-    materialize: deps.materializeBundledPrepublicationPackages ?? materializeBundledPrepublicationPackages,
+    materialize: deps.materializeBundledPrepublicationPackages
+      ?? ((packageNames) => materializeBundledPrepublicationPackages(packageNames, projectRoot)),
   });
   try {
     return {
@@ -907,7 +982,7 @@ export type PluginUiArtifactBuildResult =
  * runs from source. The CLI development loop only observes and submits edits.
  */
 export async function runPluginUiArtifactBuild(
-  params: Readonly<{ projectRoot: string; signal?: AbortSignal }>,
+  params: Readonly<{ projectRoot: string; manifest?: ParsedPluginManifestV2; signal?: AbortSignal }>,
   deps: PluginAuthorToolchainDeps = defaultDeps,
 ): Promise<PluginUiArtifactBuildResult> {
   let projectRoot: string;
@@ -959,13 +1034,28 @@ export async function runPluginUiArtifactBuild(
     };
   }
 
-  const result = await deps.spawn({
-    command: runtimeCommand,
-    args: [uiBuildBin, '--project-root', projectRoot],
-    cwd: projectRoot,
-    env: deps.processEnv,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
+  // Development evaluates code in place; it has no emitted cold manifest.
+  // Give the same UI compiler that evaluated declaration without publishing a
+  // second manifest into the author's tree or bundling their daemon runtime.
+  const manifestDirectory = params.manifest
+    ? await mkdtemp(join(tmpdir(), 'happier-plugin-ui-manifest-'))
+    : null;
+  let result: PluginAuthorToolchainSpawnResult;
+  try {
+    const manifestPath = manifestDirectory ? join(manifestDirectory, 'plugin.json') : null;
+    if (manifestPath && params.manifest) {
+      await writeFile(manifestPath, serializeCanonicalPluginManifest(params.manifest), 'utf8');
+    }
+    result = await deps.spawn({
+      command: runtimeCommand,
+      args: [uiBuildBin, '--project-root', projectRoot, ...(manifestPath ? ['--manifest-path', manifestPath] : [])],
+      cwd: projectRoot,
+      env: deps.processEnv,
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+  } finally {
+    if (manifestDirectory) await rm(manifestDirectory, { recursive: true, force: true });
+  }
   if (result.exitCode !== 0 || result.signal !== null) {
     return {
       ok: false,

@@ -11,15 +11,12 @@ import {
 import {
     CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
-    isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
-    normalizePersistedExecutionRunConnectedServicesLaunchV1,
-    ExecutionRunConnectedServicesCleanupReceiptV1Schema,
-    pluginSourceCustodyV1Equal,
-    type ExecutionRunAgentContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { isPersistedExecutionRunConnectedServicesLaunchIdentityExact, normalizePersistedExecutionRunConnectedServicesLaunchV1, ExecutionRunConnectedServicesCleanupReceiptV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ExecutionRunAgentContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
+import { ConnectedServiceSpawnModelUnavailableError } from '../resolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceMaterializationBlockedError } from '../materialize/materializeConnectedServicesForSpawn';
 import {
     boundConnectedServiceMaterializationDiagnosticValue,
@@ -27,7 +24,10 @@ import {
 import {
     sanitizeConnectedServiceDiagnosticError,
 } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
-import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, readConnectedServiceChildSelectionsFromEnv, type ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
+import { ConnectedServiceRunRejectedStartRequestSchema, type ConnectedServiceRunRejectedStartHandler } from './materializeContract';
+import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import {
     scopeConnectedAccountPurposeBindingLease,
     type ConnectedAccountPurposeBindingLease,
@@ -73,6 +73,7 @@ type ResolveAuthForSpawnInput = Pick<
     | 'sessionDirectory'
     | 'vendorResumeId'
     | 'resumeReachabilityRequired'
+    | 'modelId'
     | 'resolveQualifiedPurposeBindingSnapshot'
     | 'activateQualifiedPurposeBindings'
 >;
@@ -102,6 +103,11 @@ export type ExecutionRunTargetRegistration = Readonly<{
 }>;
 
 export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
+    recoverRejectedStart?: (input: Readonly<{
+        selection: Extract<ConnectedServiceChildSelection, { kind: 'group' }>;
+        modelId: string;
+        isCurrent(): boolean;
+    }>) => ReturnType<ConnectedServiceAuthGroupSwitchCoordinator<QualifiedConnectedAccountServiceRef>['switchAfterClassifiedFailure']>;
     resolveAuthForSpawn: ResolveAuthForSpawn;
     registerRunTargets: (registration: ExecutionRunTargetRegistration) => void;
     unregisterRunTargets: (runKey: string) => void;
@@ -157,6 +163,7 @@ export type CreateExecutionRunConnectedServicesBridgeDeps = Readonly<{
 export type ExecutionRunConnectedServicesBridge = Readonly<{
     materialize: ConnectedServiceRunMaterializationHandler;
     release: ConnectedServiceRunReleaseHandler;
+    recoverRejectedStart: ConnectedServiceRunRejectedStartHandler;
     adoptLiveMaterialization: (input: Readonly<{
         runId: string;
         runnerPid: number;
@@ -176,6 +183,9 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
 }>;
 
 type RunReleaseEntry = {
+    modelId: string | null;
+    selections: ReadonlyMap<string, ConnectedServiceChildSelection> | null;
+    isCurrent(): boolean;
     activationId: string;
     /**
      * A failed daemon-replacement adoption may retain only exact root-cleanup
@@ -392,6 +402,7 @@ export function createExecutionRunConnectedServicesBridge(
 
     const prepareEntry = async (input: Readonly<{
         activationId: string;
+        modelId?: string;
         runKey: string;
         runnerPid: number;
         agentId: CatalogAgentId;
@@ -527,6 +538,9 @@ export function createExecutionRunConnectedServicesBridge(
                 throw new Error('execution_run_authority_not_current');
             }
             entry = {
+                modelId: input.modelId ?? null,
+                selections: readConnectedServiceChildSelectionsFromEnv(input.env),
+                isCurrent: subjectIsCurrent,
                 activationId: input.activationId,
                 authorityActive: true,
                 runKey: input.runKey,
@@ -648,6 +662,9 @@ export function createExecutionRunConnectedServicesBridge(
                 }
                 if (!current) {
                     cleanupOnlyEntry = {
+                        modelId: null,
+                        selections: null,
+                        isCurrent: () => false,
                         activationId: registration.activationId ?? randomUUID(),
                         authorityActive: false,
                         runKey: registration.runKey,
@@ -876,6 +893,7 @@ export function createExecutionRunConnectedServicesBridge(
                         sessionDirectory: input.cwd,
                         vendorResumeId: null,
                         resumeReachabilityRequired: false,
+                        ...(input.modelId ? { modelId: input.modelId } : {}),
                         resolveQualifiedPurposeBindingSnapshot: (bindings) =>
                             resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                                 agentId,
@@ -907,6 +925,10 @@ export function createExecutionRunConnectedServicesBridge(
                         cleanupFilesystem: null,
                         contributionLease,
                     });
+                    if (error instanceof ConnectedServiceSpawnModelUnavailableError) {
+                        return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+                            modelId: error.modelId, errorMessage: error.message };
+                    }
                     if (error instanceof ConnectedServiceMaterializationBlockedError) {
                         // Plugin-authored diagnostic prose reaches the retained
                         // daemon log and the runner bridge, so every open scalar
@@ -983,6 +1005,7 @@ export function createExecutionRunConnectedServicesBridge(
                         .resolveAgentContributionIdentity();
                     entry = await prepareEntry({
                         activationId,
+                        ...(input.modelId ? { modelId: input.modelId } : {}),
                         runKey,
                         runnerPid: input.runnerPid,
                         agentId,
@@ -1056,6 +1079,47 @@ export function createExecutionRunConnectedServicesBridge(
         });
     };
 
+    const recoverRejectedStart: ConnectedServiceRunRejectedStartHandler = async (raw) => {
+        const parsed = ConnectedServiceRunRejectedStartRequestSchema.safeParse(raw);
+        if (!parsed.success) return blocked('Invalid rejected-start evidence');
+        const input = parsed.data;
+        return await withRunKeyMutation(input.runId, async () => {
+            const entry = retainedCleanupByRunKey.get(input.runId);
+            const runner = deps.captureRunnerIdentity({ runnerPid: input.runnerPid });
+            const isCurrent = () => Boolean(entry && entry.authorityActive && !entry.retiring
+                && entry.activationId === input.activationId && entry.runnerPid === input.runnerPid
+                && runner?.identity === entry.runnerIdentity && runner.isCurrent() && entry.isCurrent());
+            if (!isCurrent() || !entry) return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
+            const failure = input.classification;
+            const selection = entry.selections?.get(failure.serviceId);
+            if (entry.modelId !== input.modelId || failure.kind !== 'plan'
+                || failure.limitCategory !== 'plan_invalid' || failure.quotaScope !== 'model'
+                || failure.providerLimitId !== input.modelId || selection?.kind !== 'group'
+                || failure.profileId !== selection.activeProfileId || failure.groupId !== selection.groupId
+                || failure.groupGeneration !== selection.generation
+                || !selection.credentialRevision || failure.expectedCredentialRevision !== selection.credentialRevision) {
+                return blocked('Rejected-start evidence does not match the retained Run member');
+            }
+            if (!deps.recoverRejectedStart) return blocked('Rejected-start pool recovery is unavailable');
+            let result: Awaited<ReturnType<NonNullable<CreateExecutionRunConnectedServicesBridgeDeps['recoverRejectedStart']>>>;
+            try {
+                result = await deps.recoverRejectedStart({ selection, modelId: input.modelId, isCurrent });
+            } catch {
+                return isCurrent() ? blocked('Rejected-start pool recovery is unavailable')
+                    : { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
+            }
+            if (!isCurrent() || result.status === 'stale_context') return { ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale };
+            if (result.status === 'switched' || result.status === 'observed_generation' || result.status === 'superseded_after_apply') {
+                return { ok: true, retry: true };
+            }
+            if (result.status === 'no_eligible_member') return {
+                ok: false, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+                modelId: input.modelId, errorMessage: `No enabled pool member can serve model '${input.modelId}'`,
+            };
+            return blocked(`Rejected-start pool recovery refused (${result.status})`);
+        });
+    };
+
     const cleanupTerminalMaterialization: ExecutionRunConnectedServicesBridge[
         'cleanupTerminalMaterialization'
     ] = async (input) => {
@@ -1092,6 +1156,9 @@ export function createExecutionRunConnectedServicesBridge(
                 : null;
             if (runner?.isCurrent()) {
                 const cleanupOnlyEntry: RunReleaseEntry = {
+                    modelId: null,
+                    selections: null,
+                    isCurrent: () => false,
                     activationId: parsed.data.activationId,
                     authorityActive: false,
                     runKey: parsed.data.runKey,
@@ -1187,6 +1254,7 @@ export function createExecutionRunConnectedServicesBridge(
     return {
         materialize,
         release,
+        recoverRejectedStart,
         adoptLiveMaterialization,
         cleanupTerminalMaterialization,
         releaseForRunnerExit,

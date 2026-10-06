@@ -163,14 +163,11 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
     [draftKey, itemKeys],
   );
 
-  // ---- selection: the existing multi-selection store, fed the rows only this model can see ----
+  // ---- selection: the existing store; Collection supplies its one eligible-row inventory ----
   const multiple = input.selection === 'multiple';
   const [selectionStore] = useState<HappierListMultiSelectionStore | null>(
     () => (multiple ? createHappierListMultiSelectionStore({ scopeKey: 'collection', visibleOrderedKeys: [] }) : null),
   );
-  useEffect(() => {
-    selectionStore?.setVisibleRows({ visibleOrderedKeys: itemKeys, eligibleKeys: itemKeys });
-  }, [itemKeys, selectionStore]);
   const selectionSnapshot = useSyncExternalStore(
     selectionStore?.subscribe ?? noopSubscribe,
     selectionStore?.getSnapshot ?? readInertSnapshot,

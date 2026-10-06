@@ -95,7 +95,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
-  useSettings: () => useSettingsSpy(),
+  useSettingsSelector: <T,>(selector: (settings: ReturnType<typeof useSettingsSpy>) => T) => selector(useSettingsSpy()),
   useLocalSetting: () => 1,
   useProfile: () => ({
     connectedAccountsV4: [],

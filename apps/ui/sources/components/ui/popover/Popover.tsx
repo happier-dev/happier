@@ -203,7 +203,8 @@ type PopoverCommonProps = Readonly<{
     /**
      * An explicit side that cannot hold `maxHeightCap` (`maxWidthCap` for left/right) moves to the
      * opposite side when that one has more room, instead of overlapping its anchor. `auto*`
-     * placements already choose their side.
+     * placements already choose their side. Enabled by default; a caller can
+     * opt out when retaining its explicit side is part of its presentation.
      */
     flip?: boolean;
     portal?: PopoverPortalOptions;
@@ -935,7 +936,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
                 preferredMinAvailable: placement === 'auto-horizontal' || placement === 'left' || placement === 'right'
                     ? maxWidthCap
                     : maxHeightCap,
-                flip: props.flip === true,
+                flip: props.flip !== false,
                 available: {
                     top: availableTop,
                     bottom: availableBottom,
@@ -1031,7 +1032,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         scheduleFrame(() => {
             void measureWithRetries(0);
         });
-    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, windowHeight, windowWidth, portalTarget]);
+    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, props.flip, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;

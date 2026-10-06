@@ -1,7 +1,5 @@
-import {
-  readAccountSettingValueForBackendTarget,
-  type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { AGENT_IDS, resolvePermissionModeGroupForAgent, type AgentId } from '@happier-dev/agents';
 
 import type { PermissionMode } from '@/api/types';

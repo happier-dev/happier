@@ -1,12 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
-import {
-    PluginJsonValueV2Schema,
-    pluginSourceCustodyV1Equal,
-    sameQualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type {
     ConnectedAccountAttemptResponse,
     ConnectedAccountControlTarget as ConnectedAccountDaemonControlTarget,
@@ -24,6 +23,10 @@ import type {
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { logger } from '@/ui/logger';
 import type { PluginSourceCustody } from '@/plugins/runtime/sourceAuthority';
+import {
+    ConnectedAccountRuntimeInvocationNotStartedError,
+    type ConnectedAccountRuntimeLease,
+} from '@/plugins/runtime/connectedAccounts/contributionRegistry';
 import {
     createConnectedAccountAuthenticationAttemptOwner,
     type ConnectedAccountAttemptProviderInvocation,
@@ -248,11 +251,33 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
         });
     const runtime: AttemptOwnerParams['runtime'] = Object.freeze({
         async admit(input) {
-            const registryLease = await params.reloadController.acquireRuntimeRegistry();
+            let registryLease = await params.reloadController.acquireRuntimeRegistry();
             try {
-                const contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(
-                    input.service,
-                );
+                const original = registryLease.registry.connectedAccountContributions?.describe(input.service);
+                let contribution: ConnectedAccountRuntimeLease | null | undefined;
+                try {
+                    contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(input.service);
+                } catch (error) {
+                    if (
+                        !(error instanceof ConnectedAccountRuntimeInvocationNotStartedError)
+                        || !original
+                        || params.reloadController.isRuntimeRegistryCurrent(registryLease.registry)
+                    ) throw error;
+                    // Lazy activation yielded across publication, before a provider
+                    // callback existed. Refresh from the existing current pointer.
+                    await registryLease.release();
+                    registryLease = await params.reloadController.acquireRuntimeRegistry();
+                    contribution = await registryLease.registry.resolveConnectedAccountRuntime?.(input.service);
+                    if (
+                        !contribution
+                        || !sameService(contribution.ref, original.ref)
+                        || !pluginSourceCustodyV1Equal(contribution.sourceCustody, original.sourceCustody)
+                        || !isDeepStrictEqual(
+                            contribution.descriptor.authentication.modes.find((mode) => mode.id === input.modeId),
+                            original.descriptor.authentication.modes.find((mode) => mode.id === input.modeId),
+                        )
+                    ) throw error;
+                }
                 if (!contribution) {
                     throw new Error('Connected-account service runtime is unavailable');
                 }

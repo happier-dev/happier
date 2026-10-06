@@ -1,11 +1,7 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
-import {
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  classifyRunnerConnectedServiceSelectionV1,
-  type ConnectedServiceBindingsV2,
-  type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { classifyRunnerConnectedServiceSelectionV1 } from '@happier-dev/protocol/ephemeralRunner/runnerConnectedServices';
+import type { ConnectedServiceBindingsV2, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 import {
   createConnectedAccountPurposeBindingOwner,

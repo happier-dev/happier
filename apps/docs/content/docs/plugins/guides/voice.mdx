@@ -102,23 +102,22 @@ minimum tile width and subtitle lines to the same shared tile owner.
 
 ### Dictate into your own input
 
-`DictationButton` returns editable text through `onTranscription`. Put it beside
-your controlled input; decide how to insert those words, and keep submission as
-a separate user action:
+The public `TextField` accepts `dictation` to place the host's Dictation control
+beside your controlled input. It follows the field's disabled state and returns
+editable text through `onTranscription`. Decide how to insert those words, and
+keep submission as a separate user action:
 
 ```tsx
 import { useState } from 'react';
-import { DictationButton, Text, TextField } from '@happier-dev/plugin-ui';
+import { Text, TextField } from '@happier-dev/plugin-ui';
 
 export function DraftInput() {
   const [draft, setDraft] = useState('');
-  return <>
-    <TextField label="Draft" value={draft} onChange={setDraft} multiline />
-    <DictationButton
-      onTranscription={(words) => setDraft((current) => current ? `${current}\n${words}` : words)}
-      fallback={<Text>Dictation is unavailable in this host.</Text>}
-    />
-  </>;
+  return <TextField label="Draft" value={draft} onChange={setDraft} multiline
+    dictation={{
+      onTranscription: (words) => setDraft((current) => current ? `${current}\n${words}` : words),
+      fallback: <Text>Dictation is unavailable in this host.</Text>,
+    }} />;
 }
 ```
 
@@ -131,6 +130,8 @@ they cannot override hidden host presentation. Remount the control with a new
 React key when replacing the logical draft it edits. Do not send audio to a
 second STT implementation from your UI. Hosted-web frames without the same-realm
 presentation binding retain their normal text input and use the fallback.
+For a custom input, compose the public `DictationButton` beside it with the same
+delivery callback and bind its `disabled` prop to that input's editability.
 
 ## Commands a voice agent can call
 

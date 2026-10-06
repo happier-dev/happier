@@ -1,9 +1,6 @@
-import {
-    MachineLiveStreamStartRequestV1Schema,
-    PEER_MEDIATION_RECEIPTS,
-    type MachineLiveStreamReceiptV1,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import type { MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 import type { LiveStreamRouteDecision } from '@happier-dev/peer-mediation';
 
 export type MachineLiveStreamRouteAuthorization = Readonly<{

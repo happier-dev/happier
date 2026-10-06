@@ -1,4 +1,4 @@
-import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import { fetchSessionsPage as fetchSessionsPageDefault } from '@/session/transport/http/sessionsHttp';
 

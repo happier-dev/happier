@@ -54,6 +54,24 @@ const finalResultBinding = {
 };
 
 describe('Workflow stored Account content', () => {
+  it('opens unknown checkpoint fields without weakening required fields, binding or writes', () => {
+    const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: 'row-1',
+      nextSequence: '1', frontier: { nextBlockOrdinal: 1, paused: false } };
+    const envelope = { t: 'plain', extra: true, v: { v: 2, extra: true,
+      binding: { ...checkpointBinding, extra: true }, content: { ...checkpoint, extra: true,
+        frontier: { ...checkpoint.frontier, extra: true } } } };
+    expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding, envelope }))
+      .toEqual({ kind: 'available', content: checkpoint });
+    expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: { ...checkpointBinding, runId: 'other-run' }, envelope }))
+      .toEqual({ kind: 'bindingMismatch' });
+    expect(openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
+      envelope: { ...envelope, v: { ...envelope.v, content: { ...envelope.v.content, rootRecordId: null } } } }))
+      .toEqual({ kind: 'contentInvalid' });
+    const nonCanonicalCheckpoint = { ...checkpoint, frontier: { ...checkpoint.frontier, extra: true } };
+    expect(() => sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain', binding: checkpointBinding,
+      checkpoint: nonCanonicalCheckpoint }))
+      .toThrow();
+  });
   it.each(['plain', 'e2ee'] as const)('round-trips final-panel fingerprint under the exact Run binding (%s)', (mode) => {
     const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: 'row-1',
       nextSequence: '1', frontier: { nextBlockOrdinal: 1, paused: false }, endFingerprint: 'F-b' };

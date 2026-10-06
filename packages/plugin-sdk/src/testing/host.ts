@@ -1,22 +1,15 @@
 /** @moduleRealm daemon */
-import {
-    arePluginMachineMaterializationRefsEqual,
-    createPluginActionInvocation,
-    readPluginActionFailureAuthorPayload,
-    MessageActionAvailableSnapshotV1Schema,
-    PluginMachineExecutionOriginV1Schema,
-    PluginMachineMaterializationRefV1Schema,
-    PluginContributionPointProtocolV1Schema,
-    rehydratePluginContributionPointSemanticsV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { createPluginActionInvocation, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { MessageActionAvailableSnapshotV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { PluginContributionPointProtocolV1Schema, rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 import type {
     PluginMachineExecutionOriginV1,
     PluginMachineMaterializationRefV1,
     RehydratedPluginContributionPointOperationV1,
 } from '@happier-dev/protocol';
-import {
-    derivePluginDaemonContributionRegistrationRights,
-} from '@happier-dev/protocol/plugins/manifest';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import type {
     ActionHandler,

@@ -385,7 +385,7 @@ describe('QualifiedPoolDetailView', () => {
     it('keeps provider allowance names, deduplicates windows, and reports enabled-member coverage', () => {
         const candidates = buildPoolQuotaLimitCandidates({
             enabledMemberCount: 3,
-            selectedProviderLimitIds: ['iguana_necktie', 'saved-but-unreported'],
+            selectedProviderLimitIds: ['iguana_necktie', 'saved-but-unreported', 'seven_day_all'],
             snapshots: [
                 {
                     v: 1,
@@ -407,7 +407,7 @@ describe('QualifiedPoolDetailView', () => {
                             used: null, limit: null, unit: 'unknown', utilizationPct: 20, resetsAt: null, status: 'ok', details: {},
                         },
                         {
-                            meterId: 'seven_day_fable', label: 'Weekly (Fable)', providerLimitId: 'seven_day_fable', modelId: null,
+                            meterId: 'seven_day_fable', label: 'seven_day_fable', providerLimitId: 'seven_day_fable', modelId: null,
                             used: null, limit: null, unit: 'unknown', utilizationPct: 30, resetsAt: null, status: 'ok', details: { rawScope: 'weekly_scoped' },
                         },
                         {
@@ -464,6 +464,7 @@ describe('QualifiedPoolDetailView', () => {
                 unavailable: true,
                 reportingMemberCount: 0,
             }),
+            expect.objectContaining({ providerLimitId: 'seven_day_all', title: 'Weekly (all models)', unavailable: true }),
             expect.objectContaining({
                 providerLimitId: 'legacy-session',
                 title: 'Legacy session',

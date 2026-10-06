@@ -1,5 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
-import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { readPendingQueueV2ActivationEligibilityFromServer } from '@/api/session/pendingQueueV2Transport';
 import { reportPendingSessionActivationFailure } from '@/api/session/pendingActivationTransport';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';

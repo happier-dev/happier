@@ -1,18 +1,13 @@
 import { createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 
-import {
-  assessEndpointHostLocality,
-  buildActivityWebhookPayload,
-  classifyProviderHostnameSyntax,
-  decryptSecretValueWithKeysV1,
-  hasConfiguredSecretStringValue,
-  isProviderMetadataHostname,
-  parseProviderIpAddress,
-  ProviderEndpointSafetyError,
-  type AttentionPreviewBehavior,
-  type WebhookNotificationChannelV1,
-} from '@happier-dev/protocol';
+import { assessEndpointHostLocality, ProviderEndpointSafetyError } from '@happier-dev/protocol/providers/safety/url';
+import { classifyProviderHostnameSyntax, parseProviderIpAddress } from '@happier-dev/protocol/providers/safety/locality';
+import { isProviderMetadataHostname } from '@happier-dev/protocol/providers/safety/metadataDestinations';
+import { buildActivityWebhookPayload } from '@happier-dev/protocol/activity/webhookPayload';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { hasConfiguredSecretStringValue } from '@happier-dev/protocol/account/settings/notificationChannels';
+import type { AttentionPreviewBehavior, WebhookNotificationChannelV1 } from '@happier-dev/protocol';
 
 import { openPinnedHttpStream, type PinnedHttpStreamTransport } from '@/network/pinnedHttp';
 

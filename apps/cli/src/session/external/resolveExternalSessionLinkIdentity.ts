@@ -3,7 +3,7 @@ import type {
   ExternalSessionsSource,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
-import { readRuntimeDescriptorV1ForAgent } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1ForAgent } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 
 import type {
   ExternalSessionExecutionSurface,

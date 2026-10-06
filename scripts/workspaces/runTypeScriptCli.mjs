@@ -14,6 +14,16 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
 const args = process.argv.slice(2);
 
+// Plugin SDK's finite task delegates to its existing prepared compiler script.
+const lifecycleTask = process.env.npm_lifecycle_event === 'typecheck:tests:prepared'
+  ? 'typecheck:finite' : process.env.npm_lifecycle_event;
+const finiteTask = [lifecycleTask, process.env.TURBO_TASK_ID?.split('#').at(-1)]
+  .find((task) => task === 'typecheck:finite' || task === 'typecheck:source:finite');
+if (finiteTask && process.env.HAPPIER_TYPECHECK_DISPATCHED !== '1') {
+  process.stderr.write(`run \`yarn typecheck\` (routed) instead of \`${finiteTask}\`\n`);
+  process.exit(1);
+}
+
 function compilerProjects(args) {
   const projects = [];
   const sharedArgs = [];

@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
-import {
-    ConnectedServiceBindingsV2IngressSchema,
-    ExecutionRunConnectedServicesLaunchV1Schema,
-    type ExecutionRunConnectedServicesLaunchV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ExecutionRunConnectedServicesLaunchV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import type { ExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '../runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 
 export const ExecutionRunConnectedServicesRegistrationV1Schema = ExecutionRunConnectedServicesLaunchV1Schema;
 export type ExecutionRunConnectedServicesRegistrationV1 = ExecutionRunConnectedServicesLaunchV1;
@@ -21,6 +20,7 @@ export type ExecutionRunConnectedServicesRegistrationV1 = ExecutionRunConnectedS
 export const CONNECTED_SERVICE_RUN_MATERIALIZE_PATH = '/connected-service-run/materialize';
 export const CONNECTED_SERVICE_RUN_RELEASE_PATH = '/connected-service-run/release';
 export const CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH = '/connected-service-run/generation-current';
+export const CONNECTED_SERVICE_RUN_REJECTED_START_PATH = '/connected-service-run/rejected-start';
 
 export const ConnectedServiceRunMaterializeRequestSchema = z.object({
     runId: z.string().trim().min(1),
@@ -28,6 +28,7 @@ export const ConnectedServiceRunMaterializeRequestSchema = z.object({
     agentId: z.string().trim().min(1),
     connectedServices: ConnectedServiceBindingsV2IngressSchema,
     cwd: z.string().trim().min(1),
+    modelId: z.string().trim().min(1).optional(),
 });
 export type ConnectedServiceRunMaterializeRequest = z.infer<typeof ConnectedServiceRunMaterializeRequestSchema>;
 
@@ -49,7 +50,43 @@ export type ConnectedServiceRunGenerationCurrentRequest = z.infer<
 export const CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES = {
     unavailable: 'connected_service_run_materialization_unavailable',
     blocked: 'connected_service_run_materialization_blocked',
+    stale: 'connected_service_run_activation_stale',
+    modelUnavailable: 'connected_service_run_model_unavailable',
 } as const;
+
+export const ConnectedServiceRunRejectedStartRequestSchema = z.object({
+    runId: z.string().trim().min(1),
+    runnerPid: z.number().int().positive(),
+    activationId: z.string().uuid(),
+    modelId: z.string().trim().min(1),
+    classification: z.unknown().transform((value, ctx) => {
+        const classification = sanitizeConnectedServiceRuntimeFailureClassification(value);
+        if (!classification) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Invalid connected service classification' });
+            return z.NEVER;
+        }
+        return classification;
+    }),
+}).strict();
+export type ConnectedServiceRunRejectedStartRequest = z.infer<typeof ConnectedServiceRunRejectedStartRequestSchema>;
+export const ConnectedServiceRunRejectedStartResultSchema = z.union([
+    z.object({ ok: z.literal(true), retry: z.literal(true) }).strict(),
+    z.object({
+        ok: z.literal(false),
+        errorCode: z.enum([
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.stale,
+            CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable,
+        ]),
+        modelId: z.string().optional(),
+        errorMessage: z.string().optional(),
+    }).strict(),
+]);
+export type ConnectedServiceRunRejectedStartResult = z.infer<typeof ConnectedServiceRunRejectedStartResultSchema>;
+export type ConnectedServiceRunRejectedStartHandler = (
+    input: ConnectedServiceRunRejectedStartRequest,
+) => Promise<ConnectedServiceRunRejectedStartResult>;
 
 export type ConnectedServiceRunMaterializationHandlerResult =
     | Readonly<{
@@ -61,7 +98,8 @@ export type ConnectedServiceRunMaterializationHandlerResult =
     }>
     | Readonly<{
         ok: false;
-        errorCode: typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked;
+        errorCode: typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked | typeof CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable;
+        modelId?: string;
         errorMessage?: string;
     }>;
 

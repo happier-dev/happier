@@ -1,16 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-import {
-  getActionSpec,
-  ActionIdSchema,
-  isActionSpecSurfacedOn,
-  normalizeServerIdentityIdCapability,
-  PublicActionIdSchema,
-  SignedRootActionIdSchema,
-  clientActionUnavailable,
-  accountSettingsParse,
-  type ActionId,
-} from '@happier-dev/protocol';
+import { getActionSpec, resolveActionExecutionPlacementForInput, isActionSpecSurfacedOn, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { isActionExecutableFromStandaloneMcp } from '@happier-dev/protocol/actions/actionToolExposure';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { ActionId } from '@happier-dev/protocol';
 
 import {
   readStoredCredentialsForServerId,
@@ -102,6 +98,7 @@ export function createExternalMcpServer(params: Readonly<{
   });
   const isActionEnabled = (id: ActionId): boolean => (
     (!usesApiToken || PublicActionIdSchema.safeParse(id).success)
+    && isActionExecutableFromStandaloneMcp(getActionSpec(id))
     && isServerFeatureAvailable(id)
   );
 
@@ -203,7 +200,7 @@ export function createExternalMcpServer(params: Readonly<{
           execute: async (...args: Parameters<typeof baseExecutor.execute>) => {
             const [actionId, input, context] = args;
             const builtInActionId = ActionIdSchema.safeParse(actionId);
-            if (!builtInActionId.success || getActionSpec(builtInActionId.data).executionPlacement !== 'client') {
+            if (!builtInActionId.success || resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input) !== 'client') {
               return await pluginExecutor.execute(...args);
             }
             // Delegate before local admission: this exact Home's daemon owns

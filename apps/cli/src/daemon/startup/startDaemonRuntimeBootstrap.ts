@@ -75,14 +75,8 @@ import {
   createDaemonServerWorkScheduler,
   type DaemonServerWorkScheduler,
 } from '../serverWork';
-import {
-  parseBooleanEnv,
-  type BuiltInLegacyConnectedAccountOperation,
-  type ConnectedServiceExecutionAuthorityV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import type { BuiltInLegacyConnectedAccountOperation, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type {
   AgentSpawnQualifiedPurposeBindingSnapshot,
 } from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';

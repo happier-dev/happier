@@ -3,16 +3,11 @@ import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
 import { isActiveLatestTurnStatus } from '../../sessionTurnStatusSnapshot';
-import {
-    deriveVoiceAgentTurnLocalId,
-    hasRawComposerAttachmentSelectionV1,
-    readVoiceAgentTurnPayloadFromMeta,
-    validatePluginHookPayloadV1,
-    SessionMediaMessageMetaV1Schema,
-    type SessionMediaMessageMetaV1,
-    type ComposerAttachmentInputV1,
-    type ComposerContentHandleV1,
-} from '@happier-dev/protocol';
+import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
+import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
+import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import type { SessionMediaMessageMetaV1, ComposerAttachmentInputV1, ComposerContentHandleV1 } from '@happier-dev/protocol';
 import type {
     PrimaryTurnStatusV1,
     PendingRequestedActionV1,

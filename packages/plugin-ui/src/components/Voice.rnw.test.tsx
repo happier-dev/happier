@@ -8,6 +8,40 @@ import { PluginUiPresentationHostProviderInternal } from '../presentationHost/co
 import { HappierUiAnimationActivityProviderInternal } from '../environment/context.js';
 
 describe('public Voice author composition', () => {
+  it('keeps field editability and Dictation admission together without submitting the draft', async () => {
+    const context = createSurfaceContext();
+    const onTranscription = vi.fn();
+    const onSubmitEditing = vi.fn();
+    // The same-realm host bridge is the capture boundary; the public field remains real.
+    const host = {
+      renderIcon: () => null,
+      renderDictationButton: (input: { disabled?: boolean; onTranscription(text: string): void }) => (
+        <button disabled={input.disabled} onClick={() => input.onTranscription('Editable words')}>Dictate</button>
+      ),
+    };
+    const hostApi = createHostApiStub(context);
+    const render = (disabled: boolean, dictationAvailable = true) => <PluginUiProviderInternal hostApi={hostApi} context={context} surfaceActivity={{ active: true }}>
+      <PluginUiPresentationHostProviderInternal host={host}>
+        <TextField label="Draft" value="Typed words" onChange={() => undefined} onSubmitEditing={onSubmitEditing}
+          disabled={disabled} dictation={dictationAvailable ? { onTranscription } : undefined} />
+      </PluginUiPresentationHostProviderInternal>
+    </PluginUiProviderInternal>;
+    const view = mountThroughReactNativeWeb(render(true));
+    expect(view.container.querySelector('button')?.disabled).toBe(true);
+    expect(view.container.querySelector('input')?.disabled).toBe(true);
+    await view.render(render(false));
+    await act(async () => { view.container.querySelector('button')?.click(); });
+    expect(onTranscription).toHaveBeenCalledWith('Editable words');
+    expect(view.container.querySelector('input')?.value).toBe('Typed words');
+    expect(onSubmitEditing).not.toHaveBeenCalled();
+    view.container.querySelector('input')?.focus();
+    expect(document.activeElement).toBe(view.container.querySelector('input'));
+    await view.render(render(false, false));
+    expect(document.activeElement).toBe(view.container.querySelector('input'));
+    expect(view.container.querySelector('input')?.value).toBe('Typed words');
+    view.unmount();
+  });
+
   it('renders ordered setup instructions through the shared step owner', () => {
     const context = createSurfaceContext();
     const view = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>

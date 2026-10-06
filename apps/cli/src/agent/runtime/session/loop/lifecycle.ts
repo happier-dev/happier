@@ -1,16 +1,9 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/session/controls/checkpoints';
-import {
-  buildBackendTargetKeyV2,
-  AgentSessionRuntimeEventSchema,
-  validatePluginHookPayloadV1,
-  type AgentSessionRuntimeEvent,
-  type ProviderBoundModelRef,
-  type SessionModelTransitionResultV1,
-  type SessionRuntimeIssueV1,
-  type SessionTurnFactsV1,
-  type SessionRolePromptContextV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
+import type { AgentSessionRuntimeEvent, ProviderBoundModelRef, SessionModelTransitionResultV1, SessionRuntimeIssueV1, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
 import { render } from 'ink';
 import React from 'react';
 

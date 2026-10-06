@@ -9,6 +9,7 @@ import { isServerApiRequestPath } from "./serverApiPath";
 import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import { InactiveAccountError } from "@/app/auth/accountStatus";
+import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 
 function sendGlobalErrorResponse(
     reply: FastifyReply,
@@ -36,7 +37,8 @@ export function enableErrorHandlers(app: Fastify) {
         }
         const method = request.method;
         const url = redactHttpRequestUrlForLog(request.url);
-        const errorMessage = redactPublicShareCapabilityUrl(error.message);
+        const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);
+        const errorMessage = schemaMismatch?.message ?? redactPublicShareCapabilityUrl(error.message);
         const stack = typeof error.stack === "string"
             ? redactPublicShareCapabilityUrl(error.stack)
             : error.stack;
@@ -61,6 +63,9 @@ export function enableErrorHandlers(app: Fastify) {
 
         if (statusCode >= 500) {
             captureFastifyExceptionForSentry(error, request as any);
+            if (schemaMismatch) {
+                return sendGlobalErrorResponse(reply, statusCode, { ...schemaMismatch, statusCode });
+            }
             // Internal server errors - don't expose details
             return sendGlobalErrorResponse(reply, statusCode, {
                 error: 'Internal Server Error',
@@ -159,7 +164,8 @@ export function enableErrorHandlers(app: Fastify) {
     app.addHook('onError', async (request, reply, error) => {
         const method = request.method;
         const url = redactHttpRequestUrlForLog(request.url);
-        const errorMessage = redactPublicShareCapabilityUrl(error.message);
+        const errorMessage = readSharedQaSchemaMismatchDiagnostic(error)?.message
+            ?? redactPublicShareCapabilityUrl(error.message);
         const duration = (Date.now() - (request.startTime || Date.now())) / 1000;
 
         log({

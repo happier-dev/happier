@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import {
-  createAccountWorkflowTriggerActions,
-  resolveValidatedAutomationAccountEncryptionV1,
-  type WorkflowDefinitionV1,
-  type WorkflowTriggerActionsDependencies,
-} from '@happier-dev/protocol';
+import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
+import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { WorkflowDefinitionV1, WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition,
   listAutomationDefinitions, reconcileAutomationDefinition } from '@/api/automations';

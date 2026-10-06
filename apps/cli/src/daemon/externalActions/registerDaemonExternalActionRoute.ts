@@ -3,23 +3,12 @@ import { Buffer } from 'node:buffer';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createDaemonControlRequestLifetime as createRequestLifetime } from '../controlRequestLifetime';
 
-import {
-  ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1,
-  AccountApiTokenEncryptionAccessRequestV1Schema,
-  ExternalActionRequestEnvelopeSchema,
-  parseAccountApiTokenBearerV1,
-  type ExternalActionExecutionAuthorizationV1,
-  type ExternalActionRequestEnvelope,
-} from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, AccountApiTokenEncryptionAccessRequestV1Schema, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol';
 import type { AccountServerPatEncryptionAccessReader } from '../auth/accountServerPatEncryptionAccess';
-import {
-  EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES_V2,
-  EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
-  projectExternalActionHttpError,
-  type ExternalActionHttpErrorCode,
-  type PreparedExternalActionResponseEnvelope,
-  readExternalActionProtectedRequestId,
-} from '@happier-dev/protocol/actions';
+import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES_V2, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, projectExternalActionHttpError, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionHttpErrorCode, PreparedExternalActionResponseEnvelope } from '@happier-dev/protocol/actions';
 
 import type { DaemonPatVerifier, VerifiedDaemonPat } from '../auth/daemonPatVerifier';
 import {

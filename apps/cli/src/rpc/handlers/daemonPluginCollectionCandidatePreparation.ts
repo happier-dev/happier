@@ -1,9 +1,6 @@
-import {
-    DaemonPluginCollectionCandidatePreparationRequestV1Schema,
-    DaemonPluginCollectionCandidatePreparationResponseV1Schema,
-    type DaemonPluginCollectionCandidatePreparationResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonPluginCollectionCandidatePreparationRequestV1Schema, DaemonPluginCollectionCandidatePreparationResponseV1Schema } from '@happier-dev/protocol/daemon/pluginCollectionCandidatePreparation';
+import type { DaemonPluginCollectionCandidatePreparationResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';

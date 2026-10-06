@@ -13,7 +13,8 @@ import type {
     HostTerminalProviderSessionProjection,
     HostTerminalSubagentProjection,
 } from './contract';
-import { readNonBlankOpaqueIdentifier, type SubagentStatusV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { SubagentStatusV1 } from '@happier-dev/protocol';
 
 type TerminalProjectionSession = Readonly<{
     sessionId: string;

@@ -65,14 +65,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { AgentId } from '@happier-dev/agents';
 import { readAgentNativeHomeEnvironmentKeys } from '../../src/plugins/authoring/agentNativeHomeEnvironmentKeys.ts';
-import { parseBundledPluginPublicationFailures } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
+import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import {
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
   type WorkspaceBundleLockContext,
 } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { withGeneratorSingleFlight, withPreparedGeneratorPublication } from './bundledPlugins/publication.ts';
-import { readGeneratorAuthoringSourceFingerprint, resolveGeneratorAuthoringWorkspaceNames } from './bundledPlugins/authoringInputs.mjs';
+import { readGeneratorAuthoringSourceFingerprint, readGeneratorCliPreparationFingerprint, resolveGeneratorAuthoringWorkspaceNames } from './bundledPlugins/authoringInputs.mjs';
 export { readGeneratorAuthoringSourceFingerprint } from './bundledPlugins/authoringInputs.mjs';
 import { parseWorkspaceLockLeaseValue } from '../../../../packages/cli-common/workspaceLockLease.mjs';
 import { readWorkspaceBuildInputs, readWorkspaceBuildFileDigest, readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
@@ -118,7 +118,7 @@ import {
   resolveBundledWorkspacePackageDir,
   syncSharedDepsForSourceDev,
 } from '../buildSharedDeps.mjs';
-import { createWorkspaceChildBuildEnv } from '../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { createWorkspaceChildBuildEnv, resolveWorkspaceBuildMode } from '../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import {
   assertHostCanExcludeBundledPlugin,
   createBundledPluginPublicationFailure,
@@ -546,20 +546,18 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
   // esbuild without letting that source-dev pass reconsider plugin builds.
   const hostWorkspaceNames = generatorPublicationDependencyNames();
   await sync(true, GENERATOR_STAGE_PREP_STAMP_PATH, hostWorkspaceNames);
-  for (const [stampPath, workspaceNames] of [
-    [GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']],
-    [GENERATOR_STAGE_PREP_STAMP_PATH, hostWorkspaceNames],
-  ] as const) {
-    if (!inspectUsableSourceDevSharedDepsLastGreen({
-      repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
-      stampPath,
-      workspaceNames,
-      includeRuntimeDependencies: true,
-      requireExactOutputs: true,
-      verifyMaterializedOutputs: true,
-    }).usable) {
-      throw new Error('Bundled plugin dependency preparation has no coherent recorded output; rerun the publisher');
-    }
+  // The final host pass includes the SDK closure and can rebuild its shared
+  // dependencies. Validate that final publication, not the earlier SDK-only
+  // record which this same preparation may have superseded.
+  if (!inspectUsableSourceDevSharedDepsLastGreen({
+    repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
+    stampPath: GENERATOR_STAGE_PREP_STAMP_PATH,
+    workspaceNames: generatorPublicationDependencyNames(),
+    includeRuntimeDependencies: true,
+    requireExactOutputs: true,
+    verifyMaterializedOutputs: true,
+  }).usable) {
+    throw new Error('Bundled plugin dependency preparation has no coherent recorded output; rerun the publisher');
   }
   return captureGeneratorDependencyCurrentness(['plugin-sdk', ...hostWorkspaceNames]);
 }
@@ -614,6 +612,9 @@ async function prepareSelectedBundledPluginWorkspaceOutputs(input: Readonly<{
       heldLockValue: input.inheritedLockValue,
     }),
     quiet: true,
+    reportProgress: (event: Readonly<{ stage: string; event: string; workspaceName?: string; reason?: string; invalidation?: string; durationMs?: number }>) => {
+      process.stderr.write(`bundled-plugins: selected-plugin-preparation ${JSON.stringify(event)}\n`);
+    },
   });
   return prepared.failedPluginBuilds;
 }
@@ -3863,6 +3864,36 @@ export async function collectBundledFirstPartyVoiceProjectionSources(
   });
 }
 
+function resolveBundledVoiceRuntimeProjectionOutPath(rootDir: string, platform: string) {
+  return resolve(rootDir, 'apps/ui/sources/voice/registry',
+    `generatedBundledVoiceRuntimeEntries${platform === 'web' ? '' : `.${platform}`}.ts`);
+}
+
+function resolveGeneratorHostProjectionOutPaths(rootDir: string) {
+  return {
+    cliOutPath: resolve(rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+    cliManifestOutPath: resolve(rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    uiOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
+    uiTranslationsOutPath: resolve(rootDir, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
+    uiVoiceEntriesOutPath: resolve(rootDir, 'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts'),
+    uiBehaviorOverridesOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts'),
+    sessionAgentBehaviorsOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors.ts'),
+    visibleMessageResolversOutPath: resolve(rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.visibleMessageResolvers.ts'),
+    promptAssetPluginDescriptorsOutPath: resolve(rootDir, 'apps/cli/src/prompts/assets/generated/pluginDescriptors.ts'),
+  };
+}
+
+export function readGeneratorHostProjectionCurrentness(rootDir: string): string {
+  const paths = [
+    ...Object.values(resolveGeneratorHostProjectionOutPaths(rootDir)),
+    ...BUNDLED_VOICE_RUNTIME_PLATFORMS.map((platform) => resolveBundledVoiceRuntimeProjectionOutPath(rootDir, platform)),
+    resolve(rootDir, 'apps/cli', BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH),
+    // The same publication synchronizes the UI's bundled Voice dependencies.
+    resolve(rootDir, 'apps/ui/package.json'),
+  ];
+  return JSON.stringify(paths.map((path) => [path, existsSync(path) ? readWorkspaceBuildFileDigest(path) : null]));
+}
+
 function renderBundledVoiceRuntimeProjectionOutputs(
   rootDir: string,
   sources: readonly BundledFirstPartyVoiceProjectionSource[],
@@ -3872,8 +3903,7 @@ function renderBundledVoiceRuntimeProjectionOutputs(
   const excludedPackageNames = new Set(failures.map((failure) => failure.packageName));
   const outputs = BUNDLED_VOICE_RUNTIME_PLATFORMS.map((platform) => ({
     platform,
-    outPath: resolve(rootDir, 'apps/ui/sources/voice/registry',
-      `generatedBundledVoiceRuntimeEntries${platform === 'web' ? '' : `.${platform}`}.ts`),
+    outPath: resolveBundledVoiceRuntimeProjectionOutPath(rootDir, platform),
     out: renderBundledVoiceRuntimeEntriesTs(sources, platform, excludedPackageNames),
   }));
   const common = outputs[0]!.out;
@@ -4767,35 +4797,12 @@ async function generateBundledPluginEntries(
   const generatedAgentIds = collectGeneratedAgentIds(bundledAgentDefinitionIds, dependencies);
   const agentDefinitionsById = bundledAgentDefinitionProjection.agentDefinitionsById;
 
-  const cliOutPath = resolve(options.rootDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts');
-  const cliManifestOutPath = resolve(
-    options.rootDir,
-    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts',
-  );
-  const uiOutPath = resolve(options.rootDir, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts');
-  const uiTranslationsOutPath = resolve(
-    options.rootDir,
-    'apps/ui/sources/text/bundledPluginTranslations.generated.ts',
-  );
-  const uiVoiceEntriesOutPath = resolve(
-    options.rootDir,
-    'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts',
-  );
-  const uiBehaviorOverridesOutPath = resolve(
-    options.rootDir,
-    'apps/ui/sources/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides.ts',
-  );
-  const sessionAgentBehaviorsOutPath = resolve(
-    options.rootDir,
-    'apps/ui/sources/agents/registry/generatedBundledPluginEntries.sessionAgentBehaviors.ts',
-  );
+  const { cliOutPath, cliManifestOutPath, uiOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath,
+    uiBehaviorOverridesOutPath, sessionAgentBehaviorsOutPath, visibleMessageResolversOutPath,
+    promptAssetPluginDescriptorsOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
   const retiredAgentSettingsOutPath = resolve(
     options.rootDir,
     'apps/ui/sources/agents/registry/generatedBundledPluginEntries.agentSettings.ts',
-  );
-  const visibleMessageResolversOutPath = resolve(
-    options.rootDir,
-    'apps/ui/sources/agents/registry/generatedBundledPluginEntries.visibleMessageResolvers.ts',
   );
   const agentsOutPath = resolve(options.rootDir, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
   const retiredHostAgentSettingsOutPath = resolve(
@@ -4838,10 +4845,6 @@ async function generateBundledPluginEntries(
   );
   const protocolExternalSessionSourceContributions = await collectProtocolExternalSessionSourceContributions(
     pluginPackages,
-  );
-  const promptAssetPluginDescriptorsOutPath = resolve(
-    options.rootDir,
-    'apps/cli/src/prompts/assets/generated/pluginDescriptors.ts',
   );
 
   const agentUiBehaviorDescriptorSources = collectAgentUiBehaviorDescriptorSources(pluginPackages);
@@ -5017,25 +5020,28 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     workspaceNames: [...selectedOptions.workspaceNames].sort(),
     inheritedFailures,
     publicationMode: process.env.HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE ?? 'live',
+    buildMode: resolveWorkspaceBuildMode({ env: process.env }),
   });
   const workspaceNames = [...new Set([
     ...generatorPublicationDependencyNames(),
     ...bundledNames,
   ])].sort();
+  const cliDir = resolve(options.rootDir, 'apps/cli');
   const readPreparationFingerprint = () => JSON.stringify([
     request,
     ...[
       resolve(options.rootDir, 'apps/cli'),
       ...workspaceNames.map((workspaceName) => resolveBundledWorkspacePackageDir({ repoRoot: options.rootDir, workspaceName })),
-    ].map((packageDir) => readWorkspacePackageInputFingerprint({
+    ].map((packageDir) => packageDir === cliDir
+      ? readGeneratorCliPreparationFingerprint(cliDir)
+      : readWorkspacePackageInputFingerprint({
       packageDir,
-      // CLI release files include executable distribution globs; the publisher
-      // consumes its source/scripts, not those downstream packaged outputs.
-      includeShippedFiles: packageDir !== resolve(options.rootDir, 'apps/cli'),
+      // Authored shipped/native inputs belong to preparation; generated
+      // plugin artifact bytes belong to the separate output currentness check.
+      includeShippedFiles: true,
       excludeGeneratedPluginArtifacts: true,
     })),
   ]);
-  const cliDir = resolve(options.rootDir, 'apps/cli');
   const readAuthoringFingerprint = () => JSON.stringify([
     request,
     ...readWorkspaceBuildInputs(cliDir).filter((path: string) =>
@@ -5053,6 +5059,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const inheritedLockValue = process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
   let preparedPublication: PreparedGeneratorPublication | undefined;
   await withGeneratorSingleFlight({
+    reportReuseDecision: (reason) => {
+      process.stderr.write(`bundled-plugins: publication-reuse reason=${reason}\n`);
+    },
     prepare: async () => {
       const authoringFingerprint = readAuthoringFingerprint();
       // Preparation exits before admission: no coordinator lease spans a
@@ -5069,6 +5078,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     readPreparationFingerprint,
     readCurrentness: () => JSON.stringify([
       readFingerprint(),
+      readPreparationFingerprint(),
+      readGeneratorHostProjectionCurrentness(options.rootDir),
+      ...bundledNames.map((workspaceName) => readWorkspacePackageInputFingerprint({
+        packageDir: resolveBundledWorkspacePackageDir({ repoRoot: options.rootDir, workspaceName }),
+        includeShippedFiles: true,
+      })),
       computeSourceDevSharedDepsSignature({ repoRoot: options.rootDir, workspaceNames, includeBuildInputs: false }),
     ]),
     stampPath: GENERATOR_PUBLICATION_STAMP_PATH,

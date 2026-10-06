@@ -18,7 +18,7 @@ export type SessionTranscriptsActionInputById = {
         direction?: 'before' | 'after' | undefined;
         scope?: 'main' | 'sidechain' | 'all' | undefined;
         sidechainId?: string | null | undefined;
-        roles?: ('user' | 'unknown' | 'agent' | 'event')[] | undefined;
+        roles?: ('unknown' | 'user' | 'agent' | 'event')[] | undefined;
         kinds?: string[] | undefined;
         format?: 'compact' | 'raw' | undefined;
         includeMeta?: boolean | undefined;
@@ -207,7 +207,7 @@ export type SessionTranscriptsActionResultById = {
             };
             localId?: string | null | undefined;
             sidechainId?: string | null | undefined;
-            messageRole?: 'user' | 'unknown' | 'agent' | 'event' | null | undefined;
+            messageRole?: 'unknown' | 'user' | 'agent' | 'event' | null | undefined;
             attentionImpact?: {
                 affectsUnread: boolean;
                 affectsMeaningfulActivity: boolean;
@@ -217,7 +217,7 @@ export type SessionTranscriptsActionResultById = {
             sourceUpdatedAt?: number | undefined;
             transcriptObservationProvenance?: {
                 kind: 'non_dependent';
-                source: 'sidechain' | 'background' | 'external' | 'history';
+                source: 'external' | 'sidechain' | 'background' | 'history';
             } | undefined;
             deliveryResolution?: {
                 v: 1;
@@ -284,7 +284,7 @@ export type SessionTranscriptsActionResultById = {
             openFailure: 'mode_mismatch' | 'corrupt_or_unopenable';
             localId?: string | null | undefined;
             sidechainId?: string | null | undefined;
-            messageRole?: 'user' | 'unknown' | 'agent' | 'event' | null | undefined;
+            messageRole?: 'unknown' | 'user' | 'agent' | 'event' | null | undefined;
             attentionImpact?: {
                 affectsUnread: boolean;
                 affectsMeaningfulActivity: boolean;
@@ -294,7 +294,7 @@ export type SessionTranscriptsActionResultById = {
             sourceUpdatedAt?: number | undefined;
             transcriptObservationProvenance?: {
                 kind: 'non_dependent';
-                source: 'sidechain' | 'background' | 'external' | 'history';
+                source: 'external' | 'sidechain' | 'background' | 'history';
             } | undefined;
             deliveryResolution?: {
                 v: 1;

@@ -59,6 +59,13 @@ describe('buildAutomationRecipeFromSessionAuthoring', () => {
 });
 
 describe('openAutomationRecipeForAuthoring', () => {
+    it.each(['plain', 'encrypted'] as const)('opens unknown stored %s program fields', async (mode) => {
+        const template = { v: 1, prompt: 'Review', extra: true };
+        const recipe = { v: 1 as const, templateVersion: 3, triggerEvidence: null, extra: true,
+            target: { kind: 'existingSession' as const, sessionId: 'session-1', extra: true },
+            template: mode === 'plain' ? { t: 'plain' as const, v: template, extra: true } : { t: 'encrypted' as const, c: 'opaque', extra: true } };
+        await expect(openAutomationRecipeForAuthoring({ recipe, decryptRaw: async () => template })).resolves.toEqual({ v: 1, prompt: 'Review' });
+    });
     it('opens the same canonical program from plain and encrypted stored recipes', async () => {
         const base = {
             v: 1 as const,

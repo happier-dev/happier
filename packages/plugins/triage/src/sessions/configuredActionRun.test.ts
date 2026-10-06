@@ -5,7 +5,7 @@ import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from 
 import type { PluginClientActionContext } from '@happier-dev/plugin-sdk/actions';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
-import { TriageRunConfiguredActionInputV1Schema } from '../actions/configuredActionRunProtocol.js';
+import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from '../actions/configuredActionRunProtocol.js';
 import { TriageReadActionsResultV1Schema } from '../actions/actionsCatalogProtocol.js';
 import type { TriageActionV1 } from '../settings/actions.js';
 import { startTriageEntrySession } from '../actions/entrySession.js';
@@ -33,6 +33,112 @@ const settlement = {
 };
 
 describe('configured action execution through the shared Session owner', () => {
+    it.each(['single', 'oneSessionPerEntry'] as const)('retains unknown dispatch custody for $0 without repeating successful bulk units', async (destination) => {
+        const { collections } = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker({ spawn: [
+            spawnSuccess({ sessionId: 'session-a' }),
+            spawnSuccess({ sessionId: destination === 'single' ? 'session-a' : 'session-b',
+                disposition: destination === 'single' ? 'rejoined' : 'created' }),
+            spawnSuccess({ sessionId: 'session-b', disposition: 'rejoined' }),
+        ] });
+        const emitted: ReturnType<typeof TriageStartEntrySessionInputV1Schema.parse>[] = [];
+        let loseReply = true;
+        const host = {
+            version: () => ({ methods: [] }),
+            executeAction: async (id: string, input: JsonValue) => {
+                if (id === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'sessions/start-entry-v1') {
+                    const start = TriageStartEntrySessionInputV1Schema.parse(input);
+                    emitted.push(start);
+                    const result = await startTriageEntrySession(start, { collections, execute: invoker.execute, nowMs: () => 1 });
+                    if (loseReply && (destination === 'single' || emitted.length === 2)) {
+                        loseReply = false;
+                        throw new Error('host reply lost after dispatch');
+                    }
+                    return result;
+                }
+                if (id === 'session.open') return null;
+                throw new Error(`unexpected Action ${id}`);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Host RPC and persistent Collection boundaries only.
+        const entries = destination === 'single' ? [entry] : [entry,
+            { ...entry, key: 'issue-2', entryRef: { ...entry.entryRef, entryId: '2' } }];
+        const request = { actionId: action.actionId, destination, entries, settlements: entries.map(() => settlement) };
+        const first = TriageRunConfiguredActionResultV1Schema.parse(await runTriageConfiguredActionV1(host, request));
+        expect(first.recovery).toBeDefined();
+        const resume = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, actionId: action.actionId, destination,
+            entries: entries.map((selected) => ({ entryRef: selected.entryRef, sourceInstanceId: selected.sourceInstance.sourceInstanceId })),
+            resumeStart: JSON.parse(JSON.stringify(first.recovery)),
+        });
+        const resumed = await runTriageConfiguredActionV1(host, { ...request, settlements: [], resumeStart: resume.resumeStart,
+            // Reobservation can update presentation, but a repeated delivery
+            // must keep the payload originally emitted under its identity.
+            entries: entries.map((selected) => ({ ...selected, presentation: { label: 'Updated source title' },
+                display: { ...selected.display, scopeLabel: 'Updated source scope' } })),
+        });
+        expect(resumed.status).toBe(destination === 'single' ? 'single' : 'bulk');
+        expect(resumed.recovery).toBeUndefined();
+        expect(emitted).toHaveLength(destination === 'single' ? 2 : 3);
+        expect(emitted.at(-1)).toEqual(emitted[destination === 'single' ? 0 : 1]);
+        const mismatched = await runTriageConfiguredActionV1(host, { ...request,
+            entries: [{ ...entry, entryRef: { ...entry.entryRef, entryId: 'different' } }], resumeStart: resume.resumeStart });
+        expect(mismatched).toMatchObject({ status: 'unavailable', reason: 'startContinuationMismatch' });
+        expect(emitted).toHaveLength(destination === 'single' ? 2 : 3);
+    });
+
+    it('cancels after an emitted bulk start without discarding settled or not-started units', async () => {
+        const abort = new AbortController();
+        const emitted: JsonValue[] = [];
+        const host = {
+            version: () => ({ methods: [] }),
+            executeAction: async (id: string, input: JsonValue) => {
+                if (id === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'sessions/start-entry-v1') {
+                    emitted.push(input);
+                    if (emitted.length === 1) abort.abort();
+                    return { v: 1, type: 'linked', sessionId: `session-${emitted.length}`, disposition: 'created',
+                        delivery: 'accepted', finalOpen: 'suppressed' };
+                }
+                throw new Error(`unexpected Action ${id}`);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Host RPC boundary, including cancellation after dispatch.
+        const request = { actionId: action.actionId, destination: 'oneSessionPerEntry' as const, settlements: [settlement, settlement],
+            entries: [entry, { ...entry, key: 'issue-2', entryRef: { ...entry.entryRef, entryId: '2' } }] };
+        const first = TriageRunConfiguredActionResultV1Schema.parse(await runTriageConfiguredActionV1(host, request, { signal: abort.signal }));
+        expect(first.results?.map((result) => result.status)).toEqual(['settled', 'notStarted']);
+        expect(first.recovery).toBeDefined();
+        const resumed = await runTriageConfiguredActionV1(host, { ...request, resumeStart: first.recovery });
+        expect(resumed.results?.map((result) => result.status)).toEqual(['settled', 'settled']);
+        expect(emitted).toHaveLength(2);
+        expect(resumed.results?.[0]).toEqual(first.results?.[0]);
+        expect(resumed.results?.[1]?.creationKey).toBe(first.results?.[1]?.creationKey);
+    });
+
+    it('forwards single-start cancellation and keeps the emitted identity when its reply is lost', async () => {
+        const abort = new AbortController();
+        let startSignal: AbortSignal | undefined;
+        const host = {
+            version: () => ({ methods: [] }),
+            executeAction: async (id: string, _input: JsonValue, options?: { signal?: AbortSignal }) => {
+                if (id === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'sessions/start-entry-v1') {
+                    startSignal = options?.signal;
+                    abort.abort();
+                    throw new Error('cancelled after dispatch');
+                }
+                throw new Error(`unexpected Action ${id}`);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Host RPC boundary and externally owned cancellation.
+        const result = await runTriageConfiguredActionV1(host, {
+            actionId: action.actionId, destination: 'single', entries: [entry], settlements: [settlement],
+        }, { signal: abort.signal });
+        expect(startSignal).toBe(abort.signal);
+        expect(result).toMatchObject({ status: 'cancelled', recovery: { state: { kind: 'single' } } });
+    });
+
     it.each([false, true, 'partial'] as const)('does not report prepared formal Review as complete (explicit engines: %s)', async (hasChoices) => {
         const reviewAction = { ...action, appliesTo: ['pullRequest'], workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review this pull request.' },
@@ -136,7 +242,11 @@ describe('configured action execution through the shared Session owner', () => {
     ] as const)(
         'agent runs $destination (missing middle: $missingMiddle) using configured instructions and durable links', async ({ destination, missingMiddle }) => {
             const { collections, control } = createTestkitCorpusCollections();
-            const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'session-a' }), spawnSuccess({ sessionId: 'session-b' })] });
+            const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess({ sessionId: 'session-a' }),
+                spawnSuccess({ sessionId: destination === 'single' ? 'session-a' : 'session-b',
+                    disposition: destination === 'single' ? 'rejoined' : 'created' })] });
+            const emitted: ReturnType<typeof TriageStartEntrySessionInputV1Schema.parse>[] = [];
+            let loseReply = destination === 'single';
             const host = {
                 version: () => ({ methods: [] }),
                 executeAction: async (id: string, input: JsonValue) => {
@@ -149,9 +259,13 @@ describe('configured action execution through the shared Session owner', () => {
                             outcome: { kind: 'present', locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer() } },
                     };
                     if (id === 'entries/read-detail-v1') return { kind: 'read', instance: testkitConfiguredInstance(), linkedSessions: [] };
-                    if (id === 'sessions/start-entry-v1') return startTriageEntrySession(TriageStartEntrySessionInputV1Schema.parse(input), {
-                        collections, execute: invoker.execute, nowMs: () => 1,
-                    });
+                    if (id === 'sessions/start-entry-v1') {
+                        const start = TriageStartEntrySessionInputV1Schema.parse(input);
+                        emitted.push(start);
+                        const result = await startTriageEntrySession(start, { collections, execute: invoker.execute, nowMs: () => 1 });
+                        if (loseReply) { loseReply = false; throw new Error('host reply lost after dispatch'); }
+                        return result;
+                    }
                     if (id === 'session.open') return null;
                     throw new Error(`unexpected Action ${id}`);
                 },
@@ -176,11 +290,22 @@ describe('configured action execution through the shared Session owner', () => {
                     }] }] }],
                 } }) },
             } as unknown as PluginClientActionContext; // Client RPC boundary with target-owned admitted source facts.
-            const result = await createTriageRunConfiguredActionHandler()(TriageRunConfiguredActionInputV1Schema.parse({
+            const configuredInput = TriageRunConfiguredActionInputV1Schema.parse({
                 v: 1, actionId: action.actionId, entries: entries.map((selected) => ({
                     entryRef: selected.entryRef, sourceInstanceId: selected.sourceInstance.sourceInstanceId,
-                })), destination, drafts: entries.map((_, index) => ({ ...settlement, directory: `${settlement.directory.path}-${index}` })),
-            }), clientContext);
+                })), destination, drafts: entries.map((_, index) => ({ ...settlement, directory: { kind: 'path', path: `${settlement.directory.path}-${index}` } })),
+            });
+            const handler = createTriageRunConfiguredActionHandler();
+            let result = await handler(configuredInput, clientContext);
+            if (destination === 'single') {
+                expect(result).toMatchObject({ status: 'unavailable', reason: 'startOutcomeUnknown' });
+                expect(result.recovery).toBeDefined();
+                const { drafts: _initialDrafts, ...continuationInput } = configuredInput;
+                result = await handler(TriageRunConfiguredActionInputV1Schema.parse({
+                    ...continuationInput, resumeStart: JSON.parse(JSON.stringify(result.recovery)),
+                }), clientContext);
+                expect(emitted[1]).toEqual(emitted[0]);
+            }
             expect(result).toMatchObject({ v: 1, status: destination === 'single' ? 'single' : 'bulk' });
             for (const [index, selected] of availableEntries.entries()) {
                 const tag = await deriveSessionLinkTag(collections.sessionLinks, selected.entryRef,
@@ -188,7 +313,7 @@ describe('configured action execution through the shared Session owner', () => {
                 expect(control.sessionLinks.inspect(tag)).toMatchObject({ deleted: false });
             }
             const sends = invoker.callsFor('session.message.send');
-            expect(sends).toHaveLength(destination === 'oneSessionForAllEntries' ? 1 : availableEntries.length);
+            expect(sends).toHaveLength(destination === 'single' ? 2 : destination === 'oneSessionForAllEntries' ? 1 : availableEntries.length);
             expect(sends[0]?.input).toMatchObject({ message: action.target.seededFallbackInstruction });
             if (missingMiddle) {
                 expect(invoker.callsFor('session.spawn_new').map((call) => call.input)).toMatchObject([

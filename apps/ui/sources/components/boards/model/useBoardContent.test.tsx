@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyWorkBoardIntentV1, buildWorkBoardItemKeyV1, createWorkBoardV1, normalizeSessionListFilterV1 } from '@happier-dev/protocol';
+import { applyWorkBoardIntentV1, buildWorkBoardItemKeyV1, createWorkBoardV1, encodePlainArtifactStoredContent, normalizeSessionListFilterV1 } from '@happier-dev/protocol';
 
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -9,6 +9,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { ARTIFACT_LIST_PATH, AUTOMATION_LIST_PATH, RUN_STORAGE_PATH, boardDefinitionArtifact, boardRunStoragePage, installBoardLibraryTestHarness } from '../boardLibraryTestHarness';
 import type { BoardHomes } from './useBoardContent';
+import { formatWorkflowDefinitionContentUnavailableReason } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 const harness = installBoardLibraryTestHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -46,6 +47,35 @@ function runsBoard(startedBy: readonly ('you' | 'agents' | 'triggers')[] = []) {
 }
 
 describe('Board shared Run filter membership', () => {
+    it('preserves unavailable definition reasons on Board cards beside readable neighbors', async () => {
+        const definitionIds = ['header', 'body', 'readable'];
+        // Only stored HTTP bytes are malformed; the real Artifact codec and
+        // Workflow list owner classify each row beside its readable neighbor.
+        harness.home.answer(homes.activeServerId!, ARTIFACT_LIST_PATH, { body: [
+            { ...boardDefinitionArtifact('header', 'Unavailable'), header: encodePlainArtifactStoredContent({
+                kind: 'workflow-definition.v1', definitionId: 'header',
+                revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 7 },
+            }) },
+            { ...boardDefinitionArtifact('body', 'Repair me'), body: encodePlainArtifactStoredContent({ body: 'not-json' }) },
+            boardDefinitionArtifact('readable', 'Readable'),
+        ] });
+        runAnswer.mockReturnValue({ body: { summaries: [], remainingSourceArtifactIds: [] } });
+        const members = definitionIds.map(definitionId => {
+            const ref = { kind: 'workflow', qualifiedId: { serverId: homes.activeServerId!, id: definitionId } } as const;
+            return { key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true };
+        });
+        const hook = await renderHook(() => ({
+            cards: useBoardCards({ members, complete: true }, homes),
+            library: useWorkflowDefinitionLibrary(),
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().library.status).toBe('loaded'));
+        expect(hook.getCurrent().cards).toMatchObject([
+            { availability: 'content_unavailable', unavailableReason: formatWorkflowDefinitionContentUnavailableReason('invalid_header'), body: { kind: 'none' } },
+            { availability: 'content_unavailable', title: 'Repair me', unavailableReason: formatWorkflowDefinitionContentUnavailableReason('invalid_body'), body: { kind: 'none' } },
+            { availability: 'ready', title: 'Readable', body: { kind: 'workflow' } },
+        ]);
+        expect(hook.getCurrent().cards.slice(0, 2).every(card => card.status.tone === 'neutral')).toBe(true);
+    });
     it('consumes the definition list scheduler occurrence without deriving a date from its schedule', async () => {
         const definitions = [123_456, null].map((nextRunAt, index) => ({ definitionId: `scheduled-${index}`, nextRunAt }));
         harness.home.answer(homes.activeServerId!, ARTIFACT_LIST_PATH, { body: definitions.map((definition, index) =>

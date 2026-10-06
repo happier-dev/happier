@@ -1,4 +1,4 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import os from 'node:os';
 

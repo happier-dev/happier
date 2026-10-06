@@ -1,4 +1,5 @@
-import { SessionReportsToV1Schema, type SessionReportsToV1 } from '@happier-dev/protocol';
+import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import type { SessionReportsToV1 } from '@happier-dev/protocol';
 
 export const HAPPIER_SESSION_CREATE_REPORTS_TO_ENV_KEY = 'HAPPIER_SESSION_CREATE_REPORTS_TO_V1_JSON';
 

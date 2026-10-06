@@ -1,8 +1,6 @@
-import {
-    isPluginUiHostApiVersionCompatibleWithVersionV1,
-    PLUGIN_UI_HOST_API_VERSION_V1,
-    type PluginUiArtifactsManifestEntryV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { isPluginUiHostApiVersionCompatibleWithVersionV1 } from '@happier-dev/protocol/plugins/ui/hostApi';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
+import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
 
 export const PLUGIN_UI_HOST_API_VERSION = PLUGIN_UI_HOST_API_VERSION_V1;
 

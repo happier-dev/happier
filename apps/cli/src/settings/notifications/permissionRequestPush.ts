@@ -1,7 +1,5 @@
-import {
-  summarizeToolInputForNotification,
-  type AccountSettings,
-} from '@happier-dev/protocol';
+import { summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
+import type { AccountSettings } from '@happier-dev/protocol';
 import type { PermissionMode } from '@/api/types';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';

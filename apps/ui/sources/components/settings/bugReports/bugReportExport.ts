@@ -1,5 +1,3 @@
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
 import {
   buildBugReportExportBundle,
   serializeBugReportExportBundle,
@@ -8,52 +6,34 @@ import {
   type BugReportFormPayload,
 } from '@happier-dev/protocol';
 
-type BugReportExportFileDeps = {
-  cacheDirectory?: string | null;
-  now?: () => number;
-  writeFile?: (path: string, contents: string) => Promise<void>;
-  shareFile?: (path: string) => Promise<void>;
-};
+import { t } from '@/text';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 export async function exportBugReportDiagnosticsBundle(input: {
   environment: BugReportEnvironmentPayload;
   artifacts: readonly BugReportArtifactPayload[];
   form?: BugReportFormPayload;
   exportedAt?: string;
-  deps?: BugReportExportFileDeps;
-}): Promise<string> {
-  const deps = input.deps ?? {};
-  const cacheDirectory = deps.cacheDirectory ?? FileSystem.cacheDirectory;
-  if (!cacheDirectory) {
-    throw new Error('Diagnostics export is unavailable because no cache directory exists.');
-  }
-
-  const path = cacheDirectory + 'happier-diagnostics-' + String(deps.now?.() ?? Date.now()) + '.json';
+}): Promise<void> {
   const bundle = buildBugReportExportBundle({
     exportedAt: input.exportedAt,
     form: input.form,
     environment: input.environment,
     artifacts: input.artifacts,
   });
-  const contents = serializeBugReportExportBundle(bundle);
-
-  const writeFile = deps.writeFile ?? (async (filePath, fileContents) => {
-    await FileSystem.writeAsStringAsync(filePath, fileContents, {
-      encoding: FileSystem.EncodingType.UTF8,
+  const name = `happier-diagnostics-${Date.now()}.json`;
+  const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: name });
+  if (!sink.ok) throw new Error(sink.error);
+  let retainCacheFile = false;
+  try {
+    await sink.writeBytes(new TextEncoder().encode(serializeBugReportExportBundle(bundle)));
+    await sink.close();
+    const result = await shareNativeCacheFile({
+      fileUri: sink.fileUri, name, mimeType: 'application/json', UTI: 'public.json', dialogTitle: t('common.saveAs'),
     });
-  });
-  const shareFile = deps.shareFile ?? (async (filePath) => {
-    if (!(await Sharing.isAvailableAsync())) {
-      throw new Error('Diagnostics sharing is unavailable on this device.');
-    }
-    await Sharing.shareAsync(filePath, {
-      mimeType: 'application/json',
-      dialogTitle: 'Export diagnostics',
-      UTI: 'public.json',
-    });
-  });
-
-  await writeFile(path, contents);
-  await shareFile(path);
-  return path;
+    if (result.status !== 'shared') throw new Error(t('files.fileSharingUnavailable'));
+    retainCacheFile = result.retainCacheFile;
+  } finally {
+    if (!retainCacheFile) await sink.cleanup();
+  }
 }

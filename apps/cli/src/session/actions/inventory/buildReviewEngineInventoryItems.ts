@@ -1,4 +1,5 @@
-import { isBackendTargetDisabledByAccountSettings, type AccountSettings, type ReviewEngineCapabilities } from '@happier-dev/protocol';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AccountSettings, ReviewEngineCapabilities } from '@happier-dev/protocol';
 
 import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';

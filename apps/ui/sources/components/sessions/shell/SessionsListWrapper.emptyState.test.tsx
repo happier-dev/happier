@@ -1,7 +1,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen as renderScreenWithProviders, standardCleanup } from '@/dev/testkit';
+import { NavigationContext, useNavigation } from '@react-navigation/native';
 import type { VisibleSessionListPaneStateOptions } from '@/hooks/session/useVisibleSessionListPaneState';
 import { SessionsListWrapper } from './SessionsListWrapper';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -54,6 +55,17 @@ const accountScopeState = vi.hoisted(() => ({
 const gettingStartedState = vi.hoisted(() => ({
     kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
 }));
+
+function ScreenNavigationProvider({ children }: React.PropsWithChildren) {
+    const navigation = useNavigation<NonNullable<React.ContextType<typeof NavigationContext>>>();
+    return <NavigationContext.Provider value={navigation}>
+        {children}
+    </NavigationContext.Provider>;
+}
+
+function renderScreen(element: React.ReactElement) {
+    return renderScreenWithProviders(element, { wrapper: ScreenNavigationProvider });
+}
 
 installSessionShellCommonModuleMocks({
     reactNative: async () => {

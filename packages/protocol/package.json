@@ -6,6 +6,3446 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./lazyZodSchema": {
+      "types": "./dist/lazyZodSchema.d.ts",
+      "default": "./dist/lazyZodSchema.js"
+    },
+    "./plugins/ui/uiArtifactsManifest": {
+      "types": "./dist/plugins/ui/uiArtifactsManifest.d.ts",
+      "default": "./dist/plugins/ui/uiArtifactsManifest.js"
+    },
+    "./plugins/ui/subscriptions": {
+      "types": "./dist/plugins/ui/subscriptions.d.ts",
+      "default": "./dist/plugins/ui/subscriptions.js"
+    },
+    "./widgets/builtinWidgetDescriptorV1": {
+      "types": "./dist/widgets/builtinWidgetDescriptorV1.d.ts",
+      "default": "./dist/widgets/builtinWidgetDescriptorV1.js"
+    },
+    "./widgets/executeWidgetInstanceActionV1": {
+      "types": "./dist/widgets/executeWidgetInstanceActionV1.d.ts",
+      "default": "./dist/widgets/executeWidgetInstanceActionV1.js"
+    },
+    "./scm/remotePolicy": {
+      "types": "./dist/scm/remotePolicy.d.ts",
+      "default": "./dist/scm/remotePolicy.js"
+    },
+    "./plugins/contributions/ui/surfaceRegistry": {
+      "types": "./dist/plugins/contributions/ui/surfaceRegistry.d.ts",
+      "default": "./dist/plugins/contributions/ui/surfaceRegistry.js"
+    },
+    "./scm/operationOutcome": {
+      "types": "./dist/scm/operationOutcome.d.ts",
+      "default": "./dist/scm/operationOutcome.js"
+    },
+    "./plugins/ui/hostApi": {
+      "types": "./dist/plugins/ui/hostApi.d.ts",
+      "default": "./dist/plugins/ui/hostApi.js"
+    },
+    "./plugins/ui/hostedWebBuild": {
+      "types": "./dist/plugins/ui/hostedWebBuild.d.ts",
+      "default": "./dist/plugins/ui/hostedWebBuild.js"
+    },
+    "./plugins/ui/selectedActionInput": {
+      "types": "./dist/plugins/ui/selectedActionInput.d.ts",
+      "default": "./dist/plugins/ui/selectedActionInput.js"
+    },
+    "./plugins/contributions/ui/widgetInventory": {
+      "types": "./dist/plugins/contributions/ui/widgetInventory.d.ts",
+      "default": "./dist/plugins/contributions/ui/widgetInventory.js"
+    },
+    "./widgets/widgetConnectedAccountPurposeBindingV1": {
+      "types": "./dist/widgets/widgetConnectedAccountPurposeBindingV1.d.ts",
+      "default": "./dist/widgets/widgetConnectedAccountPurposeBindingV1.js"
+    },
+    "./widgets/widgetDefinitionV1": {
+      "types": "./dist/widgets/widgetDefinitionV1.d.ts",
+      "default": "./dist/widgets/widgetDefinitionV1.js"
+    },
+    "./widgets/widgetActionInputResolverV1": {
+      "types": "./dist/widgets/widgetActionInputResolverV1.d.ts",
+      "default": "./dist/widgets/widgetActionInputResolverV1.js"
+    },
+    "./widgets/widgetInputAdmissionV1": {
+      "types": "./dist/widgets/widgetInputAdmissionV1.d.ts",
+      "default": "./dist/widgets/widgetInputAdmissionV1.js"
+    },
+    "./widgets/widgetViewerPurposeV1": {
+      "types": "./dist/widgets/widgetViewerPurposeV1.d.ts",
+      "default": "./dist/widgets/widgetViewerPurposeV1.js"
+    },
+    "./widgets/widgetSurfaceArtifactV1": {
+      "types": "./dist/widgets/widgetSurfaceArtifactV1.d.ts",
+      "default": "./dist/widgets/widgetSurfaceArtifactV1.js"
+    },
+    "./widgets/widgetDefinitionArtifactV1": {
+      "types": "./dist/widgets/widgetDefinitionArtifactV1.d.ts",
+      "default": "./dist/widgets/widgetDefinitionArtifactV1.js"
+    },
+    "./widgets/widgetDefinitionPromotionV1": {
+      "types": "./dist/widgets/widgetDefinitionPromotionV1.d.ts",
+      "default": "./dist/widgets/widgetDefinitionPromotionV1.js"
+    },
+    "./plugins/contributions/ui/sessionHeaderActions": {
+      "types": "./dist/plugins/contributions/ui/sessionHeaderActions.d.ts",
+      "default": "./dist/plugins/contributions/ui/sessionHeaderActions.js"
+    },
+    "./plugins/ui/semanticCommands": {
+      "types": "./dist/plugins/ui/semanticCommands.d.ts",
+      "default": "./dist/plugins/ui/semanticCommands.js"
+    },
+    "./plugins/ui/hostApiDefinition": {
+      "types": "./dist/plugins/ui/hostApiDefinition.d.ts",
+      "default": "./dist/plugins/ui/hostApiDefinition.js"
+    },
+    "./plugins/ui/hostedWebAssetPolicy": {
+      "types": "./dist/plugins/ui/hostedWebAssetPolicy.d.ts",
+      "default": "./dist/plugins/ui/hostedWebAssetPolicy.js"
+    },
+    "./plugins/contributions/ui/sessionInfoSections": {
+      "types": "./dist/plugins/contributions/ui/sessionInfoSections.d.ts",
+      "default": "./dist/plugins/contributions/ui/sessionInfoSections.js"
+    },
+    "./scm/resolveScmBackendCapabilities": {
+      "types": "./dist/scm/resolveScmBackendCapabilities.d.ts",
+      "default": "./dist/scm/resolveScmBackendCapabilities.js"
+    },
+    "./actions/accountSettingDeclarations": {
+      "types": "./dist/actions/accountSettingDeclarations.d.ts",
+      "default": "./dist/actions/accountSettingDeclarations.js"
+    },
+    "./actions/settingsDeclarationActionFamily": {
+      "types": "./dist/actions/settingsDeclarationActionFamily.d.ts",
+      "default": "./dist/actions/settingsDeclarationActionFamily.js"
+    },
+    "./runtime/agentSessionV1": {
+      "types": "./dist/runtime/agentSessionV1.d.ts",
+      "default": "./dist/runtime/agentSessionV1.js"
+    },
+    "./bugs/reports/redaction": {
+      "types": "./dist/bugs/reports/redaction.d.ts",
+      "default": "./dist/bugs/reports/redaction.js"
+    },
+    "./sessions/slashCommands": {
+      "types": "./dist/sessions/slashCommands.d.ts",
+      "default": "./dist/sessions/slashCommands.js"
+    },
+    "./runtime/input/structuredInputV1": {
+      "types": "./dist/runtime/input/structuredInputV1.d.ts",
+      "default": "./dist/runtime/input/structuredInputV1.js"
+    },
+    "./scm/comparison": {
+      "types": "./dist/scm/comparison.d.ts",
+      "default": "./dist/scm/comparison.js"
+    },
+    "./scm/diffSummary": {
+      "types": "./dist/scm/diffSummary.d.ts",
+      "default": "./dist/scm/diffSummary.js"
+    },
+    "./scm/diffSummaryResult": {
+      "types": "./dist/scm/diffSummaryResult.d.ts",
+      "default": "./dist/scm/diffSummaryResult.js"
+    },
+    "./scm/diffSummaryCommitPlan": {
+      "types": "./dist/scm/diffSummaryCommitPlan.d.ts",
+      "default": "./dist/scm/diffSummaryCommitPlan.js"
+    },
+    "./sessions/permissions/v1": {
+      "types": "./dist/sessions/permissions/v1.d.ts",
+      "default": "./dist/sessions/permissions/v1.js"
+    },
+    "./sessions/permissions/mediationRecordsV1": {
+      "types": "./dist/sessions/permissions/mediationRecordsV1.d.ts",
+      "default": "./dist/sessions/permissions/mediationRecordsV1.js"
+    },
+    "./agents/claude/permissionRequestSource": {
+      "types": "./dist/agents/claude/permissionRequestSource.d.ts",
+      "default": "./dist/agents/claude/permissionRequestSource.js"
+    },
+    "./tools/v2/aliases": {
+      "types": "./dist/tools/v2/aliases.d.ts",
+      "default": "./dist/tools/v2/aliases.js"
+    },
+    "./runtime/agentSessionStartupInstructionsV1": {
+      "types": "./dist/runtime/agentSessionStartupInstructionsV1.d.ts",
+      "default": "./dist/runtime/agentSessionStartupInstructionsV1.js"
+    },
+    "./actions/actionCompletion": {
+      "types": "./dist/actions/actionCompletion.d.ts",
+      "default": "./dist/actions/actionCompletion.js"
+    },
+    "./runtime/agentSessionLimitsV1": {
+      "types": "./dist/runtime/agentSessionLimitsV1.d.ts",
+      "default": "./dist/runtime/agentSessionLimitsV1.js"
+    },
+    "./runtime/agentExecutionRunV1": {
+      "types": "./dist/runtime/agentExecutionRunV1.d.ts",
+      "default": "./dist/runtime/agentExecutionRunV1.js"
+    },
+    "./teams/credentials/resourceV1": {
+      "types": "./dist/teams/credentials/resourceV1.d.ts",
+      "default": "./dist/teams/credentials/resourceV1.js"
+    },
+    "./providers/errors": {
+      "types": "./dist/providers/errors.d.ts",
+      "default": "./dist/providers/errors.js"
+    },
+    "./providers/sessions/bindingMetadataV1": {
+      "types": "./dist/providers/sessions/bindingMetadataV1.d.ts",
+      "default": "./dist/providers/sessions/bindingMetadataV1.js"
+    },
+    "./sessions/metadata/sessionMetadataSchemasV1": {
+      "types": "./dist/sessions/metadata/sessionMetadataSchemasV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionMetadataSchemasV1.js"
+    },
+    "./sessions/metadata/sessionWorkspaceLocationV1": {
+      "types": "./dist/sessions/metadata/sessionWorkspaceLocationV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionWorkspaceLocationV1.js"
+    },
+    "./runtime/input/mentionRefV1": {
+      "types": "./dist/runtime/input/mentionRefV1.d.ts",
+      "default": "./dist/runtime/input/mentionRefV1.js"
+    },
+    "./sessions/work/agentActivity/agentActivityHeadlineV1": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityHeadlineV1.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityHeadlineV1.js"
+    },
+    "./sessions/work/sessionActivityHeadlineBundleV1": {
+      "types": "./dist/sessions/work/sessionActivityHeadlineBundleV1.d.ts",
+      "default": "./dist/sessions/work/sessionActivityHeadlineBundleV1.js"
+    },
+    "./sessions/control/runtimeIssueV1": {
+      "types": "./dist/sessions/control/runtimeIssueV1.d.ts",
+      "default": "./dist/sessions/control/runtimeIssueV1.js"
+    },
+    "./sessions/turns/sessionTurnMutationV1": {
+      "types": "./dist/sessions/turns/sessionTurnMutationV1.d.ts",
+      "default": "./dist/sessions/turns/sessionTurnMutationV1.js"
+    },
+    "./sessions/work/state/sessionWorkStateItemIds": {
+      "types": "./dist/sessions/work/state/sessionWorkStateItemIds.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStateItemIds.js"
+    },
+    "./sessions/work/state/sessionWorkStateMerge": {
+      "types": "./dist/sessions/work/state/sessionWorkStateMerge.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStateMerge.js"
+    },
+    "./workflows/composeWorkflowRunWorkerUpdateV1": {
+      "types": "./dist/workflows/composeWorkflowRunWorkerUpdateV1.d.ts",
+      "default": "./dist/workflows/composeWorkflowRunWorkerUpdateV1.js"
+    },
+    "./workflows/workflowStoredContentV1": {
+      "types": "./dist/workflows/workflowStoredContentV1.d.ts",
+      "default": "./dist/workflows/workflowStoredContentV1.js"
+    },
+    "./workflows/workflowRunDataKeyV1": {
+      "types": "./dist/workflows/workflowRunDataKeyV1.d.ts",
+      "default": "./dist/workflows/workflowRunDataKeyV1.js"
+    },
+    "./workflows/workflowRunKeyV1": {
+      "types": "./dist/workflows/workflowRunKeyV1.d.ts",
+      "default": "./dist/workflows/workflowRunKeyV1.js"
+    },
+    "./providers/brokerRouteGrantV1": {
+      "types": "./dist/providers/brokerRouteGrantV1.d.ts",
+      "default": "./dist/providers/brokerRouteGrantV1.js"
+    },
+    "./sessions/follow/sessionFollowSourceKeyPreparationV1": {
+      "types": "./dist/sessions/follow/sessionFollowSourceKeyPreparationV1.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowSourceKeyPreparationV1.js"
+    },
+    "./rpc/methods": {
+      "types": "./dist/rpc/methods.d.ts",
+      "default": "./dist/rpc/methods.js"
+    },
+    "./sessions/follow/sessionFollowFrontierV1": {
+      "types": "./dist/sessions/follow/sessionFollowFrontierV1.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowFrontierV1.js"
+    },
+    "./sessions/follow/sessionFollowTransportV1": {
+      "types": "./dist/sessions/follow/sessionFollowTransportV1.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowTransportV1.js"
+    },
+    "./sessions/follow/sessionFollowUpdateEnvelopeV1": {
+      "types": "./dist/sessions/follow/sessionFollowUpdateEnvelopeV1.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowUpdateEnvelopeV1.js"
+    },
+    "./sessions/follow/sessionFollowSourceProjectionV1": {
+      "types": "./dist/sessions/follow/sessionFollowSourceProjectionV1.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowSourceProjectionV1.js"
+    },
+    "./machines/pools/v1": {
+      "types": "./dist/machines/pools/v1.d.ts",
+      "default": "./dist/machines/pools/v1.js"
+    },
+    "./sessions/creation/sessionCreationCorrespondenceV1": {
+      "types": "./dist/sessions/creation/sessionCreationCorrespondenceV1.d.ts",
+      "default": "./dist/sessions/creation/sessionCreationCorrespondenceV1.js"
+    },
+    "./sessions/creation/sessionCreationIdentityV1": {
+      "types": "./dist/sessions/creation/sessionCreationIdentityV1.d.ts",
+      "default": "./dist/sessions/creation/sessionCreationIdentityV1.js"
+    },
+    "./sessions/control/checkpoints/v1": {
+      "types": "./dist/sessions/control/checkpoints/v1.d.ts",
+      "default": "./dist/sessions/control/checkpoints/v1.js"
+    },
+    "./sessions/messages/agentExternalSessionTranscriptRawRecord": {
+      "types": "./dist/sessions/messages/agentExternalSessionTranscriptRawRecord.d.ts",
+      "default": "./dist/sessions/messages/agentExternalSessionTranscriptRawRecord.js"
+    },
+    "./sessions/control/sessionRunnerRuntimeV1": {
+      "types": "./dist/sessions/control/sessionRunnerRuntimeV1.d.ts",
+      "default": "./dist/sessions/control/sessionRunnerRuntimeV1.js"
+    },
+    "./actions/pluginActionSurface": {
+      "types": "./dist/actions/pluginActionSurface.d.ts",
+      "default": "./dist/actions/pluginActionSurface.js"
+    },
+    "./actions/actionIds": {
+      "types": "./dist/actions/actionIds.d.ts",
+      "default": "./dist/actions/actionIds.js"
+    },
+    "./providers/sessions/agentSessionProviderBindingV1": {
+      "types": "./dist/providers/sessions/agentSessionProviderBindingV1.d.ts",
+      "default": "./dist/providers/sessions/agentSessionProviderBindingV1.js"
+    },
+    "./sessions/messages/sessionPendingMachineAdmissionV1": {
+      "types": "./dist/sessions/messages/sessionPendingMachineAdmissionV1.d.ts",
+      "default": "./dist/sessions/messages/sessionPendingMachineAdmissionV1.js"
+    },
+    "./sessions/messages/sessionPendingExecutionRunMachineAdmissionV2": {
+      "types": "./dist/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.d.ts",
+      "default": "./dist/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js"
+    },
+    "./runtime/input/composerContentV1": {
+      "types": "./dist/runtime/input/composerContentV1.d.ts",
+      "default": "./dist/runtime/input/composerContentV1.js"
+    },
+    "./runtime/input/composerAttachmentV1": {
+      "types": "./dist/runtime/input/composerAttachmentV1.d.ts",
+      "default": "./dist/runtime/input/composerAttachmentV1.js"
+    },
+    "./inputs/inputFields": {
+      "types": "./dist/inputs/inputFields.d.ts",
+      "default": "./dist/inputs/inputFields.js"
+    },
+    "./actions/safetyVocabulary": {
+      "types": "./dist/actions/safetyVocabulary.d.ts",
+      "default": "./dist/actions/safetyVocabulary.js"
+    },
+    "./providers/compatibility/v1": {
+      "types": "./dist/providers/compatibility/v1.d.ts",
+      "default": "./dist/providers/compatibility/v1.js"
+    },
+    "./plugins/contributions/jsonSchema": {
+      "types": "./dist/plugins/contributions/jsonSchema.d.ts",
+      "default": "./dist/plugins/contributions/jsonSchema.js"
+    },
+    "./sessions/creation/sessionExecutionTargetV1": {
+      "types": "./dist/sessions/creation/sessionExecutionTargetV1.d.ts",
+      "default": "./dist/sessions/creation/sessionExecutionTargetV1.js"
+    },
+    "./providers/materialization/v1": {
+      "types": "./dist/providers/materialization/v1.d.ts",
+      "default": "./dist/providers/materialization/v1.js"
+    },
+    "./connect/connectedAccountPurposeIdentity": {
+      "types": "./dist/connect/connectedAccountPurposeIdentity.d.ts",
+      "default": "./dist/connect/connectedAccountPurposeIdentity.js"
+    },
+    "./providers/capabilities/v1": {
+      "types": "./dist/providers/capabilities/v1.d.ts",
+      "default": "./dist/providers/capabilities/v1.js"
+    },
+    "./voice/realtime/agentSession": {
+      "types": "./dist/voice/realtime/agentSession.d.ts",
+      "default": "./dist/voice/realtime/agentSession.js"
+    },
+    "./runtime/input/composerReferenceProviderV1": {
+      "types": "./dist/runtime/input/composerReferenceProviderV1.d.ts",
+      "default": "./dist/runtime/input/composerReferenceProviderV1.js"
+    },
+    "./runtime/catalog/skills": {
+      "types": "./dist/runtime/catalog/skills.d.ts",
+      "default": "./dist/runtime/catalog/skills.js"
+    },
+    "./sessions/work/state/sessionWorkStateRpc": {
+      "types": "./dist/sessions/work/state/sessionWorkStateRpc.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStateRpc.js"
+    },
+    "./runtime/input/imageInputV1": {
+      "types": "./dist/runtime/input/imageInputV1.d.ts",
+      "default": "./dist/runtime/input/imageInputV1.js"
+    },
+    "./tools/v2/patch": {
+      "types": "./dist/tools/v2/patch.d.ts",
+      "default": "./dist/tools/v2/patch.js"
+    },
+    "./actions/actionToolExposure": {
+      "types": "./dist/actions/actionToolExposure.d.ts",
+      "default": "./dist/actions/actionToolExposure.js"
+    },
+    "./actions/actionSettings": {
+      "types": "./dist/actions/actionSettings.d.ts",
+      "default": "./dist/actions/actionSettings.js"
+    },
+    "./actions/actionApprovalPolicy": {
+      "types": "./dist/actions/actionApprovalPolicy.d.ts",
+      "default": "./dist/actions/actionApprovalPolicy.js"
+    },
+    "./actions/actionSurfaceAvailability": {
+      "types": "./dist/actions/actionSurfaceAvailability.d.ts",
+      "default": "./dist/actions/actionSurfaceAvailability.js"
+    },
+    "./plugins/actions/qualifiedActionId": {
+      "types": "./dist/plugins/actions/qualifiedActionId.d.ts",
+      "default": "./dist/plugins/actions/qualifiedActionId.js"
+    },
+    "./actions/executor/dispatch": {
+      "types": "./dist/actions/executor/dispatch.d.ts",
+      "default": "./dist/actions/executor/dispatch.js"
+    },
+    "./actions/actionRequiredServerFeature": {
+      "types": "./dist/actions/actionRequiredServerFeature.d.ts",
+      "default": "./dist/actions/actionRequiredServerFeature.js"
+    },
+    "./actions/sessionSpawnConfigOptions": {
+      "types": "./dist/actions/sessionSpawnConfigOptions.d.ts",
+      "default": "./dist/actions/sessionSpawnConfigOptions.js"
+    },
+    "./actions/homeDomainActionFamily": {
+      "types": "./dist/actions/homeDomainActionFamily.d.ts",
+      "default": "./dist/actions/homeDomainActionFamily.js"
+    },
+    "./actions/sessionAccessActionFamily": {
+      "types": "./dist/actions/sessionAccessActionFamily.d.ts",
+      "default": "./dist/actions/sessionAccessActionFamily.js"
+    },
+    "./machines/pools/actionsV1": {
+      "types": "./dist/machines/pools/actionsV1.d.ts",
+      "default": "./dist/machines/pools/actionsV1.js"
+    },
+    "./sessions/access/sessionAccessActionsV1": {
+      "types": "./dist/sessions/access/sessionAccessActionsV1.d.ts",
+      "default": "./dist/sessions/access/sessionAccessActionsV1.js"
+    },
+    "./sessions/access/sessionAccessOperationsV1": {
+      "types": "./dist/sessions/access/sessionAccessOperationsV1.d.ts",
+      "default": "./dist/sessions/access/sessionAccessOperationsV1.js"
+    },
+    "./teams/credentials/readinessV1": {
+      "types": "./dist/teams/credentials/readinessV1.d.ts",
+      "default": "./dist/teams/credentials/readinessV1.js"
+    },
+    "./teams/credentials/externalProviderApiV1": {
+      "types": "./dist/teams/credentials/externalProviderApiV1.d.ts",
+      "default": "./dist/teams/credentials/externalProviderApiV1.js"
+    },
+    "./teams/credentials/actionsV1": {
+      "types": "./dist/teams/credentials/actionsV1.d.ts",
+      "default": "./dist/teams/credentials/actionsV1.js"
+    },
+    "./sessions/creation/sessionSpawnNewResultV1": {
+      "types": "./dist/sessions/creation/sessionSpawnNewResultV1.d.ts",
+      "default": "./dist/sessions/creation/sessionSpawnNewResultV1.js"
+    },
+    "./sessions/external/secureRefreshV1": {
+      "types": "./dist/sessions/external/secureRefreshV1.d.ts",
+      "default": "./dist/sessions/external/secureRefreshV1.js"
+    },
+    "./actions/operations/v1": {
+      "types": "./dist/actions/operations/v1.d.ts",
+      "default": "./dist/actions/operations/v1.js"
+    },
+    "./actions/externalActionExecutionAuthorization": {
+      "types": "./dist/actions/externalActionExecutionAuthorization.d.ts",
+      "default": "./dist/actions/externalActionExecutionAuthorization.js"
+    },
+    "./sessions/external/operationActionsV1": {
+      "types": "./dist/sessions/external/operationActionsV1.d.ts",
+      "default": "./dist/sessions/external/operationActionsV1.js"
+    },
+    "./sessions/external/statusDemandV1": {
+      "types": "./dist/sessions/external/statusDemandV1.d.ts",
+      "default": "./dist/sessions/external/statusDemandV1.js"
+    },
+    "./transfers/relay/v2/socketEvents": {
+      "types": "./dist/transfers/relay/v2/socketEvents.d.ts",
+      "default": "./dist/transfers/relay/v2/socketEvents.js"
+    },
+    "./sessions/control/machineSessionTerminalV1": {
+      "types": "./dist/sessions/control/machineSessionTerminalV1.d.ts",
+      "default": "./dist/sessions/control/machineSessionTerminalV1.js"
+    },
+    "./sessions/creation/sessionServerStartV1": {
+      "types": "./dist/sessions/creation/sessionServerStartV1.d.ts",
+      "default": "./dist/sessions/creation/sessionServerStartV1.js"
+    },
+    "./actions/executor/artifactPublicLinkActions": {
+      "types": "./dist/actions/executor/artifactPublicLinkActions.d.ts",
+      "default": "./dist/actions/executor/artifactPublicLinkActions.js"
+    },
+    "./artifacts/artifactHtmlV1": {
+      "types": "./dist/artifacts/artifactHtmlV1.d.ts",
+      "default": "./dist/artifacts/artifactHtmlV1.js"
+    },
+    "./actions/externalActionApi": {
+      "types": "./dist/actions/externalActionApi.d.ts",
+      "default": "./dist/actions/externalActionApi.js"
+    },
+    "./sessions/external/legacyDirectSessionWireSchemasV1": {
+      "types": "./dist/sessions/external/legacyDirectSessionWireSchemasV1.d.ts",
+      "default": "./dist/sessions/external/legacyDirectSessionWireSchemasV1.js"
+    },
+    "./sessions/external/hookManagementV1": {
+      "types": "./dist/sessions/external/hookManagementV1.d.ts",
+      "default": "./dist/sessions/external/hookManagementV1.js"
+    },
+    "./marketplace/marketplaceSourceRegistryV1": {
+      "types": "./dist/marketplace/marketplaceSourceRegistryV1.d.ts",
+      "default": "./dist/marketplace/marketplaceSourceRegistryV1.js"
+    },
+    "./terminal/stream": {
+      "types": "./dist/terminal/stream.d.ts",
+      "default": "./dist/terminal/stream.js"
+    },
+    "./terminal/input": {
+      "types": "./dist/terminal/input.d.ts",
+      "default": "./dist/terminal/input.js"
+    },
+    "./sessions/control/sessionRunnerRestartV1": {
+      "types": "./dist/sessions/control/sessionRunnerRestartV1.d.ts",
+      "default": "./dist/sessions/control/sessionRunnerRestartV1.js"
+    },
+    "./sessions/control/sessionRunnerRestartV2": {
+      "types": "./dist/sessions/control/sessionRunnerRestartV2.d.ts",
+      "default": "./dist/sessions/control/sessionRunnerRestartV2.js"
+    },
+    "./plugins/availability/materializationRefV1": {
+      "types": "./dist/plugins/availability/materializationRefV1.d.ts",
+      "default": "./dist/plugins/availability/materializationRefV1.js"
+    },
+    "./voice/realtime/providerSettings": {
+      "types": "./dist/voice/realtime/providerSettings.d.ts",
+      "default": "./dist/voice/realtime/providerSettings.js"
+    },
+    "./auth/callerInputConstraintsV1": {
+      "types": "./dist/auth/callerInputConstraintsV1.d.ts",
+      "default": "./dist/auth/callerInputConstraintsV1.js"
+    },
+    "./providers/selection/v2": {
+      "types": "./dist/providers/selection/v2.d.ts",
+      "default": "./dist/providers/selection/v2.js"
+    },
+    "./messages/structured/participantMessageV1": {
+      "types": "./dist/messages/structured/participantMessageV1.d.ts",
+      "default": "./dist/messages/structured/participantMessageV1.js"
+    },
+    "./sessions/userActionRequiredOccurrenceV1": {
+      "types": "./dist/sessions/userActionRequiredOccurrenceV1.d.ts",
+      "default": "./dist/sessions/userActionRequiredOccurrenceV1.js"
+    },
+    "./sessions/personal/attention": {
+      "types": "./dist/sessions/personal/attention.d.ts",
+      "default": "./dist/sessions/personal/attention.js"
+    },
+    "./sessions/external/followLifecycleV1": {
+      "types": "./dist/sessions/external/followLifecycleV1.d.ts",
+      "default": "./dist/sessions/external/followLifecycleV1.js"
+    },
+    "./sessions/external/historicalImportIdentity": {
+      "types": "./dist/sessions/external/historicalImportIdentity.d.ts",
+      "default": "./dist/sessions/external/historicalImportIdentity.js"
+    },
+    "./sessions/external/takeoverV1": {
+      "types": "./dist/sessions/external/takeoverV1.d.ts",
+      "default": "./dist/sessions/external/takeoverV1.js"
+    },
+    "./sessions/pending/pendingActivationAuthorizationV1": {
+      "types": "./dist/sessions/pending/pendingActivationAuthorizationV1.d.ts",
+      "default": "./dist/sessions/pending/pendingActivationAuthorizationV1.js"
+    },
+    "./sessions/messages/sessionPendingAdmissionSettlementV1": {
+      "types": "./dist/sessions/messages/sessionPendingAdmissionSettlementV1.d.ts",
+      "default": "./dist/sessions/messages/sessionPendingAdmissionSettlementV1.js"
+    },
+    "./sessions/runtime/activity/transport": {
+      "types": "./dist/sessions/runtime/activity/transport.d.ts",
+      "default": "./dist/sessions/runtime/activity/transport.js"
+    },
+    "./sessions/metadata/sessionActionConfirmationsV1": {
+      "types": "./dist/sessions/metadata/sessionActionConfirmationsV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionActionConfirmationsV1.js"
+    },
+    "./sessions/follow/accountVoiceFollowTransportV1": {
+      "types": "./dist/sessions/follow/accountVoiceFollowTransportV1.d.ts",
+      "default": "./dist/sessions/follow/accountVoiceFollowTransportV1.js"
+    },
+    "./sessions/discussions/api": {
+      "types": "./dist/sessions/discussions/api.d.ts",
+      "default": "./dist/sessions/discussions/api.js"
+    },
+    "./sessions/encryption/sessionDataKeyEnvelopes": {
+      "types": "./dist/sessions/encryption/sessionDataKeyEnvelopes.d.ts",
+      "default": "./dist/sessions/encryption/sessionDataKeyEnvelopes.js"
+    },
+    "./sessions/access/sessionInitialAccessDraftV1": {
+      "types": "./dist/sessions/access/sessionInitialAccessDraftV1.d.ts",
+      "default": "./dist/sessions/access/sessionInitialAccessDraftV1.js"
+    },
+    "./sessions/follow/actionTransport": {
+      "types": "./dist/sessions/follow/actionTransport.d.ts",
+      "default": "./dist/sessions/follow/actionTransport.js"
+    },
+    "./sessions/follow/sessionFollowSourcesApi": {
+      "types": "./dist/sessions/follow/sessionFollowSourcesApi.d.ts",
+      "default": "./dist/sessions/follow/sessionFollowSourcesApi.js"
+    },
+    "./sessions/follow/api": {
+      "types": "./dist/sessions/follow/api.d.ts",
+      "default": "./dist/sessions/follow/api.js"
+    },
+    "./sessions/organization/mutations": {
+      "types": "./dist/sessions/organization/mutations.d.ts",
+      "default": "./dist/sessions/organization/mutations.js"
+    },
+    "./sessions/organization/snapshot": {
+      "types": "./dist/sessions/organization/snapshot.d.ts",
+      "default": "./dist/sessions/organization/snapshot.js"
+    },
+    "./sessions/organization/content": {
+      "types": "./dist/sessions/organization/content.d.ts",
+      "default": "./dist/sessions/organization/content.js"
+    },
+    "./sharing/storedContentPublicShareV1": {
+      "types": "./dist/sharing/storedContentPublicShareV1.d.ts",
+      "default": "./dist/sharing/storedContentPublicShareV1.js"
+    },
+    "./sessions/readState/actionTransport": {
+      "types": "./dist/sessions/readState/actionTransport.d.ts",
+      "default": "./dist/sessions/readState/actionTransport.js"
+    },
+    "./local/services/inventory/v1": {
+      "types": "./dist/local/services/inventory/v1.d.ts",
+      "default": "./dist/local/services/inventory/v1.js"
+    },
+    "./machines/identity/contentPublicKeyFingerprint": {
+      "types": "./dist/machines/identity/contentPublicKeyFingerprint.d.ts",
+      "default": "./dist/machines/identity/contentPublicKeyFingerprint.js"
+    },
+    "./features/payload/capabilities/accountDirectoryCapabilities": {
+      "types": "./dist/features/payload/capabilities/accountDirectoryCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/accountDirectoryCapabilities.js"
+    },
+    "./installables/definitions/az": {
+      "types": "./dist/installables/definitions/az.d.ts",
+      "default": "./dist/installables/definitions/az.js"
+    },
+    "./installables/definitions/gh": {
+      "types": "./dist/installables/definitions/gh.d.ts",
+      "default": "./dist/installables/definitions/gh.js"
+    },
+    "./installables/codexAcp": {
+      "types": "./dist/installables/codexAcp.d.ts",
+      "default": "./dist/installables/codexAcp.js"
+    },
+    "./bugs/reports/sanitize": {
+      "types": "./dist/bugs/reports/sanitize.d.ts",
+      "default": "./dist/bugs/reports/sanitize.js"
+    },
+    "./actions/actionCliProjection": {
+      "types": "./dist/actions/actionCliProjection.d.ts",
+      "default": "./dist/actions/actionCliProjection.js"
+    },
+    "./inputs/inputPredicates": {
+      "types": "./dist/inputs/inputPredicates.d.ts",
+      "default": "./dist/inputs/inputPredicates.js"
+    },
+    "./actions/actionCatalog": {
+      "types": "./dist/actions/actionCatalog.d.ts",
+      "default": "./dist/actions/actionCatalog.js"
+    },
+    "./server/urls/serverUrlComparableKey": {
+      "types": "./dist/server/urls/serverUrlComparableKey.d.ts",
+      "default": "./dist/server/urls/serverUrlComparableKey.js"
+    },
+    "./providers/connections/normalizeCustomTemplateV1": {
+      "types": "./dist/providers/connections/normalizeCustomTemplateV1.d.ts",
+      "default": "./dist/providers/connections/normalizeCustomTemplateV1.js"
+    },
+    "./providers/connections/customTemplateV1": {
+      "types": "./dist/providers/connections/customTemplateV1.d.ts",
+      "default": "./dist/providers/connections/customTemplateV1.js"
+    },
+    "./providers/manualModelInput": {
+      "types": "./dist/providers/manualModelInput.d.ts",
+      "default": "./dist/providers/manualModelInput.js"
+    },
+    "./runtime/permissionIntentV1": {
+      "types": "./dist/runtime/permissionIntentV1.d.ts",
+      "default": "./dist/runtime/permissionIntentV1.js"
+    },
+    "./sessions/discussions/actions": {
+      "types": "./dist/sessions/discussions/actions.d.ts",
+      "default": "./dist/sessions/discussions/actions.js"
+    },
+    "./actions/specs/sessionCommandCli": {
+      "types": "./dist/actions/specs/sessionCommandCli.d.ts",
+      "default": "./dist/actions/specs/sessionCommandCli.js"
+    },
+    "./teams/logo": {
+      "types": "./dist/teams/logo.d.ts",
+      "default": "./dist/teams/logo.js"
+    },
+    "./sessions/work/workflow/sessionWorkflowActivityHeadlineV1": {
+      "types": "./dist/sessions/work/workflow/sessionWorkflowActivityHeadlineV1.d.ts",
+      "default": "./dist/sessions/work/workflow/sessionWorkflowActivityHeadlineV1.js"
+    },
+    "./teams/credentials/sessionBindingIntentV1": {
+      "types": "./dist/teams/credentials/sessionBindingIntentV1.d.ts",
+      "default": "./dist/teams/credentials/sessionBindingIntentV1.js"
+    },
+    "./sessions/creation/sessionSpawnBudget": {
+      "types": "./dist/sessions/creation/sessionSpawnBudget.d.ts",
+      "default": "./dist/sessions/creation/sessionSpawnBudget.js"
+    },
+    "./workspaces/workspaceSyncTopology": {
+      "types": "./dist/workspaces/workspaceSyncTopology.d.ts",
+      "default": "./dist/workspaces/workspaceSyncTopology.js"
+    },
+    "./providers/settings/v1": {
+      "types": "./dist/providers/settings/v1.d.ts",
+      "default": "./dist/providers/settings/v1.js"
+    },
+    "./server/urls/loopbackHostname": {
+      "types": "./dist/server/urls/loopbackHostname.d.ts",
+      "default": "./dist/server/urls/loopbackHostname.js"
+    },
+    "./teams/credentials/directMaterialV1": {
+      "types": "./dist/teams/credentials/directMaterialV1.d.ts",
+      "default": "./dist/teams/credentials/directMaterialV1.js"
+    },
+    "./teams/projections": {
+      "types": "./dist/teams/projections.d.ts",
+      "default": "./dist/teams/projections.js"
+    },
+    "./teams/credentials/directMaterialCensusV1": {
+      "types": "./dist/teams/credentials/directMaterialCensusV1.d.ts",
+      "default": "./dist/teams/credentials/directMaterialCensusV1.js"
+    },
+    "./sessions/control/sessionRunnerRuntimeV2": {
+      "types": "./dist/sessions/control/sessionRunnerRuntimeV2.d.ts",
+      "default": "./dist/sessions/control/sessionRunnerRuntimeV2.js"
+    },
+    "./actions/externalActionEncryption": {
+      "types": "./dist/actions/externalActionEncryption.d.ts",
+      "default": "./dist/actions/externalActionEncryption.js"
+    },
+    "./actions/specs/localServices": {
+      "types": "./dist/actions/specs/localServices.d.ts",
+      "default": "./dist/actions/specs/localServices.js"
+    },
+    "./plugins/contributions/ui/hostedWebSecurity": {
+      "types": "./dist/plugins/contributions/ui/hostedWebSecurity.d.ts",
+      "default": "./dist/plugins/contributions/ui/hostedWebSecurity.js"
+    },
+    "./local/services/inventory/listeners": {
+      "types": "./dist/local/services/inventory/listeners.d.ts",
+      "default": "./dist/local/services/inventory/listeners.js"
+    },
+    "./providers/safety/limits": {
+      "types": "./dist/providers/safety/limits.d.ts",
+      "default": "./dist/providers/safety/limits.js"
+    },
+    "./ephemeralRunner/brokerReadinessRequestV1": {
+      "types": "./dist/ephemeralRunner/brokerReadinessRequestV1.d.ts",
+      "default": "./dist/ephemeralRunner/brokerReadinessRequestV1.js"
+    },
+    "./sessions/access/sessionEffectiveAccessV1": {
+      "types": "./dist/sessions/access/sessionEffectiveAccessV1.d.ts",
+      "default": "./dist/sessions/access/sessionEffectiveAccessV1.js"
+    },
+    "./sessions/messages/spawnedFirstTurn": {
+      "types": "./dist/sessions/messages/spawnedFirstTurn.d.ts",
+      "default": "./dist/sessions/messages/spawnedFirstTurn.js"
+    },
+    "./providers/settings/readFromAccountSettingsV1": {
+      "types": "./dist/providers/settings/readFromAccountSettingsV1.d.ts",
+      "default": "./dist/providers/settings/readFromAccountSettingsV1.js"
+    },
+    "./plugins/contributions/jsonSchemaValues": {
+      "types": "./dist/plugins/contributions/jsonSchemaValues.d.ts",
+      "default": "./dist/plugins/contributions/jsonSchemaValues.js"
+    },
+    "./providers/safety/url": {
+      "types": "./dist/providers/safety/url.d.ts",
+      "default": "./dist/providers/safety/url.js"
+    },
+    "./plugins/ui/artifactIntegrity": {
+      "types": "./dist/plugins/ui/artifactIntegrity.d.ts",
+      "default": "./dist/plugins/ui/artifactIntegrity.js"
+    },
+    "./workflows/materializeWorkflowAcceptedSnapshotV1": {
+      "types": "./dist/workflows/materializeWorkflowAcceptedSnapshotV1.d.ts",
+      "default": "./dist/workflows/materializeWorkflowAcceptedSnapshotV1.js"
+    },
+    "./workflows/workflowInvocationIdentityV1": {
+      "types": "./dist/workflows/workflowInvocationIdentityV1.d.ts",
+      "default": "./dist/workflows/workflowInvocationIdentityV1.js"
+    },
+    "./workflows/workflowInvocationStructureV1": {
+      "types": "./dist/workflows/workflowInvocationStructureV1.d.ts",
+      "default": "./dist/workflows/workflowInvocationStructureV1.js"
+    },
+    "./sessions/control/exactTurnCancellationV1": {
+      "types": "./dist/sessions/control/exactTurnCancellationV1.d.ts",
+      "default": "./dist/sessions/control/exactTurnCancellationV1.js"
+    },
+    "./workflows/workflowDefinitionRefV1": {
+      "types": "./dist/workflows/workflowDefinitionRefV1.d.ts",
+      "default": "./dist/workflows/workflowDefinitionRefV1.js"
+    },
+    "./automations/automationStoredContentEnvelopeV1": {
+      "types": "./dist/automations/automationStoredContentEnvelopeV1.d.ts",
+      "default": "./dist/automations/automationStoredContentEnvelopeV1.js"
+    },
+    "./workflows/workflowSessionContextV1": {
+      "types": "./dist/workflows/workflowSessionContextV1.d.ts",
+      "default": "./dist/workflows/workflowSessionContextV1.js"
+    },
+    "./workflows/workflowDefinitionResolverV1": {
+      "types": "./dist/workflows/workflowDefinitionResolverV1.d.ts",
+      "default": "./dist/workflows/workflowDefinitionResolverV1.js"
+    },
+    "./workflows/triggers/triggerTargetV1": {
+      "types": "./dist/workflows/triggers/triggerTargetV1.d.ts",
+      "default": "./dist/workflows/triggers/triggerTargetV1.js"
+    },
+    "./actions/specs/executionRunCompletion": {
+      "types": "./dist/actions/specs/executionRunCompletion.d.ts",
+      "default": "./dist/actions/specs/executionRunCompletion.js"
+    },
+    "./actions/executor/workflowRunActions": {
+      "types": "./dist/actions/executor/workflowRunActions.d.ts",
+      "default": "./dist/actions/executor/workflowRunActions.js"
+    },
+    "./workflows/workflowStepLabel": {
+      "types": "./dist/workflows/workflowStepLabel.d.ts",
+      "default": "./dist/workflows/workflowStepLabel.js"
+    },
+    "./bugs/reports/artifacts": {
+      "types": "./dist/bugs/reports/artifacts.d.ts",
+      "default": "./dist/bugs/reports/artifacts.js"
+    },
+    "./bugs/reports/serverDiagnostics": {
+      "types": "./dist/bugs/reports/serverDiagnostics.d.ts",
+      "default": "./dist/bugs/reports/serverDiagnostics.js"
+    },
+    "./bugs/reports/machineDiagnostics": {
+      "types": "./dist/bugs/reports/machineDiagnostics.d.ts",
+      "default": "./dist/bugs/reports/machineDiagnostics.js"
+    },
+    "./bugs/reports/types": {
+      "types": "./dist/bugs/reports/types.d.ts",
+      "default": "./dist/bugs/reports/types.js"
+    },
+    "./bugs/reports/export": {
+      "types": "./dist/bugs/reports/export.d.ts",
+      "default": "./dist/bugs/reports/export.js"
+    },
+    "./bugs/reports/fallback": {
+      "types": "./dist/bugs/reports/fallback.d.ts",
+      "default": "./dist/bugs/reports/fallback.js"
+    },
+    "./bugs/reports/reporter": {
+      "types": "./dist/bugs/reports/reporter.d.ts",
+      "default": "./dist/bugs/reports/reporter.js"
+    },
+    "./bugs/reports/similarIssues": {
+      "types": "./dist/bugs/reports/similarIssues.d.ts",
+      "default": "./dist/bugs/reports/similarIssues.js"
+    },
+    "./bugs/reports/submit": {
+      "types": "./dist/bugs/reports/submit.d.ts",
+      "default": "./dist/bugs/reports/submit.js"
+    },
+    "./marketplace/marketplaceIndexV1": {
+      "types": "./dist/marketplace/marketplaceIndexV1.d.ts",
+      "default": "./dist/marketplace/marketplaceIndexV1.js"
+    },
+    "./transfers/sessions/sessionAttachmentUploadInitRequestV1": {
+      "types": "./dist/transfers/sessions/sessionAttachmentUploadInitRequestV1.d.ts",
+      "default": "./dist/transfers/sessions/sessionAttachmentUploadInitRequestV1.js"
+    },
+    "./crypto/boxBundleFormat": {
+      "types": "./dist/crypto/boxBundleFormat.d.ts",
+      "default": "./dist/crypto/boxBundleFormat.js"
+    },
+    "./actions/clientDispatchV1": {
+      "types": "./dist/actions/clientDispatchV1.d.ts",
+      "default": "./dist/actions/clientDispatchV1.js"
+    },
+    "./sessions/media/imageReferenceV1": {
+      "types": "./dist/sessions/media/imageReferenceV1.d.ts",
+      "default": "./dist/sessions/media/imageReferenceV1.js"
+    },
+    "./providers/safety/locality": {
+      "types": "./dist/providers/safety/locality.d.ts",
+      "default": "./dist/providers/safety/locality.js"
+    },
+    "./providers/safety/metadataDestinations": {
+      "types": "./dist/providers/safety/metadataDestinations.d.ts",
+      "default": "./dist/providers/safety/metadataDestinations.js"
+    },
+    "./sessions/personal/tracking": {
+      "types": "./dist/sessions/personal/tracking.d.ts",
+      "default": "./dist/sessions/personal/tracking.js"
+    },
+    "./sessions/personal/eventEligibility": {
+      "types": "./dist/sessions/personal/eventEligibility.d.ts",
+      "default": "./dist/sessions/personal/eventEligibility.js"
+    },
+    "./installables/descriptor": {
+      "types": "./dist/installables/descriptor.d.ts",
+      "default": "./dist/installables/descriptor.js"
+    },
+    "./installables/registry": {
+      "types": "./dist/installables/registry.d.ts",
+      "default": "./dist/installables/registry.js"
+    },
+    "./pets/constants": {
+      "types": "./dist/pets/constants.d.ts",
+      "default": "./dist/pets/constants.js"
+    },
+    "./pets/daemonRpc": {
+      "types": "./dist/pets/daemonRpc.d.ts",
+      "default": "./dist/pets/daemonRpc.js"
+    },
+    "./pets/accountLibrary": {
+      "types": "./dist/pets/accountLibrary.d.ts",
+      "default": "./dist/pets/accountLibrary.js"
+    },
+    "./pets/atlasPixelInspection": {
+      "types": "./dist/pets/atlasPixelInspection.d.ts",
+      "default": "./dist/pets/atlasPixelInspection.js"
+    },
+    "./pets/manifest": {
+      "types": "./dist/pets/manifest.d.ts",
+      "default": "./dist/pets/manifest.js"
+    },
+    "./plugins/manifest/ingest": {
+      "types": "./dist/plugins/manifest/ingest.d.ts",
+      "default": "./dist/plugins/manifest/ingest.js"
+    },
+    "./plugins/availability/v1": {
+      "types": "./dist/plugins/availability/v1.d.ts",
+      "default": "./dist/plugins/availability/v1.js"
+    },
+    "./plugins/availability/actions": {
+      "types": "./dist/plugins/availability/actions.d.ts",
+      "default": "./dist/plugins/availability/actions.js"
+    },
+    "./marketplace/pluginUpdatePolicyV1": {
+      "types": "./dist/marketplace/pluginUpdatePolicyV1.d.ts",
+      "default": "./dist/marketplace/pluginUpdatePolicyV1.js"
+    },
+    "./plugins/availability/packageAssetV1": {
+      "types": "./dist/plugins/availability/packageAssetV1.d.ts",
+      "default": "./dist/plugins/availability/packageAssetV1.js"
+    },
+    "./plugins/contributions/ui/rendererChainBinding": {
+      "types": "./dist/plugins/contributions/ui/rendererChainBinding.d.ts",
+      "default": "./dist/plugins/contributions/ui/rendererChainBinding.js"
+    },
+    "./scm/pullRequests": {
+      "types": "./dist/scm/pullRequests.d.ts",
+      "default": "./dist/scm/pullRequests.js"
+    },
+    "./workflows/workflowPluginSourceV1": {
+      "types": "./dist/workflows/workflowPluginSourceV1.d.ts",
+      "default": "./dist/workflows/workflowPluginSourceV1.js"
+    },
+    "./automations/automationActionSpecsV1": {
+      "types": "./dist/automations/automationActionSpecsV1.d.ts",
+      "default": "./dist/automations/automationActionSpecsV1.js"
+    },
+    "./changes/pluginDomain": {
+      "types": "./dist/changes/pluginDomain.d.ts",
+      "default": "./dist/changes/pluginDomain.js"
+    },
+    "./crypto/settingsSecretStringSchemasV1": {
+      "types": "./dist/crypto/settingsSecretStringSchemasV1.d.ts",
+      "default": "./dist/crypto/settingsSecretStringSchemasV1.js"
+    },
+    "./runtime/authRefresh": {
+      "types": "./dist/runtime/authRefresh.d.ts",
+      "default": "./dist/runtime/authRefresh.js"
+    },
+    "./plugins/networkHostSuffix": {
+      "types": "./dist/plugins/networkHostSuffix.d.ts",
+      "default": "./dist/plugins/networkHostSuffix.js"
+    },
+    "./actions/metadata": {
+      "types": "./dist/actions/metadata.d.ts",
+      "default": "./dist/actions/metadata.js"
+    },
+    "./inputs/inputFieldRuntime": {
+      "types": "./dist/inputs/inputFieldRuntime.d.ts",
+      "default": "./dist/inputs/inputFieldRuntime.js"
+    },
+    "./plugins/contributions/ui/declarativeDocument": {
+      "types": "./dist/plugins/contributions/ui/declarativeDocument.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeDocument.js"
+    },
+    "./plugins/contributions/ui/declarativeProjectedModelV1": {
+      "types": "./dist/plugins/contributions/ui/declarativeProjectedModelV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeProjectedModelV1.js"
+    },
+    "./runtime/eventKindsV1": {
+      "types": "./dist/runtime/eventKindsV1.d.ts",
+      "default": "./dist/runtime/eventKindsV1.js"
+    },
+    "./sessions/presentation/currentSessionPresentationV1": {
+      "types": "./dist/sessions/presentation/currentSessionPresentationV1.d.ts",
+      "default": "./dist/sessions/presentation/currentSessionPresentationV1.js"
+    },
+    "./providers/sessions/adapterBindingKeyV1": {
+      "types": "./dist/providers/sessions/adapterBindingKeyV1.d.ts",
+      "default": "./dist/providers/sessions/adapterBindingKeyV1.js"
+    },
+    "./providers/credentials/v1": {
+      "types": "./dist/providers/credentials/v1.d.ts",
+      "default": "./dist/providers/credentials/v1.js"
+    },
+    "./sessions/pluginAccess": {
+      "types": "./dist/sessions/pluginAccess.d.ts",
+      "default": "./dist/sessions/pluginAccess.js"
+    },
+    "./sessions/control/pendingInputInterruptAndRunV1": {
+      "types": "./dist/sessions/control/pendingInputInterruptAndRunV1.d.ts",
+      "default": "./dist/sessions/control/pendingInputInterruptAndRunV1.js"
+    },
+    "./sessions/control/terminalComposerClearV1": {
+      "types": "./dist/sessions/control/terminalComposerClearV1.d.ts",
+      "default": "./dist/sessions/control/terminalComposerClearV1.js"
+    },
+    "./marketplace/expectedMarketplaceListingV1": {
+      "types": "./dist/marketplace/expectedMarketplaceListingV1.d.ts",
+      "default": "./dist/marketplace/expectedMarketplaceListingV1.js"
+    },
+    "./teams/credentials/sourceBindingV1": {
+      "types": "./dist/teams/credentials/sourceBindingV1.d.ts",
+      "default": "./dist/teams/credentials/sourceBindingV1.js"
+    },
+    "./providers/runtimeState/v1": {
+      "types": "./dist/providers/runtimeState/v1.d.ts",
+      "default": "./dist/providers/runtimeState/v1.js"
+    },
+    "./providers/catalog/merge": {
+      "types": "./dist/providers/catalog/merge.d.ts",
+      "default": "./dist/providers/catalog/merge.js"
+    },
+    "./providers/ownRecordValue": {
+      "types": "./dist/providers/ownRecordValue.d.ts",
+      "default": "./dist/providers/ownRecordValue.js"
+    },
+    "./providers/connections/v1": {
+      "types": "./dist/providers/connections/v1.d.ts",
+      "default": "./dist/providers/connections/v1.js"
+    },
+    "./providers/settings/operationsV1": {
+      "types": "./dist/providers/settings/operationsV1.d.ts",
+      "default": "./dist/providers/settings/operationsV1.js"
+    },
+    "./providers/canonicalOrderV1": {
+      "types": "./dist/providers/canonicalOrderV1.d.ts",
+      "default": "./dist/providers/canonicalOrderV1.js"
+    },
+    "./providers/detection/v1": {
+      "types": "./dist/providers/detection/v1.d.ts",
+      "default": "./dist/providers/detection/v1.js"
+    },
+    "./providers/fingerprints": {
+      "types": "./dist/providers/fingerprints.d.ts",
+      "default": "./dist/providers/fingerprints.js"
+    },
+    "./providers/catalog/descriptorV1": {
+      "types": "./dist/providers/catalog/descriptorV1.d.ts",
+      "default": "./dist/providers/catalog/descriptorV1.js"
+    },
+    "./providers/settings/limits": {
+      "types": "./dist/providers/settings/limits.d.ts",
+      "default": "./dist/providers/settings/limits.js"
+    },
+    "./providers/migrations/conflictsV1": {
+      "types": "./dist/providers/migrations/conflictsV1.d.ts",
+      "default": "./dist/providers/migrations/conflictsV1.js"
+    },
+    "./providers/migrations/accountSettingsV1": {
+      "types": "./dist/providers/migrations/accountSettingsV1.d.ts",
+      "default": "./dist/providers/migrations/accountSettingsV1.js"
+    },
+    "./providers/migrations/legacyProfilesV1": {
+      "types": "./dist/providers/migrations/legacyProfilesV1.d.ts",
+      "default": "./dist/providers/migrations/legacyProfilesV1.js"
+    },
+    "./providers/securityFingerprintsV1": {
+      "types": "./dist/providers/securityFingerprintsV1.d.ts",
+      "default": "./dist/providers/securityFingerprintsV1.js"
+    },
+    "./providers/originRelativePathSchema": {
+      "types": "./dist/providers/originRelativePathSchema.d.ts",
+      "default": "./dist/providers/originRelativePathSchema.js"
+    },
+    "./providers/safety/response": {
+      "types": "./dist/providers/safety/response.d.ts",
+      "default": "./dist/providers/safety/response.js"
+    },
+    "./providers/grants/v1": {
+      "types": "./dist/providers/grants/v1.d.ts",
+      "default": "./dist/providers/grants/v1.js"
+    },
+    "./providers/catalog/limits": {
+      "types": "./dist/providers/catalog/limits.d.ts",
+      "default": "./dist/providers/catalog/limits.js"
+    },
+    "./providers/detection/descriptorV1": {
+      "types": "./dist/providers/detection/descriptorV1.d.ts",
+      "default": "./dist/providers/detection/descriptorV1.js"
+    },
+    "./providers/sessions/lifecycle": {
+      "types": "./dist/providers/sessions/lifecycle.d.ts",
+      "default": "./dist/providers/sessions/lifecycle.js"
+    },
+    "./capabilities/codexPassiveRealtimeSetup": {
+      "types": "./dist/capabilities/codexPassiveRealtimeSetup.d.ts",
+      "default": "./dist/capabilities/codexPassiveRealtimeSetup.js"
+    },
+    "./actions/actionExecutor": {
+      "types": "./dist/actions/actionExecutor.d.ts",
+      "default": "./dist/actions/actionExecutor.js"
+    },
+    "./actions/actionRpcTransport": {
+      "types": "./dist/actions/actionRpcTransport.d.ts",
+      "default": "./dist/actions/actionRpcTransport.js"
+    },
+    "./scm/operationError": {
+      "types": "./dist/scm/operationError.d.ts",
+      "default": "./dist/scm/operationError.js"
+    },
+    "./sessions/creation/sessionInitialTriggerAdmissionV1": {
+      "types": "./dist/sessions/creation/sessionInitialTriggerAdmissionV1.d.ts",
+      "default": "./dist/sessions/creation/sessionInitialTriggerAdmissionV1.js"
+    },
+    "./sessions/creation/sessionCreateOriginV1": {
+      "types": "./dist/sessions/creation/sessionCreateOriginV1.d.ts",
+      "default": "./dist/sessions/creation/sessionCreateOriginV1.js"
+    },
+    "./scm/reviewedMarks": {
+      "types": "./dist/scm/reviewedMarks.d.ts",
+      "default": "./dist/scm/reviewedMarks.js"
+    },
+    "./scm/repositoryClone": {
+      "types": "./dist/scm/repositoryClone.d.ts",
+      "default": "./dist/scm/repositoryClone.js"
+    },
+    "./scm/requestBase": {
+      "types": "./dist/scm/requestBase.d.ts",
+      "default": "./dist/scm/requestBase.js"
+    },
+    "./sessions/messages/canonicalTurnDiffTool": {
+      "types": "./dist/sessions/messages/canonicalTurnDiffTool.d.ts",
+      "default": "./dist/sessions/messages/canonicalTurnDiffTool.js"
+    },
+    "./scm/worktrees": {
+      "types": "./dist/scm/worktrees.d.ts",
+      "default": "./dist/scm/worktrees.js"
+    },
+    "./scm/capabilities": {
+      "types": "./dist/scm/capabilities.d.ts",
+      "default": "./dist/scm/capabilities.js"
+    },
+    "./scm/workingSnapshot": {
+      "types": "./dist/scm/workingSnapshot.d.ts",
+      "default": "./dist/scm/workingSnapshot.js"
+    },
+    "./actions/blockingApprovalCoordinator": {
+      "types": "./dist/actions/blockingApprovalCoordinator.d.ts",
+      "default": "./dist/actions/blockingApprovalCoordinator.js"
+    },
+    "./actions/sessionSpawnMachineTarget": {
+      "types": "./dist/actions/sessionSpawnMachineTarget.d.ts",
+      "default": "./dist/actions/sessionSpawnMachineTarget.js"
+    },
+    "./todos/todoSessionLinkV1": {
+      "types": "./dist/todos/todoSessionLinkV1.d.ts",
+      "default": "./dist/todos/todoSessionLinkV1.js"
+    },
+    "./home/homeHubArtifactV1": {
+      "types": "./dist/home/homeHubArtifactV1.d.ts",
+      "default": "./dist/home/homeHubArtifactV1.js"
+    },
+    "./capabilities/machineAgentInventory": {
+      "types": "./dist/capabilities/machineAgentInventory.d.ts",
+      "default": "./dist/capabilities/machineAgentInventory.js"
+    },
+    "./sessions/creation/sessionCreationTargetPreparationV1": {
+      "types": "./dist/sessions/creation/sessionCreationTargetPreparationV1.d.ts",
+      "default": "./dist/sessions/creation/sessionCreationTargetPreparationV1.js"
+    },
+    "./actions/resolveActionBackendTargetSelection": {
+      "types": "./dist/actions/resolveActionBackendTargetSelection.d.ts",
+      "default": "./dist/actions/resolveActionBackendTargetSelection.js"
+    },
+    "./actions/executor/sessionListAccess": {
+      "types": "./dist/actions/executor/sessionListAccess.d.ts",
+      "default": "./dist/actions/executor/sessionListAccess.js"
+    },
+    "./sessions/board/actionIds": {
+      "types": "./dist/sessions/board/actionIds.d.ts",
+      "default": "./dist/sessions/board/actionIds.js"
+    },
+    "./sessions/follow/voiceTrackedTargetsCompatibilityV1": {
+      "types": "./dist/sessions/follow/voiceTrackedTargetsCompatibilityV1.d.ts",
+      "default": "./dist/sessions/follow/voiceTrackedTargetsCompatibilityV1.js"
+    },
+    "./actions/executor/workflowAccountActions": {
+      "types": "./dist/actions/executor/workflowAccountActions.d.ts",
+      "default": "./dist/actions/executor/workflowAccountActions.js"
+    },
+    "./actions/executor/workflowDefinitions": {
+      "types": "./dist/actions/executor/workflowDefinitions.d.ts",
+      "default": "./dist/actions/executor/workflowDefinitions.js"
+    },
+    "./actions/executor/workflowTriggerAccountHost": {
+      "types": "./dist/actions/executor/workflowTriggerAccountHost.d.ts",
+      "default": "./dist/actions/executor/workflowTriggerAccountHost.js"
+    },
+    "./sessions/board/layoutOperations": {
+      "types": "./dist/sessions/board/layoutOperations.d.ts",
+      "default": "./dist/sessions/board/layoutOperations.js"
+    },
+    "./sessions/board/item": {
+      "types": "./dist/sessions/board/item.d.ts",
+      "default": "./dist/sessions/board/item.js"
+    },
+    "./sessions/board/actions": {
+      "types": "./dist/sessions/board/actions.d.ts",
+      "default": "./dist/sessions/board/actions.js"
+    },
+    "./sessions/board/errors": {
+      "types": "./dist/sessions/board/errors.d.ts",
+      "default": "./dist/sessions/board/errors.js"
+    },
+    "./sessions/board/layout": {
+      "types": "./dist/sessions/board/layout.d.ts",
+      "default": "./dist/sessions/board/layout.js"
+    },
+    "./sessions/board/mutations": {
+      "types": "./dist/sessions/board/mutations.d.ts",
+      "default": "./dist/sessions/board/mutations.js"
+    },
+    "./actions/homeDomainHttpBinding": {
+      "types": "./dist/actions/homeDomainHttpBinding.d.ts",
+      "default": "./dist/actions/homeDomainHttpBinding.js"
+    },
+    "./actions/sessionDiscussionActionFamily": {
+      "types": "./dist/actions/sessionDiscussionActionFamily.d.ts",
+      "default": "./dist/actions/sessionDiscussionActionFamily.js"
+    },
+    "./sessions/discussions/models": {
+      "types": "./dist/sessions/discussions/models.d.ts",
+      "default": "./dist/sessions/discussions/models.js"
+    },
+    "./sessions/discussions/content": {
+      "types": "./dist/sessions/discussions/content.d.ts",
+      "default": "./dist/sessions/discussions/content.js"
+    },
+    "./sessions/discussions/equality": {
+      "types": "./dist/sessions/discussions/equality.d.ts",
+      "default": "./dist/sessions/discussions/equality.js"
+    },
+    "./sessions/metadata/sessionMetadataEnvelopesV1": {
+      "types": "./dist/sessions/metadata/sessionMetadataEnvelopesV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionMetadataEnvelopesV1.js"
+    },
+    "./plugins/ui/composer": {
+      "types": "./dist/plugins/ui/composer.d.ts",
+      "default": "./dist/plugins/ui/composer.js"
+    },
+    "./sessions/messages/sessionInputAuthoringV1": {
+      "types": "./dist/sessions/messages/sessionInputAuthoringV1.d.ts",
+      "default": "./dist/sessions/messages/sessionInputAuthoringV1.js"
+    },
+    "./actions/specs/executionRunCli": {
+      "types": "./dist/actions/specs/executionRunCli.d.ts",
+      "default": "./dist/actions/specs/executionRunCli.js"
+    },
+    "./sessions/messages/transcriptBodySemanticProjection": {
+      "types": "./dist/sessions/messages/transcriptBodySemanticProjection.d.ts",
+      "default": "./dist/sessions/messages/transcriptBodySemanticProjection.js"
+    },
+    "./sessions/subagents/subagentRefV1": {
+      "types": "./dist/sessions/subagents/subagentRefV1.d.ts",
+      "default": "./dist/sessions/subagents/subagentRefV1.js"
+    },
+    "./sessions/subagents/durableCustodyV1": {
+      "types": "./dist/sessions/subagents/durableCustodyV1.d.ts",
+      "default": "./dist/sessions/subagents/durableCustodyV1.js"
+    },
+    "./sessions/turns/sessionTurnV1": {
+      "types": "./dist/sessions/turns/sessionTurnV1.d.ts",
+      "default": "./dist/sessions/turns/sessionTurnV1.js"
+    },
+    "./sessions/listing/response": {
+      "types": "./dist/sessions/listing/response.d.ts",
+      "default": "./dist/sessions/listing/response.js"
+    },
+    "./sessions/listing/query": {
+      "types": "./dist/sessions/listing/query.d.ts",
+      "default": "./dist/sessions/listing/query.js"
+    },
+    "./sessions/organization/attentionAction": {
+      "types": "./dist/sessions/organization/attentionAction.d.ts",
+      "default": "./dist/sessions/organization/attentionAction.js"
+    },
+    "./teams/credentials/sessionBindingV1": {
+      "types": "./dist/teams/credentials/sessionBindingV1.d.ts",
+      "default": "./dist/teams/credentials/sessionBindingV1.js"
+    },
+    "./workspaces/workspaceRefV1": {
+      "types": "./dist/workspaces/workspaceRefV1.d.ts",
+      "default": "./dist/workspaces/workspaceRefV1.js"
+    },
+    "./terminal/inputEncoding": {
+      "types": "./dist/terminal/inputEncoding.d.ts",
+      "default": "./dist/terminal/inputEncoding.js"
+    },
+    "./transfers/sessions/sessionAttachmentHandleV1": {
+      "types": "./dist/transfers/sessions/sessionAttachmentHandleV1.d.ts",
+      "default": "./dist/transfers/sessions/sessionAttachmentHandleV1.js"
+    },
+    "./usage/contextUsage": {
+      "types": "./dist/usage/contextUsage.d.ts",
+      "default": "./dist/usage/contextUsage.js"
+    },
+    "./workspaces/manifestSchema": {
+      "types": "./dist/workspaces/manifestSchema.d.ts",
+      "default": "./dist/workspaces/manifestSchema.js"
+    },
+    "./voice/toolResultsChannel": {
+      "types": "./dist/voice/toolResultsChannel.d.ts",
+      "default": "./dist/voice/toolResultsChannel.js"
+    },
+    "./prompts/memoryRecallGuidanceV1": {
+      "types": "./dist/prompts/memoryRecallGuidanceV1.d.ts",
+      "default": "./dist/prompts/memoryRecallGuidanceV1.js"
+    },
+    "./actions/actionVoiceToolSummary": {
+      "types": "./dist/actions/actionVoiceToolSummary.d.ts",
+      "default": "./dist/actions/actionVoiceToolSummary.js"
+    },
+    "./home/governance/claim": {
+      "types": "./dist/home/governance/claim.d.ts",
+      "default": "./dist/home/governance/claim.js"
+    },
+    "./automations/automationIdV1": {
+      "types": "./dist/automations/automationIdV1.d.ts",
+      "default": "./dist/automations/automationIdV1.js"
+    },
+    "./plugins/contributions/browser/v1": {
+      "types": "./dist/plugins/contributions/browser/v1.d.ts",
+      "default": "./dist/plugins/contributions/browser/v1.js"
+    },
+    "./plugins/contributions/scmBackends": {
+      "types": "./dist/plugins/contributions/scmBackends.d.ts",
+      "default": "./dist/plugins/contributions/scmBackends.js"
+    },
+    "./plugins/contributions/ui/transcriptActivities": {
+      "types": "./dist/plugins/contributions/ui/transcriptActivities.d.ts",
+      "default": "./dist/plugins/contributions/ui/transcriptActivities.js"
+    },
+    "./runtime/catalog/vendorPlugins": {
+      "types": "./dist/runtime/catalog/vendorPlugins.d.ts",
+      "default": "./dist/runtime/catalog/vendorPlugins.js"
+    },
+    "./scm/worktreeName": {
+      "types": "./dist/scm/worktreeName.d.ts",
+      "default": "./dist/scm/worktreeName.js"
+    },
+    "./scm/remoteNormalization": {
+      "types": "./dist/scm/remoteNormalization.d.ts",
+      "default": "./dist/scm/remoteNormalization.js"
+    },
+    "./scm/hostingRepositoryIdentity": {
+      "types": "./dist/scm/hostingRepositoryIdentity.d.ts",
+      "default": "./dist/scm/hostingRepositoryIdentity.js"
+    },
+    "./scm/pathScope": {
+      "types": "./dist/scm/pathScope.d.ts",
+      "default": "./dist/scm/pathScope.js"
+    },
+    "./scm/freshness": {
+      "types": "./dist/scm/freshness.d.ts",
+      "default": "./dist/scm/freshness.js"
+    },
+    "./scm/selectedMutationPath": {
+      "types": "./dist/scm/selectedMutationPath.d.ts",
+      "default": "./dist/scm/selectedMutationPath.js"
+    },
+    "./scm/cloneProtocol": {
+      "types": "./dist/scm/cloneProtocol.d.ts",
+      "default": "./dist/scm/cloneProtocol.js"
+    },
+    "./messages/structured/subagentCommandV1": {
+      "types": "./dist/messages/structured/subagentCommandV1.d.ts",
+      "default": "./dist/messages/structured/subagentCommandV1.js"
+    },
+    "./messages/structured/subagentLaunchV1": {
+      "types": "./dist/messages/structured/subagentLaunchV1.d.ts",
+      "default": "./dist/messages/structured/subagentLaunchV1.js"
+    },
+    "./sessions/work/state/sessionWorkStateBounds": {
+      "types": "./dist/sessions/work/state/sessionWorkStateBounds.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStateBounds.js"
+    },
+    "./sessions/system/records/activity/activitySystemRecordKinds": {
+      "types": "./dist/sessions/system/records/activity/activitySystemRecordKinds.d.ts",
+      "default": "./dist/sessions/system/records/activity/activitySystemRecordKinds.js"
+    },
+    "./sessions/work/backgroundTask/backgroundTaskRecordV1": {
+      "types": "./dist/sessions/work/backgroundTask/backgroundTaskRecordV1.d.ts",
+      "default": "./dist/sessions/work/backgroundTask/backgroundTaskRecordV1.js"
+    },
+    "./sessions/work/backgroundTask/backgroundTaskRedaction": {
+      "types": "./dist/sessions/work/backgroundTask/backgroundTaskRedaction.d.ts",
+      "default": "./dist/sessions/work/backgroundTask/backgroundTaskRedaction.js"
+    },
+    "./sessions/work/agentActivity/agentActivityEntryV1": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityEntryV1.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityEntryV1.js"
+    },
+    "./sessions/work/agentActivity/agentActivityHeadlineBuild": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityHeadlineBuild.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityHeadlineBuild.js"
+    },
+    "./sessions/work/agentActivity/agentActivityKindV1": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityKindV1.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityKindV1.js"
+    },
+    "./sessions/work/agentActivity/agentActivityStatusV1": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityStatusV1.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityStatusV1.js"
+    },
+    "./sessions/work/agentActivity/agentActivityToneV1": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityToneV1.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityToneV1.js"
+    },
+    "./sessions/work/agentActivity/agentActivityEntryId": {
+      "types": "./dist/sessions/work/agentActivity/agentActivityEntryId.d.ts",
+      "default": "./dist/sessions/work/agentActivity/agentActivityEntryId.js"
+    },
+    "./sessions/work/agentActivity/adapters/fromWorkflowAgentStatus": {
+      "types": "./dist/sessions/work/agentActivity/adapters/fromWorkflowAgentStatus.d.ts",
+      "default": "./dist/sessions/work/agentActivity/adapters/fromWorkflowAgentStatus.js"
+    },
+    "./sessions/work/agentActivity/adapters/fromWorkflowRunStatus": {
+      "types": "./dist/sessions/work/agentActivity/adapters/fromWorkflowRunStatus.d.ts",
+      "default": "./dist/sessions/work/agentActivity/adapters/fromWorkflowRunStatus.js"
+    },
+    "./sessions/work/workflow/sessionWorkflowRunSnapshotV1": {
+      "types": "./dist/sessions/work/workflow/sessionWorkflowRunSnapshotV1.d.ts",
+      "default": "./dist/sessions/work/workflow/sessionWorkflowRunSnapshotV1.js"
+    },
+    "./sessions/work/workflow/sessionWorkflowActivityHeadlineBuild": {
+      "types": "./dist/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild.d.ts",
+      "default": "./dist/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild.js"
+    },
+    "./sessions/work/workflow/sessionWorkflowRunRecordRevision": {
+      "types": "./dist/sessions/work/workflow/sessionWorkflowRunRecordRevision.d.ts",
+      "default": "./dist/sessions/work/workflow/sessionWorkflowRunRecordRevision.js"
+    },
+    "./plugins/contributions/ui/declarativeDocumentContentTypeV1": {
+      "types": "./dist/plugins/contributions/ui/declarativeDocumentContentTypeV1.d.ts",
+      "default": "./dist/plugins/contributions/ui/declarativeDocumentContentTypeV1.js"
+    },
+    "./plugins/ui/currentUiContext": {
+      "types": "./dist/plugins/ui/currentUiContext.d.ts",
+      "default": "./dist/plugins/ui/currentUiContext.js"
+    },
+    "./plugins/ui/hostedWebBridge": {
+      "types": "./dist/plugins/ui/hostedWebBridge.d.ts",
+      "default": "./dist/plugins/ui/hostedWebBridge.js"
+    },
+    "./plugins/data/hostedWebAccountDataBridgeV1": {
+      "types": "./dist/plugins/data/hostedWebAccountDataBridgeV1.d.ts",
+      "default": "./dist/plugins/data/hostedWebAccountDataBridgeV1.js"
+    },
+    "./voice/realtime/transcriptLadder": {
+      "types": "./dist/voice/realtime/transcriptLadder.d.ts",
+      "default": "./dist/voice/realtime/transcriptLadder.js"
+    },
+    "./voice/realtime/events": {
+      "types": "./dist/voice/realtime/events.d.ts",
+      "default": "./dist/voice/realtime/events.js"
+    },
+    "./embed/embedBridgeV1": {
+      "types": "./dist/embed/embedBridgeV1.d.ts",
+      "default": "./dist/embed/embedBridgeV1.js"
+    },
+    "./embed/embedSessionOptionsV1": {
+      "types": "./dist/embed/embedSessionOptionsV1.d.ts",
+      "default": "./dist/embed/embedSessionOptionsV1.js"
+    },
+    "./sessions/external/contentSearchMatch": {
+      "types": "./dist/sessions/external/contentSearchMatch.d.ts",
+      "default": "./dist/sessions/external/contentSearchMatch.js"
+    },
+    "./ssh/sshTarget": {
+      "types": "./dist/ssh/sshTarget.d.ts",
+      "default": "./dist/ssh/sshTarget.js"
+    },
+    "./plugins/contributions/managedDependencies": {
+      "types": "./dist/plugins/contributions/managedDependencies.d.ts",
+      "default": "./dist/plugins/contributions/managedDependencies.js"
+    },
+    "./sessions/metadata/acpConfiguredBackendV1": {
+      "types": "./dist/sessions/metadata/acpConfiguredBackendV1.d.ts",
+      "default": "./dist/sessions/metadata/acpConfiguredBackendV1.js"
+    },
+    "./acp/catalog/settingsV1": {
+      "types": "./dist/acp/catalog/settingsV1.d.ts",
+      "default": "./dist/acp/catalog/settingsV1.js"
+    },
+    "./plugins/contributions/agentAcpTransport": {
+      "types": "./dist/plugins/contributions/agentAcpTransport.d.ts",
+      "default": "./dist/plugins/contributions/agentAcpTransport.js"
+    },
+    "./activity/shellCommand": {
+      "types": "./dist/activity/shellCommand.d.ts",
+      "default": "./dist/activity/shellCommand.js"
+    },
+    "./execution/runs/startRequest": {
+      "types": "./dist/execution/runs/startRequest.d.ts",
+      "default": "./dist/execution/runs/startRequest.js"
+    },
+    "./execution/runs/resultContractV1": {
+      "types": "./dist/execution/runs/resultContractV1.d.ts",
+      "default": "./dist/execution/runs/resultContractV1.js"
+    },
+    "./messages/structured/delegateOutputV1": {
+      "types": "./dist/messages/structured/delegateOutputV1.d.ts",
+      "default": "./dist/messages/structured/delegateOutputV1.js"
+    },
+    "./reviews/comments/proposals": {
+      "types": "./dist/reviews/comments/proposals.d.ts",
+      "default": "./dist/reviews/comments/proposals.js"
+    },
+    "./messages/structured/planOutputV1": {
+      "types": "./dist/messages/structured/planOutputV1.d.ts",
+      "default": "./dist/messages/structured/planOutputV1.js"
+    },
+    "./reviews/reviewStart": {
+      "types": "./dist/reviews/reviewStart.d.ts",
+      "default": "./dist/reviews/reviewStart.js"
+    },
+    "./messages/structured/reviewFindingsV2": {
+      "types": "./dist/messages/structured/reviewFindingsV2.d.ts",
+      "default": "./dist/messages/structured/reviewFindingsV2.js"
+    },
+    "./plugins/installations/manifests": {
+      "types": "./dist/plugins/installations/manifests.d.ts",
+      "default": "./dist/plugins/installations/manifests.js"
+    },
+    "./plugins/permissions/grants": {
+      "types": "./dist/plugins/permissions/grants.d.ts",
+      "default": "./dist/plugins/permissions/grants.js"
+    },
+    "./reviews/comments/v1": {
+      "types": "./dist/reviews/comments/v1.d.ts",
+      "default": "./dist/reviews/comments/v1.js"
+    },
+    "./reviews/comments/actions": {
+      "types": "./dist/reviews/comments/actions.d.ts",
+      "default": "./dist/reviews/comments/actions.js"
+    },
+    "./reviews/comments/triageTransition": {
+      "types": "./dist/reviews/comments/triageTransition.d.ts",
+      "default": "./dist/reviews/comments/triageTransition.js"
+    },
+    "./reviews/comments/findingIdentity": {
+      "types": "./dist/reviews/comments/findingIdentity.d.ts",
+      "default": "./dist/reviews/comments/findingIdentity.js"
+    },
+    "./messages/structured/reviewFindingsV1": {
+      "types": "./dist/messages/structured/reviewFindingsV1.d.ts",
+      "default": "./dist/messages/structured/reviewFindingsV1.js"
+    },
+    "./account/settings/accountSettings": {
+      "types": "./dist/account/settings/accountSettings.d.ts",
+      "default": "./dist/account/settings/accountSettings.js"
+    },
+    "./prompts/roles/sessionRolesSnapshot": {
+      "types": "./dist/prompts/roles/sessionRolesSnapshot.d.ts",
+      "default": "./dist/prompts/roles/sessionRolesSnapshot.js"
+    },
+    "./prompts/roles/resolveRoleSelectionV1": {
+      "types": "./dist/prompts/roles/resolveRoleSelectionV1.d.ts",
+      "default": "./dist/prompts/roles/resolveRoleSelectionV1.js"
+    },
+    "./execution/runs/responseSchemas": {
+      "types": "./dist/execution/runs/responseSchemas.d.ts",
+      "default": "./dist/execution/runs/responseSchemas.js"
+    },
+    "./sessions/permissions/respondRpcParamsV1": {
+      "types": "./dist/sessions/permissions/respondRpcParamsV1.d.ts",
+      "default": "./dist/sessions/permissions/respondRpcParamsV1.js"
+    },
+    "./sessions/messages/sessionInputAdmission": {
+      "types": "./dist/sessions/messages/sessionInputAdmission.d.ts",
+      "default": "./dist/sessions/messages/sessionInputAdmission.js"
+    },
+    "./tools/structuredQuestionAnswersV1": {
+      "types": "./dist/tools/structuredQuestionAnswersV1.d.ts",
+      "default": "./dist/tools/structuredQuestionAnswersV1.js"
+    },
+    "./activity/agentRequestSummary": {
+      "types": "./dist/activity/agentRequestSummary.d.ts",
+      "default": "./dist/activity/agentRequestSummary.js"
+    },
+    "./tools/happierToolsShellBridge": {
+      "types": "./dist/tools/happierToolsShellBridge.d.ts",
+      "default": "./dist/tools/happierToolsShellBridge.js"
+    },
+    "./prompts/effectiveCodingPromptBehaviorV1": {
+      "types": "./dist/prompts/effectiveCodingPromptBehaviorV1.d.ts",
+      "default": "./dist/prompts/effectiveCodingPromptBehaviorV1.js"
+    },
+    "./sessions/system/records/sessionSystemRecordRoutes": {
+      "types": "./dist/sessions/system/records/sessionSystemRecordRoutes.d.ts",
+      "default": "./dist/sessions/system/records/sessionSystemRecordRoutes.js"
+    },
+    "./prompts/buildAppendSystemPromptBaseV1": {
+      "types": "./dist/prompts/buildAppendSystemPromptBaseV1.d.ts",
+      "default": "./dist/prompts/buildAppendSystemPromptBaseV1.js"
+    },
+    "./prompts/promptPlanV1": {
+      "types": "./dist/prompts/promptPlanV1.d.ts",
+      "default": "./dist/prompts/promptPlanV1.js"
+    },
+    "./prompts/roles/renderSessionRoleBlockV1": {
+      "types": "./dist/prompts/roles/renderSessionRoleBlockV1.d.ts",
+      "default": "./dist/prompts/roles/renderSessionRoleBlockV1.js"
+    },
+    "./prompts/codingPromptBehaviorV1": {
+      "types": "./dist/prompts/codingPromptBehaviorV1.d.ts",
+      "default": "./dist/prompts/codingPromptBehaviorV1.js"
+    },
+    "./prompts/isMemoryRecallGuidanceSupported": {
+      "types": "./dist/prompts/isMemoryRecallGuidanceSupported.d.ts",
+      "default": "./dist/prompts/isMemoryRecallGuidanceSupported.js"
+    },
+    "./storage/artifactStoredContent": {
+      "types": "./dist/storage/artifactStoredContent.d.ts",
+      "default": "./dist/storage/artifactStoredContent.js"
+    },
+    "./prompts/library/promptStacksV1": {
+      "types": "./dist/prompts/library/promptStacksV1.d.ts",
+      "default": "./dist/prompts/library/promptStacksV1.js"
+    },
+    "./crypto/encryptedDataKeyEnvelopeV1": {
+      "types": "./dist/crypto/encryptedDataKeyEnvelopeV1.d.ts",
+      "default": "./dist/crypto/encryptedDataKeyEnvelopeV1.js"
+    },
+    "./prompts/library/resolvePromptStackSystemAppendBlocksV1": {
+      "types": "./dist/prompts/library/resolvePromptStackSystemAppendBlocksV1.d.ts",
+      "default": "./dist/prompts/library/resolvePromptStackSystemAppendBlocksV1.js"
+    },
+    "./reviews/comments/content": {
+      "types": "./dist/reviews/comments/content.d.ts",
+      "default": "./dist/reviews/comments/content.js"
+    },
+    "./reviews/comments/transport": {
+      "types": "./dist/reviews/comments/transport.d.ts",
+      "default": "./dist/reviews/comments/transport.js"
+    },
+    "./reviews/comments/publicationTransport": {
+      "types": "./dist/reviews/comments/publicationTransport.d.ts",
+      "default": "./dist/reviews/comments/publicationTransport.js"
+    },
+    "./reviews/comments/snapshots": {
+      "types": "./dist/reviews/comments/snapshots.d.ts",
+      "default": "./dist/reviews/comments/snapshots.js"
+    },
+    "./reviews/ReviewAssumption": {
+      "types": "./dist/reviews/ReviewAssumption.d.ts",
+      "default": "./dist/reviews/ReviewAssumption.js"
+    },
+    "./reviews/ReviewFinding": {
+      "types": "./dist/reviews/ReviewFinding.d.ts",
+      "default": "./dist/reviews/ReviewFinding.js"
+    },
+    "./reviews/ReviewQuestion": {
+      "types": "./dist/reviews/ReviewQuestion.d.ts",
+      "default": "./dist/reviews/ReviewQuestion.js"
+    },
+    "./messages/structured/executionRunStructuredRunRef": {
+      "types": "./dist/messages/structured/executionRunStructuredRunRef.d.ts",
+      "default": "./dist/messages/structured/executionRunStructuredRunRef.js"
+    },
+    "./reviews/scope": {
+      "types": "./dist/reviews/scope.d.ts",
+      "default": "./dist/reviews/scope.js"
+    },
+    "./backends/targets/backendTargetRefV2": {
+      "types": "./dist/backends/targets/backendTargetRefV2.d.ts",
+      "default": "./dist/backends/targets/backendTargetRefV2.js"
+    },
+    "./sessions/messages/sessionInputPromptContextV1": {
+      "types": "./dist/sessions/messages/sessionInputPromptContextV1.d.ts",
+      "default": "./dist/sessions/messages/sessionInputPromptContextV1.js"
+    },
+    "./execution/runs/requestedConfiguration": {
+      "types": "./dist/execution/runs/requestedConfiguration.d.ts",
+      "default": "./dist/execution/runs/requestedConfiguration.js"
+    },
+    "./agents/executionTargetV1": {
+      "types": "./dist/agents/executionTargetV1.d.ts",
+      "default": "./dist/agents/executionTargetV1.js"
+    },
+    "./reviews/reviewFollowUp": {
+      "types": "./dist/reviews/reviewFollowUp.d.ts",
+      "default": "./dist/reviews/reviewFollowUp.js"
+    },
+    "./sessions/relations/workerUpdateV1": {
+      "types": "./dist/sessions/relations/workerUpdateV1.d.ts",
+      "default": "./dist/sessions/relations/workerUpdateV1.js"
+    },
+    "./json/strictJsonValue": {
+      "types": "./dist/json/strictJsonValue.d.ts",
+      "default": "./dist/json/strictJsonValue.js"
+    },
+    "./reviews/reviewPublicationEvidence": {
+      "types": "./dist/reviews/reviewPublicationEvidence.d.ts",
+      "default": "./dist/reviews/reviewPublicationEvidence.js"
+    },
+    "./execution/runs/runPrimitives": {
+      "types": "./dist/execution/runs/runPrimitives.d.ts",
+      "default": "./dist/execution/runs/runPrimitives.js"
+    },
+    "./profiles/secretReferenceOverlayV1": {
+      "types": "./dist/profiles/secretReferenceOverlayV1.d.ts",
+      "default": "./dist/profiles/secretReferenceOverlayV1.js"
+    },
+    "./mcp/servers/sessionSelectionV1": {
+      "types": "./dist/mcp/servers/sessionSelectionV1.d.ts",
+      "default": "./dist/mcp/servers/sessionSelectionV1.js"
+    },
+    "./reviews/reviewNarration": {
+      "types": "./dist/reviews/reviewNarration.d.ts",
+      "default": "./dist/reviews/reviewNarration.js"
+    },
+    "./messages/structured/reviewFollowUpV1": {
+      "types": "./dist/messages/structured/reviewFollowUpV1.d.ts",
+      "default": "./dist/messages/structured/reviewFollowUpV1.js"
+    },
+    "./reviews/resolveEffectiveReviewFindings": {
+      "types": "./dist/reviews/resolveEffectiveReviewFindings.d.ts",
+      "default": "./dist/reviews/resolveEffectiveReviewFindings.js"
+    },
+    "./reviews/projectReviewFindingsOverlay": {
+      "types": "./dist/reviews/projectReviewFindingsOverlay.d.ts",
+      "default": "./dist/reviews/projectReviewFindingsOverlay.js"
+    },
+    "./reviews/reviewEngines": {
+      "types": "./dist/reviews/reviewEngines.d.ts",
+      "default": "./dist/reviews/reviewEngines.js"
+    },
+    "./sessions/state/fieldRegistrySchema": {
+      "types": "./dist/sessions/state/fieldRegistrySchema.d.ts",
+      "default": "./dist/sessions/state/fieldRegistrySchema.js"
+    },
+    "./reviews/scmPullRequestScope": {
+      "types": "./dist/reviews/scmPullRequestScope.d.ts",
+      "default": "./dist/reviews/scmPullRequestScope.js"
+    },
+    "./execution/runs/executionRunNotifyParentDefaultV1": {
+      "types": "./dist/execution/runs/executionRunNotifyParentDefaultV1.d.ts",
+      "default": "./dist/execution/runs/executionRunNotifyParentDefaultV1.js"
+    },
+    "./prompts/roles/builtInRolesV1": {
+      "types": "./dist/prompts/roles/builtInRolesV1.d.ts",
+      "default": "./dist/prompts/roles/builtInRolesV1.js"
+    },
+    "./sessions/state/capabilitySchema": {
+      "types": "./dist/sessions/state/capabilitySchema.d.ts",
+      "default": "./dist/sessions/state/capabilitySchema.js"
+    },
+    "./prompts/changeTitleInstructionV1": {
+      "types": "./dist/prompts/changeTitleInstructionV1.d.ts",
+      "default": "./dist/prompts/changeTitleInstructionV1.js"
+    },
+    "./sessions/metadata/agentRuntimeFacetsV1": {
+      "types": "./dist/sessions/metadata/agentRuntimeFacetsV1.d.ts",
+      "default": "./dist/sessions/metadata/agentRuntimeFacetsV1.js"
+    },
+    "./agents/nativeResumeIdentityV1": {
+      "types": "./dist/agents/nativeResumeIdentityV1.d.ts",
+      "default": "./dist/agents/nativeResumeIdentityV1.js"
+    },
+    "./push/readyNotificationContent": {
+      "types": "./dist/push/readyNotificationContent.d.ts",
+      "default": "./dist/push/readyNotificationContent.js"
+    },
+    "./sessions/messages/pendingDeliveryBlockedReason": {
+      "types": "./dist/sessions/messages/pendingDeliveryBlockedReason.d.ts",
+      "default": "./dist/sessions/messages/pendingDeliveryBlockedReason.js"
+    },
+    "./sessions/pending/pendingRequestedActionV1": {
+      "types": "./dist/sessions/pending/pendingRequestedActionV1.d.ts",
+      "default": "./dist/sessions/pending/pendingRequestedActionV1.js"
+    },
+    "./sessions/attach/metadataIdentityPolicy": {
+      "types": "./dist/sessions/attach/metadataIdentityPolicy.d.ts",
+      "default": "./dist/sessions/attach/metadataIdentityPolicy.js"
+    },
+    "./account/settings/admitAgentStartV1": {
+      "types": "./dist/account/settings/admitAgentStartV1.d.ts",
+      "default": "./dist/account/settings/admitAgentStartV1.js"
+    },
+    "./sessions/external/sourceCatalog": {
+      "types": "./dist/sessions/external/sourceCatalog.d.ts",
+      "default": "./dist/sessions/external/sourceCatalog.js"
+    },
+    "./sessions/metadata/terminalMetadata": {
+      "types": "./dist/sessions/metadata/terminalMetadata.d.ts",
+      "default": "./dist/sessions/metadata/terminalMetadata.js"
+    },
+    "./sessions/metadata/sessionRollbackRangesV1": {
+      "types": "./dist/sessions/metadata/sessionRollbackRangesV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionRollbackRangesV1.js"
+    },
+    "./features/catalog": {
+      "types": "./dist/features/catalog.d.ts",
+      "default": "./dist/features/catalog.js"
+    },
+    "./sessions/state/valueSchemas/usageLimitRecovery": {
+      "types": "./dist/sessions/state/valueSchemas/usageLimitRecovery.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/usageLimitRecovery.js"
+    },
+    "./sessions/work/state/sessionWorkStateV1": {
+      "types": "./dist/sessions/work/state/sessionWorkStateV1.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStateV1.js"
+    },
+    "./sessions/awareness/availability": {
+      "types": "./dist/sessions/awareness/availability.d.ts",
+      "default": "./dist/sessions/awareness/availability.js"
+    },
+    "./voice/sourceDisclosureV1": {
+      "types": "./dist/voice/sourceDisclosureV1.d.ts",
+      "default": "./dist/voice/sourceDisclosureV1.js"
+    },
+    "./sessions/messages/sessionMessageAccountActorV1": {
+      "types": "./dist/sessions/messages/sessionMessageAccountActorV1.d.ts",
+      "default": "./dist/sessions/messages/sessionMessageAccountActorV1.js"
+    },
+    "./sessions/messages/sessionStoredMessageContent": {
+      "types": "./dist/sessions/messages/sessionStoredMessageContent.d.ts",
+      "default": "./dist/sessions/messages/sessionStoredMessageContent.js"
+    },
+    "./sessions/messages/transcriptRawRecordV1": {
+      "types": "./dist/sessions/messages/transcriptRawRecordV1.d.ts",
+      "default": "./dist/sessions/messages/transcriptRawRecordV1.js"
+    },
+    "./account/settings/sessionPendingQueueDeliveryTiming": {
+      "types": "./dist/account/settings/sessionPendingQueueDeliveryTiming.d.ts",
+      "default": "./dist/account/settings/sessionPendingQueueDeliveryTiming.js"
+    },
+    "./sessions/metadata/sessionPendingQueueHoldV1": {
+      "types": "./dist/sessions/metadata/sessionPendingQueueHoldV1.d.ts",
+      "default": "./dist/sessions/metadata/sessionPendingQueueHoldV1.js"
+    },
+    "./sessions/control/modelTransitionV1": {
+      "types": "./dist/sessions/control/modelTransitionV1.d.ts",
+      "default": "./dist/sessions/control/modelTransitionV1.js"
+    },
+    "./sessions/control/rollback/checkpointCodeRollback": {
+      "types": "./dist/sessions/control/rollback/checkpointCodeRollback.d.ts",
+      "default": "./dist/sessions/control/rollback/checkpointCodeRollback.js"
+    },
+    "./sessions/rollback": {
+      "types": "./dist/sessions/rollback.d.ts",
+      "default": "./dist/sessions/rollback.js"
+    },
+    "./agents/agentIdV1": {
+      "types": "./dist/agents/agentIdV1.d.ts",
+      "default": "./dist/agents/agentIdV1.js"
+    },
+    "./sessions/external/sourceTranscriptItemV1": {
+      "types": "./dist/sessions/external/sourceTranscriptItemV1.d.ts",
+      "default": "./dist/sessions/external/sourceTranscriptItemV1.js"
+    },
+    "./sessions/external/daemonRpcV1": {
+      "types": "./dist/sessions/external/daemonRpcV1.d.ts",
+      "default": "./dist/sessions/external/daemonRpcV1.js"
+    },
+    "./sessions/state/valueSchemas/acpConfigOption": {
+      "types": "./dist/sessions/state/valueSchemas/acpConfigOption.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/acpConfigOption.js"
+    },
+    "./sessions/metadata/metadataOverridesV1": {
+      "types": "./dist/sessions/metadata/metadataOverridesV1.d.ts",
+      "default": "./dist/sessions/metadata/metadataOverridesV1.js"
+    },
+    "./sessions/state/valueSchemas/attention": {
+      "types": "./dist/sessions/state/valueSchemas/attention.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/attention.js"
+    },
+    "./sessions/external/externalAgentObservationV1": {
+      "types": "./dist/sessions/external/externalAgentObservationV1.d.ts",
+      "default": "./dist/sessions/external/externalAgentObservationV1.js"
+    },
+    "./sessions/state/valueSchemas/model": {
+      "types": "./dist/sessions/state/valueSchemas/model.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/model.js"
+    },
+    "./sessions/state/valueSchemas/permissionMode": {
+      "types": "./dist/sessions/state/valueSchemas/permissionMode.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/permissionMode.js"
+    },
+    "./sessions/state/valueSchemas/providerSessionId": {
+      "types": "./dist/sessions/state/valueSchemas/providerSessionId.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/providerSessionId.js"
+    },
+    "./sessions/state/valueSchemas/readState": {
+      "types": "./dist/sessions/state/valueSchemas/readState.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/readState.js"
+    },
+    "./sessions/runtime/activity/sessionRuntimeActivity": {
+      "types": "./dist/sessions/runtime/activity/sessionRuntimeActivity.d.ts",
+      "default": "./dist/sessions/runtime/activity/sessionRuntimeActivity.js"
+    },
+    "./sessions/metadata/runtimeDescriptorV1": {
+      "types": "./dist/sessions/metadata/runtimeDescriptorV1.d.ts",
+      "default": "./dist/sessions/metadata/runtimeDescriptorV1.js"
+    },
+    "./sessions/state/valueSchemas/title": {
+      "types": "./dist/sessions/state/valueSchemas/title.d.ts",
+      "default": "./dist/sessions/state/valueSchemas/title.js"
+    },
+    "./sessions/external/publicTranscriptFollowV1": {
+      "types": "./dist/sessions/external/publicTranscriptFollowV1.d.ts",
+      "default": "./dist/sessions/external/publicTranscriptFollowV1.js"
+    },
+    "./spawn/envOverlay": {
+      "types": "./dist/spawn/envOverlay.d.ts",
+      "default": "./dist/spawn/envOverlay.js"
+    },
+    "./plugins/contributions/composerAttachmentRuntimeV1": {
+      "types": "./dist/plugins/contributions/composerAttachmentRuntimeV1.d.ts",
+      "default": "./dist/plugins/contributions/composerAttachmentRuntimeV1.js"
+    },
+    "./plugins/actions/v2": {
+      "types": "./dist/plugins/actions/v2.d.ts",
+      "default": "./dist/plugins/actions/v2.js"
+    },
+    "./plugins/runtime/api": {
+      "types": "./dist/plugins/runtime/api.d.ts",
+      "default": "./dist/plugins/runtime/api.js"
+    },
+    "./models/descriptor": {
+      "types": "./dist/models/descriptor.d.ts",
+      "default": "./dist/models/descriptor.js"
+    },
+    "./plugins/events/hostV1": {
+      "types": "./dist/plugins/events/hostV1.d.ts",
+      "default": "./dist/plugins/events/hostV1.js"
+    },
+    "./daemon/pluginContributionIntrospection": {
+      "types": "./dist/daemon/pluginContributionIntrospection.d.ts",
+      "default": "./dist/daemon/pluginContributionIntrospection.js"
+    },
+    "./sessions/control/sessionProviderCliAttachPrepareV1": {
+      "types": "./dist/sessions/control/sessionProviderCliAttachPrepareV1.d.ts",
+      "default": "./dist/sessions/control/sessionProviderCliAttachPrepareV1.js"
+    },
+    "./sessions/relations/sessionReportsToV1": {
+      "types": "./dist/sessions/relations/sessionReportsToV1.d.ts",
+      "default": "./dist/sessions/relations/sessionReportsToV1.js"
+    },
+    "./sessions/awareness/projectionV1": {
+      "types": "./dist/sessions/awareness/projectionV1.d.ts",
+      "default": "./dist/sessions/awareness/projectionV1.js"
+    },
+    "./sessions/metadata/connectedServiceMaterializationIdentityV1": {
+      "types": "./dist/sessions/metadata/connectedServiceMaterializationIdentityV1.d.ts",
+      "default": "./dist/sessions/metadata/connectedServiceMaterializationIdentityV1.js"
+    },
+    "./sessions/changes/schemas": {
+      "types": "./dist/sessions/changes/schemas.d.ts",
+      "default": "./dist/sessions/changes/schemas.js"
+    },
+    "./diff/splitUnifiedDiffByFile": {
+      "types": "./dist/diff/splitUnifiedDiffByFile.d.ts",
+      "default": "./dist/diff/splitUnifiedDiffByFile.js"
+    },
+    "./connect/normalizeConnectedServiceSelectionInput": {
+      "types": "./dist/connect/normalizeConnectedServiceSelectionInput.d.ts",
+      "default": "./dist/connect/normalizeConnectedServiceSelectionInput.js"
+    },
+    "./voice/actions": {
+      "types": "./dist/voice/actions.d.ts",
+      "default": "./dist/voice/actions.js"
+    },
+    "./voice/outputEvents": {
+      "types": "./dist/voice/outputEvents.d.ts",
+      "default": "./dist/voice/outputEvents.js"
+    },
+    "./voice/speechText": {
+      "types": "./dist/voice/speechText.d.ts",
+      "default": "./dist/voice/speechText.js"
+    },
+    "./account/profile": {
+      "types": "./dist/account/profile.d.ts",
+      "default": "./dist/account/profile.js"
+    },
+    "./auth/accountSecurity": {
+      "types": "./dist/auth/accountSecurity.d.ts",
+      "default": "./dist/auth/accountSecurity.js"
+    },
+    "./auth/accountSessions": {
+      "types": "./dist/auth/accountSessions.d.ts",
+      "default": "./dist/auth/accountSessions.js"
+    },
+    "./connect/legacyConnectedServiceCompatibility": {
+      "types": "./dist/connect/legacyConnectedServiceCompatibility.d.ts",
+      "default": "./dist/connect/legacyConnectedServiceCompatibility.js"
+    },
+    "./storage/storedJsonContentEnvelope": {
+      "types": "./dist/storage/storedJsonContentEnvelope.d.ts",
+      "default": "./dist/storage/storedJsonContentEnvelope.js"
+    },
+    "./machines/machineStoredContent": {
+      "types": "./dist/machines/machineStoredContent.d.ts",
+      "default": "./dist/machines/machineStoredContent.js"
+    },
+    "./machines/peer/mediation/stream/v1": {
+      "types": "./dist/machines/peer/mediation/stream/v1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/v1.js"
+    },
+    "./machines/peer/mediation/stream/payloadV1": {
+      "types": "./dist/machines/peer/mediation/stream/payloadV1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/payloadV1.js"
+    },
+    "./crypto/accountScopedCipher": {
+      "types": "./dist/crypto/accountScopedCipher.d.ts",
+      "default": "./dist/crypto/accountScopedCipher.js"
+    },
+    "./features/serverEnabledBit": {
+      "types": "./dist/features/serverEnabledBit.d.ts",
+      "default": "./dist/features/serverEnabledBit.js"
+    },
+    "./machines/peer/mediation/tunnel/relay": {
+      "types": "./dist/machines/peer/mediation/tunnel/relay.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/relay.js"
+    },
+    "./clientCompatibility/accountStoredContentCompatibilityV1": {
+      "types": "./dist/clientCompatibility/accountStoredContentCompatibilityV1.d.ts",
+      "default": "./dist/clientCompatibility/accountStoredContentCompatibilityV1.js"
+    },
+    "./artifacts/artifactAccessV1": {
+      "types": "./dist/artifacts/artifactAccessV1.d.ts",
+      "default": "./dist/artifacts/artifactAccessV1.js"
+    },
+    "./artifacts/artifactRecipientKeyPreparationV1": {
+      "types": "./dist/artifacts/artifactRecipientKeyPreparationV1.d.ts",
+      "default": "./dist/artifacts/artifactRecipientKeyPreparationV1.js"
+    },
+    "./artifacts/artifactActionsV1": {
+      "types": "./dist/artifacts/artifactActionsV1.d.ts",
+      "default": "./dist/artifacts/artifactActionsV1.js"
+    },
+    "./artifacts/artifactHeaderRestorationV1": {
+      "types": "./dist/artifacts/artifactHeaderRestorationV1.d.ts",
+      "default": "./dist/artifacts/artifactHeaderRestorationV1.js"
+    },
+    "./artifacts/artifactExcerptV1": {
+      "types": "./dist/artifacts/artifactExcerptV1.d.ts",
+      "default": "./dist/artifacts/artifactExcerptV1.js"
+    },
+    "./artifacts/artifactSharingV1": {
+      "types": "./dist/artifacts/artifactSharingV1.d.ts",
+      "default": "./dist/artifacts/artifactSharingV1.js"
+    },
+    "./artifacts/artifactBinaryV1": {
+      "types": "./dist/artifacts/artifactBinaryV1.d.ts",
+      "default": "./dist/artifacts/artifactBinaryV1.js"
+    },
+    "./crypto/sessionDataKeyBundleV0": {
+      "types": "./dist/crypto/sessionDataKeyBundleV0.d.ts",
+      "default": "./dist/crypto/sessionDataKeyBundleV0.js"
+    },
+    "./crypto/sessionDataKeyBundleWebCrypto": {
+      "types": "./dist/crypto/sessionDataKeyBundleWebCrypto.d.ts",
+      "default": "./dist/crypto/sessionDataKeyBundleWebCrypto.js"
+    },
+    "./artifacts/artifactListSelectionV1": {
+      "types": "./dist/artifacts/artifactListSelectionV1.d.ts",
+      "default": "./dist/artifacts/artifactListSelectionV1.js"
+    },
+    "./automations/automationApiV3": {
+      "types": "./dist/automations/automationApiV3.d.ts",
+      "default": "./dist/automations/automationApiV3.js"
+    },
+    "./automations/automationRunStateV3": {
+      "types": "./dist/automations/automationRunStateV3.d.ts",
+      "default": "./dist/automations/automationRunStateV3.js"
+    },
+    "./account/encryptionMode": {
+      "types": "./dist/account/encryptionMode.d.ts",
+      "default": "./dist/account/encryptionMode.js"
+    },
+    "./account/encryptionKeyFingerprintV1": {
+      "types": "./dist/account/encryptionKeyFingerprintV1.d.ts",
+      "default": "./dist/account/encryptionKeyFingerprintV1.js"
+    },
+    "./connect/connectedServiceCredentialBinding": {
+      "types": "./dist/connect/connectedServiceCredentialBinding.d.ts",
+      "default": "./dist/connect/connectedServiceCredentialBinding.js"
+    },
+    "./connect/generatedBuiltInLegacyConnectedAccountCompatibility": {
+      "types": "./dist/connect/generatedBuiltInLegacyConnectedAccountCompatibility.d.ts",
+      "default": "./dist/connect/generatedBuiltInLegacyConnectedAccountCompatibility.js"
+    },
+    "./connect/qualifiedConnectedAccountsV4": {
+      "types": "./dist/connect/qualifiedConnectedAccountsV4.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountsV4.js"
+    },
+    "./connect/qualifiedConnectedAccountsV4QueryCodec": {
+      "types": "./dist/connect/qualifiedConnectedAccountsV4QueryCodec.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountsV4QueryCodec.js"
+    },
+    "./clientCompatibility/upgradeRequiredV1": {
+      "types": "./dist/clientCompatibility/upgradeRequiredV1.d.ts",
+      "default": "./dist/clientCompatibility/upgradeRequiredV1.js"
+    },
+    "./features/payload/featuresResponseSchema": {
+      "types": "./dist/features/payload/featuresResponseSchema.d.ts",
+      "default": "./dist/features/payload/featuresResponseSchema.js"
+    },
+    "./clientCompatibility/primitives": {
+      "types": "./dist/clientCompatibility/primitives.d.ts",
+      "default": "./dist/clientCompatibility/primitives.js"
+    },
+    "./crypto/serializedJsonValue": {
+      "types": "./dist/crypto/serializedJsonValue.d.ts",
+      "default": "./dist/crypto/serializedJsonValue.js"
+    },
+    "./machines/ownership/daemonOwnership": {
+      "types": "./dist/machines/ownership/daemonOwnership.d.ts",
+      "default": "./dist/machines/ownership/daemonOwnership.js"
+    },
+    "./machines/operationProtocolCapabilitiesV1": {
+      "types": "./dist/machines/operationProtocolCapabilitiesV1.d.ts",
+      "default": "./dist/machines/operationProtocolCapabilitiesV1.js"
+    },
+    "./sessionStop": {
+      "types": "./dist/sessionStop.d.ts",
+      "default": "./dist/sessionStop.js"
+    },
+    "./connect/connectedAccountDaemonRpcV1": {
+      "types": "./dist/connect/connectedAccountDaemonRpcV1.d.ts",
+      "default": "./dist/connect/connectedAccountDaemonRpcV1.js"
+    },
+    "./prompts/library/promptAssetsV1": {
+      "types": "./dist/prompts/library/promptAssetsV1.d.ts",
+      "default": "./dist/prompts/library/promptAssetsV1.js"
+    },
+    "./prompts/library/promptAssetDescriptorsV1": {
+      "types": "./dist/prompts/library/promptAssetDescriptorsV1.d.ts",
+      "default": "./dist/prompts/library/promptAssetDescriptorsV1.js"
+    },
+    "./prompts/library/promptRegistriesV1": {
+      "types": "./dist/prompts/library/promptRegistriesV1.d.ts",
+      "default": "./dist/prompts/library/promptRegistriesV1.js"
+    },
+    "./sessions/control/handoff/workspaceSyncSchemas": {
+      "types": "./dist/sessions/control/handoff/workspaceSyncSchemas.d.ts",
+      "default": "./dist/sessions/control/handoff/workspaceSyncSchemas.js"
+    },
+    "./mcp/servers/daemonRpcV1": {
+      "types": "./dist/mcp/servers/daemonRpcV1.d.ts",
+      "default": "./dist/mcp/servers/daemonRpcV1.js"
+    },
+    "./mcp/servers/previewV1": {
+      "types": "./dist/mcp/servers/previewV1.d.ts",
+      "default": "./dist/mcp/servers/previewV1.js"
+    },
+    "./account/settings/savedSecretCatalogV1": {
+      "types": "./dist/account/settings/savedSecretCatalogV1.d.ts",
+      "default": "./dist/account/settings/savedSecretCatalogV1.js"
+    },
+    "./memory/memorySearch": {
+      "types": "./dist/memory/memorySearch.d.ts",
+      "default": "./dist/memory/memorySearch.js"
+    },
+    "./memory/memoryStatus": {
+      "types": "./dist/memory/memoryStatus.d.ts",
+      "default": "./dist/memory/memoryStatus.js"
+    },
+    "./memory/memoryWindow": {
+      "types": "./dist/memory/memoryWindow.d.ts",
+      "default": "./dist/memory/memoryWindow.js"
+    },
+    "./daemon/serverWorkStatus": {
+      "types": "./dist/daemon/serverWorkStatus.d.ts",
+      "default": "./dist/daemon/serverWorkStatus.js"
+    },
+    "./daemon/terminal": {
+      "types": "./dist/daemon/terminal.d.ts",
+      "default": "./dist/daemon/terminal.js"
+    },
+    "./daemon/agentSignIn": {
+      "types": "./dist/daemon/agentSignIn.d.ts",
+      "default": "./dist/daemon/agentSignIn.js"
+    },
+    "./daemon/executionRuns": {
+      "types": "./dist/daemon/executionRuns.d.ts",
+      "default": "./dist/daemon/executionRuns.js"
+    },
+    "./connect/sessionConnectedServiceAuthSwitch": {
+      "types": "./dist/connect/sessionConnectedServiceAuthSwitch.d.ts",
+      "default": "./dist/connect/sessionConnectedServiceAuthSwitch.js"
+    },
+    "./daemon/voiceCredentials": {
+      "types": "./dist/daemon/voiceCredentials.d.ts",
+      "default": "./dist/daemon/voiceCredentials.js"
+    },
+    "./account/settings/savedSecretMutationOwner": {
+      "types": "./dist/account/settings/savedSecretMutationOwner.d.ts",
+      "default": "./dist/account/settings/savedSecretMutationOwner.js"
+    },
+    "./voice/diagnostics": {
+      "types": "./dist/voice/diagnostics.d.ts",
+      "default": "./dist/voice/diagnostics.js"
+    },
+    "./daemon/voiceInference": {
+      "types": "./dist/daemon/voiceInference.d.ts",
+      "default": "./dist/daemon/voiceInference.js"
+    },
+    "./daemon/voiceSpeech": {
+      "types": "./dist/daemon/voiceSpeech.d.ts",
+      "default": "./dist/daemon/voiceSpeech.js"
+    },
+    "./sessions/control/handoff/handoffSchemas": {
+      "types": "./dist/sessions/control/handoff/handoffSchemas.d.ts",
+      "default": "./dist/sessions/control/handoff/handoffSchemas.js"
+    },
+    "./voice/recognitionLanguage": {
+      "types": "./dist/voice/recognitionLanguage.d.ts",
+      "default": "./dist/voice/recognitionLanguage.js"
+    },
+    "./push/expoPushDelivery": {
+      "types": "./dist/push/expoPushDelivery.d.ts",
+      "default": "./dist/push/expoPushDelivery.js"
+    },
+    "./push/pushNotificationActions": {
+      "types": "./dist/push/pushNotificationActions.d.ts",
+      "default": "./dist/push/pushNotificationActions.js"
+    },
+    "./prompts/roles/roleActionIdsV1": {
+      "types": "./dist/prompts/roles/roleActionIdsV1.d.ts",
+      "default": "./dist/prompts/roles/roleActionIdsV1.js"
+    },
+    "./messages/structured/voiceAgentTurnLocalId": {
+      "types": "./dist/messages/structured/voiceAgentTurnLocalId.d.ts",
+      "default": "./dist/messages/structured/voiceAgentTurnLocalId.js"
+    },
+    "./sessions/messages/sessionMediaV1": {
+      "types": "./dist/sessions/messages/sessionMediaV1.d.ts",
+      "default": "./dist/sessions/messages/sessionMediaV1.js"
+    },
+    "./sessions/messages/transcriptObservationV1": {
+      "types": "./dist/sessions/messages/transcriptObservationV1.d.ts",
+      "default": "./dist/sessions/messages/transcriptObservationV1.js"
+    },
+    "./sessions/messages/sessionMessageRole": {
+      "types": "./dist/sessions/messages/sessionMessageRole.d.ts",
+      "default": "./dist/sessions/messages/sessionMessageRole.js"
+    },
+    "./sessions/messages/coerceSessionUserPromptV1": {
+      "types": "./dist/sessions/messages/coerceSessionUserPromptV1.d.ts",
+      "default": "./dist/sessions/messages/coerceSessionUserPromptV1.js"
+    },
+    "./sessions/messages/sessionMessagesPageV1": {
+      "types": "./dist/sessions/messages/sessionMessagesPageV1.d.ts",
+      "default": "./dist/sessions/messages/sessionMessagesPageV1.js"
+    },
+    "./sessions/messages/messageStructuredPresentationV1": {
+      "types": "./dist/sessions/messages/messageStructuredPresentationV1.d.ts",
+      "default": "./dist/sessions/messages/messageStructuredPresentationV1.js"
+    },
+    "./plugins/backendDefinitionV1": {
+      "types": "./dist/plugins/backendDefinitionV1.d.ts",
+      "default": "./dist/plugins/backendDefinitionV1.js"
+    },
+    "./plugins/backendExternalSessionSourceInstances": {
+      "types": "./dist/plugins/backendExternalSessionSourceInstances.d.ts",
+      "default": "./dist/plugins/backendExternalSessionSourceInstances.js"
+    },
+    "./sessions/messages/messageActionReferenceV1": {
+      "types": "./dist/sessions/messages/messageActionReferenceV1.d.ts",
+      "default": "./dist/sessions/messages/messageActionReferenceV1.js"
+    },
+    "./sessions/pending/acceptedPendingSettlementV1": {
+      "types": "./dist/sessions/pending/acceptedPendingSettlementV1.d.ts",
+      "default": "./dist/sessions/pending/acceptedPendingSettlementV1.js"
+    },
+    "./sessions/messages/pendingDeliveryStatusV1": {
+      "types": "./dist/sessions/messages/pendingDeliveryStatusV1.d.ts",
+      "default": "./dist/sessions/messages/pendingDeliveryStatusV1.js"
+    },
+    "./sessions/pending/pendingProviderAction": {
+      "types": "./dist/sessions/pending/pendingProviderAction.d.ts",
+      "default": "./dist/sessions/pending/pendingProviderAction.js"
+    },
+    "./account/settings/accountSettingsApiV2": {
+      "types": "./dist/account/settings/accountSettingsApiV2.d.ts",
+      "default": "./dist/account/settings/accountSettingsApiV2.js"
+    },
+    "./crypto/encryptedDataKeyEnvelopeFormatV1": {
+      "types": "./dist/crypto/encryptedDataKeyEnvelopeFormatV1.d.ts",
+      "default": "./dist/crypto/encryptedDataKeyEnvelopeFormatV1.js"
+    },
+    "./sessions/encryption/prepareSessionDataKeyEnvelopeItemV1": {
+      "types": "./dist/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.d.ts",
+      "default": "./dist/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.js"
+    },
+    "./sessions/encryption/sessionDataKeyPreparationPass": {
+      "types": "./dist/sessions/encryption/sessionDataKeyPreparationPass.d.ts",
+      "default": "./dist/sessions/encryption/sessionDataKeyPreparationPass.js"
+    },
+    "./compat/operationUpdateRequiredV1": {
+      "types": "./dist/compat/operationUpdateRequiredV1.d.ts",
+      "default": "./dist/compat/operationUpdateRequiredV1.js"
+    },
+    "./social/friends": {
+      "types": "./dist/social/friends.d.ts",
+      "default": "./dist/social/friends.js"
+    },
+    "./crypto/accountContentKeyBindingV1": {
+      "types": "./dist/crypto/accountContentKeyBindingV1.d.ts",
+      "default": "./dist/crypto/accountContentKeyBindingV1.js"
+    },
+    "./messages/structured/conversationTurnOriginV1": {
+      "types": "./dist/messages/structured/conversationTurnOriginV1.d.ts",
+      "default": "./dist/messages/structured/conversationTurnOriginV1.js"
+    },
+    "./voice/voiceAgentRunMetadataContract": {
+      "types": "./dist/voice/voiceAgentRunMetadataContract.d.ts",
+      "default": "./dist/voice/voiceAgentRunMetadataContract.js"
+    },
+    "./voice/voiceAgentRunMetadataV1": {
+      "types": "./dist/voice/voiceAgentRunMetadataV1.d.ts",
+      "default": "./dist/voice/voiceAgentRunMetadataV1.js"
+    },
+    "./crypto/publicShareEncryptedDataKeyEnvelopeV0": {
+      "types": "./dist/crypto/publicShareEncryptedDataKeyEnvelopeV0.d.ts",
+      "default": "./dist/crypto/publicShareEncryptedDataKeyEnvelopeV0.js"
+    },
+    "./machines/cliUpdateFacts": {
+      "types": "./dist/machines/cliUpdateFacts.d.ts",
+      "default": "./dist/machines/cliUpdateFacts.js"
+    },
+    "./sentFrom": {
+      "types": "./dist/sentFrom.d.ts",
+      "default": "./dist/sentFrom.js"
+    },
+    "./machines/identity/machineReplacement": {
+      "types": "./dist/machines/identity/machineReplacement.d.ts",
+      "default": "./dist/machines/identity/machineReplacement.js"
+    },
+    "./machines/peer/mediation/loopbackEndpointV1": {
+      "types": "./dist/machines/peer/mediation/loopbackEndpointV1.d.ts",
+      "default": "./dist/machines/peer/mediation/loopbackEndpointV1.js"
+    },
+    "./auth/externalOAuth": {
+      "types": "./dist/auth/externalOAuth.d.ts",
+      "default": "./dist/auth/externalOAuth.js"
+    },
+    "./auth/keyChallenge": {
+      "types": "./dist/auth/keyChallenge.d.ts",
+      "default": "./dist/auth/keyChallenge.js"
+    },
+    "./auth/recoveryKey": {
+      "types": "./dist/auth/recoveryKey.d.ts",
+      "default": "./dist/auth/recoveryKey.js"
+    },
+    "./features/payload/capabilities/serverIdentityCapabilities": {
+      "types": "./dist/features/payload/capabilities/serverIdentityCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/serverIdentityCapabilities.js"
+    },
+    "./crypto/qrProvisioningV2": {
+      "types": "./dist/crypto/qrProvisioningV2.d.ts",
+      "default": "./dist/crypto/qrProvisioningV2.js"
+    },
+    "./crypto/terminalProvisioningV2": {
+      "types": "./dist/crypto/terminalProvisioningV2.d.ts",
+      "default": "./dist/crypto/terminalProvisioningV2.js"
+    },
+    "./common/asyncTtlCache": {
+      "types": "./dist/common/asyncTtlCache.d.ts",
+      "default": "./dist/common/asyncTtlCache.js"
+    },
+    "./plugins/contributions/agentCliMetadata": {
+      "types": "./dist/plugins/contributions/agentCliMetadata.d.ts",
+      "default": "./dist/plugins/contributions/agentCliMetadata.js"
+    },
+    "./ssh/tunnels": {
+      "types": "./dist/ssh/tunnels.d.ts",
+      "default": "./dist/ssh/tunnels.js"
+    },
+    "./system/tasks/spec": {
+      "types": "./dist/system/tasks/spec.d.ts",
+      "default": "./dist/system/tasks/spec.js"
+    },
+    "./actions/specs/wait": {
+      "types": "./dist/actions/specs/wait.d.ts",
+      "default": "./dist/actions/specs/wait.js"
+    },
+    "./actions/actionDefinitionV1": {
+      "types": "./dist/actions/actionDefinitionV1.d.ts",
+      "default": "./dist/actions/actionDefinitionV1.js"
+    },
+    "./machines/host/normalizeMachineHost": {
+      "types": "./dist/machines/host/normalizeMachineHost.d.ts",
+      "default": "./dist/machines/host/normalizeMachineHost.js"
+    },
+    "./auth/accountExternalAuthProof": {
+      "types": "./dist/auth/accountExternalAuthProof.d.ts",
+      "default": "./dist/auth/accountExternalAuthProof.js"
+    },
+    "./auth/accountSecurityCrypto": {
+      "types": "./dist/auth/accountSecurityCrypto.d.ts",
+      "default": "./dist/auth/accountSecurityCrypto.js"
+    },
+    "./auth/passwordMutationChallenge": {
+      "types": "./dist/auth/passwordMutationChallenge.d.ts",
+      "default": "./dist/auth/passwordMutationChallenge.js"
+    },
+    "./auth/verifiedEmail": {
+      "types": "./dist/auth/verifiedEmail.d.ts",
+      "default": "./dist/auth/verifiedEmail.js"
+    },
+    "./crypto/apiTokenEncryptionAccess": {
+      "types": "./dist/crypto/apiTokenEncryptionAccess.d.ts",
+      "default": "./dist/crypto/apiTokenEncryptionAccess.js"
+    },
+    "./auth/nativeAuthEmailRoutes": {
+      "types": "./dist/auth/nativeAuthEmailRoutes.d.ts",
+      "default": "./dist/auth/nativeAuthEmailRoutes.js"
+    },
+    "./automations/automationOccurrenceV1": {
+      "types": "./dist/automations/automationOccurrenceV1.d.ts",
+      "default": "./dist/automations/automationOccurrenceV1.js"
+    },
+    "./system/tasks/promptPayloadContracts": {
+      "types": "./dist/system/tasks/promptPayloadContracts.d.ts",
+      "default": "./dist/system/tasks/promptPayloadContracts.js"
+    },
+    "./mcp/servers/settingsV1": {
+      "types": "./dist/mcp/servers/settingsV1.d.ts",
+      "default": "./dist/mcp/servers/settingsV1.js"
+    },
+    "./plugins/settingsAdministration": {
+      "types": "./dist/plugins/settingsAdministration.d.ts",
+      "default": "./dist/plugins/settingsAdministration.js"
+    },
+    "./profiles/backendProfileSchema": {
+      "types": "./dist/profiles/backendProfileSchema.d.ts",
+      "default": "./dist/profiles/backendProfileSchema.js"
+    },
+    "./backends/targets/compat/customAcp": {
+      "types": "./dist/backends/targets/compat/customAcp.d.ts",
+      "default": "./dist/backends/targets/compat/customAcp.js"
+    },
+    "./execution/runs/index": {
+      "types": "./dist/execution/runs/index.d.ts",
+      "default": "./dist/execution/runs/index.js"
+    },
+    "./execution/runs/streaming": {
+      "types": "./dist/execution/runs/streaming.d.ts",
+      "default": "./dist/execution/runs/streaming.js"
+    },
+    "./sessions/control/contract": {
+      "types": "./dist/sessions/control/contract.d.ts",
+      "default": "./dist/sessions/control/contract.js"
+    },
+    "./sessions/awareness/action": {
+      "types": "./dist/sessions/awareness/action.d.ts",
+      "default": "./dist/sessions/awareness/action.js"
+    },
+    "./sessions/control/listResult": {
+      "types": "./dist/sessions/control/listResult.d.ts",
+      "default": "./dist/sessions/control/listResult.js"
+    },
+    "./backends/targets/backendTargetRef": {
+      "types": "./dist/backends/targets/backendTargetRef.d.ts",
+      "default": "./dist/backends/targets/backendTargetRef.js"
+    },
+    "./sessions/awareness/projectV1": {
+      "types": "./dist/sessions/awareness/projectV1.d.ts",
+      "default": "./dist/sessions/awareness/projectV1.js"
+    },
+    "./sessions/awareness/runtime": {
+      "types": "./dist/sessions/awareness/runtime.d.ts",
+      "default": "./dist/sessions/awareness/runtime.js"
+    },
+    "./profiles/read": {
+      "types": "./dist/profiles/read.d.ts",
+      "default": "./dist/profiles/read.js"
+    },
+    "./connect/connectedServiceCipher": {
+      "types": "./dist/connect/connectedServiceCipher.d.ts",
+      "default": "./dist/connect/connectedServiceCipher.js"
+    },
+    "./sessions/control/handoff/handoffTargetReplacementApprovalV1": {
+      "types": "./dist/sessions/control/handoff/handoffTargetReplacementApprovalV1.d.ts",
+      "default": "./dist/sessions/control/handoff/handoffTargetReplacementApprovalV1.js"
+    },
+    "./sessions/spawnSessionNonce": {
+      "types": "./dist/sessions/spawnSessionNonce.d.ts",
+      "default": "./dist/sessions/spawnSessionNonce.js"
+    },
+    "./sessions/control/handoff/handoffStatus": {
+      "types": "./dist/sessions/control/handoff/handoffStatus.d.ts",
+      "default": "./dist/sessions/control/handoff/handoffStatus.js"
+    },
+    "./sessions/control/handoff/workspaceTransferSourcePathSafety": {
+      "types": "./dist/sessions/control/handoff/workspaceTransferSourcePathSafety.d.ts",
+      "default": "./dist/sessions/control/handoff/workspaceTransferSourcePathSafety.js"
+    },
+    "./prompts/roles/roleActionsV1": {
+      "types": "./dist/prompts/roles/roleActionsV1.d.ts",
+      "default": "./dist/prompts/roles/roleActionsV1.js"
+    },
+    "./account/settings/savedSecretReferenceV1": {
+      "types": "./dist/account/settings/savedSecretReferenceV1.d.ts",
+      "default": "./dist/account/settings/savedSecretReferenceV1.js"
+    },
+    "./automations/automationRunLifecycle": {
+      "types": "./dist/automations/automationRunLifecycle.d.ts",
+      "default": "./dist/automations/automationRunLifecycle.js"
+    },
+    "./automations/automationRunExecutionRecipeV1": {
+      "types": "./dist/automations/automationRunExecutionRecipeV1.d.ts",
+      "default": "./dist/automations/automationRunExecutionRecipeV1.js"
+    },
+    "./automations/automationReplyHandoffStoredContent": {
+      "types": "./dist/automations/automationReplyHandoffStoredContent.d.ts",
+      "default": "./dist/automations/automationReplyHandoffStoredContent.js"
+    },
+    "./automations/automationRunFailureDetailStoredContent": {
+      "types": "./dist/automations/automationRunFailureDetailStoredContent.d.ts",
+      "default": "./dist/automations/automationRunFailureDetailStoredContent.js"
+    },
+    "./automations/automationSessionStartRequestEnvelopeV1": {
+      "types": "./dist/automations/automationSessionStartRequestEnvelopeV1.d.ts",
+      "default": "./dist/automations/automationSessionStartRequestEnvelopeV1.js"
+    },
+    "./automations/automationTemplateStoredV1": {
+      "types": "./dist/automations/automationTemplateStoredV1.d.ts",
+      "default": "./dist/automations/automationTemplateStoredV1.js"
+    },
+    "./automations/automationTemplateEnvelope": {
+      "types": "./dist/automations/automationTemplateEnvelope.d.ts",
+      "default": "./dist/automations/automationTemplateEnvelope.js"
+    },
+    "./automations/automationTemplatePayloadV1": {
+      "types": "./dist/automations/automationTemplatePayloadV1.d.ts",
+      "default": "./dist/automations/automationTemplatePayloadV1.js"
+    },
+    "./browser/control/v1": {
+      "types": "./dist/browser/control/v1.d.ts",
+      "default": "./dist/browser/control/v1.js"
+    },
+    "./browser/automation/v1": {
+      "types": "./dist/browser/automation/v1.d.ts",
+      "default": "./dist/browser/automation/v1.js"
+    },
+    "./browser/automation/redaction": {
+      "types": "./dist/browser/automation/redaction.d.ts",
+      "default": "./dist/browser/automation/redaction.js"
+    },
+    "./browser/events/activeTarget": {
+      "types": "./dist/browser/events/activeTarget.d.ts",
+      "default": "./dist/browser/events/activeTarget.js"
+    },
+    "./browser/view/key": {
+      "types": "./dist/browser/view/key.d.ts",
+      "default": "./dist/browser/view/key.js"
+    },
+    "./browser/automation/locators": {
+      "types": "./dist/browser/automation/locators.d.ts",
+      "default": "./dist/browser/automation/locators.js"
+    },
+    "./browser/automation/reverseDispatchV1": {
+      "types": "./dist/browser/automation/reverseDispatchV1.d.ts",
+      "default": "./dist/browser/automation/reverseDispatchV1.js"
+    },
+    "./browser/automation/notImplemented": {
+      "types": "./dist/browser/automation/notImplemented.d.ts",
+      "default": "./dist/browser/automation/notImplemented.js"
+    },
+    "./browser/events/v1": {
+      "types": "./dist/browser/events/v1.d.ts",
+      "default": "./dist/browser/events/v1.js"
+    },
+    "./browser/context/annotationStructuredBlock": {
+      "types": "./dist/browser/context/annotationStructuredBlock.d.ts",
+      "default": "./dist/browser/context/annotationStructuredBlock.js"
+    },
+    "./browser/context/v1": {
+      "types": "./dist/browser/context/v1.d.ts",
+      "default": "./dist/browser/context/v1.js"
+    },
+    "./browser/diagnostics/egress/classifier": {
+      "types": "./dist/browser/diagnostics/egress/classifier.d.ts",
+      "default": "./dist/browser/diagnostics/egress/classifier.js"
+    },
+    "./browser/context/privacy": {
+      "types": "./dist/browser/context/privacy.d.ts",
+      "default": "./dist/browser/context/privacy.js"
+    },
+    "./browser/context/annotationCropGeometry": {
+      "types": "./dist/browser/context/annotationCropGeometry.d.ts",
+      "default": "./dist/browser/context/annotationCropGeometry.js"
+    },
+    "./browser/diagnostics/v1": {
+      "types": "./dist/browser/diagnostics/v1.d.ts",
+      "default": "./dist/browser/diagnostics/v1.js"
+    },
+    "./browser/profile/v1": {
+      "types": "./dist/browser/profile/v1.d.ts",
+      "default": "./dist/browser/profile/v1.js"
+    },
+    "./browser/recording/reverseCaptureV1": {
+      "types": "./dist/browser/recording/reverseCaptureV1.d.ts",
+      "default": "./dist/browser/recording/reverseCaptureV1.js"
+    },
+    "./machines/peer/mediation/stream/codecsV1": {
+      "types": "./dist/machines/peer/mediation/stream/codecsV1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/codecsV1.js"
+    },
+    "./browser/recording/v1": {
+      "types": "./dist/browser/recording/v1.d.ts",
+      "default": "./dist/browser/recording/v1.js"
+    },
+    "./features/payload/capabilities/browserCapabilities": {
+      "types": "./dist/features/payload/capabilities/browserCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/browserCapabilities.js"
+    },
+    "./browser/recording/captureProfiles": {
+      "types": "./dist/browser/recording/captureProfiles.d.ts",
+      "default": "./dist/browser/recording/captureProfiles.js"
+    },
+    "./browser/url": {
+      "types": "./dist/browser/url.d.ts",
+      "default": "./dist/browser/url.js"
+    },
+    "./browser/diagnostics/egress/headers": {
+      "types": "./dist/browser/diagnostics/egress/headers.d.ts",
+      "default": "./dist/browser/diagnostics/egress/headers.js"
+    },
+    "./browser/adapters/v1": {
+      "types": "./dist/browser/adapters/v1.d.ts",
+      "default": "./dist/browser/adapters/v1.js"
+    },
+    "./browser/sidecar/v1": {
+      "types": "./dist/browser/sidecar/v1.d.ts",
+      "default": "./dist/browser/sidecar/v1.js"
+    },
+    "./browser/sidecar/chromiumForTesting": {
+      "types": "./dist/browser/sidecar/chromiumForTesting.d.ts",
+      "default": "./dist/browser/sidecar/chromiumForTesting.js"
+    },
+    "./browser/storage/v1": {
+      "types": "./dist/browser/storage/v1.d.ts",
+      "default": "./dist/browser/storage/v1.js"
+    },
+    "./computer/v1": {
+      "types": "./dist/computer/v1.d.ts",
+      "default": "./dist/computer/v1.js"
+    },
+    "./connect/quotaObservationTime": {
+      "types": "./dist/connect/quotaObservationTime.d.ts",
+      "default": "./dist/connect/quotaObservationTime.js"
+    },
+    "./connect/connectedServiceAuthGroupMemberRuntimeStatePolicy": {
+      "types": "./dist/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy.d.ts",
+      "default": "./dist/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy.js"
+    },
+    "./connect/accountUsage": {
+      "types": "./dist/connect/accountUsage.d.ts",
+      "default": "./dist/connect/accountUsage.js"
+    },
+    "./connect/accountSubscription": {
+      "types": "./dist/connect/accountSubscription.d.ts",
+      "default": "./dist/connect/accountSubscription.js"
+    },
+    "./connect/connectedServiceUxDiagnostics": {
+      "types": "./dist/connect/connectedServiceUxDiagnostics.d.ts",
+      "default": "./dist/connect/connectedServiceUxDiagnostics.js"
+    },
+    "./connect/connectedAccountUiProjectionV1": {
+      "types": "./dist/connect/connectedAccountUiProjectionV1.d.ts",
+      "default": "./dist/connect/connectedAccountUiProjectionV1.js"
+    },
+    "./plugins/interactions/transientV1": {
+      "types": "./dist/plugins/interactions/transientV1.d.ts",
+      "default": "./dist/plugins/interactions/transientV1.js"
+    },
+    "./connect/qualifiedConnectedAccountContentEnvelope": {
+      "types": "./dist/connect/qualifiedConnectedAccountContentEnvelope.d.ts",
+      "default": "./dist/connect/qualifiedConnectedAccountContentEnvelope.js"
+    },
+    "./account/settings/connectedAccountServiceConfigurationsV1": {
+      "types": "./dist/account/settings/connectedAccountServiceConfigurationsV1.d.ts",
+      "default": "./dist/account/settings/connectedAccountServiceConfigurationsV1.js"
+    },
+    "./connect/recoveryCreditConsumeIdempotencyKey": {
+      "types": "./dist/connect/recoveryCreditConsumeIdempotencyKey.d.ts",
+      "default": "./dist/connect/recoveryCreditConsumeIdempotencyKey.js"
+    },
+    "./env/parseBooleanEnv": {
+      "types": "./dist/env/parseBooleanEnv.d.ts",
+      "default": "./dist/env/parseBooleanEnv.js"
+    },
+    "./sessions/continuation/recoveryV1": {
+      "types": "./dist/sessions/continuation/recoveryV1.d.ts",
+      "default": "./dist/sessions/continuation/recoveryV1.js"
+    },
+    "./devices/simulator/runtimeV1": {
+      "types": "./dist/devices/simulator/runtimeV1.d.ts",
+      "default": "./dist/devices/simulator/runtimeV1.js"
+    },
+    "./local/services/launcher/v1": {
+      "types": "./dist/local/services/launcher/v1.d.ts",
+      "default": "./dist/local/services/launcher/v1.js"
+    },
+    "./local/services/actions/v1": {
+      "types": "./dist/local/services/actions/v1.d.ts",
+      "default": "./dist/local/services/actions/v1.js"
+    },
+    "./devices/simulator/actionBuilders": {
+      "types": "./dist/devices/simulator/actionBuilders.d.ts",
+      "default": "./dist/devices/simulator/actionBuilders.js"
+    },
+    "./devices/simulator/runtimeActionBacking": {
+      "types": "./dist/devices/simulator/runtimeActionBacking.d.ts",
+      "default": "./dist/devices/simulator/runtimeActionBacking.js"
+    },
+    "./machines/peer/mediation/stream/controlV1": {
+      "types": "./dist/machines/peer/mediation/stream/controlV1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/controlV1.js"
+    },
+    "./devices/simulator/androidV1": {
+      "types": "./dist/devices/simulator/androidV1.d.ts",
+      "default": "./dist/devices/simulator/androidV1.js"
+    },
+    "./machines/peer/mediation/receipts": {
+      "types": "./dist/machines/peer/mediation/receipts.d.ts",
+      "default": "./dist/machines/peer/mediation/receipts.js"
+    },
+    "./machines/peer/mediation/stream/captureV1": {
+      "types": "./dist/machines/peer/mediation/stream/captureV1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/captureV1.js"
+    },
+    "./devices/simulator/v1": {
+      "types": "./dist/devices/simulator/v1.d.ts",
+      "default": "./dist/devices/simulator/v1.js"
+    },
+    "./devices/simulator/iosV1": {
+      "types": "./dist/devices/simulator/iosV1.d.ts",
+      "default": "./dist/devices/simulator/iosV1.js"
+    },
+    "./features/payload/capabilities/localServiceCapabilities": {
+      "types": "./dist/features/payload/capabilities/localServiceCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/localServiceCapabilities.js"
+    },
+    "./crypto/settingsSecretStringsV1": {
+      "types": "./dist/crypto/settingsSecretStringsV1.d.ts",
+      "default": "./dist/crypto/settingsSecretStringsV1.js"
+    },
+    "./messages/structured/sessionSummaryShardV1": {
+      "types": "./dist/messages/structured/sessionSummaryShardV1.d.ts",
+      "default": "./dist/messages/structured/sessionSummaryShardV1.js"
+    },
+    "./messages/structured/sessionSynopsisV1": {
+      "types": "./dist/messages/structured/sessionSynopsisV1.d.ts",
+      "default": "./dist/messages/structured/sessionSynopsisV1.js"
+    },
+    "./memory/resolveMemoryEmbeddingsConfig": {
+      "types": "./dist/memory/resolveMemoryEmbeddingsConfig.d.ts",
+      "default": "./dist/memory/resolveMemoryEmbeddingsConfig.js"
+    },
+    "./memory/memorySettings": {
+      "types": "./dist/memory/memorySettings.d.ts",
+      "default": "./dist/memory/memorySettings.js"
+    },
+    "./connectivity/iroh/machineHandshakeV1": {
+      "types": "./dist/connectivity/iroh/machineHandshakeV1.d.ts",
+      "default": "./dist/connectivity/iroh/machineHandshakeV1.js"
+    },
+    "./machines/peer/mediation/directRouteGrantCachePolicyV1": {
+      "types": "./dist/machines/peer/mediation/directRouteGrantCachePolicyV1.d.ts",
+      "default": "./dist/machines/peer/mediation/directRouteGrantCachePolicyV1.js"
+    },
+    "./machines/peer/mediation/directRouteGrantV2": {
+      "types": "./dist/machines/peer/mediation/directRouteGrantV2.d.ts",
+      "default": "./dist/machines/peer/mediation/directRouteGrantV2.js"
+    },
+    "./machines/peer/mediation/ephemeralPeerRouteProofV2": {
+      "types": "./dist/machines/peer/mediation/ephemeralPeerRouteProofV2.d.ts",
+      "default": "./dist/machines/peer/mediation/ephemeralPeerRouteProofV2.js"
+    },
+    "./connectivity/iroh/endpointDescriptorV1": {
+      "types": "./dist/connectivity/iroh/endpointDescriptorV1.d.ts",
+      "default": "./dist/connectivity/iroh/endpointDescriptorV1.js"
+    },
+    "./machines/peer/mediation/observability/v1": {
+      "types": "./dist/machines/peer/mediation/observability/v1.d.ts",
+      "default": "./dist/machines/peer/mediation/observability/v1.js"
+    },
+    "./machines/peer/mediation/observability/metadataRedaction": {
+      "types": "./dist/machines/peer/mediation/observability/metadataRedaction.d.ts",
+      "default": "./dist/machines/peer/mediation/observability/metadataRedaction.js"
+    },
+    "./machines/peer/mediation/observability/flowStore": {
+      "types": "./dist/machines/peer/mediation/observability/flowStore.d.ts",
+      "default": "./dist/machines/peer/mediation/observability/flowStore.js"
+    },
+    "./machines/peer/mediation/rpc/directV2": {
+      "types": "./dist/machines/peer/mediation/rpc/directV2.d.ts",
+      "default": "./dist/machines/peer/mediation/rpc/directV2.js"
+    },
+    "./machines/peer/mediation/rpc/commandReceiptV1": {
+      "types": "./dist/machines/peer/mediation/rpc/commandReceiptV1.d.ts",
+      "default": "./dist/machines/peer/mediation/rpc/commandReceiptV1.js"
+    },
+    "./machines/peer/mediation/routeFeature": {
+      "types": "./dist/machines/peer/mediation/routeFeature.d.ts",
+      "default": "./dist/machines/peer/mediation/routeFeature.js"
+    },
+    "./machines/peer/mediation/rpc/routePolicyV1": {
+      "types": "./dist/machines/peer/mediation/rpc/routePolicyV1.d.ts",
+      "default": "./dist/machines/peer/mediation/rpc/routePolicyV1.js"
+    },
+    "./machines/peer/mediation/stream/metering": {
+      "types": "./dist/machines/peer/mediation/stream/metering.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/metering.js"
+    },
+    "./machines/peer/mediation/stream/directV2": {
+      "types": "./dist/machines/peer/mediation/stream/directV2.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/directV2.js"
+    },
+    "./machines/peer/mediation/stream/receipts": {
+      "types": "./dist/machines/peer/mediation/stream/receipts.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/receipts.js"
+    },
+    "./machines/peer/mediation/tunnel/v1": {
+      "types": "./dist/machines/peer/mediation/tunnel/v1.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/v1.js"
+    },
+    "./machines/peer/mediation/tunnel/encoding": {
+      "types": "./dist/machines/peer/mediation/tunnel/encoding.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/encoding.js"
+    },
+    "./machines/peer/mediation/tunnel/openAuthorizationV2": {
+      "types": "./dist/machines/peer/mediation/tunnel/openAuthorizationV2.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/openAuthorizationV2.js"
+    },
+    "./features/payload/capabilities/machineTunnelCapabilities": {
+      "types": "./dist/features/payload/capabilities/machineTunnelCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/machineTunnelCapabilities.js"
+    },
+    "./machines/peer/mediation/tunnel/v2": {
+      "types": "./dist/machines/peer/mediation/tunnel/v2.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/v2.js"
+    },
+    "./machines/peer/mediation/tunnel/authorization": {
+      "types": "./dist/machines/peer/mediation/tunnel/authorization.d.ts",
+      "default": "./dist/machines/peer/mediation/tunnel/authorization.js"
+    },
+    "./machines/peer/mediation/peerApplicationEncryptionV1": {
+      "types": "./dist/machines/peer/mediation/peerApplicationEncryptionV1.d.ts",
+      "default": "./dist/machines/peer/mediation/peerApplicationEncryptionV1.js"
+    },
+    "./sessions/metadata/windowsTerminalWindowName": {
+      "types": "./dist/sessions/metadata/windowsTerminalWindowName.d.ts",
+      "default": "./dist/sessions/metadata/windowsTerminalWindowName.js"
+    },
+    "./approvals/approvalRequestV1": {
+      "types": "./dist/approvals/approvalRequestV1.d.ts",
+      "default": "./dist/approvals/approvalRequestV1.js"
+    },
+    "./machines/transfer/transferStream": {
+      "types": "./dist/machines/transfer/transferStream.d.ts",
+      "default": "./dist/machines/transfer/transferStream.js"
+    },
+    "./sessions/pending/sessionPendingQueueWakeV1": {
+      "types": "./dist/sessions/pending/sessionPendingQueueWakeV1.d.ts",
+      "default": "./dist/sessions/pending/sessionPendingQueueWakeV1.js"
+    },
+    "./sessions/metadata/providerAccountUsageRefsV1": {
+      "types": "./dist/sessions/metadata/providerAccountUsageRefsV1.d.ts",
+      "default": "./dist/sessions/metadata/providerAccountUsageRefsV1.js"
+    },
+    "./voice/modelPacks/pathSafety": {
+      "types": "./dist/voice/modelPacks/pathSafety.d.ts",
+      "default": "./dist/voice/modelPacks/pathSafety.js"
+    },
+    "./voice/modelPacks/manifest": {
+      "types": "./dist/voice/modelPacks/manifest.d.ts",
+      "default": "./dist/voice/modelPacks/manifest.js"
+    },
+    "./voice/modelPacks/identityV1": {
+      "types": "./dist/voice/modelPacks/identityV1.d.ts",
+      "default": "./dist/voice/modelPacks/identityV1.js"
+    },
+    "./voice/runtimeConfig": {
+      "types": "./dist/voice/runtimeConfig.d.ts",
+      "default": "./dist/voice/runtimeConfig.js"
+    },
+    "./voice/modelPacks/kokoro": {
+      "types": "./dist/voice/modelPacks/kokoro.d.ts",
+      "default": "./dist/voice/modelPacks/kokoro.js"
+    },
+    "./voice/modelPacks/catalog": {
+      "types": "./dist/voice/modelPacks/catalog.d.ts",
+      "default": "./dist/voice/modelPacks/catalog.js"
+    },
+    "./voice/modelPacks/artifactRolesV1": {
+      "types": "./dist/voice/modelPacks/artifactRolesV1.d.ts",
+      "default": "./dist/voice/modelPacks/artifactRolesV1.js"
+    },
+    "./daemon/contributionRegistryProjection": {
+      "types": "./dist/daemon/contributionRegistryProjection.d.ts",
+      "default": "./dist/daemon/contributionRegistryProjection.js"
+    },
+    "./sessions/agentTransition": {
+      "types": "./dist/sessions/agentTransition.d.ts",
+      "default": "./dist/sessions/agentTransition.js"
+    },
+    "./automations/automationWorkflowRecipeV2": {
+      "types": "./dist/automations/automationWorkflowRecipeV2.d.ts",
+      "default": "./dist/automations/automationWorkflowRecipeV2.js"
+    },
+    "./sessions/work/state/sessionWorkStatePrimary": {
+      "types": "./dist/sessions/work/state/sessionWorkStatePrimary.d.ts",
+      "default": "./dist/sessions/work/state/sessionWorkStatePrimary.js"
+    },
+    "./usage/usageAnalyticsContracts": {
+      "types": "./dist/usage/usageAnalyticsContracts.d.ts",
+      "default": "./dist/usage/usageAnalyticsContracts.js"
+    },
+    "./features/payload/capabilities/bugReportsCapabilities": {
+      "types": "./dist/features/payload/capabilities/bugReportsCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/bugReportsCapabilities.js"
+    },
+    "./diagnostics/doctorSnapshot": {
+      "types": "./dist/diagnostics/doctorSnapshot.d.ts",
+      "default": "./dist/diagnostics/doctorSnapshot.js"
+    },
+    "./features/buildPolicy": {
+      "types": "./dist/features/buildPolicy.d.ts",
+      "default": "./dist/features/buildPolicy.js"
+    },
+    "./features/embeddedFeaturePolicy": {
+      "types": "./dist/features/embeddedFeaturePolicy.d.ts",
+      "default": "./dist/features/embeddedFeaturePolicy.js"
+    },
+    "./features/featureDecisionEngine": {
+      "types": "./dist/features/featureDecisionEngine.d.ts",
+      "default": "./dist/features/featureDecisionEngine.js"
+    },
+    "./features/decision": {
+      "types": "./dist/features/decision.d.ts",
+      "default": "./dist/features/decision.js"
+    },
+    "./features/payload/capabilities/teamCredentialCapabilities": {
+      "types": "./dist/features/payload/capabilities/teamCredentialCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/teamCredentialCapabilities.js"
+    },
+    "./features/payload/responseLimits": {
+      "types": "./dist/features/payload/responseLimits.d.ts",
+      "default": "./dist/features/payload/responseLimits.js"
+    },
+    "./machines/transfer/directPeerUrls": {
+      "types": "./dist/machines/transfer/directPeerUrls.d.ts",
+      "default": "./dist/machines/transfer/directPeerUrls.js"
+    },
+    "./mcp/servers/authModeV1": {
+      "types": "./dist/mcp/servers/authModeV1.d.ts",
+      "default": "./dist/mcp/servers/authModeV1.js"
+    },
+    "./plugins/contributions/mcp": {
+      "types": "./dist/plugins/contributions/mcp.d.ts",
+      "default": "./dist/plugins/contributions/mcp.js"
+    },
+    "./mcp/servers/resolveEffectiveServersV1": {
+      "types": "./dist/mcp/servers/resolveEffectiveServersV1.d.ts",
+      "default": "./dist/mcp/servers/resolveEffectiveServersV1.js"
+    },
+    "./mcp/servers/resolveManagedSessionMcpSelectionV1": {
+      "types": "./dist/mcp/servers/resolveManagedSessionMcpSelectionV1.d.ts",
+      "default": "./dist/mcp/servers/resolveManagedSessionMcpSelectionV1.js"
+    },
+    "./activity/agentRequestNotificationContent": {
+      "types": "./dist/activity/agentRequestNotificationContent.d.ts",
+      "default": "./dist/activity/agentRequestNotificationContent.js"
+    },
+    "./activity/webhookPayload": {
+      "types": "./dist/activity/webhookPayload.d.ts",
+      "default": "./dist/activity/webhookPayload.js"
+    },
+    "./account/settings/notificationChannels": {
+      "types": "./dist/account/settings/notificationChannels.d.ts",
+      "default": "./dist/account/settings/notificationChannels.js"
+    },
+    "./account/settings/attentionDeliveryPolicyDecision": {
+      "types": "./dist/account/settings/attentionDeliveryPolicyDecision.d.ts",
+      "default": "./dist/account/settings/attentionDeliveryPolicyDecision.js"
+    },
+    "./activity/live/remoteUpdates": {
+      "types": "./dist/activity/live/remoteUpdates.d.ts",
+      "default": "./dist/activity/live/remoteUpdates.js"
+    },
+    "./plugins/data/collectionsV1": {
+      "types": "./dist/plugins/data/collectionsV1.d.ts",
+      "default": "./dist/plugins/data/collectionsV1.js"
+    },
+    "./plugins/manifest/v2": {
+      "types": "./dist/plugins/manifest/v2.d.ts",
+      "default": "./dist/plugins/manifest/v2.js"
+    },
+    "./plugins/contributions/catalog": {
+      "types": "./dist/plugins/contributions/catalog.d.ts",
+      "default": "./dist/plugins/contributions/catalog.js"
+    },
+    "./plugins/events/v1": {
+      "types": "./dist/plugins/events/v1.d.ts",
+      "default": "./dist/plugins/events/v1.js"
+    },
+    "./plugins/recipientContractV1": {
+      "types": "./dist/plugins/recipientContractV1.d.ts",
+      "default": "./dist/plugins/recipientContractV1.js"
+    },
+    "./automations/automationEventTriggerEvidence": {
+      "types": "./dist/automations/automationEventTriggerEvidence.d.ts",
+      "default": "./dist/automations/automationEventTriggerEvidence.js"
+    },
+    "./server/http/requestBodyBoundsV1": {
+      "types": "./dist/server/http/requestBodyBoundsV1.d.ts",
+      "default": "./dist/server/http/requestBodyBoundsV1.js"
+    },
+    "./automations/automationTriggerDefinitionStoredContent": {
+      "types": "./dist/automations/automationTriggerDefinitionStoredContent.d.ts",
+      "default": "./dist/automations/automationTriggerDefinitionStoredContent.js"
+    },
+    "./plugins/data/accountKvV1": {
+      "types": "./dist/plugins/data/accountKvV1.d.ts",
+      "default": "./dist/plugins/data/accountKvV1.js"
+    },
+    "./plugins/data/collectionContributionV1": {
+      "types": "./dist/plugins/data/collectionContributionV1.d.ts",
+      "default": "./dist/plugins/data/collectionContributionV1.js"
+    },
+    "./plugins/data/collectionUiQueryWireV1": {
+      "types": "./dist/plugins/data/collectionUiQueryWireV1.d.ts",
+      "default": "./dist/plugins/data/collectionUiQueryWireV1.js"
+    },
+    "./plugins/data/collectionLogicalCodecV1": {
+      "types": "./dist/plugins/data/collectionLogicalCodecV1.d.ts",
+      "default": "./dist/plugins/data/collectionLogicalCodecV1.js"
+    },
+    "./plugins/settings/accountSettingsV1": {
+      "types": "./dist/plugins/settings/accountSettingsV1.d.ts",
+      "default": "./dist/plugins/settings/accountSettingsV1.js"
+    },
+    "./plugins/contributions/daemonDatabases": {
+      "types": "./dist/plugins/contributions/daemonDatabases.d.ts",
+      "default": "./dist/plugins/contributions/daemonDatabases.js"
+    },
+    "./plugins/data/daemonDatabaseLimitsV1": {
+      "types": "./dist/plugins/data/daemonDatabaseLimitsV1.d.ts",
+      "default": "./dist/plugins/data/daemonDatabaseLimitsV1.js"
+    },
+    "./plugins/contributions/settings": {
+      "types": "./dist/plugins/contributions/settings.d.ts",
+      "default": "./dist/plugins/contributions/settings.js"
+    },
+    "./plugins/managedServiceEndpointUrl": {
+      "types": "./dist/plugins/managedServiceEndpointUrl.d.ts",
+      "default": "./dist/plugins/managedServiceEndpointUrl.js"
+    },
+    "./plugins/hooks/eventEnvelopeV1": {
+      "types": "./dist/plugins/hooks/eventEnvelopeV1.d.ts",
+      "default": "./dist/plugins/hooks/eventEnvelopeV1.js"
+    },
+    "./plugins/events/session": {
+      "types": "./dist/plugins/events/session.d.ts",
+      "default": "./dist/plugins/events/session.js"
+    },
+    "./plugins/actions/invocation": {
+      "types": "./dist/plugins/actions/invocation.d.ts",
+      "default": "./dist/plugins/actions/invocation.js"
+    },
+    "./plugins/actions/clientInvocationV1": {
+      "types": "./dist/plugins/actions/clientInvocationV1.d.ts",
+      "default": "./dist/plugins/actions/clientInvocationV1.js"
+    },
+    "./plugins/contributions/ui/v2": {
+      "types": "./dist/plugins/contributions/ui/v2.d.ts",
+      "default": "./dist/plugins/contributions/ui/v2.js"
+    },
+    "./plugins/settingsActionInvoker": {
+      "types": "./dist/plugins/settingsActionInvoker.d.ts",
+      "default": "./dist/plugins/settingsActionInvoker.js"
+    },
+    "./plugins/permissions/actions": {
+      "types": "./dist/plugins/permissions/actions.d.ts",
+      "default": "./dist/plugins/permissions/actions.js"
+    },
+    "./plugins/failureProjection": {
+      "types": "./dist/plugins/failureProjection.d.ts",
+      "default": "./dist/plugins/failureProjection.js"
+    },
+    "./approvals/targetActionApprovalRequestV1": {
+      "types": "./dist/approvals/targetActionApprovalRequestV1.d.ts",
+      "default": "./dist/approvals/targetActionApprovalRequestV1.js"
+    },
+    "./plugins/webhooks/statusV1": {
+      "types": "./dist/plugins/webhooks/statusV1.d.ts",
+      "default": "./dist/plugins/webhooks/statusV1.js"
+    },
+    "./prompts/library/promptBundleSchemas": {
+      "types": "./dist/prompts/library/promptBundleSchemas.d.ts",
+      "default": "./dist/prompts/library/promptBundleSchemas.js"
+    },
+    "./profiles/builtInBackendProfiles": {
+      "types": "./dist/profiles/builtInBackendProfiles.d.ts",
+      "default": "./dist/profiles/builtInBackendProfiles.js"
+    },
+    "./profiles/v2/schema": {
+      "types": "./dist/profiles/v2/schema.d.ts",
+      "default": "./dist/profiles/v2/schema.js"
+    },
+    "./automations/automationReplyHandoffIdentityV1": {
+      "types": "./dist/automations/automationReplyHandoffIdentityV1.d.ts",
+      "default": "./dist/automations/automationReplyHandoffIdentityV1.js"
+    },
+    "./daemon/pluginCaptureSources": {
+      "types": "./dist/daemon/pluginCaptureSources.d.ts",
+      "default": "./dist/daemon/pluginCaptureSources.js"
+    },
+    "./daemon/pluginStoredImage": {
+      "types": "./dist/daemon/pluginStoredImage.d.ts",
+      "default": "./dist/daemon/pluginStoredImage.js"
+    },
+    "./plugins/actions/daemonInvocationV1": {
+      "types": "./dist/plugins/actions/daemonInvocationV1.d.ts",
+      "default": "./dist/plugins/actions/daemonInvocationV1.js"
+    },
+    "./machines/peer/mediation/stream/relayStartRpcV1": {
+      "types": "./dist/machines/peer/mediation/stream/relayStartRpcV1.d.ts",
+      "default": "./dist/machines/peer/mediation/stream/relayStartRpcV1.js"
+    },
+    "./daemon/pluginCollectionCandidatePreparation": {
+      "types": "./dist/daemon/pluginCollectionCandidatePreparation.d.ts",
+      "default": "./dist/daemon/pluginCollectionCandidatePreparation.js"
+    },
+    "./execution/runs/cancelTurn": {
+      "types": "./dist/execution/runs/cancelTurn.d.ts",
+      "default": "./dist/execution/runs/cancelTurn.js"
+    },
+    "./execution/runs/waitForTerminal": {
+      "types": "./dist/execution/runs/waitForTerminal.d.ts",
+      "default": "./dist/execution/runs/waitForTerminal.js"
+    },
+    "./actions/executor/agentStartAdmission": {
+      "types": "./dist/actions/executor/agentStartAdmission.d.ts",
+      "default": "./dist/actions/executor/agentStartAdmission.js"
+    },
+    "./plugins/openableContent": {
+      "types": "./dist/plugins/openableContent.d.ts",
+      "default": "./dist/plugins/openableContent.js"
+    },
+    "./machines/fileBrowser": {
+      "types": "./dist/machines/fileBrowser.d.ts",
+      "default": "./dist/machines/fileBrowser.js"
+    },
+    "./sessions/agentTransitionEffectStage": {
+      "types": "./dist/sessions/agentTransitionEffectStage.d.ts",
+      "default": "./dist/sessions/agentTransitionEffectStage.js"
+    },
+    "./sessions/userMessageRpc": {
+      "types": "./dist/sessions/userMessageRpc.d.ts",
+      "default": "./dist/sessions/userMessageRpc.js"
+    },
+    "./account/settings/sessionAgentSpawnPolicyV1": {
+      "types": "./dist/account/settings/sessionAgentSpawnPolicyV1.d.ts",
+      "default": "./dist/account/settings/sessionAgentSpawnPolicyV1.js"
+    },
+    "./workspace/anchors/v1": {
+      "types": "./dist/workspace/anchors/v1.d.ts",
+      "default": "./dist/workspace/anchors/v1.js"
+    },
+    "./workspace/favicon/v1": {
+      "types": "./dist/workspace/favicon/v1.d.ts",
+      "default": "./dist/workspace/favicon/v1.js"
+    },
+    "./machines/workspaceFiles": {
+      "types": "./dist/machines/workspaceFiles.d.ts",
+      "default": "./dist/machines/workspaceFiles.js"
+    },
+    "./execution/runs/interactionAffordances": {
+      "types": "./dist/execution/runs/interactionAffordances.d.ts",
+      "default": "./dist/execution/runs/interactionAffordances.js"
+    },
+    "./messages/structured/reviewCommentsInput": {
+      "types": "./dist/messages/structured/reviewCommentsInput.d.ts",
+      "default": "./dist/messages/structured/reviewCommentsInput.js"
+    },
+    "./sessions/changes/mergeTurnChangeSets": {
+      "types": "./dist/sessions/changes/mergeTurnChangeSets.d.ts",
+      "default": "./dist/sessions/changes/mergeTurnChangeSets.js"
+    },
+    "./scm/backendCapabilities": {
+      "types": "./dist/scm/backendCapabilities.d.ts",
+      "default": "./dist/scm/backendCapabilities.js"
+    },
+    "./approvals/approvalArtifactHeaderV1": {
+      "types": "./dist/approvals/approvalArtifactHeaderV1.d.ts",
+      "default": "./dist/approvals/approvalArtifactHeaderV1.js"
+    },
+    "./approvals/approvalRequestTransition": {
+      "types": "./dist/approvals/approvalRequestTransition.d.ts",
+      "default": "./dist/approvals/approvalRequestTransition.js"
+    },
+    "./approvals/executionRunHostActionApprovalRequestV1": {
+      "types": "./dist/approvals/executionRunHostActionApprovalRequestV1.d.ts",
+      "default": "./dist/approvals/executionRunHostActionApprovalRequestV1.js"
+    },
+    "./account/settings/accountSettingMutationV1": {
+      "types": "./dist/account/settings/accountSettingMutationV1.d.ts",
+      "default": "./dist/account/settings/accountSettingMutationV1.js"
+    },
+    "./sessions/awareness/waitV1": {
+      "types": "./dist/sessions/awareness/waitV1.d.ts",
+      "default": "./dist/sessions/awareness/waitV1.js"
+    },
+    "./actions/executor/artifactAccessActions": {
+      "types": "./dist/actions/executor/artifactAccessActions.d.ts",
+      "default": "./dist/actions/executor/artifactAccessActions.js"
+    },
+    "./launchProfiles/publishLaunchProfile": {
+      "types": "./dist/launchProfiles/publishLaunchProfile.d.ts",
+      "default": "./dist/launchProfiles/publishLaunchProfile.js"
+    },
+    "./boards/workBoardArtifactV1": {
+      "types": "./dist/boards/workBoardArtifactV1.d.ts",
+      "default": "./dist/boards/workBoardArtifactV1.js"
+    },
+    "./daemon/startAgentSignIn": {
+      "types": "./dist/daemon/startAgentSignIn.d.ts",
+      "default": "./dist/daemon/startAgentSignIn.js"
+    },
+    "./prompts/library/promptExternalLinksV1": {
+      "types": "./dist/prompts/library/promptExternalLinksV1.d.ts",
+      "default": "./dist/prompts/library/promptExternalLinksV1.js"
+    },
+    "./prompts/library/promptLibraryActionOperations": {
+      "types": "./dist/prompts/library/promptLibraryActionOperations.d.ts",
+      "default": "./dist/prompts/library/promptLibraryActionOperations.js"
+    },
+    "./prompts/library/promptInvocationActionOperations": {
+      "types": "./dist/prompts/library/promptInvocationActionOperations.d.ts",
+      "default": "./dist/prompts/library/promptInvocationActionOperations.js"
+    },
+    "./sessions/authoring/creationFieldsV1": {
+      "types": "./dist/sessions/authoring/creationFieldsV1.d.ts",
+      "default": "./dist/sessions/authoring/creationFieldsV1.js"
+    },
+    "./sessions/external/operationV1": {
+      "types": "./dist/sessions/external/operationV1.d.ts",
+      "default": "./dist/sessions/external/operationV1.js"
+    },
+    "./sessions/external/operationActionSchemasV1": {
+      "types": "./dist/sessions/external/operationActionSchemasV1.d.ts",
+      "default": "./dist/sessions/external/operationActionSchemasV1.js"
+    },
+    "./sessions/fork": {
+      "types": "./dist/sessions/fork.d.ts",
+      "default": "./dist/sessions/fork.js"
+    },
+    "./artifacts/artifactWorkspaceFileV1": {
+      "types": "./dist/artifacts/artifactWorkspaceFileV1.d.ts",
+      "default": "./dist/artifacts/artifactWorkspaceFileV1.js"
+    },
+    "./prompts/roles/accountRoleActions": {
+      "types": "./dist/prompts/roles/accountRoleActions.d.ts",
+      "default": "./dist/prompts/roles/accountRoleActions.js"
+    },
+    "./automations/automationAccountCurrentnessV1": {
+      "types": "./dist/automations/automationAccountCurrentnessV1.d.ts",
+      "default": "./dist/automations/automationAccountCurrentnessV1.js"
+    },
+    "./sessions/agentTransitionDivider": {
+      "types": "./dist/sessions/agentTransitionDivider.d.ts",
+      "default": "./dist/sessions/agentTransitionDivider.js"
+    },
+    "./sessions/mutations/sessionMutationEqualityV1": {
+      "types": "./dist/sessions/mutations/sessionMutationEqualityV1.d.ts",
+      "default": "./dist/sessions/mutations/sessionMutationEqualityV1.js"
+    },
+    "./plugins/contributions/agentExternalSessions": {
+      "types": "./dist/plugins/contributions/agentExternalSessions.d.ts",
+      "default": "./dist/plugins/contributions/agentExternalSessions.js"
+    },
+    "./plugins/contributionLimits": {
+      "types": "./dist/plugins/contributionLimits.d.ts",
+      "default": "./dist/plugins/contributionLimits.js"
+    },
+    "./machines/identity/machineLocality": {
+      "types": "./dist/machines/identity/machineLocality.d.ts",
+      "default": "./dist/machines/identity/machineLocality.js"
+    },
+    "./machines/identity/canonicalMachineId": {
+      "types": "./dist/machines/identity/canonicalMachineId.d.ts",
+      "default": "./dist/machines/identity/canonicalMachineId.js"
+    },
+    "./plugins/interactions/owner": {
+      "types": "./dist/plugins/interactions/owner.d.ts",
+      "default": "./dist/plugins/interactions/owner.js"
+    },
+    "./sessions/continueWithReplay": {
+      "types": "./dist/sessions/continueWithReplay.d.ts",
+      "default": "./dist/sessions/continueWithReplay.js"
+    },
+    "./backends/targets/compat/continueWithReplayRpcParamsCompat": {
+      "types": "./dist/backends/targets/compat/continueWithReplayRpcParamsCompat.d.ts",
+      "default": "./dist/backends/targets/compat/continueWithReplayRpcParamsCompat.js"
+    },
+    "./sessions/messages/sessionExternalShareableTranscriptV1": {
+      "types": "./dist/sessions/messages/sessionExternalShareableTranscriptV1.d.ts",
+      "default": "./dist/sessions/messages/sessionExternalShareableTranscriptV1.js"
+    },
+    "./messages/structured/voiceAgentTurnV1": {
+      "types": "./dist/messages/structured/voiceAgentTurnV1.d.ts",
+      "default": "./dist/messages/structured/voiceAgentTurnV1.js"
+    },
+    "./sessions/messages/sessionInputAdmissionRejectionV1": {
+      "types": "./dist/sessions/messages/sessionInputAdmissionRejectionV1.d.ts",
+      "default": "./dist/sessions/messages/sessionInputAdmissionRejectionV1.js"
+    },
+    "./sessions/messages/emptyCanonicalTurnDiffSuppression": {
+      "types": "./dist/sessions/messages/emptyCanonicalTurnDiffSuppression.d.ts",
+      "default": "./dist/sessions/messages/emptyCanonicalTurnDiffSuppression.js"
+    },
+    "./sessions/system/records/memory/memorySystemRecordKinds": {
+      "types": "./dist/sessions/system/records/memory/memorySystemRecordKinds.d.ts",
+      "default": "./dist/sessions/system/records/memory/memorySystemRecordKinds.js"
+    },
+    "./sessions/system/records/sessionSystemRecord": {
+      "types": "./dist/sessions/system/records/sessionSystemRecord.d.ts",
+      "default": "./dist/sessions/system/records/sessionSystemRecord.js"
+    },
+    "./sessions/system/records/sessionSystemRecordCatalog": {
+      "types": "./dist/sessions/system/records/sessionSystemRecordCatalog.d.ts",
+      "default": "./dist/sessions/system/records/sessionSystemRecordCatalog.js"
+    },
+    "./sessions/control/sessionUsageLimitRecoveryOperationResultV1": {
+      "types": "./dist/sessions/control/sessionUsageLimitRecoveryOperationResultV1.d.ts",
+      "default": "./dist/sessions/control/sessionUsageLimitRecoveryOperationResultV1.js"
+    },
+    "./encryption/clientEncryptionRequirement": {
+      "types": "./dist/encryption/clientEncryptionRequirement.d.ts",
+      "default": "./dist/encryption/clientEncryptionRequirement.js"
+    },
+    "./account/settings/accountSettingsPersistedObject": {
+      "types": "./dist/account/settings/accountSettingsPersistedObject.d.ts",
+      "default": "./dist/account/settings/accountSettingsPersistedObject.js"
+    },
+    "./profiles/listProjection": {
+      "types": "./dist/profiles/listProjection.d.ts",
+      "default": "./dist/profiles/listProjection.js"
+    },
+    "./account/authoringMemory": {
+      "types": "./dist/account/authoringMemory.d.ts",
+      "default": "./dist/account/authoringMemory.js"
+    },
+    "./account/settings/legacyAuthoringMemorySettingsV1": {
+      "types": "./dist/account/settings/legacyAuthoringMemorySettingsV1.d.ts",
+      "default": "./dist/account/settings/legacyAuthoringMemorySettingsV1.js"
+    },
+    "./account/authoringMemoryImport": {
+      "types": "./dist/account/authoringMemoryImport.d.ts",
+      "default": "./dist/account/authoringMemoryImport.js"
+    },
+    "./profiles/visibilityV1": {
+      "types": "./dist/profiles/visibilityV1.d.ts",
+      "default": "./dist/profiles/visibilityV1.js"
+    },
+    "./profiles/historicalCompatibilityV1": {
+      "types": "./dist/profiles/historicalCompatibilityV1.d.ts",
+      "default": "./dist/profiles/historicalCompatibilityV1.js"
+    },
+    "./profiles/profileCompatibility": {
+      "types": "./dist/profiles/profileCompatibility.d.ts",
+      "default": "./dist/profiles/profileCompatibility.js"
+    },
+    "./profiles/resolveBackendProfile": {
+      "types": "./dist/profiles/resolveBackendProfile.d.ts",
+      "default": "./dist/profiles/resolveBackendProfile.js"
+    },
+    "./account/settings/savedSecretResourceContentV1": {
+      "types": "./dist/account/settings/savedSecretResourceContentV1.d.ts",
+      "default": "./dist/account/settings/savedSecretResourceContentV1.js"
+    },
+    "./sessions/pending/pendingLocalId": {
+      "types": "./dist/sessions/pending/pendingLocalId.d.ts",
+      "default": "./dist/sessions/pending/pendingLocalId.js"
+    },
+    "./ssh/hostTrust": {
+      "types": "./dist/ssh/hostTrust.d.ts",
+      "default": "./dist/ssh/hostTrust.js"
+    },
+    "./encryption/storagePolicyDecisions": {
+      "types": "./dist/encryption/storagePolicyDecisions.d.ts",
+      "default": "./dist/encryption/storagePolicyDecisions.js"
+    },
+    "./prompts/systemPromptBaseV1": {
+      "types": "./dist/prompts/systemPromptBaseV1.d.ts",
+      "default": "./dist/prompts/systemPromptBaseV1.js"
+    },
+    "./features/payload/capabilities/machineLiveStreamCapabilities": {
+      "types": "./dist/features/payload/capabilities/machineLiveStreamCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/machineLiveStreamCapabilities.js"
+    },
+    "./features/payload/capabilities/machineTransferCapabilities": {
+      "types": "./dist/features/payload/capabilities/machineTransferCapabilities.d.ts",
+      "default": "./dist/features/payload/capabilities/machineTransferCapabilities.js"
+    },
+    "./sessions/messages/sessionMessageMeta": {
+      "types": "./dist/sessions/messages/sessionMessageMeta.d.ts",
+      "default": "./dist/sessions/messages/sessionMessageMeta.js"
+    },
+    "./activity/parseJson": {
+      "types": "./dist/activity/parseJson.d.ts",
+      "default": "./dist/activity/parseJson.js"
+    },
     "./home": {
       "types": "./dist/home/index.d.ts",
       "default": "./dist/home/index.js"
@@ -113,6 +3553,14 @@
     "./rpc": {
       "types": "./dist/rpc/index.d.ts",
       "default": "./dist/rpc/index.js"
+    },
+    "./rpc/providers": {
+      "types": "./dist/rpc/providers.d.ts",
+      "default": "./dist/rpc/providers.js"
+    },
+    "./rpc/npmRegistryProfiles": {
+      "types": "./dist/rpc/npmRegistryProfiles.d.ts",
+      "default": "./dist/rpc/npmRegistryProfiles.js"
     },
     "./marketplace": {
       "types": "./dist/marketplace/index.d.ts",

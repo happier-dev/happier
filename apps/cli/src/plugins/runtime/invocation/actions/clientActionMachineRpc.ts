@@ -1,7 +1,5 @@
-import {
-  RPC_METHODS,
-  UiContributedActionExecuteResponseV1Schema,
-} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { UiContributedActionExecuteResponseV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 
 import type { ClientContributedActionExecutor, PluginActionExecutorResult } from './executeContributedAction';
 

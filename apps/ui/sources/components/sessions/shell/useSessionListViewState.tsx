@@ -34,6 +34,7 @@ import { useSessionListRenderModels } from './useSessionListRenderModels';
 import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
 import { useSessionListNavigationActions } from './useSessionListNavigationActions';
 import { useSessionListRowInteractions } from './useSessionListRowInteractions';
+import { readSessionListDestinationIntent } from './useSessionListEntityDragDrop';
 import { useSessionListOrganizationWriters } from './useSessionListOrganizationWriters';
 import { useSessionListRowMoveActionHandlers } from './useSessionListRowMoveActionHandlers';
 import { useSessionListWorkspaceHeaderActions } from './useSessionListWorkspaceHeaderActions';
@@ -1611,23 +1612,23 @@ export function useSessionListViewStateFromPaneState(
     }, [openMoveSheet, rowInteractions.entityDragDrop.runtime, rowInteractions.prepareTreeRowSource]);
 
     const moveTreeRowToWorkspaceRoot = React.useCallback((sourceRowId: string, sourceLabel: string) => {
+        const scope = rowInteractions.entityDragDrop.scope;
+        if (!scope) return;
         const source = rowInteractions.prepareTreeRowSource(sourceRowId);
         if (!source) return;
         const runtime = rowInteractions.entityDragDrop.runtime;
         const destination = runtime.getDestinations(source.sourceId).find(entry => {
-            const value = entry.destination;
-            return entry.targetId === rowInteractions.entityDragDrop.targetId && value && typeof value === 'object'
-                && !Array.isArray(value) && 'instructionKind' in value && value.instructionKind === 'move-to-root';
+            return entry.targetId === rowInteractions.entityDragDrop.targetId
+                && readSessionListDestinationIntent(entry.destination, scope)?.instructionKind === 'move-to-root';
         });
         if (!destination || destination.admission.status !== 'allowed') { source.dispose(); return; }
+        const intent = readSessionListDestinationIntent(destination.destination, scope);
         void runtime.perform(source.sourceId, destination.targetId, destination.destination, 'chooser').then(outcome => {
-            const value = destination.destination;
-            if (outcome?.status === 'applied' && value && typeof value === 'object' && !Array.isArray(value) && 'containerId' in value
-                && typeof value.containerId === 'string') sessionListA11y.announceDropResult({ label: sourceLabel,
+            if (outcome?.status === 'applied' && typeof intent?.containerId === 'string') sessionListA11y.announceDropResult({ label: sourceLabel,
                 destinationLabel: t('sessionsList.moveToWorkspaceRoot'), result: { instruction: { kind: 'move-to-root',
-                    containerId: value.containerId, rootId: value.containerId, depth: 0 }, visual: { kind: 'none' } } });
+                    containerId: intent.containerId, rootId: intent.containerId, depth: 0 }, visual: { kind: 'none' } } });
         }).finally(source.dispose);
-    }, [rowInteractions.entityDragDrop.runtime, rowInteractions.entityDragDrop.targetId, rowInteractions.prepareTreeRowSource, sessionListA11y]);
+    }, [rowInteractions.entityDragDrop.runtime, rowInteractions.entityDragDrop.scope, rowInteractions.entityDragDrop.targetId, rowInteractions.prepareTreeRowSource, sessionListA11y]);
 
     const moveTreeRowByKeyboard = React.useCallback((
         sourceRowId: string,

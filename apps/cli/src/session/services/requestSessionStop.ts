@@ -3,13 +3,9 @@ import { configuration } from '@/configuration';
 import { stopDaemonSession } from '@/daemon/controlClient';
 import { listSessionMarkers, removeSessionMarker } from '@/daemon/sessionRegistry';
 import { createStopSession } from '@/daemon/sessions/stopSession';
-import {
-  SessionStopCleanupIncompleteReasonSchema,
-  SessionStopOutcomeSchema,
-  StopSessionResultSchema,
-  type SessionStopOutcome,
-  type SessionStopResult as SessionStopCommandResult,
-} from '@happier-dev/protocol';
+import { SessionStopCleanupIncompleteReasonSchema, SessionStopOutcomeSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
+import type { SessionStopOutcome, SessionStopResult as SessionStopCommandResult } from '@happier-dev/protocol';
 import type {
   StopSessionResult,
 } from '@/daemon/sessions/stopSessionContract';
@@ -32,7 +28,9 @@ import {
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
 import { readTerminalHostAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
-import { RPC_ERROR_CODES, RPC_METHODS, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 type StopSessionAttemptResult = StopSessionResult | Readonly<{

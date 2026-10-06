@@ -9,7 +9,7 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
-import { buildWidgetFrameStyleActions, buildWidgetInstanceActions } from '@/components/widgets/frame/widgetFrameMenu';
+import { buildWidgetDefinitionActions, buildWidgetFrameStyleActions, buildWidgetInstanceActions, buildWidgetMoveActions, orderWidgetMenu } from '@/components/widgets/frame/widgetFrameMenu';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
@@ -80,7 +80,11 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
     const rename = useWidgetFrameRename({
         title,
         // An empty name gives the copy back its widget's name.
-        onRename: (next) => { if (next !== (instance.displayName ?? '')) void edit({ kind: 'widget_rename', displayName: next || null }); },
+        onRename: async (next) => {
+            if (next === (instance.displayName ?? '')) return;
+            const outcome = await edit({ kind: 'widget_rename', displayName: next || null });
+            if (outcome.status !== 'applied') throw new Error('widget_rename_refused');
+        },
         testID: props.testID,
     });
     const bindingLabel = useWidgetInstanceBindingLabel(instance, candidate);
@@ -89,25 +93,28 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
 
     const actions = React.useMemo((): ItemAction[] => {
         const width = { id: 'width', title: t('widgetAdd.width') } as const;
-        return [
-            ...buildWidgetInstanceActions({ editInputs: inputs.editInputs, onRename: rename.begin, onAbout: definition.about }),
+        return orderWidgetMenu({
+            instance: buildWidgetInstanceActions({ editInputs: inputs.editInputs, onRename: rename.begin }),
             // One card column or two (lab Q8): the Canvas width step; By status and phones keep one column.
-            ...([1, 2] as const).map((span): ItemAction => ({
+            width: ([1, 2] as const).map((span): ItemAction => ({
                 id: `width-${span}`, title: span === 1 ? t('boards.widgets.widthOne') : t('boards.widgets.widthTwo'),
                 icon: span === 1 ? 'square' : 'square-split-horizontal', selected: placement.width === span, group: width,
                 onPress: () => { if (placement.width !== span) void edit({ kind: 'widget_width', width: span }); },
             })),
-            { id: 'moveEarlier', title: t('boards.widgets.moveEarlier'), icon: 'caret-up', disabled: props.index === 0,
-                onPress: () => { void edit({ kind: 'widget_move', toIndex: props.index - 1 }); } },
-            { id: 'moveLater', title: t('boards.widgets.moveLater'), icon: 'caret-down', disabled: props.index >= props.count - 1,
-                onPress: () => { void edit({ kind: 'widget_move', toIndex: props.index + 1 }); } },
-            ...buildWidgetFrameStyleActions({
+            frame: buildWidgetFrameStyleActions({
                 placement: 'board', surfaceDefault, override: placement.frameStyle ?? null,
                 onSet: (style) => { void edit({ kind: 'widget_frame', frameStyle: style }); },
             }),
-            { id: 'remove', title: t('boards.widgets.remove'), icon: 'trash', destructive: true,
-                onPress: () => { void edit({ kind: 'widget_remove' }); } },
-        ];
+            move: buildWidgetMoveActions({
+                index: props.index,
+                count: props.count,
+                labels: { earlier: t('boards.widgets.moveEarlier'), later: t('boards.widgets.moveLater') },
+                onMove: (delta) => { void edit({ kind: 'widget_move', toIndex: props.index + delta }); },
+            }),
+            definition: buildWidgetDefinitionActions({ onAbout: definition.about }),
+            remove: [{ id: 'remove', title: t('boards.widgets.remove'), icon: 'trash', destructive: true,
+                onPress: () => { void edit({ kind: 'widget_remove' }); } }],
+        });
     }, [definition.about, edit, inputs.editInputs, placement.frameStyle, placement.width, props.count, props.index, rename.begin, surfaceDefault]);
 
     // Leaving the Board keeps each card's place: the body's last height stays while it holds no reads.

@@ -66,6 +66,7 @@ vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
+    serverId: 'server-1',
     metadata: {
       machineId: 'm1',
       flavor: 'codex',

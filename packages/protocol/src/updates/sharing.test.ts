@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { SessionEndAckResponseSchema, UpdateBodySchema } from './index.js';
 
 describe('updates sharing', () => {
+  it('validates private Artifact revision metadata separately from public content updates', () => {
+    const update = { t: 'update-artifact', artifactId: 'artifact', body: { value: 'AQIDBA==', version: 2 } };
+    expect(UpdateBodySchema.safeParse({ ...update, provenance: 'AQIDBA==', provenanceDataEncryptionKey: 'AQIDBA==' }).success).toBe(true);
+    expect(UpdateBodySchema.safeParse({ ...update, provenance: null, provenanceDataEncryptionKey: null }).success).toBe(true);
+    expect(UpdateBodySchema.safeParse({ ...update, provenance: { savedBy: 'actor' } }).success).toBe(false);
+    expect(UpdateBodySchema.safeParse({ ...update, provenanceDataEncryptionKey: 42 }).success).toBe(false);
+  });
+
   it('accepts session-shared updates without encryptedDataKey', () => {
     const parsed = UpdateBodySchema.safeParse({
       t: 'session-shared',

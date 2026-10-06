@@ -171,6 +171,7 @@ export async function buildBundledWorkspaceDependenciesForCli({
 
   for (const relativePath of [
     'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts',
+    'packages/cli-common/src/componentArtifacts/stageCliTargetRuntimeDependencies.ts',
     'packages/cli-common/src/componentArtifacts/copyCliNodeRuntimePayload.ts',
     'packages/cli-common/src/componentArtifacts/finalizeRuntimeArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/targets.ts',
@@ -180,6 +181,7 @@ export async function buildBundledWorkspaceDependenciesForCli({
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
     'packages/cli-common/workspaceRuntimeDependencies.mjs',
+    'packages/cli-common/componentArtifactTarget.mjs',
   ]) {
     await writeFixtureFile(join(root, relativePath), 'owner input\n');
   }
@@ -233,6 +235,19 @@ describe('daemon runtime support identity', () => {
     expect(changedTool.fingerprint).not.toBe(changedRuntimeDependency.fingerprint);
     expect(changedSidecar.fingerprint).not.toBe(changedTool.fingerprint);
     expect(changedSidecar.workspaceRuntimeIdentity).toBe(initial.workspaceRuntimeIdentity);
+  });
+
+  it('describes a foreign target without requiring the identity reader to run on that target', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    const nativeTarget = targetForHost();
+    const input = { repoRoot: root, goVersion: 'go version go1.fixture' };
+    const native = readCliBinaryArtifactSupportIdentity({ ...input, target: nativeTarget });
+    const foreign = readCliBinaryArtifactSupportIdentity({
+      ...input,
+      target: { ...nativeTarget, arch: nativeTarget.arch === 'arm64' ? 'x64' : 'arm64' },
+    });
+    expect(foreign.fingerprint).not.toBe(native.fingerprint);
   });
 
   it('derives managed support identity from workspace source before installed outputs are refreshed', async () => {
@@ -504,11 +519,16 @@ describe('daemon runtime support identity', () => {
     await expect(readFile(join(artifactDir, 'manifest.json'), 'utf8')).resolves.toContain(support.fingerprint);
   });
 
-  it('builds daemon code without recopying its stable runtime support closure', async () => {
+  it.each(['native', 'foreign'])('builds %s-target daemon code without recopying its stable runtime support closure', async (targetKind) => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
     const payloadDir = join(root, 'artifacts', 'daemon', 'code-only', 'payload');
-    const target = targetForHost();
+    const hostTarget = targetForHost();
+    const target = targetKind === 'native' ? hostTarget : {
+      ...hostTarget,
+      arch: hostTarget.arch === 'arm64' ? 'x64' : 'arm64',
+      bunTarget: `bun-${hostTarget.os}-${hostTarget.arch === 'arm64' ? 'x64' : 'arm64'}`,
+    };
 
     const built = await buildCliBinaryArtifactCodePayload({
       repoRoot: root,
@@ -529,7 +549,8 @@ describe('daemon runtime support identity', () => {
           workspaceRuntimePackages: workspaceRuntime.packageNames,
         });
       },
-      compileBinary: async ({ outfile }) => {
+      compileBinary: async ({ outfile, bunTarget }) => {
+        expect(bunTarget).toBe(target.bunTarget);
         await writeFixtureFile(outfile, 'compiled daemon binary\n');
       },
     });

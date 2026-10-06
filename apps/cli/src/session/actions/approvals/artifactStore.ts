@@ -1,19 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  ActionIdSchema,
-  approvalArtifactBodyMatchesHeaderV1,
-  buildApprovalRequestArtifactHeaderV1,
-  buildExecutionRunHostActionApprovalArtifactHeaderV1,
-  buildTargetActionApprovalArtifactHeaderV1,
-  decideApprovalRequestTransition,
-  type ActionId,
-  type ApprovalQueueListItemV1,
-  type ApprovalRequest,
-  type ExecutionRunHostActionApprovalRequestV1,
-  type TargetActionApprovalRequestV1,
-  type PromptLibraryArtifactStore,
-} from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, buildExecutionRunHostActionApprovalArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import type { ActionId, ApprovalQueueListItemV1, ApprovalRequest, ExecutionRunHostActionApprovalRequestV1, TargetActionApprovalRequestV1, PromptLibraryArtifactStore } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import {

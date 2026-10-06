@@ -90,7 +90,7 @@ describe('WorkflowContinuityControls continuation disclosure', () => {
 
         expect(screen.findByTestId('editor-conversation-waiting-note')).not.toBeNull();
         expect(screen.getTextContent()).toContain(
-            'workflows.conversation.waitingForConversation:{"block":"Check the build"}',
+            'workflows.conversation.waitingForConversation:{"block":"workflows.editor.addStep"}',
         );
     });
 

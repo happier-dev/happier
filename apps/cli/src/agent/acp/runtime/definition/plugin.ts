@@ -1,4 +1,4 @@
-import { PluginAgentRuntimeAcpV2Schema } from '@happier-dev/protocol';
+import { PluginAgentRuntimeAcpV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
 import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 

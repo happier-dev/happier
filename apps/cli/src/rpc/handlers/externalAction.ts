@@ -1,17 +1,7 @@
-import {
-  createExternalActionDaemonDispatchResponse,
-  ExternalActionDaemonDispatchRequestSchema,
-  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
-  prepareExternalActionResponseEnvelopeV1,
-  type ActionExecuteResult,
-  type ExternalActionDaemonDispatchRequest,
-  type ExternalActionDaemonDispatchResultV1,
-} from '@happier-dev/protocol';
-import {
-  isSocketRpcActionApiServerOriginAuthorizationContext,
-  RPC_ERROR_CODES,
-  RPC_ERROR_MESSAGES,
-} from '@happier-dev/protocol/rpc';
+import { createExternalActionDaemonDispatchResponse, ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ActionExecuteResult, ExternalActionDaemonDispatchRequest, ExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol';
+import { isSocketRpcActionApiServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type {

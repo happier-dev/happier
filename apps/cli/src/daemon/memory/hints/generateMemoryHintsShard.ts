@@ -1,4 +1,7 @@
-import { redactBugReportSensitiveText, SessionSummaryShardV1Schema, SessionSynopsisV1Schema, type SessionSummaryShardV1, type SessionSynopsisV1 } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { SessionSummaryShardV1Schema } from '@happier-dev/protocol/messages/structured/sessionSummaryShardV1';
+import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
+import type { SessionSummaryShardV1, SessionSynopsisV1 } from '@happier-dev/protocol';
 
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 

@@ -7,6 +7,7 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionMobileSurface } from './sessionCockpitState';
 
@@ -504,6 +505,7 @@ async function primeSessionBoardFeature(enabled: boolean): Promise<void> {
 
 describe('SessionCockpitSurfaceScreen navigation surface', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         standardCleanup();
         persistedStorage.clear();
         seedTranscript();

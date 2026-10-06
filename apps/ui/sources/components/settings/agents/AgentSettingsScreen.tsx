@@ -19,7 +19,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { BadgeGrid, type BadgeGridItem } from '@/components/ui/layout/BadgeGrid';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -334,7 +334,10 @@ const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentCon
         accountSettingsAvailable: boolean;
     }>,
 ) {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+    }));
     const applySettings = useApplySettings();
     const identity = props.projection.identity;
     const declarations = React.useMemo(
@@ -431,7 +434,9 @@ const AgentSessionDefaultsSection = React.memo(function AgentSessionDefaultsSect
     popoverBoundaryRef?: React.ComponentProps<typeof DropdownMenu>['popoverBoundaryRef'];
     onOpenModels: (() => void) | null;
 }>) {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        sessionDefaultPermissionModeByTargetKey: settings.sessionDefaultPermissionModeByTargetKey,
+    }));
     const applySettings = useApplySettings();
     const [permissionMenuOpen, setPermissionMenuOpen] = React.useState(false);
     const { projection, compatibilityTargetKeys, accountSettingsAvailable } = props;
@@ -536,7 +541,9 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
     machineOffline: boolean;
     onRetryMachine: () => void;
 }>) {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    }));
     const applySettings = useApplySettings();
     const providerTargetKey = props.projection.backendTargetKey;
     const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
@@ -696,7 +703,10 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         machineOffline,
         onRetryMachine,
     } = props;
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        backendCliSourcePreferenceByTargetKey: settings.backendCliSourcePreferenceByTargetKey,
+    }));
     const paneScopeId = React.useMemo(
         () => `settings:provider:${agentId}`,
         [agentId],
@@ -965,7 +975,10 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
     const administrationTargetSelection = useAgentsAdministrationTargetSelection();
     const rawAgentId = params.agentId;
     const normalizedAgentId = typeof rawAgentId === 'string' ? rawAgentId.trim() : '';

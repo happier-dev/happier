@@ -166,6 +166,9 @@ function projectAutomationV3ClaimReceiptResult(
             }),
             recipeKind: result.run.recipeKind ?? recipeKindForClaimRun(result.run),
             executionInputEnvelope: result.run.executionInputEnvelope,
+            ...(result.run.workflowAcceptedSnapshotEnvelope === null ? {} : {
+                workflowAcceptedSnapshotEnvelope: result.run.workflowAcceptedSnapshotEnvelope,
+            }),
             ...(result.run.workflowCustodyState !== null
                 ? { automationEvidenceEnvelope: result.run.triggerEvidenceEnvelope }
                 : {}),
@@ -214,7 +217,8 @@ function serializeAutomationClaimReceiptResultV2(result: AutomationClaimResult):
             run: { ...projected.run, workflowAcceptedSnapshotEnvelope: null },
         });
     }
-    const { automationEvidenceEnvelope: _automationEvidenceEnvelope, ...receiptRun } = projected.run;
+    const { automationEvidenceEnvelope: _automationEvidenceEnvelope,
+        workflowAcceptedSnapshotEnvelope: _workflowAcceptedSnapshotEnvelope, ...receiptRun } = projected.run;
     return JSON.stringify({
         ...projected,
         run: {
@@ -745,6 +749,9 @@ async function resolveClaimReceiptTx(params: Readonly<{
                 : {
                     ...run,
                     executionInputEnvelope: currentAttempt.executionInputEnvelope,
+                    ...(currentAttempt.workflowAcceptedSnapshotEnvelope === null ? {} : {
+                        workflowAcceptedSnapshotEnvelope: currentAttempt.workflowAcceptedSnapshotEnvelope,
+                    }),
                     lastSucceededRun,
                     ...(currentAttempt.workflowCustodyState !== null
                         ? { automationEvidenceEnvelope: currentAttempt.triggerEvidenceEnvelope }

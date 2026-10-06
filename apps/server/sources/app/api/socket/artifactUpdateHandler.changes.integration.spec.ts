@@ -47,13 +47,17 @@ vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 const txDbMocks = createDbMocks({
     account: ["findUnique", "update"],
     accountChange: ["upsert"],
-    artifact: ["findFirst", "findUnique", "updateMany", "create", "delete"],
+    artifact: ["findFirst", "findUnique", "updateMany", "create", "delete", "deleteMany"],
+    artifactRevision: ["create", "findMany", "deleteMany"],
+    artifactBlob: ["findMany"],
 } as const);
 
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({
         account: txDbMocks.db.account,
         accountChange: txDbMocks.db.accountChange,
+        artifactRevision: txDbMocks.db.artifactRevision,
+        artifactBlob: txDbMocks.db.artifactBlob,
         // The persistent boundary returns joined owner/grant facts when selected.
         artifact: { ...txDbMocks.db.artifact, findFirst: async (...args: unknown[]) => {
             const row = await txDbMocks.db.artifact.findFirst(...args);
@@ -85,6 +89,11 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         txDbMocks.db.account.findUnique.mockResolvedValue(readyE2eeAccount);
         txDbMocks.db.account.update.mockResolvedValue({ seq: 555 });
         txDbMocks.db.accountChange.upsert.mockResolvedValue({});
+        // The persistence boundary includes retained revisions and exact blob custody.
+        txDbMocks.db.artifactRevision.create.mockResolvedValue({});
+        txDbMocks.db.artifactRevision.findMany.mockResolvedValue([]);
+        txDbMocks.db.artifactRevision.deleteMany.mockResolvedValue({ count: 0 });
+        txDbMocks.db.artifactBlob.findMany.mockResolvedValue([]);
     });
 
     const currentSocket = () => createFakeSocket({ data: {} });
@@ -207,7 +216,8 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         }));
         expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", payload: expect.objectContaining({
             seq: 555, body: { t: "update-artifact", artifactId: "a1",
-                header: { value: "aGVsbG8=", version: 2 }, body: { value: "d29ybGQ=", version: 3 } },
+                header: { value: "aGVsbG8=", version: 2 }, body: { value: "d29ybGQ=", version: 3 },
+                provenance: null, provenanceDataEncryptionKey: null },
         }) }));
         expect(callback).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -323,8 +333,13 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         txDbMocks.db.artifact.findFirst.mockResolvedValue({
             id: "a3",
             dataEncryptionKey: Buffer.from("key"),
+            headerVersion: 1,
+            bodyVersion: 1,
+            deletedAt: null,
+            blobs: [],
         });
-        txDbMocks.db.artifact.delete.mockResolvedValue({ id: "a3" });
+        txDbMocks.db.artifact.updateMany.mockResolvedValue({ count: 1 });
+        txDbMocks.db.artifact.deleteMany.mockResolvedValue({ count: 1 });
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 

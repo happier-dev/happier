@@ -7,14 +7,10 @@ import {
   type SubagentsService,
   type SubagentSummary,
 } from '@happier-dev/plugin-sdk/sessions/subagents';
-import {
-  serializeSessionSubagentCustodyDetailV1,
-  normalizePluginSourceCustodyV1,
-  PluginSourceCustodyV1Schema,
-  type PluginSourceCustodyV1,
-  type SubagentRefV1,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { serializeSessionSubagentCustodyDetailV1 } from '@happier-dev/protocol/sessions/subagents/durableCustodyV1';
+import { normalizePluginSourceCustodyV1, PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginSourceCustodyV1, SubagentRefV1 } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { HostSubagentStore } from './hostSubagentStore';

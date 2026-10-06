@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -679,6 +680,7 @@ const promptLibraryUxRefinementTranslationExtension = {
 
 const sessionHandoffTranslationExtensions = {
   ru: {
+    awaitingAdmission: 'Проверяем место назначения перед запуском. Ваш выбор сохранён здесь.',
     targetApproval: {
       title: 'Что произойдёт в месте назначения',
       sourceLabel: 'Откуда переносим',
@@ -714,11 +716,13 @@ const sessionHandoffTranslationExtensions = {
       },
     },
     workspaceOutcome: {
+        linked: 'Эта передача обновила выбранный связанный маршрут к месту назначения.',
         copied: 'Копия рабочего пространства теперь на целевой машине.',
         relationshipCreated: 'Теперь рабочее пространство синхронизируется между обеими машинами.',
         relationshipReused: 'Передача использовала уже существующую синхронизацию рабочего пространства.',
     },
     failure: {
+      partialLinked: 'Часть файлов синхронизирована, но следующему связанному рабочему пространству требуется внимание. Сессия не возобновилась в месте назначения. Откройте подробности, чтобы увидеть заблокированную связь.',
       title: 'Не удалось передать сессию',
       message: 'Не удалось завершить передачу. Вы можете повторить попытку.',
     },
@@ -742,6 +746,39 @@ const settingsSessionHandoffTranslationExtensions = {
     groupTitle: 'Передача сессии',
     groupFooter: 'Выберите параметры по умолчанию для переноса сессии между машинами.',
     entrySubtitle: 'Открыть настройки передачи',
+    workspaceMode: {
+      title: 'Рабочее пространство',
+      noneTitle: 'Не переносить файлы',
+      noneSubtitle: 'Перенести сессию, не изменяя рабочее пространство в месте назначения.',
+      copyOnceSubtitle: 'Один раз скопировать рабочее пространство в место назначения и прекратить синхронизацию.',
+      keepSyncedSubtitle: 'Отражать изменения источника, сохраняя безопасные файлы, существующие только в месте назначения.',
+      mirrorExactlySubtitle: 'Поддерживать точную копию; файлы, существующие только в месте назначения, могут быть удалены.',
+      keepBothInSyncSubtitle: 'Согласовывать изменения с обеих сторон и показывать конфликты.',
+      relationshipTitle: 'Связь рабочих пространств',
+      linkedTitle: ({ hub }: { hub: string }) => `Использовать связанное рабочее пространство · через ${hub}`,
+      relationshipId: 'ID связи рабочих пространств',
+      relationshipPlaceholder: 'Выберите существующую связь для продолжения синхронизации.',
+      relationshipSelected: 'Эта папка уже синхронизируется с этим рабочим пространством. Откройте его подробности.',
+    },
+    targetBootstrap: {
+      title: 'Папка назначения',
+      materializeTitle: 'Подготовить из этого рабочего пространства',
+      materializeSubtitle: 'Подготовить из этого рабочего пространства. Если в папке назначения уже есть файлы, они будут заменены.',
+      useExistingTitle: 'Использовать существующую папку',
+      useExistingSubtitle: 'Сохранить текущее содержимое папки и начать его синхронизацию.',
+    },
+    advanced: {
+      title: 'Дополнительно',
+      subtitle: 'Точная копия, двусторонняя синхронизация и выбор содержимого.',
+      modeTitle: 'Дополнительные параметры синхронизации',
+    },
+    contentSelection: {
+      title: 'Содержимое рабочего пространства',
+      gitTitle: 'Файлы под контролем версий',
+      gitSubtitle: 'Использовать выбор файлов и исключения Git рабочего пространства.',
+      allFilesTitle: 'Все файлы',
+      allFilesSubtitle: 'Включить всю разрешённую папку, в том числе рабочие пространства без Git.',
+    },
     workspaceTransfer: {
       groupTitle: 'Передача рабочей области',
       groupFooter: 'Решите, нужно ли при передаче копировать рабочую область и как по умолчанию обрабатывать конфликты.',
@@ -831,6 +868,7 @@ const ruValues = {
     connectedServicesSetup: connectedServicesSetupTranslations.ru,
     homeWidgets: homeWidgetTranslations.ru,
     widgetFrame: widgetFrameTranslations.ru,
+    navigationPlacement: navigationPlacementTranslations.ru,
     inputPicker: inputPickerTranslations.ru,
     widgetAdd: widgetAddTranslations.ru,
     widgetDefinition: widgetDefinitionTranslations.ru,
@@ -1417,6 +1455,9 @@ const ruValues = {
       failedToLoad: "Не удалось загрузить запуск",
       latestToolResultTitle: "Последний результат инструмента",
       latestToolResultRaw: "Сырые данные",
+      cancelTurn: 'Отменить ответ',
+      resumeRun: 'Продолжить разговор',
+      controlFailed: 'Не удалось обновить этот разговор',
       a11y: {
         refreshRun: "Обновить запуск",
       },
@@ -1510,7 +1551,56 @@ const ruValues = {
       loadTemplateFailed: "Не удалось загрузить шаблон автоматизации.",
     },
     form: {
+      confirm: {
+        createTitle: ({ name }: { name: string }) => `Создать «${name}»?`,
+        editTitle: ({ name }: { name: string }) => `Сохранить изменения в «${name}»?`,
+        createConfirm: 'Создать автоматизацию',
+        editConfirm: 'Сохранить автоматизацию',
+        trigger: ({ pluginId, eventLocalId }: { pluginId: string; eventLocalId: string }) => `Триггер: ${eventLocalId} из ${pluginId}`,
+        observationCheckpointedPull: 'События поступают при опросе источника.',
+        observationSocket: 'События поступают через постоянное подключение провайдера. События, пропущенные между сессиями, не воспроизводятся.',
+        observationDurablePush: 'События поступают через вебхук, размещённый в Happier. Сервер Happier читает каждое исходное событие провайдера в памяти, затем проверяет подпись и шифрует его.',
+        watcher: ({ machineId }: { machineId: string }) => `Наблюдает машина ${machineId}`,
+        executors: ({ machineIds }: { machineIds: string }) => `Выполняется на машине ${machineIds}`,
+        targetNewSession: 'Каждое подходящее событие создаёт новую сессию без вашего участия.',
+        targetExistingSession: 'Каждое подходящее событие отправляет задачу в выбранную существующую сессию без вашего участия.',
+        targetExecutionRun: ({ permissionMode }: { permissionMode: string }) => `Каждое подходящее событие запускает фоновое выполнение без вашего участия с режимом разрешений «${permissionMode}».`,
+        enabled: 'Автоматизация включена и запустится при поступлении подходящего события.',
+        disabled: 'Автоматизация сохранена выключенной и не запустится, пока вы её не включите.',
+      },
       trigger: {
+        schedule: 'Расписание',
+        event: 'Событие',
+        noEligibleExistingSessions: 'Нет доступных сессий для этой цели.',
+        existingSessionUnavailable: 'Выбранная сессия недоступна для выполнения автоматизации.',
+        executionPermissionMode: 'РЕЖИМ РАЗРЕШЕНИЙ',
+        eventCatalogUnavailable: 'Источники событий станут доступны после загрузки этой машины.',
+        eventSource: 'ИСТОЧНИК СОБЫТИЯ',
+        chooseEvent: 'Выберите событие',
+        noEligibleEvents: 'На этой машине нет подходящих источников событий.',
+        source: 'ИСТОЧНИК',
+        configureSource: 'Настроить источник',
+        sourceConfigured: 'Источник настроен',
+        sourceUnavailable: 'Настройка источника недоступна. Проверьте источник события и попробуйте снова.',
+        chooseWatcher: 'Выберите наблюдателя',
+        noEligibleWatchers: 'Для этого источника событий сейчас нет доступного наблюдателя.',
+        observationTransport: 'КАК ПОСТУПАЮТ СОБЫТИЯ',
+        observationCheckpointedPull: 'Опрос изменений',
+        observationSocket: 'Постоянное подключение',
+        observationDurablePush: 'Вебхук',
+        webhookEndpointTitle: 'Добавьте этот вебхук в GitHub',
+        webhookEndpointInstructions: 'Откройте настройки репозитория, добавьте вебхук с этим URL доставки и секретом, выберите "application/json" и нужные события. Happier начнёт получать события только после сохранения вебхука.',
+        webhookEndpointUrl: 'URL ДОСТАВКИ',
+        webhookEndpointSecret: 'СЕКРЕТ (ПОКАЗЫВАЕТСЯ ОДИН РАЗ)',
+        webhookEndpointSecretLost: 'Эта конечная точка уже существует, а её секрет был показан один раз. Замените учётные данные в настройках вебхука, чтобы получить новый секрет.',
+        webhookEndpointAwaitingConfirmation: 'Happier ещё не получил проверенное событие от этого вебхука, поэтому доставка пока не подтверждена. Сохраните вебхук у провайдера и проверьте снова. Триггер можно сохранить сейчас, но он не сработает до получения события с проверенной подписью.',
+        webhookEndpointRecheck: 'Проверить вебхук снова',
+        eventFilter: 'ФИЛЬТР СОБЫТИЙ (НЕОБЯЗАТЕЛЬНО)',
+        eventFilterPlaceholder: '{"v":1,"all":[…]}',
+        eventFilterInvalid: 'Введите корректный фильтр событий.',
+        maximumObservationAge: 'МАКСИМАЛЬНЫЙ ВОЗРАСТ НАБЛЮДЕНИЯ (МС, НЕОБЯЗАТЕЛЬНО)',
+        maximumObservationAgePlaceholder: '30000',
+        maximumObservationAgeInvalid: 'Введите целое число миллисекунд.',
         target: 'ЦЕЛЬ ВЫПОЛНЕНИЯ',
         targetNewSession: 'Новая сессия',
         targetExistingSession: 'Существующая сессия',
@@ -1556,6 +1646,7 @@ const ruValues = {
       emptyBody:
         "Добавьте автоматизацию, чтобы выполнять работу в этой сессии при срабатывании любого триггера.",
       addAutomation: "Добавить автоматизацию",
+      addEventAutomation: 'Добавить автоматизацию по событию',
       failedToLoad: "Не удалось загрузить автоматизации.",
     },
     screen: {
@@ -1593,6 +1684,8 @@ const ruValues = {
         paused: "Приостановлена",
       },
       event: {
+        transportSocket: 'Постоянное подключение',
+        disclosureSocket: 'События поступают через постоянное подключение провайдера. События, пропущенные между сессиями, не воспроизводятся.',
         watcherTitle: "Наблюдатель событий",
         watcherUnwatched: "Нет наблюдателя",
         endpointTitle: "Конечная точка вебхука",
@@ -1708,6 +1801,8 @@ const ruValues = {
             outcomeUnknown: "Результат неизвестен",
         },
         replyHandoffTitle: "Передача ответа",
+        replyHandoffUnrecoverableTitle: 'Этот ответ больше нельзя доставить',
+        replyHandoffUnrecoverableSubtitle: 'Сведения о доставке ответа, сохранённые при запуске, невозможно прочитать, поэтому повторная попытка не поможет. Отправьте новое сообщение в разговоре, чтобы получить новый ответ.',
         replyHandoffAttempt: ({ attempt }: { attempt: number }) => `Попытка передачи ${attempt}`,
         replyHandoffDue: ({ time }: { time: string }) => `Следующая попытка передачи: ${time}`,
         replyHandoffState: {
@@ -1814,6 +1909,7 @@ const ruValues = {
   },
 
   common: {
+    saveError: 'Не удалось сохранить.',
         decrease: "Уменьшить",
         increase: "Увеличить",
     // Simple string constants
@@ -1970,6 +2066,7 @@ const ruValues = {
   },
 
   connect: {
+    legacyAccountQrUnavailable: 'Этот старый QR-код аккаунта больше нельзя безопасно подтвердить. В Home, где вы вошли в аккаунт, откройте Настройки → Добавить телефон и отсканируйте QR-код этого Home.',
     addPhonePage: {
       description: 'Пользуйтесь Happier на телефоне с уже имеющимися Home.',
       qrTitle: 'QR-код',
@@ -3046,7 +3143,6 @@ const ruValues = {
       direction: {
         makeCurrentServerReachable: 'Сделать этот сервер доступным',
         reachRemoteServerFromThisDevice: 'Подключиться к удалённому серверу с этого устройства',
-        unknown: 'Канал доступа',
       },
       kind: {
         'relay-access-provider': 'Доступ через Relay',
@@ -3357,6 +3453,10 @@ const ruValues = {
       connectedCountLabel: ({ count }: { count: number }) => `${count} подключено`,
     },
     authSwitch: {
+      activeTurnDisabled: 'Завершите или остановите текущий ход перед сменой авторизации.',
+      readOnlyDisabled: 'Для смены авторизации нужен доступ на редактирование.',
+      confirmTitle: 'Сменить авторизацию сессии?',
+      confirmBody: 'Перед следующим ходом сессия перезапустится или обновит учётные данные подключённого сервиса.',
       switchFailed: 'Не удалось сменить авторизацию для этой сессии.',
       confirmAction: 'Сменить авторизацию',
       errors: {
@@ -3378,6 +3478,7 @@ const ruValues = {
       },
       status: {
         liveApplied: 'Аутентификация переключена в текущем сеансе',
+        partialApplicationForService: ({ service }: { service: string }) => `Аутентификация ${service} переключена не полностью`,
         credentialsRefreshed: 'Аутентификация обновлена',
         restarting: 'Перезапуск сессии',
         appliesOnNextResume: 'Применится при следующем возобновлении',
@@ -3417,6 +3518,19 @@ const ruValues = {
       invalidGroup: 'Эта группа аккаунтов недействительна. Проверьте настройки и повторите попытку.',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',
+      accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+      accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+      accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+      accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+      accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+      accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+      accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+      accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+      accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+      accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+      accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+      accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     },
     diagnostics: {
       title: {
@@ -3436,12 +3550,6 @@ const ruValues = {
         claude_subscription_setup_token_not_supported_for_unified: 'Токен настройки Claude не может запустить режим Unified',
       },
       status: {
-        providerSessionStateUnavailableForResume: "Не удалось перенести состояние сеанса",
-        providerAccountAdoptionMismatch: "Провайдер остался в другом аккаунте",
-        postSwitchVerificationFailed: "Не удалось проверить аккаунт провайдера",
-        recoveryRetryScheduled: "Повтор восстановления провайдера запланирован",
-        metadataUpdateFailed: "Не удалось сохранить выбор аутентификации",
-        noEligibleGroupMember: "Нет подходящего резервного аккаунта",
         provider_session_state_unavailable_for_resume: 'Состояние сессии не удалось перенести',
         connected_service_materialization_identity_missing: 'Отсутствует идентификатор подключённого сервиса',
         resume_reachability_inputs_missing: 'Возобновление сессии нельзя проверить',
@@ -3725,6 +3833,7 @@ const ruValues = {
         `Отключить ${service} (${profileId}) и удалить из ${groups}?`,
       prompts: {
         profileIdTitle: "ID профиля",
+        profileIdPlaceholder: 'rabota',
         profileIdBody: "Используйте короткую метку, например work, personal, alt.",
         apiKeyTitle: "API-ключ",
         apiKeyBody: "Вставьте ваш API-ключ Anthropic.",
@@ -3759,18 +3868,16 @@ const ruValues = {
         connected: "Подключён",
         defaultBadge: "По умолчанию",
         needsReauth: "Нужна повторная авторизация",
+        refreshing: 'Обновление',
+        refreshFailedRetryable: 'Обновление не удалось; попробуем снова',
       },
       groups: {
         title: "Группы аккаунтов",
         empty: "Групп аккаунтов пока нет.",
         subtitle: ({ count }: { count: number }) => `${count} аккаунтов`,
-        subtitleWithActive: ({ profileId, count }: { profileId: string; count: number }) =>
-          `Активный: ${profileId} • ${count} аккаунтов`,
         actionsTitle: "Действия группы аккаунтов",
         createTitle: "Создать группу аккаунтов",
         createSubtitle: "Группируйте подключённые профили для восстановления через fallback.",
-        noProfilesTitle: "Нет подключённых профилей",
-        noProfilesBody: "Подключите хотя бы один профиль перед созданием группы аккаунтов.",
         invalidGroupTitle: "Недопустимый ID группы",
         invalidGroupBody: "Используйте буквы, цифры, точки, дефисы или подчёркивания (макс. 64).",
         statusReady: "Готово",
@@ -3800,13 +3907,27 @@ const ruValues = {
         warningNoFallbackMember: "Добавьте или включите еще одного участника, прежде чем автоматический резерв сможет менять аккаунты.",
         deleteTitle: "Удалить группу аккаунтов?",
         deleteBody: ({ groupId }: { groupId: string }) => `Удалить «${groupId}»? Профили останутся подключёнными.`,
-        prompts: {
-          groupIdTitle: "ID группы",
-          groupIdBody: "Используйте короткую метку вроде team, work или fallback.",
-          groupIdPlaceholder: "komanda",
-        },
+        deleteConfirmBody: ({ group }: { group: string }) => `Удалить «${group}»? Сессиям, использующим эту группу, потребуется выбрать другой аккаунт.`,
       },
       groupActions: {
+        title: 'Действия группы',
+        createTitle: 'Создать группу',
+        createSubtitle: 'Добавьте резервную группу для этого подключённого сервиса.',
+        groupIdTitle: 'ID группы',
+        groupIdBody: 'Выберите короткий идентификатор для этой группы подключённого сервиса.',
+        groupIdPlaceholder: 'komanda',
+        invalidGroupIdTitle: 'Недопустимый ID группы',
+        invalidGroupIdBody: 'Используйте буквы, цифры, точки, дефисы или подчёркивания (макс. 64).',
+        displayNameTitle: 'Название группы',
+        displayNameBody: 'Необязательно. Показывается при выборе авторизации и в настройках.',
+        displayNamePlaceholder: 'Командный пул',
+        deleteTitle: 'Удалить группу',
+        deleteConfirmTitle: 'Удалить группу',
+        deleteConfirmBody: ({ group }: { group: string }) => `Удалить «${group}»? Сессиям, использующим эту группу, потребуется выбрать другой аккаунт.`,
+        addMember: 'Добавить участника',
+        addMemberSubtitle: 'Добавьте в эту группу уже подключённый профиль.',
+        memberProfileTitle: 'Профиль участника',
+        memberProfileBody: 'Введите ID профиля, который нужно добавить в эту группу.',
         editTitle: "Изменить группу",
         searchMembersPlaceholder: "Поиск профилей",
         noProfilesAvailable: "Нет доступных подключённых профилей.",
@@ -3905,6 +4026,9 @@ const ruValues = {
       removeGroupTitle: "Удалить",
     },
     authModal: {
+      groupReadySubtitle: 'Использовать активного участника с доступным резервом',
+      groupExhaustedSubtitle: 'Все включённые участники ожидают восстановления квоты',
+      groupNeedsMembersSubtitle: 'Добавьте или включите участника перед использованием группы',
       nativeAuthTitle: "Нативная авторизация бэкенда",
       nativeAuthSubtitle: "Используйте локальный логин CLI / API‑ключи",
             groupSubtitle: 'Группа аккаунтов',
@@ -4176,20 +4300,7 @@ const ruValues = {
         subtitle:
           "Спрашивать перед отправкой локальных коммитов на remote.",
       },
-      options: {
-        always: {
-          title: "Всегда подтверждать pull/push",
-          subtitle: "Показывать диалоги подтверждения для pull и push.",
-        },
-        pushOnly: {
-          title: "Подтверждать только push",
-          subtitle: "Pull выполняется сразу; push требует подтверждения.",
-        },
-        never: {
-          title: "Никогда не подтверждать",
-          subtitle: "Выполнять pull и push сразу.",
-        },
-      },},
+      },
     pushRejectionRecovery: {
       title: "Восстановление при отказе push",
       footer:
@@ -5197,6 +5308,25 @@ const ruValues = {
     invalidNumber: "Некорректное число",
     invalidJson: "Некорректный JSON",
     plugins: {
+      cursor: {
+        title: 'Cursor',
+        sections: {
+          cli: {
+            title: 'CLI Cursor',
+            footer: 'Укажите исполняемый файл Cursor, если автоматического обнаружения недостаточно. Happier предпочитает cursor-agent и может использовать agent, если это разрешено.',
+          },
+        },
+        fields: {
+          cursorBinaryPath: {
+            title: 'Путь к исполняемому файлу Cursor',
+            subtitle: 'Необязательный абсолютный путь к cursor-agent или agent.',
+          },
+          cursorAgentFallbackEnabled: {
+            title: 'Разрешить резервную команду agent',
+            subtitle: 'Использовать команду agent, если cursor-agent недоступен.',
+          },
+        },
+      },
             claude: {
                 title: "Claude (удаленно)",
                 sections: {
@@ -5504,7 +5634,61 @@ const ruValues = {
     tabs: 'Вкладки',
   },
 
+  instrument: {
+    contextGauge: {
+      usedLabel: ({ percent }: { percent: number }) => `Использовано ${percent}% контекста`,
+      staleLabel: 'Использование контекста недоступно после смены модели',
+      popoverTitle: 'Контекстное окно',
+      percentRow: 'Заполнено',
+      usedRow: 'Использовано',
+      windowRow: 'Окно',
+      lifetimeRow: 'Обработано за всё время',
+      categoriesTitle: 'Состав',
+      baselineNote: ({ tokens }: { tokens: string }) => `≈${tokens} зарезервировано для базового контекста`,
+      autoCompactOn: 'Автоматическое сжатие при заполнении',
+      autoCompactOff: 'Автоматическое сжатие выключено',
+      staleNote: 'Недоступно после смены модели',
+      unknownWindow: 'Неизвестно',
+    },
+    quota: {
+      popoverTitle: 'Использование тарифа',
+    },
+    git: {
+      linesLabel: ({ added, removed }: { added: number; removed: number }) =>
+        `Добавлено строк: ${added}, удалено строк: ${removed}`,
+    },
+    strip: {
+      moreLabel: 'Другие индикаторы',
+    },
+  },
+
   settingsAppearance: {
+    editorFocusMode: 'Режим фокуса редактора',
+    editorFocusModeDescription: 'Скрывать разговор сессии и боковую панель при просмотре файлов (веб/планшет)',
+    visualEffects: {
+      title: 'Анимация и эффекты',
+      footer: 'Настройте анимацию и индикаторы приложения. Снижение уровня уменьшает анимацию и расход батареи. Системная настройка уменьшения движения всегда включает минимальный уровень.',
+      level: 'Эффекты',
+      levelDescription: 'Количество движения и глубины в индикаторах',
+      levelOptions: {
+        full: 'Полные',
+        fullDescription: 'Плавные шкалы, пружинная анимация и глубина',
+        subtle: 'Умеренные',
+        subtleDescription: 'Лёгкая пружинная анимация без шейдерных эффектов',
+        minimal: 'Минимальные',
+        minimalDescription: 'Статично, без анимации',
+      },
+      animatedNumbers: 'Анимация чисел',
+      animatedNumbersDescription: 'Прокручивать числовые показания до нового значения',
+      contextGauge: 'Использование контекста',
+      contextGaugeDescription: 'Как показывать использование контекста в сессии',
+      contextGaugeOptions: {
+        gauge: 'Шкала',
+        text: 'Текст',
+        hidden: 'Скрыто',
+      },
+      reduceMotionActive: 'Уменьшение движения включено, эффекты минимальны',
+    },
     pageDescription: 'Тема, текст, макет и анимация.',
     themesSummary: ({ light, dark }: { light: string; dark: string }) => `Светлая: ${light} · Тёмная: ${dark}`,
     themesCount: ({ builtIn, custom }: { builtIn: number; custom: number }) => `Встроенных: ${builtIn} · Своих: ${custom}`,
@@ -5666,23 +5850,6 @@ const ruValues = {
       pixelated: "Пиксельная",
       gradient: "Градиентная",
       brutalist: "Бруталистская",
-      meshGradient: "Сеточный градиент",
-      meshGradientOrganic: "Сеточный градиент: органика",
-      meshGradientRows: "Сеточный градиент: ряды",
-      meshGradientColumns: "Сеточный градиент: колонки",
-      meshGradientDiagonal: "Сеточный градиент: диагональ",
-      meshGradientOval: "Сеточный градиент: овал",
-      meshGradientWaves: "Сеточный градиент: волны",
-      meshGradientSoftNoise: "Сеточный градиент: мягкий шум",
-      photoGradient: "Слоистый градиент",
-      photoGradientRows: "Слоистый градиент: ряды",
-      photoGradientColumns: "Слоистый градиент: колонки",
-      photoGradientDiagonal: "Слоистый градиент: диагональ",
-      photoGradientWaves: "Слоистый градиент: волны",
-      photoGradientOval: "Слоистый градиент: овал",
-      photoGradientValueNoise: "Слоистый градиент: мягкий шум",
-      photoGradientVoronoi: "Слоистый градиент: ячейки",
-      photoGradientMeshGrid: "Слоистый градиент: сетка",
     },
     showFlavorIcons: "Показывать иконки провайдеров ИИ",
     showFlavorIconsDescription:
@@ -6161,6 +6328,12 @@ const ruValues = {
     noPathSelected: "Пожалуйста, выберите директорию для запуска сессии",
     temporaryComputer: {
         title: 'Временный компьютер',
+        teamAccess: {
+          title: 'Ограниченный доступ к команде',
+          off: 'Доступ к команде выключен',
+          on: 'Доступ к команде включён',
+          hint: 'Когда включено, именно этот временный компьютер может использовать подтверждение вашего текущего входа для ограниченных операций команды. Отзыв или отключение этого входа удаляет доступ.',
+        },
         subtitle: 'Подготовьте проверенный пакет Runner для другого компьютера.',
         continueLater: 'Продолжить позже',
         cancelConnectedTitle: 'Отменить этот временный компьютер?',
@@ -6729,6 +6902,7 @@ const ruValues = {
 
     emptyState: {
       title: "Сессий пока нет",
+      connectMachineActionSubtitle: 'Подключите этот компьютер, чтобы он мог запускать сессии.',
       description: "Запустите сессию на одной из ваших машин в сети.",
       descriptionPrefix: "Запустите сессию на одной из ваших машин с помощью ",
       descriptionSuffix: " в терминале или с помощью кнопок ниже.",
@@ -6797,6 +6971,7 @@ const ruValues = {
     killSessionConfirm: "Вы уверены, что хотите завершить эту сессию?",
     stopSession: "Остановить сессию",
     stopSessionConfirm: "Вы уверены, что хотите остановить эту сессию?",
+    stopSessionControlUnavailable: 'Happier не удалось подключиться к управлению сессией. Убедитесь, что машина сессии и демон в сети, и попробуйте снова.',
     archiveSession: "Архивировать сессию",
     archiveSessionConfirm: "Вы уверены, что хотите архивировать эту сессию?",
     workspaceTitle: "Рабочее пространство",
@@ -7776,6 +7951,9 @@ const ruValues = {
           interruptAndRunNow: "Прервать и запустить сейчас",
           markHandled: "Отметить обработанным",
           requeue: "Вернуть в очередь",
+          continueWaiting: 'Продолжить ожидание',
+          dismiss: 'Скрыть',
+          sendAsNew: 'Отправить как новое',
         },
         editPrompt: {
           title: "Редактировать отложенное сообщение",
@@ -7826,9 +8004,13 @@ const ruValues = {
           actionConflict: "Состояние ожидающего сообщения изменилось во время выполнения действия. Проверьте его текущее состояние и повторите попытку.",
           discardFailed: "Не удалось отбросить отложенную доставку",
           markHandledFailed: "Не удалось отметить отложенную доставку обработанной",
+          editStructuredInputUnsupported: 'Это отложенное сообщение содержит структурированные данные, которые пока нельзя безопасно редактировать.',
         },
       },
       transcript: {
+          olderLoadContinueTitle: 'Загрузить более ранние сообщения',
+          olderLoadContinueBody: 'Доступны ещё сообщения. Загрузите следующую страницу, чтобы продолжить чтение.',
+          olderLoadContinueAction: 'Загрузить более ранние сообщения',
           olderLoadFailedTitle: 'Не удалось загрузить более ранние сообщения',
           olderLoadFailedBody: 'Остальная часть этого разговора никуда не делась. Попробуйте загрузить более ранние сообщения ещё раз.',
       },
@@ -7920,6 +8102,8 @@ const ruValues = {
   },
 
     universalSearch: {
+        sessionInventoryLoading: 'Загрузка дополнительных сессий…',
+        sessionInventoryIncomplete: 'Некоторые сессии не удалось загрузить. Очистите поиск и попробуйте снова.',
         content: fileContentSearchTranslations["ru"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: 'Обновите Happier на этом компьютере, чтобы искать коммиты.',
@@ -8158,6 +8342,9 @@ const ruValues = {
         },},
 
     agentInput: {
+        profile: {
+            sectionTitle: 'Профиль',
+        },
         promptPicker: promptPickerTranslations['ru'],
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Выбрано.`,
@@ -8259,6 +8446,8 @@ const ruValues = {
       kilo: "Kilo",
       kiro: "Kiro",
       customAcp: "Пользовательский АКП",
+      coderabbit: 'CodeRabbit',
+      deepsec: 'DeepSec',
       pi: "Pi",
       copilot: "Copilot",
 
@@ -8269,6 +8458,7 @@ const ruValues = {
     },
       model: {
         title: "Модель",
+        sectionTitle: 'Модель',
         useCliSettings: "Использовать настройки CLI",
         running: ({ model }: { model: string }) => `Запущена: ${model}`,
         lastUsed: ({ model }: { model: string }) => `Последняя использованная: ${model}`,
@@ -8391,6 +8581,7 @@ const ruValues = {
     },
     actionMenu: {
       title: "Действия",
+      settings: 'Настройки',
       files: "Файлы",
       stop: "Остановить",
     },
@@ -8680,6 +8871,8 @@ const ruValues = {
 	        copyPath: "Копировать путь",
 	        download: "Скачать",
 	        downloadAsZip: "Скачать как ZIP",
+	        openWith: 'Открыть с помощью',
+	        share: 'Поделиться',
 	      },
 	      dropToUpload: "Перетащите файлы для загрузки",
 	      rename: {
@@ -8948,6 +9141,9 @@ const ruValues = {
         `Неподготовленные изменения (${count})`,
 	      // File viewer strings
 	      fileReadFailed: "Не удалось прочитать файл",
+	      androidFileActionsUnavailable: "Действия с файлами Android недоступны в этой версии приложения. Обновите Happier и повторите попытку.",
+	      fileSharingUnavailable: "Обмен файлами недоступен на этом устройстве.",
+	      fileCleanupFailed: "Не удалось удалить временный файл",
 	      fileTooLargeToPreview: "Файл слишком большой для предварительного просмотра",
 	      fileWriteFailed: "Не удалось записать файл",
 	      fileEditor: {
@@ -8980,6 +9176,7 @@ const ruValues = {
           detachFromPrompt: "Открепить от промпта",
           durable: {
             headerTitle: "Комментарии ревью",
+            delegate: 'Делегировать',
             count: ({ count }: { count: number }) => `${count}`,
             empty: "Комментариев ревью пока нет",
             engine: "Движок",
@@ -9084,6 +9281,7 @@ const ruValues = {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Загрузка ${fileName}...`,
         binaryFile: "Бинарный файл",
+        videoPreview: 'Предпросмотр видео',
         imagePreviewTooLarge: "Предпросмотр изображения слишком большой для отображения",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `Открыть сгенерированное изображение ${name}`,
@@ -10157,6 +10355,12 @@ const ruValues = {
     details: {
       launchOrigin: {
         discussion: ({ discussionId }: { discussionId: string }) => `Запущено из разговора ${discussionId}`,
+        crossSession: ({ sessionId }: { sessionId: string }) => `Запущено из сессии ${sessionId}`,
+        externalCli: 'Запущено извне через CLI',
+        externalMcp: 'Запущено извне через MCP',
+        externalAction: 'Запущено извне через действие',
+        externalUnknown: 'Запущено извне (источник неизвестен)',
+        legacyUnknown: 'Источник запуска неизвестен',
       },
       titles: {
         executionRun: "Запуск выполнения",
@@ -10494,6 +10698,8 @@ settingsSession: {
 	        attentionPromotionModeGlobalSubtitle: 'Показывать одну секцию внимания выше остальных',
 	        attentionPromotionModeWithinGroupsTitle: 'Перемещать вверх текущей группы',
 	        attentionPromotionModeWithinGroupsSubtitle: 'Оставлять сессии в их папке или рабочей области',
+	        reminderAutoClearOnOpenTitle: "Убирать напоминания при открытии",
+	        reminderAutoClearOnOpenSubtitle: "Отключите, чтобы убирать наступившие напоминания вручную. Будущие остаются запланированными.",
 	        attentionStandingDefaultTitle: 'Оставлять сессии в «Требует внимания»',
 	        attentionStandingDefaultEnabledSubtitle: 'Каждая сессия остаётся, пока вы её не уберёте',
 	        attentionStandingDefaultDisabledSubtitle: 'Оставляйте сессии по одной',
@@ -10655,14 +10861,14 @@ settingsSession: {
       providerUsageGauge: {
         title: "Использование провайдера",
         footer:
-          "Управляет индикатором квоты рядом с полем ввода, когда доступны надёжные данные использования провайдера. Закрепите окно использования в подключённом аккаунте, чтобы показывать его как дополнительный индикатор.",
+          "Выберите индикаторы редактора для всех аккаунтов. Они учитывают лимиты использования, выбранные в каждом пуле. Избранные лимиты добавляют индикаторы активного аккаунта.",
         visibilityTitle: "Показывать индикатор использования провайдера",
         labelsTitle: "Показывать подписи",
         labelsSubtitle: "Подписывает индикаторы контекста и использования рядом с полем ввода.",
         visibilityEnabledSubtitle:
           "Показывать оставшуюся квоту провайдера рядом с полем ввода, когда она доступна.",
         visibilityHiddenSubtitle: "Скрыть квоту провайдера рядом с полем ввода.",
-        windowTitle: "Окно индикатора",
+        windowTitle: "Периоды индикаторов",
         windowMostConstrainedTitle: "Самое ограниченное",
         windowMostConstrainedSubtitle:
           "Показывать надёжное окно квоты с наименьшим остатком.",
@@ -10670,8 +10876,8 @@ settingsSession: {
         windowDailySubtitle: "Предпочитать дневное окно квоты.",
         windowWeeklyTitle: "Недельное",
         windowWeeklySubtitle: "Предпочитать недельное окно квоты.",
-        windowSessionTitle: "Сессия",
-        windowSessionSubtitle: "Предпочитать окно квоты текущей сессии.",
+        windowSessionTitle: "Короткий период",
+        windowSessionSubtitle: "Показывать короткие периоды квоты, например пять часов.",
         windowPrimaryTitle: "Основное",
         windowPrimarySubtitle: "Предпочитать основное окно квоты провайдера.",
         windowSecondaryTitle: "Дополнительное",
@@ -11217,7 +11423,7 @@ settingsSession: {
       byo: "Мой аккаунт ElevenLabs",
       byoSubtitle: "Использовать свой API-ключ и агента ElevenLabs",
       openaiRealtime: "OpenAI Realtime",
-      openaiRealtimeSubtitle: "Использовать сохранённый API-ключ или явно выбранный аккаунт OpenAI",
+      openaiRealtimeSubtitle: "Использует ваш аккаунт OpenAI или API-ключ",
       grokRealtime: "Grok Voice",
       grokRealtimeSubtitle: "Использует ваш API-ключ xAI",
     },
@@ -12227,6 +12433,16 @@ settingsSession: {
   },
 
   settingsAccount: {
+    firstKeyRecovery: {
+      title: 'Завершить настройку шифрования',
+      description: 'Happier всё ещё хранит ключ восстановления для настройки шифрования, которая могла уже завершиться. Завершите настройку перед выходом или сменой аккаунта.',
+      warning: 'Шифрование уже могло быть применено. Удаление этого ключа восстановления может навсегда лишить вас доступа к аккаунту.',
+      finish: 'Завершить настройку шифрования',
+      keep: 'Сохранить ключ восстановления',
+      abandon: 'Удалить ключ восстановления',
+      abandonConfirmTitle: 'Удалить ключ восстановления?',
+      failed: 'Состояние восстановления изменилось или его не удалось очистить. Ваши учётные данные и ключ восстановления сохранены. Попробуйте снова.',
+    },
       ...accountEncryptionRecoveryTranslations['ru'],
     providerCatalogUnavailable: 'Не удалось проверить доступные подключения для входа.',
     securityPageDescription: "Способы входа, восстановление, сеансы и шифрование для этого Home.",
@@ -12926,6 +13142,166 @@ settingsSession: {
     brandHeroGetStarted: "Начать",
   },
 
+  journey: {
+    actions: {
+      skipToSetup: 'Перейти к настройке',
+    },
+    beats: {
+      a1: {
+        eyebrow: 'Часть 1',
+        title: 'Начните писать код где угодно. Продолжайте на любом устройстве.',
+        body: 'Начните с одной сессии, которая будет с вами в терминале, настольном приложении, браузере и на телефоне.',
+      },
+      a2: {
+        eyebrow: 'Уже здесь',
+        title: 'Ваши сессии уже здесь.',
+        body: 'Happier собирает уже запущенные вами сессии, чтобы вы начинали в знакомой обстановке.',
+      },
+      a3: {
+        eyebrow: 'Терминал',
+        title: 'Любите терминал? Мы тоже.',
+        body: 'Продолжайте работать в терминальном интерфейсе, а когда понадобится больше места, откройте ту же сессию в приложении.',
+      },
+      a4: {
+        eyebrow: 'Рабочая панель',
+        title: 'Всё необходимое в одном касании.',
+        body: 'Откройте рабочую панель сессии на телефоне и управляйте работой без поиска нужного окна.',
+      },
+      a5: {
+        eyebrow: 'Команда',
+        title: 'Ваши сессии работают командой.',
+        body: 'Отправляйте отдельные задачи другим агентам. Их результаты вернутся в сессию, с которой вы начали.',
+      },
+      a6: {
+        eyebrow: 'Очередь',
+        title: 'Планируйте. Направляйте. Создавайте ответвления.',
+        body: 'Ставьте следующие сообщения в очередь, меняйте направление в процессе или исследуйте перспективный путь в ответвлении, сохраняя контекст.',
+      },
+      a7: {
+        eyebrow: 'Внимание',
+        title: 'Всегда знайте, где вы нужны.',
+        body: 'Сессии, которым нужно ваше участие, поднимаются наверх. Выберите, как их показывать, и настройка начнёт действовать после завершения установки.',
+      },
+      a8: {
+        eyebrow: 'Ревью',
+        title: 'Проверяйте код. Отправляйте замечания.',
+        body: 'Читайте изменения строка за строкой и отправляйте точные замечания прямо агенту.',
+      },
+      a9: {
+        eyebrow: 'Git',
+        title: 'Создавайте. Выпускайте.',
+        body: 'Настройте коммиты, отправку изменений и восстановление после отказа отправки для агентов. Одни правила на всех подключённых машинах.',
+      },
+      a10: {
+        eyebrow: 'Голос',
+        title: 'Коллега, с которым можно поговорить.',
+        body: 'Обсуждайте изменения с агентом, который понимает вашу сессию, а не просто превращает речь в текст.',
+      },
+      a11: {
+        eyebrow: 'MCP',
+        title: 'Одна настройка MCP для всех агентов.',
+        body: 'Настройте инструменты один раз и сделайте их доступными везде, где работают ваши агенты.',
+      },
+      a12: {
+        eyebrow: 'Пулы',
+        title: 'Объединяйте аккаунты. Продолжайте работу.',
+        body: 'Соберите аккаунты в пулы, чтобы в долгий рабочий день переключаться на следующий аккаунт вместо остановки из-за лимита.',
+      },
+      a13: {
+        eyebrow: 'Настройка',
+        title: 'Настраивайте почти всё.',
+        body: 'Начните с собственных тем, затем подстройте сессии, агентов и рабочие процессы под привычный способ работы.',
+      },
+      a14: {
+        eyebrow: 'И ещё',
+        title: 'Больше возможностей, когда они нужны.',
+        body: 'Цели, промпты, папки, передача сессий, совместный доступ, автоматизация, уведомления и работа на разных платформах ждут своего часа.',
+      },
+      s1: {
+        eyebrow: 'Настройка',
+        title: 'Вы решаете, где хранятся данные.',
+        body: 'Начните с Home, найденного через Happier Cloud, или подключитесь напрямую к Home, которым управляете сами.',
+      },
+      s2: {
+        eyebrow: 'Аккаунт',
+        title: 'Один ключ. Только ваш.',
+        body: 'По умолчанию ваш аккаунт представлен ключом восстановления, который не покидает ваши устройства, а история защищена сквозным шифрованием. Home хранит этот аккаунт и его сессии.',
+      },
+      s3: {
+        eyebrow: 'Машина',
+        title: 'Разбудим эту машину.',
+        body: 'Подключите компьютер, на котором будут работать сессии, и дождитесь его появления в сети.',
+      },
+      s4: {
+        eyebrow: 'Провайдеры',
+        title: 'Возьмите агентов с собой.',
+        body: 'Узнайте, какие агенты готовы на только что подключённой машине, прежде чем начать первую настоящую сессию.',
+      },
+      s5: {
+        eyebrow: 'Готово',
+        title: 'Готовы, когда готовы вы.',
+        body: 'Введите happier вместо claude или codex. Ваши сессии мгновенно синхронизируются на всех устройствах.',
+      },
+    },
+    reel: {
+      setUpHappier: 'Настроить Happier',
+      features: {
+        goals: {
+          title: 'Следите за важным.',
+          body: 'Встроенная поддержка целей Codex и списков задач Claude: цели, прогресс и бюджет видны с первого взгляда.',
+        },
+        memorySearch: {
+          title: 'Ищите всё.',
+          body: 'Смысловой поиск по памяти ваших сессий: агенты ищут контекст, а вы можете искать во всей истории.',
+        },
+        editor: {
+          title: 'Markdown без рывков.',
+          body: 'Markdown появляется в разговоре постепенно: таблицы, блоки кода и форматирование сохраняют своё место. Для файлов Markdown доступен редактор в стиле Notion.',
+        },
+        interSession: {
+          title: 'Сессии общаются.',
+          body: 'Выбирайте сообщения и отправляйте их между сессиями. Агенты и сессии координируют работу в вашем рабочем пространстве.',
+        },
+        agentActions: {
+          title: 'Агенты умеют то же, что и вы.',
+          body: 'Через спецификацию действий Happier агенты создают сессии, управляют ими и перемещаются по рабочему пространству, запрашивая одобрение, когда это важно.',
+        },
+        multiSelect: {
+          title: 'Выберите. Выполните. Готово.',
+          body: 'Выбирайте несколько сессий и действуйте сразу со всеми: архивируйте, переносите в папки или отмечайте прочитанными одним касанием.',
+        },
+        folders: {
+          title: 'Организуйте по-своему.',
+          body: 'Перетаскивайте сессии в папки и подпапки и сосредотачивайтесь на одной папке за раз.',
+        },
+        prompts: {
+          title: 'Промпты, навыки и шаблоны.',
+          body: 'Многоразовые промпты, навыки, шаблоны и реестры: определите один раз и используйте везде.',
+        },
+        sharing: {
+          title: 'Пишите код вместе.',
+          body: 'Делитесь сессией с коллегами, управляйте доступом к просмотру и действиям и сотрудничайте в реальном времени.',
+        },
+        automations: {
+          title: 'Агенты по расписанию.',
+          body: 'Запускайте сессии по расписанию для наблюдения за пул-реквестами, отслеживания задач или автоматического повторения любой работы.',
+        },
+        handoff: {
+          title: 'Мгновенно переходите между сессиями.',
+          body: 'Переносите работающую сессию с одной машины на другую, сохраняя разговор. Продолжайте ровно с того места, где остановились.',
+        },
+        notifications: {
+          title: 'Уведомления по делу.',
+          body: 'Умные уведомления открывают нужную сессию на нужном сервере. Одобряйте или отвечайте прямо из уведомления.',
+        },
+        crossPlatform: {
+          title: 'Запускайте сессии на всех своих компьютерах.',
+          body: 'Нативные приложения для iOS и Android, настольное приложение для любой ОС и веб-приложение работают синхронно.',
+        },
+      },
+    },
+  },
+
   sessionGettingStarted: {
     title: {
       connectMachine: "Настроить этот компьютер",
@@ -12994,6 +13370,58 @@ settingsSession: {
   },
 
   setupOnboarding: {
+    progressQuietLabel: ({ current, total }: { current: number; total: number }) => `Шаг ${current} из ${total}`,
+    relayCloudSubtitle: 'Найдите и подключите свои связанные Home',
+    relayOnThisComputerSubtitle: 'Создайте личный Home на этом компьютере',
+    relayOnYourComputerSubtitle: 'Создайте личный Home на своём компьютере',
+    relayOnRemoteComputerTitle: 'Создать личный Home на удалённом компьютере',
+    relayOnRemoteComputerSubtitle: 'Используйте SSH для создания на доверенном компьютере',
+    remoteRelayHostInstallTitle: 'Создать личный Home на удалённом компьютере',
+    webRelayHostHandoffTitle: 'Создать личный Home на своём компьютере',
+    webRelayHostHandoffBody: 'Используйте настольное приложение или запустите команду CLI на компьютере, где будет размещён ваш личный Home. Когда он будет готов, подключите это устройство через процедуру сопряжения.',
+    webDesktopOnlyPrimary: 'У меня есть адрес Home',
+    webDesktopOnlySetupCommandSubtitle: 'Запустите эту интерактивную команду, чтобы подключить компьютер к выбранному Home и установить фоновую службу.',
+    webDesktopOnlySetupRemotePrereqsSubtitle: 'Запустите эту интерактивную команду, чтобы подключиться к выбранному Home перед настройкой удалённого компьютера через SSH.',
+    webDesktopHandoffDesktopAppSubtitle: 'Скачайте и откройте Happier, чтобы создать личный Home с пошаговой настройкой.',
+    webDesktopHandoffCliSubtitle: 'Запустите одну команду на компьютере, где будет размещён ваш личный Home.',
+    webDesktopOnlyRelayInstallTitle: 'Создать личный Home через CLI',
+    webDesktopOnlyRelayInstallSubtitle: 'Запустите команду интерактивно на компьютере, которому доверяете размещение своего Home.',
+    webDesktopOnlyRelayStatusTitle: 'Подключиться к своему Home',
+    webDesktopOnlyRelayStatusSubtitle: 'Следуйте инструкциям по сопряжению, показанным после создания, чтобы подключить это устройство.',
+    webRelayHostInvalidUrl: 'Введите корректный адрес Home с http:// или https:// перед продолжением.',
+    preAuthTitle: 'Какой Home вы хотите использовать?',
+    preAuthBody: 'В вашем Home находятся аккаунт, сессии и настройки. Выберите существующий Home или создайте личный.',
+    preAuthContinueHint: 'При продолжении Happier подключится к выбранному Home и вернётся сюда для завершения настройки.',
+    currentRelayTitle: 'Выбранный Home',
+    selectedRelayFooterLabel: 'Выбранный Home',
+    selectedRelayFooterLine: ({ relay }: { relay: string }) => `Активный Home: ${relay}`,
+    currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Активный Home: ${relayUrl}`,
+    postAuthBody: 'Вы вошли в аккаунт. Продолжите локальную настройку, чтобы подготовить этот компьютер для выбранного Home.',
+    setupThisComputerSkipLabel: 'Я сделаю это позже',
+    setupThisComputerConnectHonesty: 'Настройка завершится только после подключения этой машины к выбранному Home.',
+    activeRelaySummaryTitle: 'Активный Home',
+    selectedRelaySummaryTitle: 'Выбранный Home',
+    thisComputerReady: 'Готов к работе с этим Home',
+    doneConnectedMachineSummary: ({ machine }: { machine: string }) => `Подключённая машина: ${machine}`,
+    doneMachineFallback: 'Подключённая машина',
+    doneStartFirstSession: 'Запустить первую сессию',
+    doneFirstSessionLine: 'Введите happier вместо claude или codex. Ваши сессии мгновенно синхронизируются на всех устройствах.',
+    doneExistingSessionsLine: ({ count }: { count: number }) => `У вас уже есть ${count} ${plural({ count, one: 'существующая сессия', few: 'существующие сессии', many: 'существующих сессий' })}.`,
+    machineArrival: {
+      oneCommand: 'Одна команда.',
+      detectedAfterSignIn: 'Запустите её на нужном компьютере. После входа мы обнаружим его автоматически.',
+      liveBody: 'Запустите её на нужном компьютере. Happier ожидает демон через подключение вашего аккаунта.',
+      watching: 'Ожидаем вашу машину…',
+      connected: 'Подключено',
+      unknownMachine: 'Обнаруженная машина',
+      notSeeingMachine: 'Машина не появилась?',
+    },
+    providerReadiness: {
+      ready: ({ provider }: { provider: string }) => `${provider} готов`,
+      missing: ({ provider }: { provider: string }) => `${provider} отсутствует`,
+      unknown: ({ provider }: { provider: string }) => `${provider}: проверка`,
+    },
+    setupNewRelayAction: 'Создать личный Home',
 		    screenTitle: "Настроить этот компьютер",
 		    welcomeTitle: "Добро пожаловать в Happier",
 			    welcomeBody: "Happier соединяет ваш телефон и компьютеры через Relay, чтобы ваши сессии были доступны везде.",
@@ -13167,6 +13595,11 @@ settingsSession: {
         "Управляйте устанавливаемыми инструментами для этой машины.",
     },
     installables: {
+      reinstall: 'Переустановить',
+      installTitle: ({ title }: { title: string }) => `Установить ${title}?`,
+      updateTitle: ({ title }: { title: string }) => `Обновить ${title}?`,
+      reinstallTitle: ({ title }: { title: string }) => `Переустановить ${title}?`,
+      installDescription: ({ title }: { title: string }) => `Это установит ${title} на выбранной машине.`,
       screenTitle: "Устанавливаемые",
       aboutGroupTitle: "О разделе",
       aboutSubtitle:
@@ -13931,6 +14364,17 @@ settingsSession: {
   },
 
   profiles: {
+    preferredAgent: {
+      title: 'Предпочитаемый агент',
+      footer: 'Начинать с этого агента при выборе профиля. Перед запуском его можно изменить.',
+      none: 'Выбрать при запуске',
+    },
+    preferredModel: {
+      title: 'Предпочитаемая модель',
+      footer: 'Сохраняет точные данные агента, подключения к провайдеру и модели. Учётные данные и адреса провайдера остаются в настройках провайдера.',
+      none: 'Выбрать при запуске',
+      stale: 'Проверьте эту сохранённую модель перед запуском',
+    },
       launchPlacement: {
           title: 'Где запускаются сессии',
           footer: 'Это предпочтение, которое разрешается при старте сессии. Машина не сохраняется как ответ.',
@@ -14136,6 +14580,9 @@ settingsSession: {
       currently: ({ label }: { label: string }) => `Currently: ${label}`,
     },
     aiBackend: {
+      antigravitySubtitleExperimental: 'CLI Antigravity (экспериментально)',
+      coderabbitSubtitleExperimental: 'CLI ревью CodeRabbit (экспериментально)',
+      deepsecSubtitleExperimental: 'CLI ревью DeepSec (экспериментально)',
       title: "Бекенд ИИ",
       selectAtLeastOneError: "Выберите хотя бы один бекенд ИИ.",
       claudeSubtitle: "CLI Claude",

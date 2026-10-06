@@ -1,7 +1,5 @@
-import {
-    MACHINE_LIVE_STREAM_AVCC_ENVELOPE_TAGS_V1,
-    type MachineLiveStreamAvccChunkTypeV1,
-} from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_AVCC_ENVELOPE_TAGS_V1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { MachineLiveStreamAvccChunkTypeV1 } from '@happier-dev/protocol';
 
 export type AndroidScrcpyRawStreamReasonCode =
     | 'android_scrcpy_raw_stream_buffer_limit_exceeded'

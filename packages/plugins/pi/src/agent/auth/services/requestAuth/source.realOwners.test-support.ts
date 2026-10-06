@@ -2,19 +2,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
-  ConnectedAccountAuthFailureRequestV1Schema,
-  ConnectedAccountQuotaFailureRequestV1Schema,
-  PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1,
-  QualifiedConnectedAccountGroupV4Schema,
-  QualifiedConnectedAccountListResponseV4Schema,
-  SPAWN_SESSION_ERROR_CODES,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountServiceRef,
-} from '@happier-dev/protocol';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import type {
   AgentSessionRuntime,
   AgentSessionRuntimeEvent,

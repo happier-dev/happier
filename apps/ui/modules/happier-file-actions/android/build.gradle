@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.fileactions'
+version = '0.0.0'
+
+android {
+  namespace "dev.happier.fileactions"
+  defaultConfig {
+    versionCode 1
+    versionName version
+  }
+  testOptions { unitTests.includeAndroidResources = true }
+}
+
+dependencies {
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
+}

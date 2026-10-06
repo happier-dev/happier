@@ -1,14 +1,9 @@
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import {
-  DEFAULT_PLUGIN_SCAFFOLD_UI_MODE,
-  PluginIdSchema,
-  PluginScaffoldTemplateSchema,
-  PluginScaffoldUiModeSchema,
-  type PluginScaffoldTemplate,
-  type PluginScaffoldUiMode,
-} from '@happier-dev/protocol';
+import { DEFAULT_PLUGIN_SCAFFOLD_UI_MODE, PluginScaffoldTemplateSchema, PluginScaffoldUiModeSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { PluginScaffoldTemplate, PluginScaffoldUiMode } from '@happier-dev/protocol';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
 
 import {

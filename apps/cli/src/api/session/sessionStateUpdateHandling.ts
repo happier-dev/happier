@@ -1,5 +1,5 @@
 import { decodeBase64, decrypt } from '../encryption';
-import { normalizeSessionMetadataForRead } from '@happier-dev/protocol';
+import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import type { AgentState, Metadata, Update } from '../types';
 import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';

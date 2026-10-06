@@ -80,19 +80,32 @@ export function useSessionBoardSnapshot(input: SessionBoardSnapshotInput): Sessi
         return () => { stopped = true; unsubscribe?.(); };
     }, [address, input.boardFeatureEnabled, lifetime, resolution, retry]);
 
+    const observedRef = React.useRef(observed);
+    observedRef.current = observed;
     const refresh = React.useCallback(() => {
-        if (observed?.lifetime === lifetime && observed.isCurrent() && observed.binding.status === 'ready' && observed.refreshRecords) {
-            observed.refreshRecords();
+        const current = observedRef.current;
+        if (current?.lifetime === lifetime && current.isCurrent() && current.binding.status === 'ready' && current.refreshRecords) {
+            current.refreshRecords();
         } else {
             setObserved(null);
             setRetry(value => value + 1);
         }
-    }, [lifetime, observed]);
+    }, [lifetime]);
 
-    if (!input.boardFeatureEnabled) return { status: 'unavailable', reason: 'board_feature_disabled', refresh };
-    if (!address) return { status: 'unavailable', reason: 'invalid_address', refresh };
-    if (resolution.kind !== 'bound') return resolution.kind === 'resolving' ? { ...LOADING, refresh } : { status: 'unavailable', reason: resolution.kind, refresh };
-    if (observed?.lifetime !== lifetime) return { ...LOADING, refresh };
-    if (!observed.isCurrent()) return { status: 'unavailable', reason: 'forbidden', refresh };
-    return { ...observed.binding, refresh };
+    const binding: SessionBoardBinding = !input.boardFeatureEnabled
+        ? { status: 'unavailable', reason: 'board_feature_disabled' }
+        : !address
+            ? { status: 'unavailable', reason: 'invalid_address' }
+            : resolution.kind !== 'bound'
+                ? resolution.kind === 'resolving' ? LOADING : { status: 'unavailable', reason: resolution.kind }
+                : observed?.lifetime !== lifetime
+                    ? LOADING
+                    : !observed.isCurrent()
+                        ? { status: 'unavailable', reason: 'forbidden' }
+                        : observed.binding;
+    const snapshot = binding.status === 'ready' ? binding.snapshot : null;
+    const reason = binding.status === 'unavailable' ? binding.reason : 'forbidden';
+    return React.useMemo<SessionBoardSnapshotBinding>(() => snapshot
+        ? { status: 'ready', snapshot, refresh }
+        : { status: 'unavailable', reason, refresh }, [snapshot, reason, refresh]);
 }

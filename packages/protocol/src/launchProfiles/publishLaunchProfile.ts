@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { ArtifactSharingResourceV1 } from '../artifacts/artifactSharingV1.js';
+import { artifactSavedByFromActionContextV1, type ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';
+import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { readAiLaunchProfileCollection } from '../profiles/read.js';
 import {
   LaunchProfileArtifactReferenceV1Schema, LaunchProfileArtifactV1Schema,
@@ -10,7 +12,7 @@ import {
 export const LaunchProfilePublishInputV1Schema = z.object({ profileId: z.string().min(1) }).strict();
 export const LaunchProfilePublishOutputV1Schema = LaunchProfileArtifactReferenceV1Schema;
 export type LaunchProfilePublisherV1 = Readonly<{
-  publish: (input: z.input<typeof LaunchProfilePublishInputV1Schema>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<z.output<typeof LaunchProfilePublishOutputV1Schema>>;
+  publish: (input: z.input<typeof LaunchProfilePublishInputV1Schema>, options?: Readonly<{ signal?: AbortSignal; context?: ActionExecutorContext }>) => Promise<z.output<typeof LaunchProfilePublishOutputV1Schema>>;
 }>;
 type RawSettings = Readonly<Record<string, unknown>>;
 
@@ -21,7 +23,7 @@ export type LaunchProfilePublisherDepsV1 = Readonly<{
   mutateSettings: (mutate: (current: RawSettings) => Record<string, unknown>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<void>;
   artifactStore: Readonly<{
     read: (artifactId: string, signal?: AbortSignal) => Promise<ArtifactSharingResourceV1 | null>;
-    create: (input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>) => Promise<Readonly<{ artifactId: string }> | null>;
+    create: (input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>) => Promise<Readonly<{ artifactId: string }> | null>;
   }>;
 }>;
 
@@ -79,6 +81,7 @@ export function createLaunchProfilePublisherV1(deps: LaunchProfilePublisherDepsV
       });
       const artifact = await deps.artifactStore.create({
         header: buildLaunchProfileArtifactHeaderV1(content), body: JSON.stringify(content),
+        savedBy: artifactSavedByFromActionContextV1(options?.context),
         ...(signal ? { signal } : {}),
       });
       if (!artifact) fail('profile_publish_failed');

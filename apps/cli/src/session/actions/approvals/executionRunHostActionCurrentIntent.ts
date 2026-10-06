@@ -1,11 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import {
-  ExecutionRunHostActionApprovalRequestV1Schema,
-  redactBugReportSensitiveText,
-  type ExecutionRunHostActionApprovalRequestV1,
-  type ReviewCommentProposalV1,
-} from '@happier-dev/protocol';
+import { ExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { ExecutionRunHostActionApprovalRequestV1, ReviewCommentProposalV1 } from '@happier-dev/protocol';
 
 import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordinator';
 import { executionRunHostActionApprovalSubjectsEqual } from './executionRunHostActionApprovalSubject';

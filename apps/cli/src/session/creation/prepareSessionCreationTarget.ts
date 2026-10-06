@@ -1,18 +1,10 @@
 import { realpath } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 
-import {
-  SCM_OPERATION_ERROR_CODES,
-  SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-  SessionCreationTargetPreparationRequestV1Schema,
-  SessionCreationTargetPreparationResultV1Schema,
-  type ScmWorktreeCreateResponse,
-  type ScmWorktreeRemoveRequest,
-  type ScmWorktreeRemoveResponse,
-  type SessionCreationPreparedCheckoutV1,
-  type SessionCreationTargetPreparationRequestV1,
-  type SessionCreationTargetPreparationResultV1,
-} from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
+import { SessionCreationTargetPreparationRequestV1Schema, SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import type { ScmWorktreeCreateResponse, ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse, SessionCreationPreparedCheckoutV1, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
 
 import { notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import { realizeWorkspaceCheckoutWithScmWorkspaceSource } from '@/scm/workspace';

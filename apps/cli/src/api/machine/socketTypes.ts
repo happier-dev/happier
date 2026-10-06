@@ -1,50 +1,20 @@
 import type { SessionBroadcast, SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import {
-  TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1,
-  type TeamCredentialExternalProviderOperationRetireV1,
-  type TeamCredentialExternalProviderOperationRetireResponseV1,
-} from '@happier-dev/protocol/teams';
-import {
-  EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1,
-  EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1,
-  EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
-  ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
-  MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
-  MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
-  MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
-  SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
-  SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
-  type SessionPendingExecutionRunEnqueueByMachineRequestV2,
-  type SessionPendingExecutionRunEnqueueByMachineResponseV2,
-  SESSION_SERVER_START_INGRESS_EVENT_V1,
-  MACHINE_LIVE_STREAM_SOCKET_EVENT,
-  PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-  TRANSFER_RELAY_V2_SOCKET_EVENT,
-  type ExternalSessionTranscriptInvalidationV1,
-  type ExternalSessionSourceUnavailableOccurrenceV1,
-  type ActionOperationRevisionEphemeralV1,
-  type ExternalSessionOperationSocketCommandV1,
-  type ExternalSessionOperationSocketResponseV1,
-  type ExternalSessionStatusDemandDaemonMessageV1,
-  type MachineLiveStreamWireEnvelopeV1,
-  type MachineUpdateMetadataRequest,
-  type MachineUpdateMetadataResponse,
-  type MachineSessionTerminalCaptureRequestV1,
-  type MachineSessionTerminalCaptureResponseV1,
-  type MachineSessionTerminalFinalizeRequestV1,
-  type MachineSessionTerminalFinalizeResponseV1,
-  type MachineUpdateOperationProtocolCapabilitiesRequestV1,
-  type MachineUpdateOperationProtocolCapabilitiesResponseV1,
-  type SessionPendingEnqueueByMachineRequestV1,
-  type SessionPendingEnqueueByMachineResponseV1,
-  type SessionServerStartIngressRequestV1,
-  type SessionServerStartIngressResponseV1,
-  type MachineTransferReceiveEnvelope,
-  type MachineTransferSendEnvelope,
-  type PeerTcpTunnelRelayEnvelope,
-  type TransferRelayV2SendEnvelope,
-} from '@happier-dev/protocol';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import type { TeamCredentialExternalProviderOperationRetireV1, TeamCredentialExternalProviderOperationRetireResponseV1 } from '@happier-dev/protocol/teams';
+import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
+import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
+import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1 } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
+import { SESSION_SERVER_START_INGRESS_EVENT_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2 } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import type { SessionPendingExecutionRunEnqueueByMachineRequestV2, SessionPendingExecutionRunEnqueueByMachineResponseV2, ExternalSessionTranscriptInvalidationV1, ExternalSessionSourceUnavailableOccurrenceV1, ActionOperationRevisionEphemeralV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionStatusDemandDaemonMessageV1, MachineLiveStreamWireEnvelopeV1, MachineUpdateMetadataRequest, MachineUpdateMetadataResponse, MachineSessionTerminalCaptureRequestV1, MachineSessionTerminalCaptureResponseV1, MachineSessionTerminalFinalizeRequestV1, MachineSessionTerminalFinalizeResponseV1, MachineUpdateOperationProtocolCapabilitiesRequestV1, MachineUpdateOperationProtocolCapabilitiesResponseV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingEnqueueByMachineResponseV1, SessionServerStartIngressRequestV1, SessionServerStartIngressResponseV1, MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, PeerTcpTunnelRelayEnvelope, TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
 
 export interface ServerToDaemonEvents {
   update: (data: Update) => void;

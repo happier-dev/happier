@@ -6,10 +6,13 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginInlineSurfaceHost } from '@/components/plugins/surfaces';
+import { resolvePluginSurfaceDescriptorRenderGate } from '@/components/plugins/surfaces/PluginSurfaceHost';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { useSessionPluginPolicyContext } from '@/components/sessions/plugins/useSessionPluginPolicyContext';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { randomUUID } from '@/platform/randomUUID';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { WidgetPresentation } from '@/sync/domains/plugins/ui/widgetContract';
@@ -19,6 +22,8 @@ import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domain
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import type { ConfiguredWidgetTargetResolution, WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildConnectedAccountPurposeSetupRoute } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
 
 import {
     resolveInstalledWidgetMount,
@@ -85,6 +90,8 @@ export type InstalledWidgetSurfaceProps = Readonly<{
     onManagePlugin?: () => void;
     /** Current framed renderer's validated intrinsic height for outer semantic sizing. */
     onIntrinsicHeightChange?: (height: number) => void;
+    /** An admitted inert reference replaces the executable body without creating a host binding. */
+    reference?: React.ReactNode;
     testID: string;
 }>;
 
@@ -202,6 +209,26 @@ function MountedAppWidget(props: MountedWidgetProps): React.ReactElement | null 
     );
 }
 
+function InstalledWidgetReference(props: Readonly<{
+    mount: InstalledWidgetMount;
+    policyContext: PluginUiPolicyEvaluationContext;
+    reference: React.ReactNode;
+    testID: string;
+    onManagePlugin?: () => void;
+}>): React.ReactElement {
+    const placement = props.mount.placement;
+    if (!placement) return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_surface_absent' }} testID={props.testID} />;
+    const gate = resolvePluginSurfaceDescriptorRenderGate(placement, props.policyContext);
+    if (!gate.canRender) return <ConfiguredWidgetRefusal resolution={{ status: 'unavailable', reasonCode: gate.reason,
+        repair: { kind: 'type_unavailable' } }} testID={props.testID} onManagePlugin={props.onManagePlugin} />;
+    return <>{props.reference}</>;
+}
+
+function SessionInstalledWidgetReference(props: InstalledWidgetSurfaceProps & Readonly<{ mount: InstalledWidgetMount; session: Session }>): React.ReactElement {
+    const policyContext = useSessionPluginPolicyContext({ session: props.session, runtime: props.runtime });
+    return <InstalledWidgetReference {...props} policyContext={policyContext} reference={props.reference} />;
+}
+
 export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): React.ReactElement {
     const mount = React.useMemo(() => resolveInstalledWidgetMount({
         source: props.source,
@@ -242,6 +269,8 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
     };
 
     if (props.target.kind === 'app') {
+        if (props.reference !== undefined) return <InstalledWidgetReference {...props} mount={mount}
+            policyContext={{ platform: props.runtime.platform }} reference={props.reference} />;
         return <MountedAppWidget key={lifetimeKey} {...mountedProps} />;
     }
 
@@ -264,6 +293,7 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
             />
         );
     }
+    if (props.reference !== undefined) return <SessionInstalledWidgetReference {...props} mount={mount} session={session} />;
     return <MountedSessionWidget key={lifetimeKey} {...mountedProps} session={session} />;
 }
 
@@ -273,7 +303,7 @@ export function ConfiguredInstalledWidgetSurface(props: Omit<InstalledWidgetSurf
     onRepairInputs?: (outcome: WidgetInputRepairOutcome) => void;
 }>): React.ReactElement {
     const { resolution, onRepairInputs, ...mounted } = props;
-    if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={onRepairInputs} />;
+    if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={onRepairInputs} onManagePlugin={props.onManagePlugin} />;
     return <InstalledWidgetSurface {...mounted} target={resolution.target} runtime={resolution.runtime} input={resolution.input} />;
 }
 
@@ -282,30 +312,64 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
     resolution: Exclude<ConfiguredWidgetTargetResolution, { status: 'ready' }>;
     testID: string;
     onRepairInputs?: (outcome: WidgetInputRepairOutcome) => void;
+    onManagePlugin?: () => void;
 }>): React.ReactElement {
     const { resolution, onRepairInputs } = props;
-    if (resolution.status === 'loading') return <UnavailableInstalledWidget
-        unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
-    // Input repair reuses the host's editor. Missing runtime/plugin authority
-    // is not an input the person can fix by choosing another value.
-    const inputsNeedAttention = resolution.status === 'selection_required' || resolution.status === 'invalid'
-        || Boolean(resolution.fields?.length);
-    if (inputsNeedAttention && resolution.reasonCode !== 'widget_viewer_purpose_authority_unavailable') {
-        const title = resolution.status === 'selection_required' ? t('widgetAdd.previewWaiting')
-            : resolution.status === 'invalid' ? t('widgetAdd.inputsInvalid') : t('widgetAdd.inputsUnavailable');
-        return <SurfaceStateCard
-            testID={`${props.testID}-state`}
-            size="line"
-            kind={resolution.status === 'denied' ? 'denied' : 'warning'}
-            title={title}
-            diagnosticCode={resolution.reasonCode}
-            accessibilitySemantics="status"
-            {...(onRepairInputs ? { action: {
-                label: t('widgetAdd.editInputs'),
-                onPress: () => onRepairInputs(resolution),
-                testID: `${props.testID}-inputs-repair`,
-            } } : {})}
-        />;
+    const router = useRouter();
+    const stateSize = useSurfaceStateCardSize();
+    if (resolution.status === 'loading') {
+        return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
     }
-    return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
+    if (resolution.status === 'unavailable' && (resolution.reasonCode === 'widget_projection_establishing'
+        || resolution.reasonCode === 'widget_session_hydrating')) {
+        return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
+    }
+    const repair = resolution.repair;
+    if (!repair || resolution.reasonCode === 'widget_viewer_purpose_authority_unavailable') {
+        return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
+    }
+    // One repair, said where the widget is (lab dagent ST "Invalid input · repair in place"): name the
+    // value that stopped resolving and why, and offer that input's own choice — never a generic
+    // "review the inputs". It opens the same Edit step, at that input.
+    const field = repair.field;
+    const label = field?.label ?? t('widgetAdd.inputsUnavailable');
+    const session = field?.selectedLabel ?? field?.label ?? t('widgetAdd.thisSession');
+    const missing = resolution.status === 'selection_required';
+    const title = repair.kind === 'connect' ? t('widgetAdd.connectionNeeded', { field: field?.label ?? t('settings.connectedServices') })
+        : repair.kind === 'session_denied' ? t('widgetAdd.sessionDenied', { session })
+        : repair.kind === 'session_unavailable' ? t('widgetAdd.sessionUnavailable', { session })
+        : repair.kind === 'type_unavailable' ? t('widgetAdd.typeUnavailable', { field: field?.label ?? t('widgetFrame.appearanceTitle') })
+        : missing && field ? t('widgetAdd.stillNeeded', { field: label })
+        : field?.selectedLabel ? t('widgetAdd.valueNotFound', { value: field.selectedLabel })
+        : field ? t('widgetAdd.inputUnavailable', { field: label })
+        : resolution.status === 'invalid' ? t('widgetAdd.inputsInvalid') : t('widgetAdd.inputsUnavailable');
+    // Why a pinned value stopped resolving; a missing input or a type needs no cause line.
+    const reason = repair.kind === 'input' && !missing && field ? t('widgetAdd.invalidReason') : undefined;
+    const repairLabel = !field ? t('widgetAdd.editInputs')
+        : missing ? t('widgetAdd.chooseField', { field: field.label })
+        : t('widgetAdd.chooseAnother', { field: field.label });
+    const action = repair.kind === 'connect' && repair.connection ? {
+        label: t('connectedServicesSettings.connect'),
+        onPress: () => router.push(buildConnectedAccountPurposeSetupRoute(repair.connection!)),
+        testID: `${props.testID}-connect`,
+    } : repair.kind === 'type_unavailable' && props.onManagePlugin ? {
+        label: t('sessionBoard.item.actions.managePlugin'),
+        onPress: props.onManagePlugin,
+        testID: `${props.testID}-manage-plugin`,
+    } : onRepairInputs && repair.kind !== 'type_unavailable' && repair.kind !== 'connect' ? {
+        label: repairLabel,
+        onPress: () => onRepairInputs(repair),
+        testID: `${props.testID}-inputs-repair`,
+    } : undefined;
+    // Sized by the frame it sits in: a card on Home or a Board, one line in a column (W-3).
+    return <SurfaceStateCard
+        testID={`${props.testID}-state`}
+        {...(stateSize ? {} : { size: 'line' as const })}
+        kind={resolution.status === 'denied' ? 'denied' : 'warning'}
+        title={title}
+        {...(reason ? { reason } : {})}
+        diagnosticCode={resolution.reasonCode}
+        accessibilitySemantics="status"
+        {...(action ? { action } : {})}
+    />;
 }

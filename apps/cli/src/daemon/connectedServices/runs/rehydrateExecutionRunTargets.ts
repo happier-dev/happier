@@ -1,9 +1,4 @@
-import {
-  ExecutionRunConnectedServicesCleanupReceiptV1Schema,
-  ExecutionRunConnectedServicesLaunchV1Schema,
-  isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
-  normalizePersistedExecutionRunConnectedServicesLaunchV1,
-} from '@happier-dev/protocol';
+import { ExecutionRunConnectedServicesCleanupReceiptV1Schema, ExecutionRunConnectedServicesLaunchV1Schema, isPersistedExecutionRunConnectedServicesLaunchIdentityExact, normalizePersistedExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol/daemon/executionRuns';
 
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 

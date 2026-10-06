@@ -1,6 +1,7 @@
 import type { StoredCredentials } from '@/persistence';
 
-import { deriveAccountMachineKeyFromRecoverySecret, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { decodeBase64, encodeBase64 } from '../encryption';
 
 export function openSessionDataEncryptionKey(params: {

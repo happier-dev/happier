@@ -1,13 +1,11 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  PROVIDER_SETTINGS_LIMITS_V1,
-  createProviderErrorV1,
-  readOwnRecordValue,
-  readProviderSettingsFromAccountSettingsV1,
-  resolveProviderGrantV1,
-  resolveProviderManagedRuntimeDeclarationV1,
-  type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { PROVIDER_SETTINGS_LIMITS_V1 } from '@happier-dev/protocol/providers/settings/limits';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import type { ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
 
 import {
   getProviderContribution,

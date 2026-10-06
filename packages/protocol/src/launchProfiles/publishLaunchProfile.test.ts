@@ -4,6 +4,7 @@ import { LaunchProfileArtifactV1Schema, launchProfileArtifactSharingAdapterV1, l
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
+import type { ActionExecutorContext } from '../actions/executor/types.js';
 
 const profile = {
   v: 2 as const, id: 'work', name: 'Work', createdAt: 1, updatedAt: 1,
@@ -28,6 +29,19 @@ function harness(candidate: unknown = profile) {
 }
 
 describe('launch_profiles.publish', () => {
+  it.each([
+    { context: { surface: 'ui', runtimeAccountId: 'account', actionCaller: { kind: 'host' } }, savedBy: { kind: 'person', accountId: 'account' } },
+    { context: { surface: 'cli', runtimeAccountId: 'account', defaultSessionId: 'other-session', actionCaller: { kind: 'session', sessionId: 'admitted-session' } },
+      savedBy: { kind: 'agent', accountId: 'account', sessionId: 'admitted-session' } },
+  ] satisfies readonly { context: ActionExecutorContext; savedBy: unknown }[])('retains the admitted actor when publishing through Actions ($savedBy.kind)', async ({ context, savedBy }) => {
+    const state = harness();
+    const executor = createActionExecutor({ launchProfilePublish: state.publisher.publish } as unknown as ActionExecutorDeps);
+    expect(await executor.execute('launch_profiles.publish', { profileId: 'work' }, { ...context, authority: 'present_user' })).toMatchObject({ ok: true });
+    expect(state.create.mock.calls[0]?.[0]).toMatchObject({ savedBy });
+    const artifact = [...state.artifacts.values()][0]!;
+    expect(artifact.header).not.toHaveProperty('savedBy');
+    expect(JSON.parse(artifact.body)).not.toHaveProperty('savedBy');
+  });
   it('retains its Artifact result through the canonical approval lifecycle', () => {
     const spec = getActionSpec('launch_profiles.publish');
     expect(spec.executionPlacement).toBe('account');

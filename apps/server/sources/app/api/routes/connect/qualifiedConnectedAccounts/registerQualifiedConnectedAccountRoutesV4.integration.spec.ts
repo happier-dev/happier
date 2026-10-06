@@ -70,6 +70,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             } });
             expect(created.statusCode, created.body).toBe(200);
             expect(created.json().group.policy.autoUseQuotaResetsWhenExhausted).toBe(true);
+            expect(created.json().group.policy.strategy).toBe("expiry_first");
             expect(created.json().group.policy.autoDisablePlanInvalidAccounts).toBe(true);
             expect(created.json().group.policy.quotaLimitSelection).toEqual({ mode: "selected", providerLimitIds: ["weekly"] });
             const url = "/v4/connect/qualified/groups?service=" + encodeURIComponent(
@@ -80,6 +81,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             expect(disabled.statusCode, disabled.body).toBe(200);
             expect(disabled.json().groups[0].policy).not.toHaveProperty("autoUseQuotaResetsWhenExhausted");
             expect(disabled.json().groups[0].policy).not.toHaveProperty("quotaLimitSelection");
+            expect(disabled.json().groups[0].policy.strategy).toBe("expiry_first");
             const disabledGroup = disabled.json().groups[0];
             const rejectedOptIn = await app.inject({ method: "PATCH", url: "/v4/connect/qualified/group", headers, payload: {
                 service, groupId: "quota-reset",

@@ -1,15 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { formatHappierAsOfTime, HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { PluginContributionIdentityV1, PublicActionResultById } from '@happier-dev/protocol';
+import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
+import type { PublicActionResultById } from '@happier-dev/protocol';
 import { readWidgetDefinitionResourcesV1, type WidgetDefinitionV1, type WidgetInstanceRefV1 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { readWidgetDescriptor, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { useWorkBoardSummaries } from '@/components/boards/model/useWorkBoards';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import { resolveServerScopedMachine } from '@/sync/store/domains/machines/resolveServerScopedMachine';
@@ -18,7 +18,7 @@ import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 
-import { WidgetDefinitionPanel, WidgetFactRow, widgetPanelText } from './WidgetDefinitionPanel';
+import { WidgetFactRow, WidgetFlowPanel, WidgetFlowTextAction, widgetFlowText } from '@/components/widgets/flow/WidgetFlowPanel';
 
 type PlacementSummary = NonNullable<PublicActionResultById['widgets.definition.get']['placementSummary']>;
 
@@ -35,25 +35,32 @@ export type WidgetAboutSource = Readonly<{
     read: string;
 }>;
 
-/** The admitted reads of a definition, from the current projection — never invented from an id. */
-export function useWidgetAboutSources(definition: WidgetDefinitionV1): readonly WidgetAboutSource[] {
-    const projection = useAppShellPluginUiProjection().pluginUiProjection;
-    return React.useMemo(() => {
-        const resources: readonly PluginContributionIdentityV1[] = readWidgetDefinitionResourcesV1(definition);
-        const state = storage.getState();
-        return resources.map((resource) => {
-            const declaration = Object.values(projection?.resourcesById ?? {}).find((row) => row.pluginId === resource.pluginId && row.id === resource.localId);
-            const origin = readPluginUiContributionOrigin(declaration);
-            const machine = origin?.machineId ? resolveServerScopedMachine(state, origin.serverId, origin.machineId) : null;
-            return {
-                key: `${resource.pluginId}/${resource.localId}`,
-                plugin: projection?.installedPackagesById[resource.pluginId]?.displayName ?? resource.pluginId,
-                machine: getMachineDisplayName(machine),
-                usesViewerConnection: (declaration?.connectedAccountPurposes?.length ?? 0) > 0,
-                read: resource.localId,
-            };
-        });
-    }, [definition, projection]);
+/** Read metadata uses the admitted target's projection, never the containing page's machine. */
+export function readWidgetAboutSources(input: Readonly<{
+    definition: WidgetDefinitionV1 | null;
+    descriptor: WidgetCandidate | null;
+    resolution: ConfiguredWidgetTargetResolution | null;
+}>): readonly WidgetAboutSource[] {
+    const runtime = input.resolution?.status === 'ready' ? input.resolution.runtime : null;
+    const projection = runtime?.pluginUiProjection;
+    const reference = input.definition?.body.kind === 'installed' ? input.definition.body
+        : input.descriptor?.sourceDefinition ?? (input.descriptor?.surface ? { kind: 'installed' as const, surface: input.descriptor.surface } : null);
+    const installed = reference ? readWidgetDescriptor(projection, reference) : null;
+    const resources = input.definition?.body.kind === 'declarative' ? readWidgetDefinitionResourcesV1(input.definition)
+        : reference && runtime ? installed?.resources ?? [] : input.descriptor?.resources ?? [];
+    const state = storage.getState();
+    return resources.map((resource) => {
+        const declaration = Object.values(projection?.resourcesById ?? {}).find((row) => row.pluginId === resource.pluginId && row.id === resource.localId);
+        const origin = readPluginUiContributionOrigin(declaration);
+        const machine = origin?.machineId ? resolveServerScopedMachine(state, origin.serverId, origin.machineId) : null;
+        return {
+            key: `${resource.pluginId}/${resource.localId}`,
+            plugin: projection?.installedPackagesById[resource.pluginId]?.displayName ?? installed?.pluginName ?? resource.pluginId,
+            machine: getMachineDisplayName(machine),
+            usesViewerConnection: (declaration?.connectedAccountPurposes?.length ?? 0) > 0,
+            read: resource.localId,
+        };
+    });
 }
 
 /** Where the copies are, in words ("Launch board · Home"); scopes it cannot list are said, never guessed. */
@@ -89,65 +96,70 @@ export function useWidgetPlacementLabels(summary: PlacementSummary | null): read
  * agent drafts a request; Duplicate makes an independent copy.
  */
 export function WidgetAboutPanel(props: Readonly<{
-    artifactId: string;
-    definition: WidgetDefinitionV1;
+    artifactId?: string;
+    definition: WidgetDefinitionV1 | null;
+    descriptor: WidgetCandidate | null;
+    name: string;
+    sources: readonly WidgetAboutSource[];
     placements: PlacementSummary | null;
     /** This copy's binding, in words, and the step that edits it. */
     inputs?: Readonly<{ binding: string | null; onEdit?: () => void }>;
     onRefresh?: () => Promise<boolean>;
+    onClose?: () => void;
     onChangeWithAgent?: () => void;
-    onDuplicate: () => Promise<string | null>;
+    onDuplicate?: () => Promise<string | null>;
     testID: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const text = widgetPanelText;
-    const artifact = useArtifact(props.artifactId);
-    const sources = useWidgetAboutSources(props.definition);
+    const text = widgetFlowText;
+    const artifact = useArtifact(props.artifactId ?? '');
+    const sources = props.sources;
     const placements = useWidgetPlacementLabels(props.placements);
     const [refresh, setRefresh] = React.useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
     const [duplicate, setDuplicate] = React.useState<Readonly<{ state: 'idle' | 'busy' } | { state: 'done'; name: string } | { state: 'failed' }>>({ state: 'idle' });
 
-    const provenance = props.definition.provenance.source;
-    const origin = provenance.kind === 'session'
+    const provenance = props.definition?.provenance.source;
+    const origin = provenance?.kind === 'session'
         ? (() => {
             const session = storage.getState().sessions[provenance.sessionId];
             return t('widgetDefinition.savedFromSession', { session: session ? getSessionName(session, provenance.serverId) : t('widgetDefinition.aSession') });
         })()
-        : t('widgetDefinition.madeInYourAccount');
+        : provenance ? t('widgetDefinition.madeInYourAccount') : props.descriptor?.pluginName ?? t('widgetDefinition.aboutUnavailable');
     const edited = artifact?.updatedAt ? t('widgetDefinition.edited', { time: formatHappierAsOfTime(artifact.updatedAt) }) : null;
     const count = props.placements?.placements.length ?? 0;
     const unlisted = (props.placements?.unavailableScopes.length ?? 0) > 0;
 
     const link = (label: string, onPress: () => void, testID: string) => (
-        <HappierPressable testID={testID} accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
-            style={(state) => focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })}>
-            <Text style={text.link}>{label}</Text>
-        </HappierPressable>
+        <WidgetFlowTextAction label={label} onPress={onPress} testID={testID} />
     );
 
+    // The footer (lab G2): the one bordered action — change it with the agent — and Duplicate as a
+    // quiet text action beside it.
     return (
-        <WidgetDefinitionPanel
-            title={props.definition.name}
+        <WidgetFlowPanel
+            title={props.name}
             hint={edited ? `${origin} · ${edited}` : origin}
+            {...(props.descriptor?.icon ? { mark: props.descriptor.icon } : {})}
             testID={props.testID}
+            onClose={props.onClose}
             footerStart={(
-                <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
                     {props.onChangeWithAgent ? (
                         <RoundButton testID={`${props.testID}.changeWithAgent`} size="small" display="secondary"
+                            leading={<Icon name="sparkle" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}
                             title={t('widgetDefinition.changeWithAgent')} onPress={props.onChangeWithAgent} />
                     ) : null}
-                    <RoundButton
+                    {props.onDuplicate ? <WidgetFlowTextAction
                         testID={`${props.testID}.duplicate`}
-                        size="small"
-                        display="secondary"
-                        title={t('widgetDefinition.duplicate')}
-                        loading={duplicate.state === 'busy'}
+                        icon="copy"
+                        label={t('widgetDefinition.duplicate')}
+                        busy={duplicate.state === 'busy'}
                         disabled={duplicate.state === 'busy'}
                         onPress={() => {
                             setDuplicate({ state: 'busy' });
-                            void props.onDuplicate().then((name) => setDuplicate(name ? { state: 'done', name } : { state: 'failed' }));
+                            void props.onDuplicate!().then((name) => setDuplicate(name ? { state: 'done', name } : { state: 'failed' }));
                         }}
-                    />
+                    /> : null}
                     {duplicate.state === 'done' || duplicate.state === 'failed' ? (
                         <Text style={text.secondary} accessibilityLiveRegion="polite" testID={`${props.testID}.duplicateResult`}>
                             {duplicate.state === 'done' ? t('widgetDefinition.duplicated', { name: duplicate.name }) : t('widgetDefinition.duplicateFailed')}
@@ -161,7 +173,7 @@ export function WidgetAboutPanel(props: Readonly<{
                     {sources.map((source) => (
                         <View key={source.key}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Icon name="hard-drives" size={14} color={theme.colors.text.secondary} />
+                                <Icon name="hard-drives" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
                                 <Text style={[text.primary, text.strong]}>{source.plugin}</Text>
                             </View>
                             <Text style={text.secondary}>
@@ -181,11 +193,11 @@ export function WidgetAboutPanel(props: Readonly<{
                     <Text style={text.secondary}>{t('widgetDefinition.cannotRunAnythingElse')}</Text>
                 </WidgetFactRow>
             ) : null}
-            {props.inputs && props.definition.inputs.fields.length > 0 ? (
+            {props.inputs && (props.definition?.inputs ?? props.descriptor?.inputs)?.fields.length ? (
                 <WidgetFactRow label={t('widgetDefinition.aboutInputs')} testID={`${props.testID}.inputs`}>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 }}>
                         <Text style={text.primary}>
-                            {props.inputs.binding ?? props.definition.inputs.fields.map((field) => field.title).join(', ')}
+                            {props.inputs.binding ?? (props.definition?.inputs ?? props.descriptor?.inputs)?.fields.map((field) => field.title).join(', ')}
                         </Text>
                         {props.inputs.onEdit ? link(t('common.edit'), props.inputs.onEdit, `${props.testID}.editInputs`) : null}
                     </View>
@@ -216,10 +228,10 @@ export function WidgetAboutPanel(props: Readonly<{
             <WidgetFactRow label={t('widgetDefinition.aboutUsedIn')} testID={`${props.testID}.usedIn`}>
                 <Text style={text.primary}>{placements.length > 0 ? placements.join(' · ') : t('widgetDefinition.notPlacedYet')}</Text>
                 {unlisted ? <Text style={text.secondary}>{t('widgetDefinition.otherPlacesNotListed')}</Text> : null}
-                <Text style={text.secondary} testID={`${props.testID}.consequence`}>
+                {props.artifactId ? <Text style={text.secondary} testID={`${props.testID}.consequence`}>
                     {unlisted || count === 0 ? t('widgetDefinition.editsChangeEverywhere') : t('widgetDefinition.editsChangeAll', { count })}
-                </Text>
+                </Text> : null}
             </WidgetFactRow>
-        </WidgetDefinitionPanel>
+        </WidgetFlowPanel>
     );
 }

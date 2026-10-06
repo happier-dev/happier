@@ -1,25 +1,13 @@
-import {
-    applyObservedProgressToExternalSessionAttentionV1,
-    buildExternalSessionAttentionV1,
-    buildExternalSessionFollowPolicyV1,
-    buildLinkedExternalSessionMetadataV1,
-    readExternalSessionAttentionV1,
-    readExternalSessionFollowPolicyV1,
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-    resolveLinkedExternalSessionMetadataV1,
-    updateLinkedExternalSessionFollowMetadataV1,
-    type ExternalSessionFollowIssueV1,
-    type ExternalSessionFollowPolicy,
-    type ExternalSessionFollowStatusV1,
-    type ExternalSessionObservedProgress,
-} from '@happier-dev/protocol';
+import { applyObservedProgressToExternalSessionAttentionV1, buildExternalSessionAttentionV1, buildExternalSessionFollowPolicyV1, buildLinkedExternalSessionMetadataV1, readExternalSessionAttentionV1, readExternalSessionFollowPolicyV1, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { updateLinkedExternalSessionFollowMetadataV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import type { ExternalSessionFollowIssueV1, ExternalSessionFollowPolicy, ExternalSessionFollowStatusV1, ExternalSessionObservedProgress } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 
-export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol';
+export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

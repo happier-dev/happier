@@ -1,21 +1,11 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderCatalogParserV1Schema,
-  ProviderCatalogProbeModelV1Schema,
-  ProviderModelLoadStateV1Schema,
-  readBundledProviderCatalogParserFactV1,
-  type BundledProviderCatalogParserV1,
-  type ProviderCatalogParserV1,
-  type ProviderCatalogProbeModelV1,
-  type ProviderModelLoadStateV1,
-  ProviderModelDescriptorV1Schema,
-} from '@happier-dev/protocol';
-import {
-  ANTHROPIC_EFFORT_LEVELS,
-  buildAnthropicModelOptions,
-  normalizeAnthropicModelDisplayName,
-  type AnthropicEffortLevel,
-} from '@happier-dev/protocol/providers/anthropic-models';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderCatalogParserV1Schema, readBundledProviderCatalogParserFactV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
+import { ProviderCatalogProbeModelV1Schema } from '@happier-dev/protocol/providers/catalog/merge';
+import { ProviderModelLoadStateV1Schema } from '@happier-dev/protocol/providers/runtimeState/v1';
+import type { BundledProviderCatalogParserV1, ProviderCatalogParserV1, ProviderCatalogProbeModelV1, ProviderModelLoadStateV1 } from '@happier-dev/protocol';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { ANTHROPIC_EFFORT_LEVELS, buildAnthropicModelOptions, normalizeAnthropicModelDisplayName } from '@happier-dev/protocol/providers/anthropic-models';
+import type { AnthropicEffortLevel } from '@happier-dev/protocol/providers/anthropic-models';
 
 export type ParsedProviderCatalogResponse = Readonly<{
   models: readonly ProviderCatalogProbeModelV1[];

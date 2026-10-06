@@ -1,7 +1,5 @@
-import {
-  isSessionPersonallyTrackedForViewerV1,
-  resolveSessionPersonalEventEligibilityV1,
-} from '@happier-dev/protocol';
+import { isSessionPersonallyTrackedForViewerV1 } from '@happier-dev/protocol/sessions/personal/tracking';
+import { resolveSessionPersonalEventEligibilityV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { ActivityNotificationEvent } from './activityNotificationEvent';

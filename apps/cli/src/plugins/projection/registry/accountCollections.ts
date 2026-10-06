@@ -1,7 +1,5 @@
-import {
-    buildQualifiedPluginContributionKey,
-    PluginProjectedAccountCollectionEntryV1Schema,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginProjectedAccountCollectionEntryV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { ResolvedAccountCollectionContribution } from './types';

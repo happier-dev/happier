@@ -9,6 +9,13 @@ import {
 } from './artifactStoredContent.js';
 
 describe('artifactStoredContent', () => {
+  it('opens unknown stored envelope fields without altering opaque JSON content', () => {
+    const value = { custom: { extra: true } };
+    const encoded = Buffer.from(JSON.stringify({ t: 'plain', v: value, extra: true }), 'utf8').toString('base64');
+    expect(decodePlainArtifactStoredContent(encoded)).toEqual(value);
+    expect(isPlainArtifactStoredContent(encoded)).toBe(true);
+    expect(isPlainArtifactDataKeyMarker(Buffer.from(JSON.stringify({ t: 'plain', v: null, extra: true }), 'utf8').toString('base64'))).toBe(true);
+  });
   it('round-trips plain Artifact content through the canonical stored-content envelope', () => {
     const value = { v: 1, kind: 'approval_request.v1', title: 'Approve' };
     const encoded = encodePlainArtifactStoredContent(value);

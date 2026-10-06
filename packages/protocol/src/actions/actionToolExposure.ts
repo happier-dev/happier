@@ -1,6 +1,7 @@
 import type { ActionId } from './actionIds.js';
 import type { ActionsSettingsV1 } from './actionSettings.js';
 import type { ActionSpec, ActionToolExposureMode, ActionToolExposureSurface } from './actionSpecs.js';
+import { SignedRootActionIdSchema } from './actionSpecs.js';
 import {
   ACTION_TOOL_EXPOSURE_SURFACES,
   getDefaultActionToolExposureMode,
@@ -10,6 +11,11 @@ import {
 } from './actionSurfaceAvailability.js';
 
 export { ACTION_TOOL_EXPOSURE_SURFACES, AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST };
+
+/** Unbound hosts cannot supply the provenance of a Session-only, non-root command. */
+export function isActionExecutableFromStandaloneMcp(spec: ActionSpec): boolean {
+  return spec.executionPlacement !== 'session' || SignedRootActionIdSchema.safeParse(spec.id).success;
+}
 
 export type ActionToolExposureResolutionContext = Readonly<{
   settings?: ActionsSettingsV1 | null;

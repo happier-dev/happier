@@ -1,7 +1,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { resolveKokoroModelConfig, resolveKokoroVoiceSid, VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { resolveKokoroModelConfig, resolveKokoroVoiceSid } from '@happier-dev/protocol/voice/modelPacks/kokoro';
+import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 import type { ModelPackManifest } from '@happier-dev/protocol';
 
 import type {

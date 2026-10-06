@@ -466,7 +466,7 @@ describe('target action invocation registry', () => {
             notify,
             setStatus: vi.fn(),
             setWidget: vi.fn(),
-            purgeOwner: vi.fn(),
+            purgeOwner: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
             replaceComposerText: vi.fn(),
             present: vi.fn(),
         };
@@ -570,7 +570,7 @@ describe('target action invocation registry', () => {
             notify: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
             setStatus: vi.fn(),
             setWidget: vi.fn(),
-            purgeOwner: vi.fn(),
+            purgeOwner: vi.fn(async () => ({ status: 'applied' as const, revision: 'r1' })),
             replaceComposerText: vi.fn(),
             present: vi.fn(),
         });

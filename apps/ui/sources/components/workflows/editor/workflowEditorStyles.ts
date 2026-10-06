@@ -1,20 +1,21 @@
 import { Platform } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
-import type { HappierPressableStyleState } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Text-labelled authoring controls cannot declare a square the way
- * `IconButton` does, so they take the canonical platform target as a real
- * minimum height. `hitSlop` is not an option: react-native-web's `Pressable`
- * never reads it and the desktop app IS the web bundle, so a slop-declared
- * target there is a target that does not exist. Growth is on the free vertical
- * axis, so wrapping chip rows still meet at their gap rather than overlapping.
+ * `IconButton` does, so under a finger they take the canonical platform target
+ * as a real minimum height. `hitSlop` is not an option: react-native-web's
+ * `Pressable` never reads it and the desktop app IS the web bundle, so a
+ * slop-declared target there is a target that does not exist. Growth is on the
+ * free vertical axis, so wrapping chip rows still meet at their gap rather than
+ * overlapping. A precise pointer keeps the document's dense rhythm (the shared
+ * touch-floor policy, `resolveTouchTargetFloorPx`), so headings, footers and
+ * the between-block gap sit at the lab's spacing on desktop.
  */
-const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
+const TOUCH_TARGET_FLOOR = resolveTouchTargetFloorPx(Platform.OS) ?? undefined;
 
 /**
  * Shared editor rhythm.
@@ -22,8 +23,8 @@ const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
  * The execution rail — one quiet leading hairline that connects ordered work and
  * folds into a group summary — is this feature's visual signature. Structure is
  * carried by whitespace, alignment and that rail rather than by nesting a card
- * inside a card. Every value comes from the existing theme tokens; this module
- * introduces no palette, font or spacing system of its own.
+ * inside a card. Colors, type and spacing use shared tokens; widths express the
+ * document's label/value columns. This module owns no interaction or focus policy.
  */
 export const workflowEditorStyles = StyleSheet.create((theme) => ({
     /**
@@ -32,7 +33,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
      * paint it without moving layout.
      */
     actionTarget: {
-        minHeight: MINIMUM_TARGET_SIZE,
+        minHeight: TOUCH_TARGET_FLOOR,
         justifyContent: 'center',
         borderWidth: 1,
         borderColor: 'transparent',
@@ -54,6 +55,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     },
     railSelected: {
         backgroundColor: theme.colors.border.focus,
+    },
+    /** A list item's content beside its rail: the block, then its "Only when" line. */
+    blockColumn: {
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 0,
+        gap: theme.margins.xs,
     },
     blockBody: {
         flex: 1,
@@ -79,6 +87,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     /** The block name as the control that selects the block. */
     headingButton: {
         flexDirection: 'row',
+        justifyContent: 'flex-start',
         gap: theme.margins.sm,
         flexGrow: 1,
         flexShrink: 1,
@@ -128,6 +137,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.margins.sm,
     },
+    /** A compound condition's arms under its lead: one indented line each, on a hairline. */
+    conditionArms: {
+        gap: theme.margins.xs,
+        paddingLeft: theme.margins.md,
+        borderLeftWidth: StyleSheet.hairlineWidth,
+        borderLeftColor: theme.colors.border.default,
+    },
     groupSummary: {
         ...Typography.default('regular'),
         color: theme.colors.text.tertiary,
@@ -152,12 +168,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.margins.xs,
         paddingHorizontal: theme.margins.md,
+        paddingVertical: theme.margins.xs,
         borderRadius: theme.borderRadius.md,
         borderColor: theme.colors.border.strong,
     },
     /** A square icon-only press frame (the block `⋯`). */
     iconTarget: {
-        minWidth: MINIMUM_TARGET_SIZE,
+        minWidth: TOUCH_TARGET_FLOOR,
         alignItems: 'center',
         borderRadius: theme.borderRadius.md,
     },
@@ -166,7 +183,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.margins.xs,
-        minHeight: 24,
+        minHeight: TOUCH_TARGET_FLOOR,
+        // Under a precise pointer the inserter lives inside the list's gap rather than adding
+        // to it: the blocks keep one rhythm whether the document is editable or read-only, and
+        // the gap still leaves clear space between the inserter and its neighbours' controls.
+        marginVertical: TOUCH_TARGET_FLOOR === undefined ? -theme.margins.sm : 0,
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     inserterHidden: {
         opacity: 0,
@@ -191,8 +214,10 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     menuRow: {
         paddingHorizontal: theme.margins.lg,
         paddingVertical: theme.margins.md,
-        minHeight: MINIMUM_TARGET_SIZE,
+        minHeight: TOUCH_TARGET_FLOOR,
         justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     menuRowPressed: {
         backgroundColor: theme.colors.surface.pressed,
@@ -223,14 +248,15 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     actionFieldRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        alignItems: 'flex-start',
+        // A label reads level with its value, not above or below it (lab S6).
+        alignItems: 'center',
         columnGap: theme.margins.md,
         rowGap: theme.margins.xs,
         minWidth: 0,
     },
     actionFieldLabelColumn: {
         width: 120,
-        minHeight: MINIMUM_TARGET_SIZE,
+        minHeight: TOUCH_TARGET_FLOOR,
         justifyContent: 'center',
     },
     actionFieldValue: {
@@ -250,8 +276,13 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         paddingTop: theme.margins.xs,
     },
     actionFieldLabel: {
-        ...Typography.default('semiBold'),
+        ...Typography.default('regular'),
         color: theme.colors.text.secondary,
+    },
+    /** A bound literal as the document reads it. */
+    actionFieldText: {
+        ...Typography.default('regular'),
+        color: theme.colors.text.primary,
     },
     menuRowLabelDestructive: {
         ...Typography.default('regular'),
@@ -270,22 +301,23 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
         maxWidth: '100%',
     },
+    /** A consumer-drawn literal field on a binding's line: it takes the line's free width. */
+    inlineLiteral: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 160,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
+    /** A result's optional field path: the token's "· field" part, sized to it rather than a row-wide box. */
+    pathValue: {
+        flexGrow: 0,
+        flexBasis: 'auto',
+    },
     referenceSelect: {
         flexShrink: 1,
         minWidth: 0,
         maxWidth: '100%',
-    },
-    /**
-     * Contact feedback for a text-labelled authoring control, applied through
-     * its `HappierPressable` state callback (see {@link workflowPressFeedbackStyle}).
-     * The same surface roles `IconButton` uses: hover reinforces and press
-     * answers on contact. Focus appearance is not owned here.
-     */
-    pressHovered: {
-        backgroundColor: theme.colors.surface.selected,
-    },
-    pressPressed: {
-        backgroundColor: theme.colors.surface.pressed,
     },
     inlineValue: {
         ...Typography.default('regular'),
@@ -303,19 +335,3 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         maxWidth: '100%',
     },
 }));
-
-/**
- * The feedback half of a text-labelled workflow control's `HappierPressable`
- * style callback: `style={(state) => [base, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}`.
- *
- * Detection is `HappierPressable`'s (its `focused` is already keyboard-only);
- * the ring's appearance is the one shared owner `focusRingStyle`, painted on
- * the border `actionTarget` reserves. This module draws no ring of its own.
- */
-export function workflowPressFeedbackStyle(state: HappierPressableStyleState, focusColor: string) {
-    return [
-        state.hovered ? workflowEditorStyles.pressHovered : null,
-        state.pressed ? workflowEditorStyles.pressPressed : null,
-        focusRingStyle({ focused: state.focused, color: focusColor }),
-    ];
-}

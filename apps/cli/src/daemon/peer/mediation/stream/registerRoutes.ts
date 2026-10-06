@@ -1,13 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import {
-    PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2,
-    PEER_MEDIATION_RECEIPTS,
-    PeerMachineLiveStreamDirectStartRequestV2Schema,
-    type DirectPeerRouteKindV1,
-    type PeerFlowKindV1,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { PEER_MACHINE_LIVE_STREAM_DIRECT_START_PATH_V2, PeerMachineLiveStreamDirectStartRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/directV2';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import type { DirectPeerRouteKindV1, PeerFlowKindV1, SignedDirectRouteGrantV2 } from '@happier-dev/protocol';
 
 import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import {

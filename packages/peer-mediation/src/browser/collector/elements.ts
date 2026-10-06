@@ -1,5 +1,6 @@
 import { INJECTED_PAGE_AUTOMATION_ACTIONS } from './actions.js';
-import { isBrowserAutomationMutatingActionKind, normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol';
+import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
+import { normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
 
 export const INJECTED_ELEMENTS_RUNTIME = `
   function backendNodeRefFor(node) {

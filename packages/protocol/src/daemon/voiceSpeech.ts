@@ -10,7 +10,7 @@ import {
   VOICE_SPEECH_OUTPUT_MAX_BYTES,
   VoiceSpeechInputMimeTypeSchema,
 } from '../plugins/contributions/voiceProviders.js';
-import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
+import { TransferSessionIdSchema } from '../transfers/sessions/transferSessionIds.js';
 import { VoiceProviderOperationErrorCodeSchema } from '../voice/providerOperations.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 

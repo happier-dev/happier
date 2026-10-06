@@ -1,11 +1,5 @@
-import {
-  isBrowserAutomationMutatingActionKind,
-  type BrowserAutomationActionKindV1,
-  type BrowserAutomationActionRequestV1,
-  type BrowserAutomationErrorCodeV1,
-  type BrowserCommandDispatchResultV1,
-  type BrowserCommandV1,
-} from '@happier-dev/protocol';
+import { isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
+import type { BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationErrorCodeV1, BrowserCommandDispatchResultV1, BrowserCommandV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationViewRef } from '../owners';
 import type {

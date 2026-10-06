@@ -258,7 +258,7 @@ describe('WidgetAddPanel Set up step', () => {
         const screen = await renderPanel({ view: 'gallery', sections: [{ ...sections[0]!, entries: [{ ...original, setup: () => pending }] }] });
         await act(async () => { screen.pressByTestId('add.entry.summary'); });
         await flushHookEffects({ cycles: 2 });
-        await act(async () => { screen.pressByTestId('add.setup.field.period.segment:1'); });
+        await act(async () => { screen.pressByTestId('add.setup.field.period.option.1'); });
         await flushHookEffects({ cycles: 2 });
         await act(async () => { screen.pressByTestId('add.setup.submit'); });
         await flushHookEffects({ cycles: 3 });
@@ -276,7 +276,9 @@ describe('WidgetAddPanel Set up step', () => {
         expect(submit).toHaveBeenCalledTimes(1);
         expect(submit.mock.calls[0]![0]).toEqual({ bindings: { session: { kind: 'context', slot: 'session' } } });
         expect(screen.findAllByTestId('add.setup')).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('widgetAdd.justAdded(widget=Summary)');
+        // In place on the picked tile: the check lands beside its count; nothing is inserted above.
+        expect(screen.findAllByTestId('add.entry.summary.added').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('add.feedback')).toHaveLength(0);
     });
 
     it('opens the inputs-first step when an input is missing; Cancel writes nothing', async () => {
@@ -313,7 +315,7 @@ describe('WidgetAddPanel Set up step', () => {
 
         screen.pressByTestId('add.entry.summary');
         await flushHookEffects({ cycles: 2 });
-        screen.pressByTestId('add.setup.field.period.segment:1');
+        screen.pressByTestId('add.setup.field.period.option.1');
         await flushHookEffects({ cycles: 2 });
         screen.pressByTestId('add.setup.submit');
         await flushHookEffects({ cycles: 3 });
@@ -322,9 +324,9 @@ describe('WidgetAddPanel Set up step', () => {
             session: { kind: 'context', slot: 'session' },
             period: { kind: 'value', value: '30d' },
         });
-        // Back on the gallery, with the tile's feedback.
+        // Back on the gallery, with the check on the picked tile.
         expect(screen.findAllByTestId('add.setup')).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('widgetAdd.justAdded(widget=Summary)');
+        expect(screen.findAllByTestId('add.entry.summary.added').length).toBeGreaterThan(0);
     });
 
     it('picks a Session on Home from the sessions source, listing one the viewer cannot read without letting it be chosen', async () => {

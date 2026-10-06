@@ -21,6 +21,44 @@ const layout = record('layout', 'layout.v1', { v: 1, tabs: [{ id: 'overview', ti
 const authority: SessionBoardAuthority = { contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true } };
 
 describe('Board repository binding', () => {
+    it('normalizes additive stored fields while isolating invalid required fields and unknown sources', async () => {
+        const widget = { ...item, source: { kind: 'widget', instance: {
+            v: 1, id: 'widget', definition: { kind: 'installed', surface: { pluginId: 'acme.widgets', localId: 'status' } },
+            bindings: { session: { kind: 'context', slot: 'session' } },
+        } } };
+        const snapshot = { ...item, source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Frozen' } } },
+            snapshot: { asOf: '2026-09-05T00:00:00.000Z', provenance: [{ label: 'Status' }] } };
+        const storedWidget = { ...widget, extra: true, height: { ...widget.height, extra: true }, source: {
+            ...widget.source, extra: true, instance: { ...widget.source.instance, extra: true,
+                definition: { ...widget.source.instance.definition, extra: true, surface: { ...widget.source.instance.definition.surface, extra: true } },
+                bindings: { session: { ...widget.source.instance.bindings.session, extra: true } },
+            },
+        } };
+        const storedSnapshot = { ...snapshot, source: { ...snapshot.source, extra: true, document: { ...snapshot.source.document,
+            extra: true, root: { ...snapshot.source.document.root, extra: true } } },
+            snapshot: { ...snapshot.snapshot, extra: true, provenance: [{ label: 'Status', extra: true }] } };
+        const savedLayout = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'widget', width: 'full' }] }] };
+        const repository = createSessionSystemRecordRepository({ scope, request: async () => new Response(JSON.stringify({
+            records: [record('layout', 'layout.v1', { ...savedLayout, extra: true, tabs: [{ ...savedLayout.tabs[0], extra: true,
+                items: [{ ...savedLayout.tabs[0].items[0], extra: true }] }] }),
+                record('widget', 'item.v1', storedWidget), record('snapshot', 'item.v1', storedSnapshot),
+                record('invalid', 'item.v1', { ...item, height: { mode: 'fixed' } }),
+                record('unknown', 'item.v1', { ...item, source: { kind: 'unknown' } })], nextCursor: null, hasNext: false,
+        })) });
+        let latest: SessionBoardBinding | undefined;
+        const stop = observeSessionBoard({ session, repository, authority, readCapabilities: () => authority.capabilities,
+            readContentContext: () => authority.contentContext, renewAuthority: async () => ({ status: 'ok', value: authority }),
+            isCurrent: () => true, onChange: value => { latest = value; } });
+        try {
+            await flushHookEffects({ cycles: 50 });
+            if (latest?.status !== 'ready') throw new Error('Board not ready');
+            expect(latest.snapshot.layoutState.kind).toBe('ready');
+            expect(latest.snapshot.itemsById.get('widget')?.state).toEqual({ kind: 'ready', item: widget });
+            expect(latest.snapshot.itemsById.get('snapshot')?.state).toEqual({ kind: 'ready', item: snapshot });
+            expect(latest.snapshot.itemsById.get('invalid')?.state.kind).toBe('unopenable');
+            expect(latest.snapshot.itemsById.get('unknown')?.state.kind).toBe('unopenable');
+        } finally { stop(); }
+    });
     it('opens paged records, isolates malformed siblings, preserves offline content and retires denied access', async () => {
         let failure: 'offline' | 'forbidden' | null = null;
         const repository = createSessionSystemRecordRepository({ scope, request: async (path) => {

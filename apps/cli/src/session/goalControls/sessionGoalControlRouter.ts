@@ -1,6 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { SessionStateWorkStateValueSchema, type SessionGoalSetRequestV1 } from '@happier-dev/protocol';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import type { SessionGoalSetRequestV1 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { resolveInactiveSessionGoalControls } from '@/agent/catalog/sessionControlAdapters';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

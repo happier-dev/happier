@@ -5,7 +5,7 @@ import { computeConnectedServiceQuotaSummaryBadges } from '@/sync/domains/connec
 import type {
   ConnectedServiceQuotaProfileRefInput,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaProfileRefs';
-import { useSettings } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/hooks';
 
 import {
   useConnectedServiceQuotaSnapshots,
@@ -22,7 +22,10 @@ export function useConnectedServiceQuotaBadges(
   profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
   options: UseConnectedServiceQuotaBadgesOptions = {},
 ): Record<string, Array<{ meterId: string; text: string }>> {
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      connectedServicesQuotaPinnedMeterIdsByKey: settings.connectedServicesQuotaPinnedMeterIdsByKey,
+      connectedServicesQuotaSummaryStrategyByKey: settings.connectedServicesQuotaSummaryStrategyByKey,
+  }));
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
 
   const pinnedByKey = settings.connectedServicesQuotaPinnedMeterIdsByKey;

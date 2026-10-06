@@ -1,10 +1,6 @@
-import {
-    MachineLiveStreamCaptureSourceV1Schema,
-    simulatorCaptureStreamFamilyV1,
-    type MachineLiveStreamCaptureSourceV1,
-    type SimulatorCaptureCapabilitiesV1,
-    type SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamCaptureSourceV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/captureV1';
+import { simulatorCaptureStreamFamilyV1 } from '@happier-dev/protocol/devices/simulator/v1';
+import type { MachineLiveStreamCaptureSourceV1, SimulatorCaptureCapabilitiesV1, SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
 
 import type { MachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';

@@ -1,7 +1,5 @@
-import {
-    SessionAttachMetadataIdentityPolicySchema,
-    type SessionAttachMetadataIdentityPolicy,
-} from '@happier-dev/protocol';
+import { SessionAttachMetadataIdentityPolicySchema } from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
+import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
 
 export function readSessionAttachMetadataIdentityPolicyFromEnv(): SessionAttachMetadataIdentityPolicy | null {
     const raw = typeof process.env.HAPPIER_SESSION_ATTACH_METADATA_IDENTITY_POLICY === 'string'

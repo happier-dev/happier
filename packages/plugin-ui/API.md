@@ -47,6 +47,9 @@ Declaration: `dist/index.d.ts`
 - type `CollectionGroupAction` from `dist/index.d.ts`
 - type `CollectionProps` from `dist/index.d.ts`
 - type `CollectionRowActions` from `dist/index.d.ts`
+- type `CollectionVirtualizer` from `dist/index.d.ts`
+- type `CollectionVirtualizerHandle` from `dist/index.d.ts`
+- type `CollectionVirtualizerRequest` from `dist/index.d.ts`
 - value `Column` from `dist/index.d.ts`
 - type `ColumnProps` from `dist/index.d.ts`
 - value `Columns` from `dist/index.d.ts`
@@ -261,9 +264,17 @@ Declaration: `dist/index.d.ts`
 - value `HappierDragGrip` from `dist/index.d.ts`
 - type `HappierDragGripDensity` from `dist/index.d.ts`
 - type `HappierDragGripProps` from `dist/index.d.ts`
+- value `HappierDragGripTrigger` from `dist/index.d.ts`
+- type `HappierDragGripTriggerProps` from `dist/index.d.ts`
+- type `HappierDropAdmission` from `dist/index.d.ts`
 - type `HappierDropChooserOption` from `dist/index.d.ts`
 - type `HappierDropChooserOptionInput` from `dist/index.d.ts`
 - type `HappierDropChooserSection` from `dist/index.d.ts`
+- type `HappierDropEffect` from `dist/index.d.ts`
+- type `HappierDropOutcomeVocabulary` from `dist/index.d.ts`
+- type `HappierDropSettlement` from `dist/index.d.ts`
+- value `HappierDropTargetOutline` from `dist/index.d.ts`
+- type `HappierDropVerdict` from `dist/index.d.ts`
 - value `HappierField` from `dist/index.d.ts`
 - value `HappierFieldBoxChevron` from `dist/index.d.ts`
 - type `HappierFieldBoxColors` from `dist/index.d.ts`
@@ -575,6 +586,8 @@ Declaration: `dist/index.d.ts`
 - type `HappierWorkTheme` from `dist/index.d.ts`
 - value `Heading` from `dist/index.d.ts`
 - type `HeadingProps` from `dist/index.d.ts`
+- value `HostedAnchoredMenu` from `dist/index.d.ts`
+- type `HostedAnchoredMenuProps` from `dist/index.d.ts`
 - value `Icon` from `dist/index.d.ts`
 - value `IconButton` from `dist/index.d.ts`
 - type `IconButtonProps` from `dist/index.d.ts`
@@ -769,6 +782,9 @@ Declaration: `dist/index.d.ts`
 - value `createListMultiSelectionStore` from `dist/index.d.ts`
 - value `defineUiSurface` from `dist/index.d.ts`
 - value `describeHappierDataChart` from `dist/index.d.ts`
+- value `describeHappierDropAnnouncement` from `dist/index.d.ts`
+- value `describeHappierDropOutcome` from `dist/index.d.ts`
+- value `describeHappierSettledDrop` from `dist/index.d.ts`
 - value `evaluateHappierCollectionMotionTrack` from `dist/index.d.ts`
 - value `filterHappierFieldDraft` from `dist/index.d.ts`
 - value `formatHappierAsOfTime` from `dist/index.d.ts`
@@ -846,6 +862,7 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierRovingSelection` from `dist/index.d.ts`
 - value `resolveHappierSelectionActionBarLayout` from `dist/index.d.ts`
 - value `resolveHappierSpinnerPresentation` from `dist/index.d.ts`
+- value `resolveHappierStagedMoveHints` from `dist/index.d.ts`
 - value `resolveHappierStagedMoveKey` from `dist/index.d.ts`
 - value `resolveHappierStateAnnouncement` from `dist/index.d.ts`
 - value `resolveHappierStateFailureGlyph` from `dist/index.d.ts`
@@ -935,11 +952,15 @@ Declaration: `dist/advanced/index.d.ts`
 - type `PluginUiResourceClient` from `dist/advanced/index.d.ts`
 - type `PluginUiResourceEntry` from `dist/advanced/index.d.ts`
 - type `PluginUiResourceStore` from `dist/advanced/index.d.ts`
+- value `PluginUiScrollActivityProvider` from `dist/advanced/index.d.ts`
+- type `PluginUiScrollActivityTracker` from `dist/advanced/index.d.ts`
 - type `PluginUiSessionPartPresentation` from `dist/advanced/index.d.ts`
 - type `PluginUiWidgetAreaPresentation` from `dist/advanced/index.d.ts`
 - value `createPluginUiHostApiResourceClient` from `dist/advanced/index.d.ts`
 - value `createPluginUiResourceStore` from `dist/advanced/index.d.ts`
+- value `isPluginUiResourceReadAuthorityLost` from `dist/advanced/index.d.ts`
 - value `materializeHappierRenderableImage` from `dist/advanced/index.d.ts`
+- value `useOptionalPluginUiScrollActivityTracker` from `dist/advanced/index.d.ts`
 
 ### `./components`
 
@@ -983,6 +1004,9 @@ Declaration: `dist/components/index.d.ts`
 - type `CollectionGroupAction` from `dist/components/index.d.ts`
 - type `CollectionProps` from `dist/components/index.d.ts`
 - type `CollectionRowActions` from `dist/components/index.d.ts`
+- type `CollectionVirtualizer` from `dist/components/index.d.ts`
+- type `CollectionVirtualizerHandle` from `dist/components/index.d.ts`
+- type `CollectionVirtualizerRequest` from `dist/components/index.d.ts`
 - value `Column` from `dist/components/index.d.ts`
 - type `ColumnProps` from `dist/components/index.d.ts`
 - value `Columns` from `dist/components/index.d.ts`
@@ -1017,6 +1041,8 @@ Declaration: `dist/components/index.d.ts`
 - type `FreshnessLineProps` from `dist/components/index.d.ts`
 - value `Heading` from `dist/components/index.d.ts`
 - type `HeadingProps` from `dist/components/index.d.ts`
+- value `HostedAnchoredMenu` from `dist/components/index.d.ts`
+- type `HostedAnchoredMenuProps` from `dist/components/index.d.ts`
 - value `Icon` from `dist/components/index.d.ts`
 - value `IconButton` from `dist/components/index.d.ts`
 - type `IconButtonProps` from `dist/components/index.d.ts`
@@ -1304,6 +1330,9 @@ Declaration: `dist/hostApi/index.d.ts`
 
 Declaration: `dist/presentation/index.d.ts`
 
+- type `CollectionVirtualizer` from `dist/presentation/index.d.ts`
+- type `CollectionVirtualizerHandle` from `dist/presentation/index.d.ts`
+- type `CollectionVirtualizerRequest` from `dist/presentation/index.d.ts`
 - type `CreateHappierListMultiSelectionStateInput` from `dist/presentation/index.d.ts`
 - value `DEFAULT_HAPPIER_SPINNER_PAUSE_ID` from `dist/presentation/index.d.ts`
 - value `DEFAULT_HAPPIER_SPINNER_SPEED_ID` from `dist/presentation/index.d.ts`
@@ -1467,9 +1496,17 @@ Declaration: `dist/presentation/index.d.ts`
 - value `HappierDragGrip` from `dist/presentation/index.d.ts`
 - type `HappierDragGripDensity` from `dist/presentation/index.d.ts`
 - type `HappierDragGripProps` from `dist/presentation/index.d.ts`
+- value `HappierDragGripTrigger` from `dist/presentation/index.d.ts`
+- type `HappierDragGripTriggerProps` from `dist/presentation/index.d.ts`
+- type `HappierDropAdmission` from `dist/presentation/index.d.ts`
 - type `HappierDropChooserOption` from `dist/presentation/index.d.ts`
 - type `HappierDropChooserOptionInput` from `dist/presentation/index.d.ts`
 - type `HappierDropChooserSection` from `dist/presentation/index.d.ts`
+- type `HappierDropEffect` from `dist/presentation/index.d.ts`
+- type `HappierDropOutcomeVocabulary` from `dist/presentation/index.d.ts`
+- type `HappierDropSettlement` from `dist/presentation/index.d.ts`
+- value `HappierDropTargetOutline` from `dist/presentation/index.d.ts`
+- type `HappierDropVerdict` from `dist/presentation/index.d.ts`
 - value `HappierField` from `dist/presentation/index.d.ts`
 - value `HappierFieldBoxChevron` from `dist/presentation/index.d.ts`
 - type `HappierFieldBoxColors` from `dist/presentation/index.d.ts`
@@ -1789,6 +1826,9 @@ Declaration: `dist/presentation/index.d.ts`
 - value `createHappierListMultiSelectionStore` from `dist/presentation/index.d.ts`
 - value `createInitialHappierListMultiSelectionState` from `dist/presentation/index.d.ts`
 - value `describeHappierDataChart` from `dist/presentation/index.d.ts`
+- value `describeHappierDropAnnouncement` from `dist/presentation/index.d.ts`
+- value `describeHappierDropOutcome` from `dist/presentation/index.d.ts`
+- value `describeHappierSettledDrop` from `dist/presentation/index.d.ts`
 - value `evaluateHappierCollectionMotionTrack` from `dist/presentation/index.d.ts`
 - value `filterHappierFieldDraft` from `dist/presentation/index.d.ts`
 - value `formatHappierAsOfTime` from `dist/presentation/index.d.ts`
@@ -1866,6 +1906,7 @@ Declaration: `dist/presentation/index.d.ts`
 - value `resolveHappierRovingSelection` from `dist/presentation/index.d.ts`
 - value `resolveHappierSelectionActionBarLayout` from `dist/presentation/index.d.ts`
 - value `resolveHappierSpinnerPresentation` from `dist/presentation/index.d.ts`
+- value `resolveHappierStagedMoveHints` from `dist/presentation/index.d.ts`
 - value `resolveHappierStagedMoveKey` from `dist/presentation/index.d.ts`
 - value `resolveHappierStateAnnouncement` from `dist/presentation/index.d.ts`
 - value `resolveHappierStateFailureGlyph` from `dist/presentation/index.d.ts`

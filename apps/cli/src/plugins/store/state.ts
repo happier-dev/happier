@@ -1,10 +1,8 @@
 import { z } from 'zod';
 
-import {
-  PluginIdSchema,
-  PluginSourceSpecV1Schema,
-  PluginUpdatePolicyV1Schema,
-} from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginSourceSpecV1Schema } from '@happier-dev/protocol/plugins/source-spec';
+import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 
 import { PluginCompatibilityDiagnosticSchema } from '@/plugins/validation/diagnostics/types';
 import {

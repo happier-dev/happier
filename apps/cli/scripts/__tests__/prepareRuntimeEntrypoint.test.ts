@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, watch, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 import { maybeRefreshLocalBundledWorkspacePackages, prepareRuntimeEntrypoint } from '../../bin/_prepareRuntimeEntrypoint.mjs';
 import { withWorkspaceBundleLock } from '../../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { resolveSourceDevSharedDepsStampPath } from '../../../../scripts/workspaces/sourceDevReadiness.mjs';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 
 const workspaceBundleLockModulePath = fileURLToPath(
@@ -14,6 +15,9 @@ const workspaceBundleLockModulePath = fileURLToPath(
 );
 const cliDistBuildManifestModuleUrl = pathToFileURL(fileURLToPath(
   new URL('../../../../packages/cli-common/cliDistBuildManifest.cjs', import.meta.url),
+)).href;
+const buildSharedDepsModuleUrl = pathToFileURL(fileURLToPath(
+  new URL('../buildSharedDeps.mjs', import.meta.url),
 )).href;
 
 function writeBuildManifest(outputDir: string) {
@@ -24,7 +28,7 @@ function writeBuildManifest(outputDir: string) {
 }
 
 describe('maybeRefreshLocalBundledWorkspacePackages', () => {
-  it('builds a complete local runtime snapshot under the writer lock when none is committed', async () => {
+  it('prepares shared dependencies without an outer publication lock, then builds the missing runtime under its writer lock', async () => {
     const repoRoot = createTempDirSync('happier-cli-prepare-entrypoint-cold-build-');
     try {
       const projectRoot = resolve(repoRoot, 'apps', 'cli');
@@ -39,18 +43,31 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
       mkdirSync(workspacesDir, { recursive: true });
       writeFileSync(resolve(repoRoot, 'package.json'), '{ "private": true }\n', 'utf8');
       writeFileSync(resolve(repoRoot, 'yarn.lock'), '# yarn\n', 'utf8');
+      writeFileSync(resolve(projectRoot, 'package.json'), '{ "name": "@happier-dev/cli", "bundledDependencies": [] }\n', 'utf8');
       writeFileSync(resolve(workspacesDir, 'syncBundledWorkspacePackages.mjs'), 'export function syncBundledWorkspacePackages() {}\n', 'utf8');
       writeFileSync(
         resolve(scriptsDir, 'buildSharedDeps.mjs'),
         [
           "import { appendFileSync, existsSync, mkdirSync } from 'node:fs';",
           "import { dirname } from 'node:path';",
+          "import assert from 'node:assert/strict';",
+          `import { main as prepareSharedDeps } from ${JSON.stringify(buildSharedDepsModuleUrl)};`,
+          `const repoRoot = ${JSON.stringify(repoRoot)};`,
           `const eventsPath = ${JSON.stringify(eventsPath)};`,
           `const sharedDepsLockPath = ${JSON.stringify(sharedDepsLockPath)};`,
           `const cliDistLockPath = ${JSON.stringify(cliDistLockPath)};`,
-          'export async function main() {',
-          '  mkdirSync(dirname(eventsPath), { recursive: true });',
-          "  appendFileSync(eventsPath, `shared:${existsSync(sharedDepsLockPath)}:${existsSync(cliDistLockPath)}\\n`, 'utf8');",
+          'export async function main(options = {}) {',
+          // The real preparation owner runs against an empty fixture closure;
+          // progress observes its filesystem locks without substituting its logic.
+          '  await prepareSharedDeps({ ...options, repoRoot, mode: "declarations", workspaceNames: [],',
+          '    lockOptions: { lockPath: sharedDepsLockPath, lockModulePath: ' + JSON.stringify(workspaceBundleLockModulePath) + ' },',
+          '    reportProgress(event) {',
+          '      if (event.stage !== "signature" || event.event !== "start") return;',
+          '      mkdirSync(dirname(eventsPath), { recursive: true });',
+          "      appendFileSync(eventsPath, `shared:${existsSync(sharedDepsLockPath)}:${existsSync(cliDistLockPath)}\\n`, 'utf8');",
+          '      assert.equal(existsSync(sharedDepsLockPath), false, "dependency preparation must not hold the outer publication lock");',
+          '    },',
+          '  });',
           '}',
           '',
         ].join('\n'),
@@ -89,7 +106,8 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
         lockPollIntervalMs: 10,
         lockStaleAfterMs: 1_000,
       })).resolves.toBe(resolve(realpathSync.native(projectRoot), 'dist', 'index.mjs'));
-      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:true:false\nbuild:false:true:true\n');
+      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:false:false\nbuild:false:true:true\n');
+      expect(existsSync(resolveSourceDevSharedDepsStampPath(repoRoot))).toBe(true);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -291,16 +309,27 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
     }
   });
 
-  it('waits for the shared CLI build lock before source-mode bundled workspace prep', async () => {
+  it('waits for a live shared-dependency writer and refreshes after it releases the lock', async () => {
     const repoRoot = createTempDirSync('happier-cli-prepare-entrypoint-lock-');
     try {
       const projectRoot = resolve(repoRoot, 'apps', 'cli');
       const syncModuleDir = resolve(repoRoot, 'scripts', 'workspaces');
       const syncCalledPath = resolve(repoRoot, '.project', 'tmp', 'sync-called');
       const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+      const waitingPath = resolve(repoRoot, '.project', 'tmp', 'waiting');
+      const observedLockModulePath = resolve(syncModuleDir, 'observedWorkspaceBundleLock.mjs');
 
       mkdirSync(projectRoot, { recursive: true });
       mkdirSync(syncModuleDir, { recursive: true });
+      mkdirSync(resolve(repoRoot, '.project', 'tmp'), { recursive: true });
+      // Observe the real lock's admission event at a filesystem boundary.
+      writeFileSync(observedLockModulePath, [
+        `import { withWorkspaceBundleLock as withLock } from ${JSON.stringify(pathToFileURL(workspaceBundleLockModulePath).href)};`,
+        "import { writeFileSync } from 'node:fs';",
+        'export function withWorkspaceBundleLock(fn, options) {',
+        `  return withLock(fn, { ...options, onWait() { writeFileSync(${JSON.stringify(waitingPath)}, 'waiting'); } });`,
+        '}',
+      ].join('\n'), 'utf8');
       writeFileSync(
         resolve(syncModuleDir, 'syncBundledWorkspacePackages.mjs'),
         [
@@ -316,18 +345,28 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
         'utf8',
       );
 
+      let refresh: Promise<void> | undefined;
+      let waitWatcher: ReturnType<typeof watch> | undefined;
       await withWorkspaceBundleLock(
         async () => {
-          await expect(
-            maybeRefreshLocalBundledWorkspacePackages(projectRoot, {
-              lockModulePath: workspaceBundleLockModulePath,
+          const waiting = new Promise<void>((resolveWaiting) => {
+            waitWatcher = watch(resolve(repoRoot, '.project', 'tmp'), () => {
+              if (existsSync(waitingPath)) resolveWaiting();
+            });
+          });
+          try {
+            refresh = maybeRefreshLocalBundledWorkspacePackages(projectRoot, {
+              lockModulePath: observedLockModulePath,
               lockPath,
               lockTimeoutMs: 50,
               lockPollIntervalMs: 10,
               lockStaleAfterMs: 1_000,
-            }),
-          ).rejects.toThrow(/Timed out waiting for workspace bundle lock/);
-          expect(existsSync(syncCalledPath)).toBe(false);
+            });
+            await waiting;
+            expect(existsSync(syncCalledPath)).toBe(false);
+          } finally {
+            waitWatcher?.close();
+          }
         },
         {
           lockPath,
@@ -336,6 +375,8 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
           staleAfterMs: 1_000,
         },
       );
+      await refresh;
+      expect(existsSync(syncCalledPath)).toBe(true);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }

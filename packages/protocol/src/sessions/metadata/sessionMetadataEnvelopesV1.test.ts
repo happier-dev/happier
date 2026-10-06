@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { projectSessionMetadataForWire } from './terminalMetadata.js';
 import { readSessionRoleIdV1, readSessionRolesV1, writeSessionRoleIdV1ToMetadata } from '../../prompts/roles/sessionRolesSnapshot.js';
 import { z } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 import {
   openAccountScopedBlobCiphertext,
@@ -31,6 +32,7 @@ import {
   SessionMetadataInactiveModelIntentExpectationV1Schema,
   SessionMetadataInactiveModelIntentVersionConflictV1Schema,
   SessionMetadataRecipientProjectionV1Schema,
+  SessionMetadataPublisherPreconditionV1Schema,
   SessionMetadataTuplePatchSuccessV1Schema,
   SessionMetadataTuplePatchV1Schema,
   SessionMetadataVersionConflictV1Schema,
@@ -56,6 +58,37 @@ import {
   sealSessionOwnerMetadataV1,
   validateSessionOwnerMetadataEnvelopeForAccountModeV1,
 } from './sessionMetadataEnvelopesV1.js';
+
+describe('metadata schema consumer contracts', () => {
+  it('preserves both JSON Schema dialects and classic fluent derivatives', () => {
+    const reference = z.object({
+      machineId: z.string().trim().min(1).max(256),
+      committedFenceMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }).strict();
+    for (const target of ['draft-2020-12', 'draft-7'] as const) {
+      expect(zodSchemaToJsonSchemaObject(SessionMetadataPublisherPreconditionV1Schema, { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(reference, { target }));
+      expect(zodSchemaToJsonSchemaObject(SessionMetadataPublisherPreconditionV1Schema.pick({ machineId: true }), { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(reference.pick({ machineId: true }), { target }));
+    }
+    expect(SessionMetadataPublisherPreconditionV1Schema.parse({ machineId: ' machine-1 ', committedFenceMs: 0 }))
+      .toEqual({ machineId: 'machine-1', committedFenceMs: 0 });
+  });
+
+  it('retains classic errors and issue paths for invalid metadata', () => {
+    const result = SessionMetadataPublisherPreconditionV1Schema.safeParse({ machineId: 42, committedFenceMs: -1 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBeInstanceOf(z.ZodError);
+      expect(result.error.issues).toMatchObject([
+        { code: 'invalid_type', path: ['machineId'], expected: 'string' },
+        { code: 'too_small', path: ['committedFenceMs'], minimum: 0 },
+      ]);
+    }
+    expect(() => SessionMetadataPublisherPreconditionV1Schema.parse({}))
+      .toThrow(z.ZodError);
+  });
+});
 
 function deterministicRandomBytes(seed: number): (length: number) => Uint8Array {
   let next = seed;

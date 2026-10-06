@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,8 +10,11 @@ import {
   readDevReloadWatchChangeSignatureAsync,
 } from './watchSignature.mjs';
 
-test('runtime reload ignore matching is separator-safe and limited to test-only path conventions', () => {
+test('runtime reload ignore matching is separator-safe and limited to canonical test and scratch conventions', () => {
   for (const path of [
+    '/repo/packages/protocol/scripts/.schema-library-scratch-3wdouQ/schema.ts',
+    'C:\\repo\\packages\\protocol\\scripts\\.schema-library-scratch-3wdouQ\\schema.ts',
+    '/repo/packages/protocol/.tmp/generated.ts',
     '/repo/apps/cli/src/testkit/fs/tempDir.ts',
     'C:\\repo\\apps\\cli\\src\\testkit\\fs\\tempDir.ts',
     '/repo/apps/cli/src/agent/tools/trace/testEvents.testkit.ts',
@@ -21,6 +24,8 @@ test('runtime reload ignore matching is separator-safe and limited to test-only 
   }
 
   for (const path of [
+    '/repo/packages/protocol/src/scratch/runtime.ts',
+    '/repo/packages/protocol/src/.temporaryRuntime.ts',
     '/repo/apps/cli/src/testkitRuntime.ts',
     '/repo/apps/cli/src/agent/tools/trace/testEvents.testkitConfig.ts',
     '/repo/apps/cli/src/runtime-testkit.ts',
@@ -102,6 +107,8 @@ test('sync and async signatures ignore test-only inputs while retaining neighbor
   await writeFile(join(sourceDir, 'vitestSetup.ts'), 'export const setup = 1;\n', 'utf-8');
   await mkdir(join(sourceDir, 'tests'), { recursive: true });
   await writeFile(join(sourceDir, 'tests', 'fixture.ts'), 'export const fixture = 2;\n', 'utf-8');
+  await mkdir(join(sourceDir, '.schema-library-scratch-example'), { recursive: true });
+  await writeFile(join(sourceDir, '.schema-library-scratch-example', 'generated.ts'), 'scratch\n');
 
   assert.equal(readDevReloadWatchChangeSignature([sourceDir]), beforeSync);
   assert.equal(await readDevReloadWatchChangeSignatureAsync([sourceDir]), beforeAsync);
@@ -146,15 +153,24 @@ test('sync and async signatures detect a same-size replacement whose mtime is pr
   const beforeSync = readDevReloadWatchChangeSignature([root]);
   const beforeAsync = await readDevReloadWatchChangeSignatureAsync([root]);
 
-  await writeFile(watchedFile, 'export const value = 2;\n', 'utf-8');
-  await utimes(watchedFile, 1, 1);
-  const afterStat = await stat(watchedFile, { bigint: true });
+  const replacement = join(root, 'replacement.ts');
+  await writeFile(replacement, 'export const value = 2;\n', 'utf-8');
+  await utimes(replacement, 1, 1);
+  await rename(replacement, watchedFile);
+  let afterStat = await stat(watchedFile, { bigint: true });
+  // Establish the changed-ctime fixture even on filesystems whose timestamp
+  // tick spans several awaited operations; keep mtime fixed throughout.
+  while (afterStat.ctimeNs === beforeStat.ctimeNs) {
+    await new Promise((resolve) => setImmediate(resolve));
+    await utimes(watchedFile, 1, 1);
+    afterStat = await stat(watchedFile, { bigint: true });
+  }
   const afterSync = readDevReloadWatchChangeSignature([root]);
   const afterAsync = await readDevReloadWatchChangeSignatureAsync([root]);
 
   assert.equal(afterStat.size, beforeStat.size);
   assert.equal(afterStat.mtimeNs, beforeStat.mtimeNs);
-  assert.notEqual(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.notEqual(afterStat.ino, beforeStat.ino);
   assert.equal(beforeSync, beforeAsync);
   assert.equal(afterSync, afterAsync);
   assert.notEqual(afterSync, beforeSync);
@@ -169,16 +185,20 @@ test('sync and async signatures ignore an identical replacement with different f
   const watchedFile = join(root, 'generated.ts');
   const content = 'export const generated = true;\n';
   await writeFile(watchedFile, content, 'utf-8');
+  await utimes(watchedFile, 1, 1);
   const beforeStat = await stat(watchedFile, { bigint: true });
   const beforeSync = readDevReloadWatchChangeSignature([root]);
   const beforeAsync = await readDevReloadWatchChangeSignatureAsync([root]);
 
   await writeFile(watchedFile, content, 'utf-8');
+  // Exercise a known metadata change rather than assuming the filesystem clock
+  // advances between two writes in the same timestamp tick.
+  await utimes(watchedFile, 2, 2);
   const afterStat = await stat(watchedFile, { bigint: true });
   const afterSync = readDevReloadWatchChangeSignature([root]);
   const afterAsync = await readDevReloadWatchChangeSignatureAsync([root]);
 
-  assert.notEqual(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.notEqual(afterStat.mtimeNs, beforeStat.mtimeNs);
   assert.equal(beforeSync, beforeAsync);
   assert.equal(afterSync, beforeSync);
   assert.equal(afterAsync, beforeAsync);

@@ -1,18 +1,11 @@
-import {
-  PluginContributionIdentityV1Schema,
-  buildCodingSessionPromptPlanBaseV1,
-  buildPromptPlanDiagnosticsV1,
-  buildPromptPlanV1,
-  buildQualifiedPluginContributionKey,
-  renderPromptPlanV1,
-  renderSessionRoleBlockV1,
-  resolveEffectiveCodingPromptBehaviorV1,
-  type CodingPromptBehaviorV1,
-  type PromptBlockV1,
-  type PromptPlanV1,
-  type SessionRolePromptContextV1,
-  type AgentSessionStartupInstructionsV1,
-} from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildCodingSessionPromptPlanBaseV1 } from '@happier-dev/protocol/prompts/buildAppendSystemPromptBaseV1';
+import { buildPromptPlanDiagnosticsV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
+import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
+import type { CodingPromptBehaviorV1, PromptBlockV1, PromptPlanV1, SessionRolePromptContextV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';

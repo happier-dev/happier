@@ -3,21 +3,14 @@ import type {
     SessionRuntimeAuthRefreshRequest,
     SessionRuntimeAuthRefreshResult,
 } from '@happier-dev/plugin-sdk/sessions';
-import {
-    AgentSessionAuthRefreshErrorV1Schema,
-    AgentSessionAuthRefreshPayloadV1Schema,
-    AgentSessionAuthRefreshRecoveryV1Schema,
-    normalizeAgentSessionAuthRefreshErrorV1,
-    type AgentSessionAuthRefreshErrorV1,
-    type AgentSessionAuthRefreshRecoveryV1,
-} from '@happier-dev/protocol';
+import { AgentSessionAuthRefreshRecoveryV1Schema } from '@happier-dev/protocol/runtime/authRefresh';
+import type { AgentSessionAuthRefreshRecoveryV1 } from '@happier-dev/protocol';
 
 import {
     type CatalogAgentId,
 } from '@/agent/catalog/ids';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
-import { projectConnectedServiceRuntimeAuthSelection } from '@/daemon/connectedServices/runtimeAuth/projectRuntimeAuthTargetInput';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from '@/agent/runtime/session/errors/connectedServiceRuntimeAuthRecoveryContext';
 import { requestDaemonSessionConnectedServiceRuntimeAuthRefresh } from '@/daemon/controlClient';
@@ -26,13 +19,13 @@ import type {
     ConnectedServiceRuntimeAuthTargetInput,
 } from '@/daemon/connectedServices/runtimeAuth/types';
 import { readTrimmedString } from './readTrimmedString';
+import { createDaemonRuntimeAuthRefreshService, normalizeRuntimeAuthRefreshResult, readRuntimeAuthRefreshError, readUnavailableDaemonRefreshErrorReason, withRuntimeAuthSelectionHints } from '../../runtimeAuthRefresh';
 
 type RuntimeAuthAdapterResolver = (
     agentId: CatalogAgentId,
 ) => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
 
 type RuntimeAuthFailureReporter = typeof reportConnectedServiceRuntimeAuthFailureToDaemon;
-const RUNTIME_AUTH_REFRESH_DAEMON_ACK_TIMEOUT_MS = 120_000;
 
 export type CreateSessionHandleAuthServiceParams = Readonly<{
     readSessionId: (signal?: AbortSignal) => Promise<string | null>;
@@ -44,86 +37,6 @@ export type CreateSessionHandleAuthServiceParams = Readonly<{
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readRefreshFailureReason(value: unknown, fallback: string): string {
-    return readTrimmedString(isRecord(value) ? value.reason : null) ?? fallback;
-}
-
-function readRuntimeAuthRefreshError(error: unknown): AgentSessionAuthRefreshErrorV1 {
-    const parsed = AgentSessionAuthRefreshErrorV1Schema.safeParse(error);
-    return parsed.success ? parsed.data : normalizeAgentSessionAuthRefreshErrorV1(error);
-}
-
-function normalizeRuntimeAuthRefreshResult(
-    value: unknown,
-    expectedRefreshAttemptId: string | null,
-): SessionRuntimeAuthRefreshResult {
-    if (!isRecord(value)) {
-        return Object.freeze({
-            status: 'failed',
-            reason: 'runtime_auth_refresh_invalid_result',
-        });
-    }
-    if (value.status === 'refreshed') {
-        const result = AgentSessionAuthRefreshPayloadV1Schema.safeParse(
-            Object.prototype.hasOwnProperty.call(value, 'result') ? value.result : value,
-        );
-        if (!result.success) {
-            return Object.freeze({
-                status: 'failed',
-                reason: 'runtime_auth_refresh_invalid_result',
-            });
-        }
-        return Object.freeze({
-            status: 'refreshed',
-            result: result.data,
-        });
-    }
-    if (value.status === 'pending') {
-        const refreshAttemptId = readTrimmedString(value.refreshAttemptId);
-        if (refreshAttemptId && refreshAttemptId === expectedRefreshAttemptId) {
-            return Object.freeze({ status: 'pending', refreshAttemptId });
-        }
-        return Object.freeze({
-            status: 'failed',
-            reason: 'runtime_auth_refresh_attempt_mismatch',
-        });
-    }
-    if (value.status === 'unavailable' || value.status === 'forbidden') {
-        return Object.freeze({
-            status: 'unavailable',
-            reason: readRefreshFailureReason(value, 'runtime_auth_refresh_unavailable'),
-        });
-    }
-    if (value.status === 'failed') {
-        return Object.freeze({
-            status: 'failed',
-            reason: readRefreshFailureReason(value, 'runtime_auth_refresh_failed'),
-            ...(Object.prototype.hasOwnProperty.call(value, 'error')
-                ? { error: readRuntimeAuthRefreshError(value.error) }
-                : {}),
-        });
-    }
-    if (value.status === 'available' || value.status === 'unsupported') {
-        return Object.freeze({
-            status: 'unavailable',
-            reason: 'runtime_auth_refresh_not_proven',
-        });
-    }
-    return Object.freeze({
-        status: 'failed',
-        reason: 'runtime_auth_refresh_invalid_result',
-    });
-}
-
-function readUnavailableDaemonRefreshErrorReason(error: unknown): string | null {
-    const reason = readTrimmedString(error instanceof Error ? error.message : error);
-    return reason === 'connected_service_session_refresh_forbidden'
-        || reason === 'connected_service_daemon_auth_bridge_unavailable'
-        || reason === 'connected_service_session_refresh_service_id_mismatch'
-        ? reason
-        : null;
 }
 
 function readCatalogAgentId(value: unknown): CatalogAgentId | null {
@@ -166,20 +79,6 @@ async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | und
     });
 }
 
-function withSelectionHints(
-    selection: unknown,
-    request: SessionRuntimeAuthRefreshRequest,
-): Readonly<Record<string, unknown>> {
-    if (!isRecord(selection)) {
-        return Object.freeze({ serviceId: request.serviceId });
-    }
-    const next: Record<string, unknown> = { ...selection };
-    if (!Object.prototype.hasOwnProperty.call(next, 'serviceId')) {
-        next.serviceId = request.serviceId;
-    }
-    return projectConnectedServiceRuntimeAuthSelection(next);
-}
-
 async function reportRecoveryIfPossible(
     params: CreateSessionHandleAuthServiceParams,
     request: SessionRuntimeAuthRefreshRequest,
@@ -212,7 +111,7 @@ function buildRefreshInput(
             agentId,
             ...(request.targetId ? { targetId: request.targetId } : {}),
         }),
-        selection: withSelectionHints(request.selection, request),
+        selection: withRuntimeAuthSelectionHints(request.selection, request),
     });
 }
 
@@ -265,7 +164,6 @@ export function createSessionHandleAuthService(
                                 reason: 'runtime_auth_credential_revision_unavailable',
                             });
                         }
-                        const expectedCredentialRevision = request.expectedCredentialRevision;
                         const refreshAttemptId = readTrimmedString(request.refreshAttemptId);
                         if (!refreshAttemptId) {
                             return Object.freeze({
@@ -280,26 +178,13 @@ export function createSessionHandleAuthService(
                                 reason: 'runtime_auth_session_unavailable',
                             });
                         }
-                        // Admission is the daemon request invocation below. Caller cancellation is
-                        // honored up to this point; once admitted, the canonical coordinator owns
-                        // settlement and this waiter must observe that authoritative result instead
-                        // of turning a detached local abort into a definitive refresh failure.
-                        throwIfAborted(options?.signal);
-                        const daemonResult = await (
-                            params.refreshViaDaemon ?? requestDaemonSessionConnectedServiceRuntimeAuthRefresh
-                        )({
-                                sessionId,
-                                serviceId,
-                                refreshAttemptId,
-                                selection: withSelectionHints(request.selection, request),
-                                ...(request.planType === undefined ? {} : { planType: request.planType }),
-                                ...(request.failingAccessTokenFingerprint === undefined
-                                    ? {}
-                                    : { failingAccessTokenFingerprint: request.failingAccessTokenFingerprint }),
-                                expectedCredentialRevision,
-                                ...(request.reason === undefined ? {} : { reason: request.reason }),
-                            }, { timeoutMs: RUNTIME_AUTH_REFRESH_DAEMON_ACK_TIMEOUT_MS });
-                        return normalizeRuntimeAuthRefreshResult(daemonResult, refreshAttemptId);
+                        const services = createDaemonRuntimeAuthRefreshService({
+                            refreshViaDaemon: (body, options) => (
+                                params.refreshViaDaemon ?? requestDaemonSessionConnectedServiceRuntimeAuthRefresh
+                            )({ ...body, sessionId }, options),
+                            reportRecovery: (request, signal) => reportRecoveryIfPossible(params, request, signal),
+                        });
+                        return await services.refreshRuntimeAuth(request, options);
                     }
                     return normalizeRuntimeAuthRefreshResult(
                         result,

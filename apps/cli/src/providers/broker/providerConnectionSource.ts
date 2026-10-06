@@ -1,10 +1,6 @@
-import {
-  createProviderErrorV1,
-  readProviderSettingsFromAccountSettingsV1,
-  type ProviderCredentialTransportV1,
-  type ProviderErrorV1,
-  type ProviderWireProtocol,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol } from '@happier-dev/protocol';
 import type {
   TeamCredentialBrokerPlacementV1,
   TeamCredentialSourceBindingV1,

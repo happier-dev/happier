@@ -1,10 +1,8 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-  readAcpConfiguredBackendV1FromMetadata,
-  readBackendTargetRefV2,
-  readRuntimeDescriptorV1FromMetadata,
-  type BackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { isConcreteLegacyConfiguredBackendId } from '@/session/backendTargets/compat/legacyConfiguredBackend';
 

@@ -206,6 +206,60 @@ async function readLogText(logPath) {
   return await readFile(logPath, 'utf-8').then(String);
 }
 
+test('hstack stack daemon reports failed TUI start attempts as command failures', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-daemon-failed-result-',
+    distIndexScript: `
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+if (args[0] === 'daemon' && args[1] === 'start') {
+  console.error('fixture daemon startup rejected');
+  process.exit(7);
+}
+if (args[0] === 'daemon' && args[1] === 'status') console.log('daemon: stopped');
+`,
+  });
+  await writeServerScopedAuth({ cliHomeDir: fixture.stackCliHome, serverUrl: `http://127.0.0.1:${fixture.serverPort}` });
+  const env = { ...fixture.baseEnv, HAPPIER_STACK_TUI: '1' };
+  for (const action of ['start', 'restart']) {
+    const res = await runHstack(['stack', 'daemon', fixture.stackName, action, '--json'], { env });
+    assert.notEqual(res.code, 0, `${action} must fail\n${res.stdout}\n${res.stderr}`);
+    assert.ok(res.stdout.includes('{'), `expected command JSON\n${res.stdout}\n${res.stderr}`);
+    const result = JSON.parse(res.stdout.slice(res.stdout.lastIndexOf('\n{') + 1));
+    assert.equal(result.ok, false);
+    assert.equal(result.error, 'daemon_start_failed');
+    assert.match(result.reason, /fixture daemon startup rejected/);
+  }
+  const human = await runHstack(['stack', 'daemon', fixture.stackName, 'start'], { env });
+  assert.notEqual(human.code, 0, human.stdout + human.stderr);
+  assert.match(human.stderr, /fixture daemon startup rejected/);
+  assert.doesNotMatch(human.stdout, /daemon command completed/);
+});
+
+test('hstack stack daemon fails explicitly when a successful wrapper never publishes readiness', async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'happier-stack-daemon-readiness-deadline-',
+    distIndexScript: `
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+if (args[0] === 'daemon' && args[1] === 'status') console.log('daemon: stopped');
+`,
+  });
+  await writeServerScopedAuth({ cliHomeDir: fixture.stackCliHome, serverUrl: `http://127.0.0.1:${fixture.serverPort}` });
+  const env = {
+    ...fixture.baseEnv, HAPPIER_STACK_TUI: '1',
+    HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '100',
+    HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+    HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+  };
+  const res = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env });
+  assert.notEqual(res.code, 0, res.stdout + res.stderr);
+  const result = JSON.parse(res.stdout.slice(res.stdout.lastIndexOf('\n{') + 1));
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'daemon_start_failed');
+  assert.match(result.reason, /readiness.*deadline|deadline.*readiness/i);
+});
+
 test('hstack stack daemon <name> restart restarts only the daemon', async (t) => {
   const fixture = await createDaemonFixture(t, {
     prefix: 'happier-stack-daemon-',

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { PluginIdSchema } from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 export function deriveExternalSessionPluginOperationDurableKey(

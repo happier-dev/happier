@@ -1,4 +1,4 @@
-import { isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol';
+import { canCancelExternalSessionOperationV1, isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol';
 import type {
     ExternalSessionOperationPhaseV1,
     ExternalSessionOperationProgressV1,
@@ -411,7 +411,8 @@ function resolveActions(
     }
 
     if (
-        !hasIncompleteUpdateFence
+        canCancelExternalSessionOperationV1(progress)
+        && !hasIncompleteUpdateFence
         && !isPostPublicationPersistedTakeover
         && (
             canCancelExternalLinked

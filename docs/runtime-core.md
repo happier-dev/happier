@@ -27,11 +27,22 @@ The lifecycle owner consumes validated `AgentSessionRuntimeEvent` evidence, proj
 
 In 0.3 development, a missing launchable Agent CLI carries `agent_cli_missing` from both the command/terminal launch owner and the native plugin system-tool binding. Startup sanitization preserves that code; the primary Session issue classifier projects `dependency_failure` with static installation/path remediation. It does not expose raw startup error text or infer acceptance from a failed prerequisite.
 
+The Session MCP owner refuses an unavailable daemon plugin catalog with
+`daemon_plugin_catalog_unavailable`, rather than interpreting it as an empty
+catalog. Before the live loop takes ownership, the construction owner projects
+this prerequisite failure through the canonical turn lifecycle and drains its
+durable mutation admission before releasing Session custody. The issue uses
+`dependency_failure` and static daemon-connection remediation; it does not imply
+missing Agent credentials. Daemonless runtimes retain their explicitly supplied
+registry lease. These are development-source contracts, not completed live proof.
+
 For cold native history catch-up, a Session factory may declare `transcriptIdentity`, its pure provider-owned identity codec. The bound `transcripts.reconcileSourceIdentities` operation uses the canonical paginated transcript reader and encryption/semantic decoder, filters conversation rows to the selected Agent, and supplies only the codec's declared correlation fields. It checks the current Session, plugin occurrence and native Session identity before and after the read. Unsupported, failed or malformed reads reject rather than becoming empty coverage. OpenCode hydrates its existing authored-ID tracker from exact committed identities, including witnessed 0.2 predecessor mappings and import IDs. Its current percent-encoded import IDs preserve opaque identity tuples; the predecessor codec compares complete constructed legacy or JSON-tuple IDs only after checking a separate exact native-session witness, never by splitting opaque IDs. Unprovable legacy coverage is reported through the existing informational Session-event and default log owners; only that historical snapshot is suppressed, so subsequent settled native turns can still sync. No new identity registry or transcript writer is introduced. These current-source contracts are distinct from full authenticated live validation of the composed 0.3 runtime.
 
 The host fits retained WorkerUpdates against the current optional context allowance before dispatch. A still-deliverable wake that cannot fit stays with the input consumer until context/source, metadata, admission or user input changes; parking neither commits a transcript event nor acknowledges provider acceptance. Source admission is rechecked before parking, so a withdrawn wake releases custody even if it still cannot fit. User input keeps priority, and the retained wake is reconsidered afterward without selecting its producer again.
 
 Native interaction lifetime is separate from causal turn identity. Ordinary requests default to turn lifetime and retire with the matching terminal turn (including ordinary requests without a turn witness); native Codex asynchronous questions explicitly use occurrence lifetime. Those questions keep their causal turn id after completion and retire when their Session/plugin occurrence retires. The permission coordinator owns this distinction; terminal callbacks do not cancel every request owned by the plugin.
+
+Whole-Session permission reset reaches the existing Session request store even when the current coordinator has no local waiters, including after handler replacement. The store cancels pending requests and delivers their response targets. Cancellation waits for in-flight coordinator completion persistence before writing the terminal result; plugin-scoped cancellation retains its owner filter and performs no write for an empty local scope.
 
 Agent-specific protocol leaves live in `packages/plugins/<agentId>/src/agent/**`. Shared ACP composition, process/terminal transport and host lifecycle stay generic in the CLI. Detection, installation and process launch follow [binary runtime](binary-runtime.md); model-source selection and materialization follow [Providers](providers.md).
 
@@ -42,6 +53,22 @@ The strict [`session.spawn_new` input](../packages/protocol/src/sessions/creatio
 The [layout-1 Session row writer](../apps/server/sources/app/session/create/layout1SessionRowWrite.ts) binds each intent to the newborn Session and invokes the canonical Automation creation and lifecycle-occurrence owners in the same transaction. Session, triggers and an eligible `sessionStarted` occurrence commit together, or a typed `initial_trigger_admission_failed` refusal rolls back the birth. Ordinary Session trigger CRUD still refuses retrospective `sessionStarted` registration. PR/CI and plugin-event sources cannot be admitted by this birth path until their source prerequisites are available. This describes current source wiring, not completed loaded-runtime validation or released availability.
 
 ## Execution Run recovery and observation
+
+Finite Run startup can recover an explicit Connected Account model rejection
+before accepting the initial input. The Agent supplies sanitized rejection
+evidence; the native host withholds terminal projection only while opening a
+fresh Run with no observed progress or output. The existing lazy Run owner asks
+the scoped daemon materialization bridge to validate that exact activation and
+member, then disposes/releases it, rematerializes the next eligible pool member,
+and replays the same unaccepted input. The pool coordinator owns the model
+cooldown and selection. A rejected start is exempt from turn/hour switch limits;
+accepted turns, partial output, unknown custody and native resume failures do
+not authorize replay. Pool exhaustion names the requested model in a typed
+error. This is an unreleased recovery corridor, not verified production
+availability: the current detached Codex host lacks the Run-scoped auth refresh
+hook required by its refresh-free authentication guard. The canonical Run auth
+services must supply that seam before composed loaded-daemon validation can
+exercise recovery. The corridor does not restart the parent Session.
 
 The execution host bridge retains private Run control state through the existing
 device-local execution registry, sealed separately from disposable visibility

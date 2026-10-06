@@ -1,6 +1,6 @@
 import type { WorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workflows';
 import { createWorkflowCoordinator, workflowInvocationKey, type WorkflowCoordinatorInvocation, type WorkflowCoordinatorStore } from './coordinator';
-import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import type { WorkflowJsonValue } from './input';
 import { shouldPublishWorkflowSharedConversation } from './workflowConversation';
 import { materializeWorkflowContainerResult } from './workflowContainerResult';

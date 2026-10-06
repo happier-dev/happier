@@ -2883,7 +2883,12 @@ export function createClaudeUnifiedTerminalTurnOperations(
       const captureStyleUnavailablePlaceholder =
         isClaudeComposerCaptureStyleUnavailablePlaceholderCandidate(inputState.currentInput, screen);
       if (!isClaudeScreenReadyForInput(screen)) {
-        const turnRunning = state.turnInFlight || state.terminalOriginTurnInFlight;
+        // Native generation is positive turn-start evidence even when lifecycle hooks were lost.
+        // Reuse the terminal-origin lifecycle owner before deriving steer readiness and acceptance.
+        if (screen.generating && !isCanonicalTurnActive()) {
+          recordTerminalOriginTurnStarted();
+        }
+        const turnRunning = isCanonicalTurnActive();
         const steerVeto = captureStyleUnavailablePlaceholder
           ? 'capture_style_unavailable'
           : resolveClaudeScreenInFlightSteerVeto(screen);

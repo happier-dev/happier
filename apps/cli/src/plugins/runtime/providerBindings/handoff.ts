@@ -1,10 +1,6 @@
-import {
-    AgentProviderBindingLaunchMaterializationV1Schema,
-    PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1,
-    SessionProviderBindingMetadataV1Schema,
-    type AgentProviderBindingLaunchMaterializationV1,
-    type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingLaunchMaterializationV1Schema, PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1 } from '@happier-dev/protocol/providers/materialization/v1';
+import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { AgentProviderBindingLaunchMaterializationV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export const HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY =

@@ -1,15 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-    AccountSettingsSavedSecretMutationError,
-    applyAccountSettingsSavedSecretMutation,
-    isSharedSavedSecretReferenceV1,
-    parseSavedSecretRefV1,
-    resolveAccountSettingsPluginSecretBinding,
-    resolveAccountSettingsPluginSecret,
-    type PluginAccountSecretBinding,
-    type PluginAccountSecretBindingTarget,
-} from '@happier-dev/protocol';
+import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation, resolveAccountSettingsPluginSecretBinding, resolveAccountSettingsPluginSecret } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { PluginAccountSecretBinding, PluginAccountSecretBindingTarget } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {

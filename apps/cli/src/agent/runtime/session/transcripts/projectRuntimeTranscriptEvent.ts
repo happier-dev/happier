@@ -1,10 +1,6 @@
-import {
-  AgentSessionRuntimeEventSchema,
-  buildSessionTranscriptMessageProvenanceV1,
-  type SessionTranscriptObservationProvenanceV1,
-  type ToolNormalizationProtocol,
-  type TurnChangeSet,
-} from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { buildSessionTranscriptMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { SessionTranscriptObservationProvenanceV1, ToolNormalizationProtocol, TurnChangeSet } from '@happier-dev/protocol';
 
 import { createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';

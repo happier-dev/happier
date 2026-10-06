@@ -1,4 +1,4 @@
-import { SessionWorkerPublishInputV1Schema, WorkerUpdateV1Schema, workerDeliverableResultMaxLengthV1, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol';
+import { SessionWorkerPublishInputV1Schema, WorkerUpdateV1Schema, workerDeliverableResultMaxLengthV1, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { RetainedExecutionRunWorkerUpdate } from '@/daemon/executionRunRegistry';
 import type { ExecutionRunState } from './executionRunTypes';
 

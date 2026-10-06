@@ -134,13 +134,23 @@ export function bindHostedEntityDropTarget(input: Readonly<{
     targetId: string;
     input?: JsonValue;
     parentId?: string;
+    onState?: (state: PluginUiEntityDragDropStateV1) => void;
 }>): PluginHostedEntityDragMount {
     const bridge = delivery(input);
+    let disposed = false;
+    let observation: Readonly<{ dispose(): void | Promise<void> }> | undefined;
     const geometry = () => {
         const rect = input.element.getBoundingClientRect();
         return { bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewport: bridge.viewport() };
     };
-    const ready = bridge.send({ kind: 'mountTarget', mountId: input.mountId, targetId: input.targetId, ...(input.input === undefined ? {} : { input: input.input }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }), ...geometry() }).then(result => result.accepted);
+    const ready = bridge.send({ kind: 'mountTarget', mountId: input.mountId, targetId: input.targetId, ...(input.input === undefined ? {} : { input: input.input }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }), ...geometry() }).then(async result => {
+        if (disposed || !result.accepted) return false;
+        if (input.onState) {
+            const subscription = await input.hostApi.watchEntityDragDrop({ mountId: input.mountId }, state => { if (!disposed) input.onState?.(state); });
+            if (disposed) void subscription.dispose(); else observation = subscription;
+        }
+        return !disposed;
+    });
     const layout = () => { void bridge.send({ kind: 'layout', mountId: input.mountId, ...geometry() }); };
     const over = (event: DragEvent) => {
         if (!bridge.hint(event)) return;
@@ -162,6 +172,8 @@ export function bindHostedEntityDropTarget(input: Readonly<{
     input.element.addEventListener('dragover', over);
     input.element.addEventListener('drop', drop);
     return { ready, dispose() {
+        disposed = true;
+        void observation?.dispose();
         observer?.disconnect(); realm?.removeEventListener('scroll', layout, true); realm?.removeEventListener('resize', layout);
         input.element.removeEventListener('dragover', over); input.element.removeEventListener('drop', drop);
         bridge.retire();

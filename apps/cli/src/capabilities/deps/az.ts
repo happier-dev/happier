@@ -2,11 +2,7 @@ import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { delimiter as PATH_DELIMITER, join } from 'node:path';
 
-import {
-  AZ_BINARY_NAME,
-  AZ_CLI_SETUP_URL,
-  AZ_DEP_ID,
-} from '@happier-dev/protocol/installables';
+import { AZ_BINARY_NAME, AZ_CLI_SETUP_URL, AZ_DEP_ID } from '@happier-dev/protocol/installables/definitions/az';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';

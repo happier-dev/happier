@@ -5,7 +5,14 @@ import { isSessionSurfaceItemIdentityCorrespondingV1 } from '../sessions/board/i
 import { WidgetDefinitionDraftV1Schema, projectWidgetDefinitionForSharedPublicationV1 } from './widgetDefinitionV1.js';
 import type { WidgetDefinitionActionDepsV1 } from './definitionActionsV1.js';
 import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
-import type { WidgetDefinitionRefV1 } from './widgetInstanceV1.js';
+import type { WidgetDefinitionRefV1, WidgetInputBindingsV1 } from './widgetInstanceV1.js';
+
+/** The copy's Session read becomes configurable; UI disclosure consumes this same transformation. */
+export function projectWidgetDefinitionPromotionBindingsV1(
+    definition: Readonly<{ sessionInputPath?: string }>, bindings: WidgetInputBindingsV1,
+): WidgetInputBindingsV1 {
+    return { ...bindings, ...(definition.sessionInputPath ? { [definition.sessionInputPath]: { kind: 'context' as const, slot: 'session' } } : {}) };
+}
 
 /** Sealed Session content stays with its existing reader and is copied only on explicit promotion. */
 export function createSessionWidgetDefinitionSourceReaderV1(input: Readonly<{

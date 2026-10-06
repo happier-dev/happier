@@ -35,10 +35,7 @@ import {
     type McpService as PluginMcpService,
     type McpTool as PluginMcpTool,
 } from '@happier-dev/plugin-sdk/mcp';
-import {
-    cloneStrictPluginJsonValue,
-    measureSerializedValidatedStrictPluginJsonUtf8Bytes,
-} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { cloneStrictPluginJsonValue, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type {
     ResolvedMcpDiscoverySourceContribution,

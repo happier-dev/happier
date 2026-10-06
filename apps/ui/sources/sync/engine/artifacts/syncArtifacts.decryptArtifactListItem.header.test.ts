@@ -4,11 +4,92 @@ import { encodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 
-import { applySocketArtifactUpdate, decryptArtifactListItem, decryptArtifactWithBody, decryptSocketNewArtifactUpdate } from './syncArtifacts';
+import { applySocketArtifactUpdate, decryptArtifactListItem, decryptArtifactWithBody, decryptSocketNewArtifactUpdate,
+  fetchArtifactBodyRevisionsFromApi, restoreArtifactBodyRevisionViaApi } from './syncArtifacts';
+import type { ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
+import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 
 describe('decryptArtifactListItem (artifact headers)', () => {
+  it.each(['plain', 'e2ee'] as const)('keeps %s retained actor metadata separate when restoring content', async mode => {
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(11)) : null;
+    const contentKey = new Uint8Array(32).fill(12);
+    const privateKey = new Uint8Array(32).fill(13);
+    const codec = new ArtifactEncryption(contentKey);
+    const source = { sessionId: 'source-session', runId: 'source-run', machineId: 'source-machine', path: 'private/earlier.txt', sha: 'a'.repeat(64) };
+    const firstActor = { savedBy: { kind: 'person' as const, accountId: 'owner' }, source };
+    const secondActor = { savedBy: { kind: 'agent' as const, accountId: 'owner', sessionId: 'author-session' }, source: { ...source, path: 'private/current.txt' } };
+    const sealBody = (body: string) => mode === 'plain' ? Promise.resolve(encodePlainArtifactStoredContent({ body })) : codec.encryptBody({ body });
+    const firstBody = await sealBody('Earlier');
+    let row: Artifact = { id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+      header: mode === 'plain' ? encodePlainArtifactStoredContent({ title: 'History' }) : await codec.encryptHeader({ title: 'History' }),
+      body: await sealBody('Current'), dataEncryptionKey: encryption ? encodeBase64(await encryption.encryptEncryptionKey(contentKey)) : ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      provenance: await sealArtifactPrivateRevisionMetadata({ mode, artifactId, bodyVersion: 2, provenance: secondActor, dataKey: privateKey }),
+      provenanceDataEncryptionKey: encryption ? encodeBase64(await encryption.encryptEncryptionKey(privateKey)) : null,
+      headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2 };
+    const firstMetadata = await sealArtifactPrivateRevisionMetadata({ mode, artifactId, bodyVersion: 1, provenance: firstActor, dataKey: privateKey });
+    const request = async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/revisions')) return Response.json({ retentionCount: 10, revisions: [
+        { bodyVersion: 1, body: firstBody, provenance: firstMetadata, createdAt: 1, sizeBytes: 7 },
+        { bodyVersion: 2, body: row.body, provenance: row.provenance, createdAt: 2, sizeBytes: 7 } ] });
+      if (path.endsWith('/restore')) {
+        const write = JSON.parse(String(init?.body)) as ArtifactUpdateRequest;
+        expect(write.expectedBodyVersion).toBe(2);
+        expect(write.provenanceDataEncryptionKey).toBe(mode === 'plain' ? null : undefined);
+        const openedBody = mode === 'plain' ? decodePlainArtifactStoredContent(write.body!) : await codec.decryptBody(write.body!);
+        expect(openedBody).toEqual({ body: 'Earlier' });
+        const openedHeader = mode === 'plain' ? decodePlainArtifactStoredContent(write.header!) : await codec.decryptHeaderRaw(write.header!);
+        expect(openedHeader).not.toHaveProperty('source');
+        row = { ...row, header: write.header!, body: write.body!, provenance: write.provenance, headerVersion: 3, bodyVersion: 3 };
+        return Response.json({ success: true, headerVersion: 3, bodyVersion: 3 });
+      }
+      if (path.endsWith('/recipients')) return Response.json({ artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: mode,
+        dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
+        provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey, recipients: [] });
+      return Response.json(row);
+    };
+    const params = { credentials: { token: 't' }, request, artifactId, encryption, artifactDataKeys: new Map() };
+    const inventory = await fetchArtifactBodyRevisionsFromApi(params);
+    expect(inventory.revisions.map(revision => revision.provenance)).toEqual([firstActor, secondActor]);
+    const updated: unknown[] = [];
+    await restoreArtifactBodyRevisionViaApi({ ...params, bodyVersion: 1, expectedRevision: { headerVersion: 2, bodyVersion: 2 },
+      savedBy: { kind: 'person', accountId: 'restoring-user' }, updateArtifact: artifact => updated.push(artifact) });
+    expect(updated).toMatchObject([{ body: 'Earlier', bodyVersion: 3, provenance: {
+      savedBy: { kind: 'person', accountId: 'restoring-user' }, source, restoredFromBodyVersion: 1 } }]);
+  });
+  it.each(['plain', 'e2ee'] as const)('opens unknown stored %s envelope fields on current and socket reads and rejects substitution', async mode => {
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(11)) : null;
+    const contentKey = new Uint8Array(32).fill(12);
+    const privateKey = new Uint8Array(32).fill(13);
+    const codec = new ArtifactEncryption(contentKey);
+    const provenance = { savedBy: { kind: 'agent' as const, accountId: 'owner', sessionId: 'session' } };
+    // Model extra persisted fields at the storage boundary, bypassing the canonical writer.
+    const storedMetadata = { v: 1, artifactId, bodyVersion: 1, unknown: true,
+      provenance: { ...provenance, unknown: true, savedBy: { ...provenance.savedBy, unknown: true } } };
+    const sealed = mode === 'plain' ? encodePlainArtifactStoredContent(storedMetadata)
+      : await new ArtifactEncryption(privateKey).encryptHeader(storedMetadata);
+    const row: Artifact = { id: artifactId, ownerAccountId: 'owner', access: 'view', encryptionMode: mode,
+      header: mode === 'plain' ? encodePlainArtifactStoredContent({ title: 'Shared' }) : await codec.encryptHeader({ title: 'Shared' }),
+      body: mode === 'plain' ? encodePlainArtifactStoredContent({ body: 'Text', unknown: true }) : await codec.encryptHeader({ body: 'Text', unknown: true }),
+      dataEncryptionKey: encryption ? encodeBase64(await encryption.encryptEncryptionKey(contentKey)) : ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      provenance: sealed, provenanceDataEncryptionKey: encryption ? encodeBase64(await encryption.encryptEncryptionKey(privateKey)) : null,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    const artifactDataKeys = new Map();
+    const full = await decryptArtifactWithBody({ artifact: row, encryption, artifactDataKeys });
+    const socket = await decryptSocketNewArtifactUpdate({ ...row, artifactId, encryption, artifactDataKeys });
+    for (const opened of [full, socket]) expect(opened).toMatchObject({ isDecrypted: true, body: 'Text', provenance });
+    if (!full) throw new Error('Expected opened record');
+    const restored = { ...provenance, restoredFromBodyVersion: 1 };
+    const next = await sealArtifactPrivateRevisionMetadata({ mode, artifactId, bodyVersion: 2, provenance: restored, dataKey: privateKey });
+    const updated = await applySocketArtifactUpdate({ existingArtifact: full, createdAt: 2, dataEncryptionKey: contentKey,
+      provenanceDataKey: privateKey, provenance: next, body: { version: 2, value: row.body! } });
+    expect(updated).toMatchObject({ isDecrypted: true, bodyVersion: 2, provenance: restored });
+    const substituted = await decryptArtifactWithBody({ artifact: { ...row, bodyVersion: 2 }, encryption, artifactDataKeys });
+    expect(substituted).toMatchObject({ isDecrypted: false, availability: { kind: 'locked' } });
+  });
   it.each(['plain', 'e2ee'] as const)('refuses malformed and specialized binary %s bodies across full and socket reads', async (mode) => {
     const encryption = mode === 'plain' ? null : await Encryption.create(new Uint8Array(32).fill(11));
     const key = new Uint8Array(32).fill(12);

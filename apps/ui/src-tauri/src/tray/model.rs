@@ -233,11 +233,11 @@ impl Default for TrayLabels {
             incomplete: "Some background services couldn’t be checked".into(),
             no_services: "This computer isn’t set up yet".into(),
             working: "Working…".into(),
-            stop_confirm_title: "Stop the background service for {relay}?".into(),
+            stop_confirm_title: "Stop Happier’s background service for {relay}?".into(),
             stop_confirm_body:
                 "Agent sessions running on this computer for {relay} will end, and your phone and browser can’t reach it there until it starts again."
                     .into(),
-            stop_all_confirm_title: "Stop background services and quit?".into(),
+            stop_all_confirm_title: "Stop Happier’s background services and quit?".into(),
             stop_all_confirm_body:
                 "Agent sessions running on this computer will end, and your phone and browser can’t reach it until you open Happier again."
                     .into(),
@@ -1241,7 +1241,7 @@ mod tests {
         let labels: TrayLabels = serde_json::from_value(json!({
             "open": "Happier öffnen",
             "quit": "",
-            "stopConfirmTitle": "Hintergrunddienst für {relay} stoppen?"
+            "stopConfirmTitle": "Happier-Hintergrunddienst für {relay} stoppen?"
         }))
         .expect("partial labels parse");
         let labels = labels.with_fallbacks();
@@ -1250,7 +1250,7 @@ mod tests {
         assert_eq!(labels.settings, "Settings…");
         assert_eq!(
             fill_relay(&labels.stop_confirm_title, "a.example.com"),
-            "Hintergrunddienst für a.example.com stoppen?"
+            "Happier-Hintergrunddienst für a.example.com stoppen?"
         );
     }
 

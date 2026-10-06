@@ -6,15 +6,9 @@ import {
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
-import {
-  getActionRequiredServerFeatureId,
-  SESSION_RUN_PROMPT_READ_ACTION_IDS_V1,
-  SessionRunPromptReadActionIdV1Schema,
-  type ActionId,
-  type ActionsSettingsV1,
-  type FeatureId,
-  type SessionRunPromptReadActionIdV1,
-} from '@happier-dev/protocol';
+import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
+import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1, SessionRunPromptReadActionIdV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { ActionId, ActionsSettingsV1, FeatureId, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 import type { HappierBuiltInToolDefinition } from './types';
 
 export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'agent';

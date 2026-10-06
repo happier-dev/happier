@@ -12,7 +12,8 @@ import {
   releaseIndependentDevTargetSyncProject,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
-import { renderMutagenProject } from './mutagen_project.mjs';
+import { DEV_TARGET_MUTAGEN_IGNORE_PATHS, renderMutagenProject, resolveMutagenSessionName } from './mutagen_project.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
 const target = {
   name: 'mac',
@@ -21,6 +22,45 @@ const target = {
   repoDir: '/Users/dev/happier',
   cliHomeDir: '/Users/dev/.happier',
 };
+
+test('Git-backed project generation syncs all source using only the existing artifact and security policy', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sync-fail-open-' });
+  const sourceDir = fixture.path('source');
+  const stackBaseDir = fixture.path('stack');
+  for (const directory of ['.git/objects', '.git/refs', 'packages/lib/src']) {
+    await mkdir(join(sourceDir, directory), { recursive: true });
+  }
+  // A real empty Git index supplies the external boundary; no repository work is staged.
+  await writeFile(join(sourceDir, '.git/HEAD'), 'ref: refs/heads/main\n');
+  await writeFile(join(sourceDir, 'package.json'), JSON.stringify({ workspaces: ['packages/*'] }));
+  await writeFile(join(sourceDir, 'packages/lib/package.json'), JSON.stringify({ name: '@happier-dev/lib' }));
+  await ensureDevTargetSyncProject({ stackBaseDir, sourceDir, targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER, env: {} }, {
+    // Mutagen is the process boundary; source membership and rendering remain real.
+    runProcess: async () => ({ code: 0, out: '' }),
+  });
+  const rendered = await readFile(join(stackBaseDir, 'mutagen/mutagen.yml'), 'utf8');
+  const ignores = rendered.split('\n').filter(line => line.startsWith('        - ')).map(line => JSON.parse(line.slice(10)));
+  assert.deepEqual(ignores, DEV_TARGET_MUTAGEN_IGNORE_PATHS);
+});
+
+test('controlled runtime borrows the producer synchronization without rewriting or mutating its lifecycle', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-borrow-producer-sync-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const projectFile = join(root, 'mutagen/mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  const project = renderMutagenProject({ sourceDir: '/source/repo', targets: [target], ownerId: 'producer-dev-owner' });
+  await writeFile(projectFile, project);
+  const calls = [];
+  const borrowed = await ensureDevTargetSyncProject({ stackBaseDir: root, sourceDir: '/source/repo',
+    targets: [target], borrowOnly: true, ownerId: 'consumer-owner', env: {} }, {
+    runProcess: async input => { calls.push(input); return { code: 0, out: JSON.stringify([{ name: resolveMutagenSessionName(target.name), paused: false, status: 'watching', conflicts: [], excludedConflicts: 0,
+      successfulCycles: 1, alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) }; },
+  });
+  await borrowed.release('terminate');
+  assert.equal(await readFile(projectFile, 'utf8'), project);
+  assert.ok(calls.every(input => !input.args.some(arg => ['start', 'resume', 'pause', 'terminate'].includes(arg))));
+});
 
 async function writeCriticalScopeStubs(root) {
   const binDir = join(root, 'critical-scope-bin');
@@ -172,7 +212,7 @@ test('independent sync start owns and resumes the canonical Mutagen project', as
   });
 
   assert.equal(result.ownership, 'owned');
-  assert.match(await readFile(result.projectFile, 'utf8'), /configurationAlpha:\n\s+watch:\n\s+pollingInterval: 150/);
+  assert.match(await readFile(result.projectFile, 'utf8'), /configurationAlpha:\n\s+watch:\n\s+mode: "no-watch"/);
   assert.deepEqual(
     calls.filter((call) => call.command === 'mutagen').map((call) => call.args[1] ?? call.args[0]),
     ['version', 'terminate', 'start', 'list'],

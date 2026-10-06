@@ -2592,7 +2592,7 @@ finally {
     Set-Content -Path $runnerScriptPath -Value $runnerScript -Encoding utf8
 
     $powerShellExecutablePath = Resolve-InstallerPowerShellExecutablePath
-    $process = Start-Process -FilePath $powerShellExecutablePath -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScriptPath) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden
+    $process = Start-Process -FilePath $powerShellExecutablePath -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"{0}"' -f $runnerScriptPath)) -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden
 
     $completed = $process.WaitForExit($timeoutMs)
     if (-not $completed) {
@@ -2659,7 +2659,6 @@ function Ensure-Minisign {
   $exe = Get-Item $exePath
 
   try {
-    $LASTEXITCODE = 1
     & $exe.FullName -v *> $null
     if ($LASTEXITCODE -ne 0) {
       throw "Downloaded minisign executable failed its version probe (exit $LASTEXITCODE)."

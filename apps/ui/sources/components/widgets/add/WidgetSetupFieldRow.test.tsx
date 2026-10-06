@@ -67,16 +67,19 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(onChange).toHaveBeenCalledWith({ kind: 'pin', value: review });
     });
 
-    it('pins a number only once it is a complete value for its widget, like Action fields', async () => {
+    it('parses a number through the public field like Action fields: an incomplete draft stays text, a complete one is the number', async () => {
         const onChange = vi.fn();
         const screen = await renderScreen(
             <WidgetSetupFieldRow entry={{ field: { path: 'limit', title: 'Limit', widget: 'integer' } }}
                 row={{ kind: 'needed' }} options={[]} optionsStatus="ready" plainValue={undefined}
                 phone={false} onChange={onChange} testID="setup.limit" />,
         );
+        // The draft keeps what was typed (the binder refuses it, so the step cannot finish), never a guess.
         screen.changeTextByTestId('setup.limit.input', '1.5');
-        expect(onChange).not.toHaveBeenCalled();
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'pin', value: '1.5' });
         screen.changeTextByTestId('setup.limit.input', '3');
-        expect(onChange).toHaveBeenCalledWith({ kind: 'pin', value: 3 });
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'pin', value: 3 });
+        screen.changeTextByTestId('setup.limit.input', '');
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'clear' });
     });
 });

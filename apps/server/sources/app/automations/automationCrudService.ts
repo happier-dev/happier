@@ -42,8 +42,8 @@ import {
     AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
     AutomationOccurrenceEvidenceEqualityTagV1Schema,
+    AutomationOccurrenceEvidenceV1ReadSchema,
     AutomationOccurrenceEvidenceV1Schema,
-    AutomationRunResultStoredV1Schema,
     deriveAutomationOccurrenceKeyV1,
     parseAutomationStoredDefinitionExecutionRecipeV1,
     AutomationTemplatePayloadV1Schema,
@@ -55,6 +55,7 @@ import {
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
     parseAutomationRunFailureDetailStoredEnvelopeV1,
+    parseAutomationRunResultStoredEnvelopeV1,
     parseAutomationRunExecutionRecipeV1,
     compilePluginJsonSchema,
     createCanonicalJsonSigningInput,
@@ -2832,19 +2833,11 @@ function assertAutomationRunLegacySummarySource(
             "Run legacy summary must retain its tagged predecessor result source",
         );
     }
-    let resultEnvelope: unknown;
-    try {
-        resultEnvelope = JSON.parse(row.resultEnvelope);
-    } catch {
-        throw new AutomationValidationError(
-            "Run legacy summary result source is not valid JSON",
-        );
-    }
-    const parsed = AutomationRunResultStoredV1Schema.safeParse(resultEnvelope);
+    const parsed = parseAutomationRunResultStoredEnvelopeV1(row.resultEnvelope);
     if (
-        !parsed.success
-        || parsed.data.t !== "legacySummaryCiphertext"
-        || parsed.data.c !== row.summaryCiphertext
+        parsed === null
+        || parsed.t !== "legacySummaryCiphertext"
+        || parsed.c !== row.summaryCiphertext
     ) {
         throw new AutomationValidationError(
             "Run legacy summary result source does not match its retained predecessor bytes",
@@ -2856,6 +2849,7 @@ function assertAutomationRunStoredContentForAccountMode(params: Readonly<{
     row: AutomationAccountEncryptionMigrationRunRow;
     mode: "plain" | "e2ee";
     content: AutomationAccountEncryptionMigrationRunStoredContent;
+    /** Persisted source validation only; new transition targets retain canonical admission. */
     allowLegacyResultSource?: boolean;
 }>): void {
     const isWorkflowRun = params.row.workflowCustodyState !== null;
@@ -2968,7 +2962,9 @@ function assertAutomationRunStoredContentForAccountMode(params: Readonly<{
                 "Plain Run evidence must use a plaintext envelope",
             );
         } else {
-            const evidence = AutomationOccurrenceEvidenceV1Schema.safeParse(
+            const evidence = (params.allowLegacyResultSource === true
+                ? AutomationOccurrenceEvidenceV1ReadSchema
+                : AutomationOccurrenceEvidenceV1Schema).safeParse(
                 outer.envelope.v,
             );
             if (!evidence.success) {

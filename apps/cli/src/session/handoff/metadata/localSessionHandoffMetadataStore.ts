@@ -1,4 +1,4 @@
-import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol';
+import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 

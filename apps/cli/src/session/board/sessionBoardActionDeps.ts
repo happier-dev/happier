@@ -1,22 +1,14 @@
 import axios from 'axios';
-import {
-  applySessionBoardItemPlacementV1, applySessionBoardLayoutOperationV1, resolveSessionBoardItemPlacementDestinationV1, removeSessionBoardItemPlacementsV1, isSessionSurfaceItemSourceCompatible,
-  bindSessionBoardMutationRequestV1,
-  classifySessionBoardMutationTransportResultV1,
-  createSessionBoardFailureV1,
-  createSessionBoardOutcomeUnknownFailureV1,
-  projectSessionBoardActionFailureV1, projectSessionBoardFeatureDecisionFailureV1,
-  projectSessionBoardAdapterFailureV1,
-  SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SessionBoardGetInputV1Schema,
-  SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema,
-  SessionBoardItemUpsertInputV1Schema, SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema,
-  SessionBoardMutationActionResultV1Schema, SessionSurfaceItemV1Schema,
-  projectSessionBoardGetResultV1,
-  type SessionBoardItemPlacementParticipantV1, type SessionBoardLayoutV1,
-  type SessionBoardReadProjectionEntryV1, type SessionBoardActionIdV1,
-} from '@happier-dev/protocol/sessions/board';
-import { SessionSystemRecordListQuerySchema } from '@happier-dev/protocol';
-import { classifyHomeDomainHttpMutationFailureV1, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { applySessionBoardItemPlacementV1, applySessionBoardLayoutOperationV1, resolveSessionBoardItemPlacementDestinationV1, removeSessionBoardItemPlacementsV1 } from '@happier-dev/protocol/sessions/board/layoutOperations';
+import { isSessionSurfaceItemSourceCompatible, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board/item';
+import { bindSessionBoardMutationRequestV1, classifySessionBoardMutationTransportResultV1, createSessionBoardFailureV1, createSessionBoardOutcomeUnknownFailureV1, projectSessionBoardActionFailureV1, projectSessionBoardAdapterFailureV1, SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SessionBoardGetInputV1Schema, SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema, SessionBoardItemUpsertInputV1Schema, SessionBoardMutationActionResultV1Schema, projectSessionBoardGetResultV1 } from '@happier-dev/protocol/sessions/board/actions';
+import { projectSessionBoardFeatureDecisionFailureV1 } from '@happier-dev/protocol/sessions/board/errors';
+import { SessionBoardLayoutV1Schema } from '@happier-dev/protocol/sessions/board/layout';
+import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
+import type { SessionBoardItemPlacementParticipantV1, SessionBoardLayoutV1, SessionBoardReadProjectionEntryV1, SessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board';
+import { SessionSystemRecordListQuerySchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

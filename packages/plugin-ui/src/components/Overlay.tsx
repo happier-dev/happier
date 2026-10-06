@@ -1,4 +1,4 @@
-import { useCallback, useContext, useMemo, useRef, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -393,6 +393,8 @@ type MenuRowsProps = Readonly<{
   triggerAccessibilityLabel: string;
   controls: PluginUiPopoverContentControls;
   initialFocusRef: MutableRefObject<View | null>;
+  /** Chooser sections have visible headings as well as their semantic group names. */
+  showGroupLabels?: boolean;
 }>;
 
 function MenuRows({
@@ -404,6 +406,7 @@ function MenuRows({
   triggerAccessibilityLabel,
   controls,
   initialFocusRef,
+  showGroupLabels = false,
 }: MenuRowsProps): ReactElement {
   const theme = usePluginTheme();
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
@@ -547,6 +550,7 @@ function MenuRows({
           accessibilityLabel={group.accessibilityLabel}
           aria-label={group.accessibilityLabel}
         >
+          {showGroupLabels ? <HappierText variant="caption" tone="secondary">{group.accessibilityLabel}</HappierText> : null}
           {renderEntries(createMenuRenderEntries(group.entries, resolvedRadioGroups))}
         </View>
       ))}
@@ -592,6 +596,58 @@ function MenuPresentation({
       )}
     />
   );
+}
+
+export type HostedAnchoredMenuProps = Readonly<{
+  anchorRef: RefObject<HTMLElement | null>;
+  onOpenChange(open: boolean): void;
+  accessibilityLabel: string;
+  items: readonly MenuItem[];
+  groups: readonly MenuGroup[];
+  onSelect(id: string): void;
+}>;
+
+/** Hosted-realm anchor adapter. Native dialog owns modal focus/Escape; MenuRows owns choices. */
+export function HostedAnchoredMenu(props: HostedAnchoredMenuProps): ReactElement {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const initialFocusRef = useRef<View | null>(null);
+  const theme = usePluginTheme();
+  const margin = theme.spacing.small;
+  const maxHeight = Math.max(0, (props.anchorRef.current?.ownerDocument.defaultView?.innerHeight ?? 0) - margin * 2);
+  const controls = useMemo<PluginUiPopoverContentControls>(() => ({ requestClose: () => props.onOpenChange(false), maxHeight }), [maxHeight, props.onOpenChange]);
+  useLayoutEffect(() => {
+    const node = dialog.current;
+    const anchor = props.anchorRef.current;
+    if (!node || !anchor) return;
+    const realm = anchor.ownerDocument.defaultView;
+    const position = () => {
+      const rect = anchor.getBoundingClientRect();
+      node.style.left = `${Math.max(margin, Math.min(rect.left, (realm?.innerWidth ?? 0) - node.offsetWidth - margin))}px`;
+      node.style.top = `${Math.max(margin, Math.min(rect.bottom, (realm?.innerHeight ?? 0) - node.offsetHeight - margin))}px`;
+    };
+    node.showModal(); position();
+    initialFocusRef.current?.focus?.();
+    realm?.addEventListener('resize', position);
+    realm?.addEventListener('scroll', position, true);
+    return () => {
+      realm?.removeEventListener('resize', position);
+      realm?.removeEventListener('scroll', position, true);
+      node.close();
+      if (anchor.isConnected) anchor.focus();
+    };
+  }, [margin, props.anchorRef]);
+  useLayoutEffect(() => { initialFocusRef.current?.focus?.(); }, [props.items, props.groups]);
+  return <dialog ref={dialog} aria-label={props.accessibilityLabel}
+    onCancel={event => { event.preventDefault(); props.onOpenChange(false); }}
+    onClick={event => { if (event.target === event.currentTarget) props.onOpenChange(false); }}
+    style={{ position: 'fixed', margin: 0, padding: 0, border: 0, background: 'transparent', color: 'inherit', maxWidth: `calc(100vw - ${margin * 2}px)` }}>
+    <OverlayFieldTriggerContext.Provider value={null}>
+      <HappierScrollArea style={{ maxHeight }}><Surface padding="small" materialRole="floating"><HappierStack gap={4}>
+        <MenuRows ungroupedItems={props.items} groups={props.groups} radioGroups={[]} onSelect={props.onSelect}
+          open showGroupLabels triggerAccessibilityLabel={props.accessibilityLabel} controls={controls} initialFocusRef={initialFocusRef} />
+      </HappierStack></Surface></HappierScrollArea>
+    </OverlayFieldTriggerContext.Provider>
+  </dialog>;
 }
 
 /** A bounded semantic menu over the shared Popover lifecycle. */

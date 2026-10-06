@@ -2,12 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import { basename, join, relative, resolve, sep } from 'node:path';
 
-import {
-    PluginDaemonDatabaseContributionV1Schema,
-    PluginContributionLocalIdSchema,
-    PluginIdSchema,
-    type PluginDaemonDatabaseContributionV1,
-} from '@happier-dev/protocol';
+import { PluginDaemonDatabaseContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/daemonDatabases';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { PluginDaemonDatabaseContributionV1 } from '@happier-dev/protocol';
 import type {
     DaemonDatabase,
     DaemonDatabaseExecutionResult,

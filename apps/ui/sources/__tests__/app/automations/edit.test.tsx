@@ -7,14 +7,23 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import { AutomationApiError } from '@/sync/api/automations/apiAutomations';
+import { SessionTriggersRoute } from '@/app/(app)/session/[id]/triggers';
+import { WorkflowsRoute } from '@/app/(app)/workflows';
+import { SessionTriggersSection } from '@/components/workflows/triggers/SessionTriggersSection';
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 // Sync's authenticated direct-definition request is the network façade; keep route/state logic real.
 const read = vi.hoisted(() => vi.fn());
+const execute = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/sync', () => ({ sync: { refreshAutomationDefinitionDetail: read } }));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
     .createExpoRouterMock({ params: () => route.params }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+// The native portal is a system boundary; keep the trigger section, form and Action client real.
+vi.mock('@/components/ui/popover', () => ({
+    Popover: ({ children }: { children: (size: { maxHeight: number }) => React.ReactNode }) => children({ maxHeight: 640 }),
+}));
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     getAppliedActiveServerSnapshot: () => ({ serverId: storage.getState().profileScope?.serverId }),
     isAppliedActiveServerRuntimeAvailable: () => true,
@@ -25,7 +34,9 @@ beforeEach(() => {
     previous = storage.getState();
     route.params = {};
     read.mockReset();
-    storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+    execute.mockReset();
+    storage.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' },
+        workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {} });
 });
 afterEach(() => { standardCleanup(); storage.setState(previous); });
 
@@ -64,7 +75,41 @@ describe('retired Automation routes', () => {
     it('opens a session-scoped set in that session rather than the Account column', async () => {
         route.params = { id: 'automation-42' };
         read.mockResolvedValue({ ...automation(), scopeSessionId: 'session-1' });
-        expect(href(await mount())).toEqual({ pathname: '/session/[id]/triggers', params: { id: 'session-1', serverId: 'server-a' } });
+        expect(href(await mount())).toEqual({ pathname: '/session/[id]/triggers', params: { id: 'session-1', serverId: 'server-a', trigger: 'automation-42' } });
+    });
+    it.each(['edit', 'detail'] as const)('resolves combined identifiers on %s to the exact Session trigger popover', async (kind) => {
+        route.params = { id: 'automation-42' };
+        const workflowId = '11111111-1111-4111-8111-111111111111';
+        read.mockResolvedValue({ ...automation(workflowId), scopeSessionId: 'session-1' });
+        expect(href(await mount(kind))).toEqual({ pathname: '/session/[id]/triggers', params: {
+            id: 'session-1', serverId: 'server-a', trigger: 'automation-42',
+        } });
+    });
+    it('forwards the scoped trigger identity through the Session alias and opens its existing row without writing', async () => {
+        route.params = { id: 'session-1', serverId: 'server-a', trigger: 'automation-42' };
+        const destination = href(await renderScreen(<SessionTriggersRoute />));
+        expect(destination).toEqual({ pathname: '/session/[id]', params: {
+            id: 'session-1', serverId: 'server-a', trigger: 'automation-42', right: 'agents',
+        } });
+        route.params = destination.params;
+        const workflowId = '11111111-1111-4111-8111-111111111111';
+        const set = (automationId: string, hour: number) => ({ automationId, revision: 4, enabled: true,
+            health: 'available', target: { kind: 'workflow', ref: workflowId },
+            triggers: [{ id: `${automationId}-schedule`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                kind: 'schedule', triggerDefinitionEnvelope: null, nextRunAt: null,
+                schedule: { kind: 'cron', scheduleExpr: `0 ${hour} * * *`, everyMs: null, timezone: null } }] });
+        const selected = set('automation-42', 19);
+        selected.triggers.push({ ...set('automation-42', 21).triggers[0]!, id: 'automation-42-later-schedule' });
+        execute.mockImplementation(async (actionId: string) => actionId === 'session.trigger.list'
+            ? { ok: true, result: { sessionId: 'session-1', sets: [set('other-automation', 9), selected], pullRequestLinks: [] } }
+            : actionId === 'workflow.definition.list'
+                ? { ok: true, result: { definitions: [], nextCursor: null } }
+                : { ok: false, errorCode: 'source_unavailable', error: 'Unavailable' });
+        const screen = await renderScreen(<SessionTriggersSection sessionId="session-1" />);
+        expect(screen.findByTestId('session-work-trigger-popover')).not.toBeNull();
+        expect(screen.findAll((node) => node.props.accessibilityLabel === 'workflows.triggers.popover.at'
+            && node.props.value === '19:00').length).toBeGreaterThan(0);
+        expect(execute.mock.calls.filter(([actionId]) => /session\.trigger\.(add|update|remove)$/.test(actionId))).toEqual([]);
     });
     it('lands a deleted Automation in Workflows with the not-available line', async () => {
         route.params = { id: 'automation-42' };
@@ -98,7 +143,6 @@ describe('retired Automation routes', () => {
     });
     it('shows the prescribed not-available line at the Workflows destination', async () => {
         route.params = { automationUnavailable: '1' };
-        const { WorkflowsRoute } = await import('@/app/(app)/workflows');
         const screen = await renderScreen(<WorkflowsRoute />);
         expect(screen.findByTestId('retired-automation-unavailable')).not.toBeNull();
     });

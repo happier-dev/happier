@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
-import { HomeConnectionDescriptorV1Schema, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import { replacePersonalHomeFileDurably } from './durableFile.js';
 import { createPersonalHomePathProtection } from './protection.js';

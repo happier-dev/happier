@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SessionCompanionPresentationItemRefV1Schema } from '@happier-dev/protocol/sessions';
 
 import {
     AGENT_PLAN_COMPANION_ITEM,
@@ -31,6 +32,17 @@ const visible: SessionCompanionPreferenceV1 = {
 };
 
 describe('session companion preference schema', () => {
+    it('reads known preference and instance fields recursively, dropping extras while input admission remains strict', () => {
+        const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: { session: { kind: 'context', slot: 'session' } } };
+        const item = { kind: 'instance', instance };
+        const storedItem = { ...item, savedBy: 'other-client', instance: { ...instance, savedBy: 'other-client', definition: { ...instance.definition, savedBy: 'other-client', surface: { ...instance.definition.surface, savedBy: 'other-client' } }, bindings: { session: { ...instance.bindings.session, savedBy: 'other-client' } } } };
+        const stored = { ...visible, savedBy: 'other-client', items: [storedItem] };
+        const expected = { ...visible, items: [item] };
+        expect(normalizeSessionCompanionPreference(stored)).toEqual(expected);
+        expect(SessionCompanionPreferencesV1Schema.parse({ 'realm:good': stored, 'realm:missing': { ...stored, density: undefined } })).toEqual({ 'realm:good': expected });
+        expect(normalizeSessionCompanionPreference({ ...stored, items: [{ ...storedItem, instance: { ...storedItem.instance, id: undefined } }] })).toEqual(HIDDEN_SESSION_COMPANION_PREFERENCE_V1);
+        expect(SessionCompanionPresentationItemRefV1Schema.safeParse(storedItem).success).toBe(false);
+    });
     it('keeps independently configured copies while a shared Board reference remains separate', () => {
         const instance = { v: 1, id: 'copy-a', definition: { kind: 'installed', surface: { pluginId: 'acme.tools', localId: 'glance' } }, bindings: { session: { kind: 'value', value: 'session-a' } } };
         const second = { ...instance, id: 'copy-b', bindings: { session: { kind: 'value', value: 'session-b' } } };

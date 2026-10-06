@@ -118,12 +118,15 @@ describe('RealtimeProviderFields', () => {
     const slider = screen.findAllByType(Slider)[0]!;
     expect(slider).toBeDefined();
     expect(slider.props.value).toBe(1);
+    expect(screen.findByTestId('voice-realtime-field-speed.default')).toBeNull();
     await act(async () => slider.props.onValueChange(1.1));
     expect(onConfigChange).toHaveBeenLastCalledWith({ ...config, speed: 1.1 });
     await screen.update(render({ ...config, speed: 1.1 }));
     const reset = screen.tree.findAll((node) => node.props.testID === 'voice-realtime-field-speed.default' && typeof node.props.onPress === 'function')[0]!;
     await act(async () => reset.props.onPress());
     expect(onConfigChange).toHaveBeenLastCalledWith(config);
+    await screen.update(render(config));
+    expect(screen.findByTestId('voice-realtime-field-speed.default')).toBeNull();
   });
   it('explains when an immediate native greeting has no Reply in literal without changing the choice', async () => {
     const { ELEVENLABS_SETTINGS_SECTION } = await import('../../../../../../../packages/plugins/elevenlabs/src/voiceSettingsPresentation');

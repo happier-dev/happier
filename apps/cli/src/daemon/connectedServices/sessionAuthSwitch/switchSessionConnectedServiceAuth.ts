@@ -1,24 +1,12 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  ConnectedAccountServiceKeySchema,
-  ConnectedServiceBindingsV2IngressSchema,
-  ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceUxDiagnosticCodeV1Schema,
-  ConnectedServiceMaterializationIdentityV1Schema,
-  isConnectedServiceCredentialHealthStatusReconnectRequired,
-  isConnectedServiceCredentialHealthStatusUsable,
-  normalizeConnectedServiceCredentialHealthStatus,
-  type ConnectedServiceUxDiagnosticV1,
-  type ConnectedServiceBindingsV2,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceMaterializationIdentityV1,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  parseQualifiedPluginContributionKey,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceCredentialRevisionV1Schema, isConnectedServiceCredentialHealthStatusReconnectRequired, isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { ConnectedServiceUxDiagnosticV1, ConnectedServiceBindingsV2, ConnectedAccountServiceKey, ConnectedServiceMaterializationIdentityV1, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { CatalogAgentId, ConnectedServiceResumeContinuityDiagnostics } from '@/agent/catalog/types';
 import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';

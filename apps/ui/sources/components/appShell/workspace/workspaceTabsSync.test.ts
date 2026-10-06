@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createWorkspaceTabsSync } from './workspaceTabsSync';
+import { createWorkspaceTabsSync, parseWorkspaceTabs } from './workspaceTabsSync';
 import { emptyWorkspaceTabs, type SharedWorkspaceTabs } from './workspaceSyncedTabs';
 import { normalizeWorkspaceSingletonTabs } from './workspaceDestinationPolicy';
 import type { CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
@@ -13,6 +13,23 @@ const singletonCatalog = [{ id: singletonKind, kind: 'plugin', container: 'appPa
 }] satisfies readonly CompactAppDestination[];
 
 describe('workspace KV synchronization', () => {
+    it('restores and canonically republishes known tab fields when persisted envelopes contain extras', async () => {
+        const canonical = record('a');
+        const stored = { ...canonical, savedBy: 'other-client', tabsById: { a: { ...canonical.tabsById.a, savedBy: 'other-client', target: { ...canonical.tabsById.a.target, savedBy: 'other-client' } } } };
+        const publications: SharedWorkspaceTabs[] = [];
+        const controller = createWorkspaceTabsSync({ transport: {
+            read: async () => ({ value: stored, version: 0 }),
+            compareAndSet: async value => { publications.push(value); return { success: true as const, version: 1 }; },
+        }, onRecord: () => {} });
+        await controller.refresh();
+        expect(controller.getSnapshot().record).toEqual(canonical);
+        controller.enqueue([{ type: 'patch', tabId: 'a', pinned: true }]);
+        await controller.flush();
+        expect(publications).toEqual([{ ...canonical, tabsById: { a: { ...canonical.tabsById.a, pinned: true } } }]);
+        expect(() => parseWorkspaceTabs({ ...stored, order: undefined }, 0)).toThrow();
+        expect(() => parseWorkspaceTabs({ ...stored, tabsById: { a: { ...stored.tabsById.a, pinned: undefined } } }, 0)).toThrow();
+        controller.stop();
+    });
     it('projects restored tabs on an absent key without publishing until an explicit edit', async () => {
         let stored: SharedWorkspaceTabs | null = null;
         const publications: SharedWorkspaceTabs[] = [];

@@ -1,6 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -44,6 +46,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     action: {
         minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
+        borderWidth: 1,
+        borderColor: 'transparent',
         justifyContent: 'center',
         paddingHorizontal: theme.margins.sm,
     },
@@ -62,6 +66,7 @@ export function WorkflowImportReview(props: Readonly<{
     repairDraft?: WorkflowEditorDraft;
     onOpenRepair: (draft: WorkflowEditorDraft) => void;
 }> & CustomModalInjectedProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const repairDraft = props.repairDraft;
     return (
         <View testID="workflow-import-review" style={styles.root} accessibilityRole="alert">
@@ -80,26 +85,26 @@ export function WorkflowImportReview(props: Readonly<{
                 ))}
             </View>
             <View style={styles.actions}>
-                <Pressable
+                <HappierPressable
                     testID="workflow-import-dismiss"
                     accessibilityRole="button"
-                    style={styles.action}
+                    style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     onPress={props.onClose}
                 >
                     <Text style={styles.secondaryActionText}>{t('common.close')}</Text>
-                </Pressable>
+                </HappierPressable>
                 {repairDraft === undefined ? null : (
-                    <Pressable
+                    <HappierPressable
                         testID="workflow-import-open-repair"
                         accessibilityRole="button"
-                        style={styles.action}
+                        style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         onPress={() => {
                             props.onOpenRepair(repairDraft);
                             props.onClose();
                         }}
                     >
                         <Text style={styles.primaryActionText}>{t('workflows.interchange.openRepairDraft')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 )}
             </View>
         </View>

@@ -28,7 +28,8 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderTestScreen } from '@/dev/testkit';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import type { AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
@@ -161,7 +162,9 @@ function buildAutomationAuthoringDraft(params: Readonly<{
     });
 }
 
-async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 'e2ee') {
+// These launch-envelope cases serve a plain Machine/socket boundary. Keep its
+// Account credential mode consistent; Account cipher behavior is covered by owner suites.
+async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 'plain') {
     const accountId = accountMode === 'plain' ? 'account-plain' : 'account-a';
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const sessionSpawnNewRpcRequest: { value: SessionSpawnNewRpcRequest | null } = { value: null };
@@ -486,7 +489,10 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             expect(peekServerReachabilityState(activeHome.serverUrl, token)?.phase).toBe('online');
         },
         useCreateNewSession,
-        renderWithActionExecutor: async (children: React.ReactElement) => await renderScreen(
+        renderWithAuth: async (children: React.ReactElement) => await renderTestScreen(
+            React.createElement(InjectedAuthProvider, { credentials, children }),
+        ),
+        renderWithActionExecutor: async (children: React.ReactElement) => await renderTestScreen(
             React.createElement(InjectedAuthProvider, {
                 credentials,
                 children: React.createElement(NewSessionEmbeddedHostProvider, {
@@ -523,12 +529,17 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
         sessionSpawnNewRpcRequest,
         mockSessionSpawnSuccess,
         machineBashSpy,
-        automationTemplateEncryption: sync.encryption!,
         dispose: async () => await reachabilityLease.release(),
     };
 }
 
 let harness: Awaited<ReturnType<typeof createUseCreateNewSessionHarness>> | null = null;
+let restoreExecutorModuleLoader: (() => void) | undefined;
+async function renderScreen(children: React.ReactElement) {
+    if (!harness) throw new Error('useCreateNewSession permission harness was not initialized');
+    // Sync's transport credentials do not authenticate the UI Action caller.
+    return await harness.renderWithAuth(children);
+}
 async function setupUseCreateNewSessionHarness() {
     if (!harness) {
         throw new Error('useCreateNewSession permission harness was not initialized');
@@ -538,8 +549,12 @@ async function setupUseCreateNewSessionHarness() {
 }
 
 describe('useCreateNewSession permission seeding', () => {
-    beforeAll(async () => { harness = await createUseCreateNewSessionHarness(); });
+    beforeAll(async () => {
+        harness = await createUseCreateNewSessionHarness();
+        restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+    });
     afterAll(async () => {
+        restoreExecutorModuleLoader?.();
         await harness?.dispose();
         harness = null;
         const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -556,8 +571,7 @@ describe('useCreateNewSession permission seeding', () => {
     });
 
     it.each(['server', 'acp'] as const)('launches OpenCode %s with strict configuration instead of raw environment', async (mode) => {
-        const launchHarness = await createUseCreateNewSessionHarness('plain');
-        await launchHarness.reset();
+        const launchHarness = await setupUseCreateNewSessionHarness();
         const { useCreateNewSession, captured, storage, renderWithActionExecutor, spawnActions, modalAlertSpy } = launchHarness;
         let handleCreateSession: (() => Promise<void>) | null = null;
         const telemetry = await import('@/utils/system/sentry');
@@ -597,7 +611,7 @@ describe('useCreateNewSession permission seeding', () => {
             });
             expect(captured.value).not.toHaveProperty('environmentVariables');
         } finally {
-            await launchHarness.dispose();
+            errors.mockRestore();
         }
     });
 

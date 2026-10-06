@@ -1,14 +1,7 @@
-import {
-  MEMORY_SESSION_SYSTEM_RECORD_KINDS,
-  SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE,
-  SessionSummaryShardV1Schema,
-  SessionSynopsisV1Schema,
-  type MemorySessionSystemRecordKind,
-  type SessionSystemRecordContent,
-  type SessionSystemRecordNamespace,
-  type SessionSummaryShardV1,
-  type SessionSynopsisV1,
-} from '@happier-dev/protocol';
+import { MEMORY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE } from '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordKinds';
+import { SessionSummaryShardV1Schema } from '@happier-dev/protocol/messages/structured/sessionSummaryShardV1';
+import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
+import type { MemorySessionSystemRecordKind, SessionSystemRecordContent, SessionSystemRecordNamespace, SessionSummaryShardV1, SessionSynopsisV1 } from '@happier-dev/protocol';
 
 import {
   openSessionStoredContent,

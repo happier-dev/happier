@@ -1,13 +1,8 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  BrowserProfileV1Schema,
-  type BrowserProfileOwnerV1,
-  type BrowserProfilePurgeFailureReasonCodeV1,
-  type BrowserProfileStorageModeV1,
-  type BrowserProfileV1,
-} from '@happier-dev/protocol';
+import { BrowserProfileV1Schema } from '@happier-dev/protocol/browser/profile/v1';
+import type { BrowserProfileOwnerV1, BrowserProfilePurgeFailureReasonCodeV1, BrowserProfileStorageModeV1, BrowserProfileV1 } from '@happier-dev/protocol';
 
 import type { BrowserStoragePartitionOwner } from '../storage/partitions';
 

@@ -1,4 +1,4 @@
-import { parseBooleanEnv } from '@happier-dev/protocol';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 
 const DEFAULT_WAIT_FOR_AUTH_TIMEOUT_MS = 10 * 60_000;
 

@@ -4,6 +4,9 @@ import { resolveSessionRightSidebarTabs } from '@/components/appShell/rightSideb
 import type { RightSidebarTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import type { RightSidebarPluginTabRuntimeAdmission } from '@/components/appShell/rightSidebar/rightSidebarPluginTabs';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS, resolveNavigationPlacements, type NavigationPlacement, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+
+export { SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS } from '@/sync/domains/settings/mobileSurfacePinning';
 
 import {
     isSessionPluginMobileSurface,
@@ -16,7 +19,7 @@ import {
  * icons, and availability. This host adapter only adds the two Session-owned
  * cockpit entries and applies host/user ordering before the mobile bar renders.
  */
-export type SessionCockpitMobileCatalogEntry =
+export type SessionCockpitMobileCatalogEntry = Readonly<{ defaultPlacement: NavigationPlacement }> & (
     | Readonly<{
         id: 'chat' | 'tabs' | 'companion';
         owner: 'host';
@@ -25,15 +28,7 @@ export type SessionCockpitMobileCatalogEntry =
         id: SessionMobileSurface;
         owner: 'rightSidebar';
         tab: RightSidebarTabDefinition;
-    }>;
-
-/**
- * What sits on the bar until the person changes it (lab frame R): Files, Git, Companion and
- * Terminal after Chat. Anything the catalog does not admit right now is simply skipped.
- */
-export const SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS: readonly SessionMobileSurface[] = Object.freeze([
-    'browse', 'git', 'companion', 'terminal',
-]);
+    }>);
 
 /**
  * `fit`: every pinned tool is on the bar. `scroll`: they do not fit, so the bar scrolls its tools
@@ -54,6 +49,7 @@ function entryForProjection(
                 id: entry.tabId,
                 owner: 'rightSidebar' as const,
                 tab: entry.tab,
+                defaultPlacement: 'overflow' as const,
             })
             : null;
     }
@@ -64,6 +60,7 @@ function entryForProjection(
             id: surface,
             owner: 'rightSidebar' as const,
             tab: entry.tab,
+            defaultPlacement: SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS.some((id) => id === surface) ? 'pinned' as const : 'overflow' as const,
         })
         : null;
 }
@@ -132,16 +129,16 @@ export function resolveSessionCockpitMobileCatalog(input: Readonly<{
         .sort(compareCatalogEntries);
 
     const result: SessionCockpitMobileCatalogEntry[] = [];
-    addCatalogEntry(result, Object.freeze({ id: 'chat', owner: 'host' as const }));
+    addCatalogEntry(result, Object.freeze({ id: 'chat', owner: 'host' as const, defaultPlacement: 'pinned' as const }));
     // These positions are host policy. A binding cannot displace built-in
     // cockpit affordances without an explicit user pin.
     addCatalogEntry(result, entryForBuiltinTab('files'));
     addCatalogEntry(result, entryForBuiltinTab('git'));
-    addCatalogEntry(result, Object.freeze({ id: 'tabs', owner: 'host' as const }));
+    addCatalogEntry(result, Object.freeze({ id: 'tabs', owner: 'host' as const, defaultPlacement: 'overflow' as const }));
     // Companion is host-owned like Chat and Details. Its first-party Session
     // Summary is composed from Session facts alone, so it is published on every
     // Home; only the Board content it can present follows `sessions.board`.
-    addCatalogEntry(result, Object.freeze({ id: 'companion', owner: 'host' as const }));
+    addCatalogEntry(result, Object.freeze({ id: 'companion', owner: 'host' as const, defaultPlacement: 'pinned' as const }));
     for (const entry of remainingBuiltIns) addCatalogEntry(result, entry);
     for (const entry of pluginEntries) addCatalogEntry(result, entry);
     addCatalogEntry(result, entryForBuiltinTab('terminal'));
@@ -172,8 +169,7 @@ export function resolveSessionCockpitMobileNavigatorSurfaces(input: Readonly<{
 
 export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     catalog: readonly SessionCockpitMobileCatalogEntry[];
-    /** The person's bar, in order; `null` until they change it (host defaults apply). */
-    barSurfaceIds: readonly string[] | null | undefined;
+    preferences: NavigationPlacementPreferences | null | undefined;
     /** How many 1-slot tabs the floating bar holds at this width (`resolveFloatingTabBarSlotCount`). */
     slotCount: number;
     /** "Always swipe between sessions" is on (and the sideways swipe with it). */
@@ -190,11 +186,8 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     const catalogById = new Map<string, SessionCockpitMobileCatalogEntry>(
         input.catalog.map((entry) => [entry.id, entry]),
     );
-    const barTools: SessionCockpitMobileCatalogEntry[] = [];
-    for (const surfaceId of input.barSurfaceIds ?? SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS) {
-        if (surfaceId === 'chat') continue;
-        addCatalogEntry(barTools, catalogById.get(surfaceId));
-    }
+    const placements = resolveNavigationPlacements(input.catalog.filter((entry) => entry.id !== 'chat'), input.preferences ?? undefined);
+    const barTools = placements.pinned;
     const toolSlots = Math.max(1, Math.floor(input.slotCount) - RESERVED_BAR_SLOTS);
     const mode: SessionCockpitBarMode = barTools.length <= toolSlots
         ? 'fit'
@@ -205,11 +198,10 @@ export function resolveSessionCockpitMobileTabVisibility(input: Readonly<{
     const visible: SessionCockpitMobileCatalogEntry[] = [];
     addCatalogEntry(visible, catalogById.get('chat'));
     for (const entry of shown) addCatalogEntry(visible, entry);
-    const pinnedIds = new Set(barTools.map((entry) => entry.id));
     return Object.freeze({
         mode,
         visible: Object.freeze(visible),
         held: Object.freeze(held),
-        overflow: Object.freeze(input.catalog.filter((entry) => entry.id !== 'chat' && !pinnedIds.has(entry.id))),
+        overflow: Object.freeze(placements.overflow),
     });
 }

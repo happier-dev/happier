@@ -1,3 +1,4 @@
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import {
     SessionSpawnNewResultV1Schema,
     type SessionSpawnNewInitialInputDispositionV1,
@@ -20,6 +21,8 @@ export function classifyActionOperationSection(
     observation: ActionOperationObservation = 'available',
 ): ActionOperationSection {
     if (!isActionOperationTerminalState(snapshot.state) && observation === 'unavailable') return 'needsAttention';
+    if (snapshot.actionId.startsWith('sessions.external.') && snapshot.progress?.kind === 'phase'
+        && ['awaiting_user_resume', 'failed', 'reconciliation_required'].includes(snapshot.progress.phase)) return 'needsAttention';
     if (snapshot.state === 'accepted' || snapshot.state === 'running') return 'inProgress';
     if (snapshot.state === 'failed' || snapshot.state === 'cancelled') return 'needsAttention';
     return 'recent';
@@ -88,7 +91,7 @@ export function readActionOperationSessionSpawnNewInitialInput(
 }
 
 export function readActionOperationPluginIdentity(actionId: string): string | null {
-    if (actionId.startsWith('session.')) return null;
+    if (ActionIdSchema.safeParse(actionId).success) return null;
     const separator = actionId.indexOf('/');
     return separator > 0 ? actionId.slice(0, separator) : actionId;
 }

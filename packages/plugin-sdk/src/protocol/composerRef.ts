@@ -1,9 +1,7 @@
 import type {
     ComposerRefV1 as CanonicalComposerRefV1,
 } from '@happier-dev/protocol/plugins/ui/composerRef';
-import {
-    ComposerRefV1Schema as canonicalComposerRefV1Schema,
-} from '@happier-dev/protocol/plugins/ui/composerRef';
+import { ComposerRefV1Schema as canonicalComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 

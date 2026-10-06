@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizeProviderEndpointUrlSyntax } from './safety/index.js';
+import { normalizeProviderEndpointUrlSyntax } from './safety/url.js';
 
 export function createProviderEndpointUrlSyntaxSchema(options: Readonly<{ allowQuery?: boolean }> = {}) {
   return z.string().transform((raw, ctx) => {

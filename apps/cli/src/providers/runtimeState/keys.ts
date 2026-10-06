@@ -1,13 +1,5 @@
-import {
-  serializeProviderCatalogRuntimeStateKeyV1,
-  serializeProviderEndpointRuntimeStateKeyV1,
-  serializeProviderInstallationRuntimeStateKeyV1,
-  serializeProviderModelLoadRuntimeStateKeyV1,
-  type ProviderCatalogRuntimeStateRecordV1,
-  type ProviderEndpointRuntimeStateRecordV1,
-  type ProviderInstallationRuntimeStateRecordV1,
-  type ProviderModelLoadRuntimeStateRecordV1,
-} from '@happier-dev/protocol';
+import { serializeProviderCatalogRuntimeStateKeyV1, serializeProviderEndpointRuntimeStateKeyV1, serializeProviderInstallationRuntimeStateKeyV1, serializeProviderModelLoadRuntimeStateKeyV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import type { ProviderCatalogRuntimeStateRecordV1, ProviderEndpointRuntimeStateRecordV1, ProviderInstallationRuntimeStateRecordV1, ProviderModelLoadRuntimeStateRecordV1 } from '@happier-dev/protocol';
 
 export type ProviderRuntimeStateRecordKind =
   | 'endpointHealth'

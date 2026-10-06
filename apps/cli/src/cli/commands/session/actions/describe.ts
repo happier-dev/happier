@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { getSerializedActionSpecForSurface } from '@happier-dev/protocol';
+import { getSerializedActionSpecForSurface } from '@happier-dev/protocol/actions/actionCatalog';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals } from '@/cli/commands/shared/argvFlags';

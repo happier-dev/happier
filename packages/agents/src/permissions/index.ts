@@ -2,12 +2,8 @@ import { PERMISSION_INTENTS, PERMISSION_MODES, type PermissionIntent, type Permi
 import type { AgentId } from '../types.js';
 import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '../sessionModes.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
-import {
-  parseAgentPermissionIntentV1Alias,
-} from '@happier-dev/protocol/runtime';
-import {
-  parseSessionPermissionModeAlias,
-} from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 
 export { PERMISSION_MODES };
 export type { PermissionIntent, PermissionMode };

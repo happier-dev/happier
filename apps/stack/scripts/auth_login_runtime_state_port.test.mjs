@@ -5,6 +5,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
+import { resolveServerUrls } from './utils/server/urls.mjs';
 
 test('hstack auth login --print --json uses stack.runtime.json server port when HAPPIER_STACK_SERVER_PORT is missing', async (t) => {
   const rootDir = getStackRootFromMeta(import.meta.url);
@@ -74,6 +75,13 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
       }) + '\n',
       'utf-8'
     );
+
+    const urls = await resolveServerUrls({
+      env: fixture.buildEnv({ HAPPIER_STACK_SERVER_PORT: '3005', HAPPIER_SERVER_URL: '' }),
+      allowEnable: false,
+    });
+    assert.equal(urls.internalServerUrl, `http://127.0.0.1:${runtimeServerPort}`,
+      'the URL owner must resolve live runtime ingress before a persisted/default port');
 
     const res = await runNodeCapture(
       [hstackBinPath(rootDir), 'auth', 'login', '--print', '--no-open', '--json'],

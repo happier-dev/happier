@@ -1,18 +1,7 @@
-import {
-    normalizePluginSourceCustodyV1,
-    pluginSourceCustodyV1Equal,
-    type BundledFirstPartyPluginSourceCustodyV1,
-    type BundledPackagedRuntimeCustodyV1,
-    type DevelopmentPluginSourceCustodyV1,
-    type ManagedPluginSourceCustodyV1,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { normalizePluginSourceCustodyV1, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { BundledFirstPartyPluginSourceCustodyV1, BundledPackagedRuntimeCustodyV1, DevelopmentPluginSourceCustodyV1, ManagedPluginSourceCustodyV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 
-export {
-    PluginSourceCustodyV1Schema,
-    normalizePluginSourceCustodyV1,
-    pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
+export { PluginSourceCustodyV1Schema, normalizePluginSourceCustodyV1, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 export type {
     BundledFirstPartyPluginSourceCustodyV1,
     BundledPackagedRuntimeCustodyV1,

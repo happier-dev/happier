@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
@@ -10,6 +11,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { renderWithAppProviders } from '@/dev/testkit';
 
 const projectionRuntime = vi.hoisted(() => ({
     describe: vi.fn<(machineId: string, options?: unknown) => Promise<unknown>>(),
@@ -31,8 +33,15 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
 const { publishMachineContributionRegistryProjectionInvalidation, publishMachineContributionRegistryProjectionReconnect } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 
-const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+import { PluginAppPageLaunchInputScope } from '@/components/appShell/plugins/pluginAppPageNavigation';
+import {
+    clearPluginAccountAvailabilityProjection,
+    readPluginAccountAvailability,
+    replacePluginAccountAvailabilityProjection,
+    useActivePluginAccountAvailabilityReader,
+} from '@/sync/domains/plugins/availability/projection';
 import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
 import {
     forgetPluginUiProjectionAdmissionSnapshots,
@@ -488,6 +497,67 @@ describe('usePluginUiProjectionCurrentness', () => {
             pluginUiProjection: null,
             interactionEnabled: false,
         });
+    });
+
+    it('fences a retired projection without updating another component during Account capture in render', async () => {
+        projectionRuntime.describe
+            .mockResolvedValueOnce(supportedProjection('Account A'))
+            .mockImplementationOnce(() => new Promise(() => {}));
+        const snapshot: { current: ReturnType<typeof usePluginUiProjectionCurrentness> | null } = { current: null };
+        function ProjectionOwner() {
+            snapshot.current = usePluginUiProjectionCurrentness({ machineId: 'machine-1', serverId: 'server-1' });
+            return null;
+        }
+        function AccountScopeReader(props: Readonly<{ capture: boolean }>) {
+            if (props.capture) captureActiveServerAccountScopeLifetime();
+            return null;
+        }
+        function AvailabilityObserver() {
+            useActivePluginAccountAvailabilityReader();
+            return null;
+        }
+        const accountA = storage.getState().profileScope!;
+        replacePluginAccountAvailabilityProjection({
+            scope: accountA,
+            snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] },
+        });
+        const accountAReader = readPluginAccountAvailability(accountA);
+        const surface = (capture: boolean) => <>
+            <AccountScopeReader capture={capture} />
+            <PluginAppPageLaunchInputScope pluginUiProjection={null}>
+                <ProjectionOwner />
+                <AvailabilityObserver />
+            </PluginAppPageLaunchInputScope>
+        </>;
+        const rendered = await renderWithAppProviders(surface(false));
+        await waitForHomeGovernance(() => expect(snapshot.current?.interactionEnabled).toBe(true));
+
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            // An unrelated Account-scoped surface may be the first render to
+            // observe the new profile. Capture retires A synchronously, while
+            // the mounted projection owner belongs to a different component.
+            await act(async () => {
+                storage.setState({ profileScope: { serverId: 'server-1', accountId: 'account-b' },
+                    settingsScope: { serverId: 'server-1', accountId: 'account-b' },
+                    profile: { ...profileDefaults, id: 'account-b' } });
+                await rendered.update(surface(true));
+            });
+
+            expect(captureActiveServerAccountScopeLifetime()?.scope.accountId).toBe('account-b');
+            expect(snapshot.current?.interactionEnabled).toBe(false);
+            expect(snapshot.current?.connectedAccountProjection).toBeNull();
+            expect(accountAReader.readMaterializations()).toEqual({
+                kind: 'unavailable', code: 'account_availability_not_loaded',
+            });
+            expect(errors.mock.calls.filter((args) => args.some((value) => (
+                typeof value === 'string' && value.includes('Cannot update a component')
+            )))).toEqual([]);
+            await rendered.unmount();
+        } finally {
+            errors.mockRestore();
+            clearPluginAccountAvailabilityProjection();
+        }
     });
 
     it('retires a same-server Account projection before the successor Account can become interactive', async () => {

@@ -1,14 +1,9 @@
 import { getBackendCatalogDefinition, legacyCustomAcpCompat } from '@happier-dev/agents';
-import {
-  AgentExecutionTargetV1Schema,
-  BackendTargetKeyV2Schema,
-  buildBackendTargetKeyV2,
-  convertBackendTargetRefV2ToV1,
-  parseBackendTargetKeyV2,
-  readBackendTargetRefV2,
-  type BackendTargetRefV1,
-  type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { BackendTargetKeyV2Schema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1, BackendTargetRefV2Input } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 
 type ExecutionRunAgentCatalog = ReturnType<typeof readAgentCatalogSnapshot>;

@@ -1,22 +1,15 @@
 import { lookup } from 'node:dns/promises';
 import { brotliDecompressSync, gunzipSync, inflateSync } from 'node:zlib';
 
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  assessProviderEndpoint,
-  containsProviderRegisteredSensitiveValue,
-  createProviderProbeRequestFingerprintV1,
-  ProviderModelIdSchema,
-  ProviderOriginRelativePathSchema,
-  normalizeProviderCredentialHeaderName,
-  normalizeProviderPublicHeaders,
-  normalizeProviderQueryParameterName,
-  validateProviderProbeResponseMetadata,
-  type ProviderCatalogParserV1,
-  type AssessedProviderEndpoint,
-  type ProviderErrorCodeV1,
-  type ProviderProbeRequestFingerprintV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { ProviderOriginRelativePathSchema } from '@happier-dev/protocol/providers/originRelativePathSchema';
+import { validateProviderProbeResponseMetadata } from '@happier-dev/protocol/providers/safety/response';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
+import { ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
+import { normalizeProviderCredentialHeaderName, normalizeProviderPublicHeaders, normalizeProviderQueryParameterName } from '@happier-dev/protocol/providers/credential-headers';
+import type { ProviderCatalogParserV1, AssessedProviderEndpoint, ProviderErrorCodeV1, ProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol';
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 

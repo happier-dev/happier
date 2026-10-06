@@ -1,4 +1,4 @@
-import { ExecutionRunIdSchema } from '@happier-dev/protocol/sessions';
+import { ExecutionRunIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 
 export type KnownPendingQueueState = Readonly<{
     known: true;

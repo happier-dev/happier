@@ -8,7 +8,7 @@ import type { EntityDropDestination } from '@/components/ui/treeDragDrop';
 import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { describeSessionListDropOutcome } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
+import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 
@@ -22,8 +22,8 @@ const effect: EntityDropEffectV1 = { actionId: 'widgets.instance.move', input: {
 
 describe('widget movement Action recovery projection', () => {
     it('the shared pointer preview describes a widget transfer as movement, not as an addition', () => {
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: { status: 'allowed', effect } }))
-            .toMatchObject({ glyph: 'above', title: effect.preview.verb });
+        expect(describeEntityDropOutcome({ phase: 'carrying', admission: { status: 'allowed', effect } }))
+            .toMatchObject({ glyph: 'move', title: effect.preview.verb });
     });
     it('retains owner-provided recovery content in Details only for its current Account', async () => {
         const previous = storage.getState();

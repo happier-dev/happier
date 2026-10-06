@@ -1,16 +1,15 @@
 import * as React from 'react';
-import { I18nManager, Platform, Pressable, View, type LayoutChangeEvent, type ScrollView } from 'react-native';
+import { I18nManager, Platform, View, type LayoutChangeEvent, type ScrollView } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useAnimatedReaction, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, type AnchoredListPositionV1 } from '@happier-dev/protocol';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDragKindV1, type EntityDragScopeV1, type EntityDropAdmissionV1, type EntityDropEffectV1, type EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
-import { HAPPIER_CARRIED_SOURCE_OPACITY, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_CARRIED_SOURCE_OPACITY, describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { describeSessionListDropOutcome } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
 import { t } from '@/text';
 import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
@@ -22,7 +21,9 @@ import { measureWindowBounds, readWindowBounds } from '../registry/measureWindow
 import type { WindowBounds, WindowPointer } from '../treeDragDropTypes';
 import { useTreeDropAutoscroll } from '../autoscroll/useTreeDropAutoscroll';
 import { entityFlatPositionAtIndex, resolveEntityFlatRowPosition } from '../geometry/entityFlatListStrategy';
-import { EntityDragGrip, EntityStagedMoveDock } from './EntityReleasePreview';
+import { ENTITY_STAGED_MOVE_DOCK_PLACEMENT, EntityDragGripTrigger, EntityStagedMoveDock, useEntityStagedMoveHints, type EntityDragGripKeyEvent } from './EntityReleasePreview';
+import { EntityDropSettledFeedback } from './EntityDropSettledFeedback';
+import { describeEntityDropOutcome } from './entityDropOutcome';
 import { TreeDropIndicatorLine } from './TreeDropIndicatorLine';
 
 export type EntityFlatReorderBinding = Readonly<{
@@ -80,9 +81,9 @@ export function entityReorderRefused(code: string): EntityDropAdmissionV1 {
     return { status: 'refused', reason: { code, message: t(code === 'same-position' ? 'entityDragDrop.reasons.noChange' : 'entityDragDrop.reasons.gone') } };
 }
 
-export function entityReorderPreview(position: AnchoredListPositionV1, items: EntityFlatReorderBinding['items']) {
+export function entityReorderPreview(position: AnchoredListPositionV1, items: EntityFlatReorderBinding['items']): import('@happier-dev/protocol/plugins/ui').EntityDropPreviewV1 {
     const target = items.find(item => item.id === position.anchorId)?.title ?? t('entityDragDrop.organize.title');
-    return { verb: t(position.placement === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target }), target };
+    return { glyph: position.placement === 'before' ? 'above' : 'below', verb: t(position.placement === 'before' ? 'entityDragDrop.preview.moveAbove' : 'entityDragDrop.preview.moveBelow', { target }), target };
 }
 
 type FlatContext = Readonly<{
@@ -184,14 +185,17 @@ export function EntityFlatReorderList(props: Readonly<{
     }, [measure]);
     const pointerInteraction = isHoverCapablePrimaryPointer();
     const context = React.useMemo(() => ({ id, runtime, binding: props.binding, organizing, pointerInteraction, registry, getBounds, measure, autoscroll }), [id, runtime, props.binding, organizing, pointerInteraction, registry, getBounds, measure, autoscroll]);
+    // Organize is for coarse pointers only, and only when there is something to organize: hover-capable
+    // pointers already have the grip on every row (lab K1h; a control with an empty target set is hidden).
+    const canOrganize = !pointerInteraction && props.binding.scope !== null && props.binding.items.length > 1;
     return <FlatContext.Provider value={context}>
         <View ref={node} testID={props.testID} onLayout={() => { void measure(); }}>
             {props.children}
+            <FlatFeedback context={context} testID={props.testID} />
         </View>
-        {props.binding.items.length > 1 ? <RoundButton testID={`${props.testID}.organize`} size="small" display="secondary"
+        {canOrganize ? <RoundButton testID={`${props.testID}.organize`} size="small" display="secondary"
             title={t(organizing ? 'entityDragDrop.organize.done' : 'entityDragDrop.organize.enter')}
             onPress={() => { if (props.binding.items.some(item => rowSourceId(context, item.id) === runtime.getSnapshot().sourceId)) runtime.cancel('organize-exit'); setOrganizing(value => !value); }} /> : null}
-        <FlatFeedback context={context} testID={props.testID} />
     </FlatContext.Provider>;
 }
 
@@ -217,6 +221,7 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     const sourceId = rowSourceId(context, id);
     const targetId = rowTargetId(context, id);
     const active = useEntityDragSourceState(runtime, sourceId);
+    const settledMatch = React.useMemo(() => ({ sourceId }), [sourceId]);
     const [chooserOpen, setChooserOpen] = React.useState(false);
     const rowNode = React.useRef<View>(null);
     const resolvedPosition = React.useRef<AnchoredListPositionV1 | null>(null);
@@ -293,11 +298,11 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     React.useEffect(() => () => adapter.current?.cancel(), []);
     const keyboardCarry = React.useRef<EntityDragCarry | null>(null);
     const staged = React.useRef<AnchoredListPositionV1 | null>(null);
-    const onKeyDown = (event: { key: string; repeat?: boolean; preventDefault(): void; stopPropagation?(): void }) => {
+    const onKeyDown = (event: EntityDragGripKeyEvent): boolean => {
         const picked = runtime.getSnapshot().phase === 'carrying' && runtime.getSnapshot().sourceId === sourceId;
         const intent = resolveHappierStagedMoveKey({ key: event.key, repeat: event.repeat, staged: picked, rtl: I18nManager.isRTL });
-        if (!intent) return;
-        event.preventDefault(); event.stopPropagation?.();
+        if (!intent) return false;
+        event.preventDefault(); event.stopPropagation();
         if (intent === 'pickUp') {
             keyboardCarry.current = runtime.begin(sourceId, 'keyboard');
             staged.current = { anchorId: id, placement: 'before' };
@@ -310,10 +315,11 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
             const ids = latest.current.binding.items.map(item => item.id);
             const projected = staged.current ? resolveAnchoredListMoveV1(ids, id, staged.current) : ids;
             const position = entityFlatPositionAtIndex(ids, id, (projected ?? ids).indexOf(id) + (intent === 'previous' ? -1 : 1));
-            if (!position) return;
+            if (!position) return true;
             staged.current = position;
             keyboardCarry.current?.choose(rowTargetId(context, position.anchorId ?? id), position);
         }
+        return true;
     };
     const destinations = useEntityDragDestinations(runtime, sourceId, chooserOpen).filter(destination => context.binding.items.some(item => rowTargetId(context, item.id) === destination.targetId));
     const sections = resolveHappierDropChooserSections({ options: destinations.map((destination, index) => ({
@@ -323,11 +329,11 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     const handle = (testID?: string) => <DropdownMenu open={chooserOpen} onOpenChange={setChooserOpen} selectedId={null}
         items={sections.flatMap(section => section.options.map(option => ({ id: option.id, title: option.label, subtitle: option.detail, disabled: option.disabled, category: section.title })))}
         onSelect={key => { const destination = destinations[Number(key)]; if (destination) void runtime.perform(sourceId, destination.targetId, destination.destination, 'chooser'); }}
-        trigger={({ toggle }) => <GestureDetector gesture={handleGesture}><Pressable testID={testID}
-            accessibilityRole="button" accessibilityLabel={t('entityDragDrop.organize.grip', { item: context.binding.items.find(item => item.id === id)?.title ?? '' })}
-            onPress={toggle} {...(Platform.OS === 'web' ? { onKeyDown } : {})}>
-            <EntityDragGrip active={active.active} density={context.pointerInteraction ? 'pointer' : 'touch'} accessibilityLabel={t('entityDragDrop.organize.grip', { item: context.binding.items.find(item => item.id === id)?.title ?? '' })} />
-        </Pressable></GestureDetector>} />;
+        trigger={({ toggle }) => <GestureDetector gesture={handleGesture}><EntityDragGripTrigger testID={testID}
+            accessibilityLabel={t('entityDragDrop.organize.grip', { item: context.binding.items.find(item => item.id === id)?.title ?? '' })}
+            accessibilityHint={t('entityDragDrop.keyboard.hintsA11y')}
+            onPress={toggle} onKeyDown={onKeyDown} expanded={chooserOpen}
+            active={active.active} density={context.pointerInteraction ? 'pointer' : 'touch'} /></GestureDetector>} />;
     const moveBy = (delta: number) => {
         const ids = latest.current.binding.items.map(item => item.id);
         const position = entityFlatPositionAtIndex(ids, id, ids.indexOf(id) + delta);
@@ -345,7 +351,10 @@ function MountedFlatRow(props: React.ComponentProps<typeof EntityFlatReorderRow>
     }} style={{ opacity: active.active ? HAPPIER_CARRIED_SOURCE_OPACITY : 1 }}>
         {contents}<FlatRowIndicator runtime={runtime} targetId={targetId} position={resolvedPosition} />
     </View>;
-    return context.pointerInteraction ? <GestureDetector gesture={gesture}>{body}</GestureDetector> : body;
+    // Lab ST4: a move its owner refused late stays under this row in words.
+    return <EntityDropSettledFeedback runtime={runtime} match={settledMatch}>
+        {context.pointerInteraction ? <GestureDetector gesture={gesture}>{body}</GestureDetector> : body}
+    </EntityDropSettledFeedback>;
 }
 
 function FlatRowIndicator(props: Readonly<{ runtime: EntityDragDropRuntime; targetId: string; position: React.RefObject<AnchoredListPositionV1 | null> }>) {
@@ -359,17 +368,18 @@ function FlatRowIndicator(props: Readonly<{ runtime: EntityDragDropRuntime; targ
     return edge ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, ...(edge === 'before' ? { top: 0 } : { bottom: 0 }) }}><TreeDropIndicatorLine visual={{ kind: 'line', targetId: props.targetId, depth: 0, edge: edge === 'before' ? 'top' : 'bottom' }} indentPx={0} /></View> : null;
 }
 
+/** The staged keyboard preview, docked over the list's foot so the list never grows when a move starts. */
 function FlatFeedback(props: Readonly<{ context: FlatContext; testID: string }>) {
     const snapshot = useEntityDragDropSnapshot(props.context.runtime);
+    const hints = useEntityStagedMoveHints();
     const ours = props.context.binding.items.some(item => rowSourceId(props.context, item.id) === snapshot.sourceId);
-    const admission = ours ? snapshot.admission : null;
-    let outcome = describeSessionListDropOutcome({ phase: snapshot.phase, admission });
-    if (ours && snapshot.outcome && snapshot.outcome.status !== 'applied') outcome = { tone: snapshot.outcome.status === 'unknown' ? 'quiet' : 'refused', title: snapshot.outcome.status === 'unknown' ? t('entityDragDrop.preview.unknownTitle') : t('entityDragDrop.preview.cantMoveHere'), detail: snapshot.outcome.reason.message };
+    const staged = ours && (snapshot.phase === 'carrying' || snapshot.phase === 'pending');
+    const outcome = staged ? describeEntityDropOutcome(snapshot) : null;
     const keyboard = props.context.runtime.getPointer() === null;
     return <>
-        {outcome && keyboard ? <EntityStagedMoveDock testID={`${props.testID}.staged`} outcome={outcome} hints={[
-            { keys: ['↑', '↓'], label: t('entityDragDrop.keyboard.choose') }, { keys: ['Enter'], label: t('entityDragDrop.keyboard.drop') }, { keys: ['Esc'], label: t('entityDragDrop.keyboard.cancel') },
-        ]} /> : null}
-        <PoliteAccessibilityStatus statusTestID={`${props.testID}.status`} transitionKey={JSON.stringify([snapshot.phase, snapshot.targetId, outcome])} announcement={outcome ? [outcome.title, outcome.detail].filter(Boolean).join('. ') : ''} />
+        {outcome && keyboard ? <View pointerEvents="none" style={ENTITY_STAGED_MOVE_DOCK_PLACEMENT}>
+            <EntityStagedMoveDock testID={`${props.testID}.staged`} outcome={outcome} hints={hints} />
+        </View> : null}
+        <PoliteAccessibilityStatus statusTestID={`${props.testID}.status`} transitionKey={JSON.stringify([snapshot.phase, snapshot.targetId, outcome])} announcement={describeHappierDropAnnouncement(outcome)} />
     </>;
 }

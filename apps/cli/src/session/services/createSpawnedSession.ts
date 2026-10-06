@@ -1,32 +1,17 @@
-import {
-  SPAWN_SESSION_ERROR_CODES,
-  readConnectedServiceMaterializationIdentityV1FromMetadata,
-  normalizeSpawnSessionNonceResolution,
-  buildSpawnedFirstTurnLocalId,
-  buildSessionSpawnInitialInputLocalIdV1,
-  hasSessionInputContentV1,
-  sessionCreationCorrespondenceMatchesV1,
-  SessionInputAdmissionRejectionCodeV1Schema,
-  DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS,
-  DEFAULT_SPAWN_INITIAL_INPUT_ADMISSION_TIMEOUT_MS,
-  SessionRolesV1Schema,
-  SessionForkFilesNotCopiedV1Schema,
-  supportsMachineSessionSpawnProtocolVersionV1,
-  type BackendTargetRefV2,
-  type MachinePoolSelectionOriginV1,
-  type SessionCreationCorrespondenceV1,
-  type SessionCreationTagV1,
-  type SessionSpawnNewInitialInputDispositionV1,
-  type SessionSpawnSourceContextV1,
-  type SessionOrganizationPlacementV1,
-  type SessionModelSelectionV1,
-  type SpawnSessionNonceResolution,
-  type PluginSessionInputAttachmentV1,
-  type RawIngressStructuredInputV1,
-  type SessionForkFilesNotCopiedV1,
-} from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
+import { sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, DEFAULT_SPAWN_INITIAL_INPUT_ADMISSION_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
+import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { hasSessionInputContentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1';
+import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionCreationTagV1, SessionSpawnNewInitialInputDispositionV1, SessionSpawnSourceContextV1, SessionOrganizationPlacementV1, SessionModelSelectionV1, SpawnSessionNonceResolution, PluginSessionInputAttachmentV1, RawIngressStructuredInputV1, SessionForkFilesNotCopiedV1 } from '@happier-dev/protocol';
 import type { SessionSpawnNewInitialInputV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { randomUUID } from 'node:crypto';
 import { isDefiniteReplaySeededPreAdmissionRejection } from './spawnPreAdmissionRejection';

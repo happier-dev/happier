@@ -1,9 +1,11 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stat } from 'node:fs/promises';
+import { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 
 import {
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault,
-  inspectUsableSourceDevSharedDepsLastGreen as inspectUsableSourceDevSharedDepsLastGreenDefault,
+  inspectUsableSourceDevSharedDepsLastGreen,
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
 import {
@@ -13,6 +15,7 @@ import {
 } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import {
   generateBundledPluginUiArtifacts as generateBundledPluginUiArtifactsDefault,
+  resolveBundledPluginUiArtifactsOutputPath,
 } from './generateBundledPluginUiArtifacts.mjs';
 
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -30,10 +33,18 @@ async function publishBundledPluginProjectionWithFailures({ repoRoot, env, plugi
 
 export async function hasUsableUiWorkspaceLastGreen({
   uiPackageDir = uiDir,
-  inspectUsableSourceDevSharedDepsLastGreen = inspectUsableSourceDevSharedDepsLastGreenDefault,
 } = {}) {
+  const repoRoot = resolve(uiPackageDir, '../..');
+  // Shared workspace readiness does not include this replica-owned byte graph.
+  // A fresh target must materialize it before Metro adopts the workspace.
+  try {
+    if (!(await stat(resolveBundledPluginUiArtifactsOutputPath(repoRoot))).isFile()) return false;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
   const inspection = await inspectUsableSourceDevSharedDepsLastGreen(
-    resolve(uiPackageDir, '../..'),
+    repoRoot,
     { workspaceNames: ['plugin-sdk'] },
   );
   return inspection?.usable === true;
@@ -89,6 +100,10 @@ export async function ensureUiWorkspacePackagesBuilt({
   if (publicationMode !== 'live' && publicationMode !== 'artifact') {
     throw new Error(`Unknown UI workspace publication mode: ${publicationMode}`);
   }
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    env,
+    buildMode: publicationMode === 'artifact' ? 'strict' : env[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
+  }) };
   verifyPatchedDependencies({ uiPackageDir });
   const result = await ensureWorkspacePackagesBuiltForComponent(uiPackageDir, {
     quiet: false,

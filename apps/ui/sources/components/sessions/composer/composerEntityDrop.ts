@@ -1,6 +1,6 @@
 import { ComposerOperationV1Schema, buildQualifiedPluginContributionKey, validatePluginDragSourceReferenceV1, readComposerReferenceMentionV1,
     type PluginContributionClientPlatform, type ComposerRefV1, type ComposerSnapshotV1 } from '@happier-dev/protocol';
-import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
+import type { EntityDragItemV1, EntityDragScopeV1, EntityDropAdmissionV1, EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
 import { entityDragScopesEqualV1 } from '@happier-dev/protocol/plugins/ui';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { listCurrentComposerReferences, type ComposerReferenceSearchHost } from '@/components/autocomplete/composerSuggestionKinds';
@@ -25,7 +25,7 @@ export type ComposerEntityDropContext = Readonly<{
     dragSourceReader?: PluginUiClientExecutableRegistrationReader;
     dragSources?: PluginUiProjectionModel['dragSourcesById'];
     resolveDestinationFile?: (href: string) => Extract<EntityDragItemV1, { kind: 'repository-file' }> | null;
-    preview: Readonly<{ verb: string; target: string }>;
+    preview: EntityDropPreviewV1;
     reason: (code: string) => string;
 }>;
 

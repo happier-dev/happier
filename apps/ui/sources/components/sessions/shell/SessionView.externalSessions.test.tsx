@@ -8,6 +8,9 @@ import {
   buildProviderAccountUsageRecordId,
   buildSystemSessionMetadataV1,
   ExternalSessionOperationSharedPresentationV1Schema,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  PluginProjectionV2Schema,
+  ParticipantRecipientV1Schema,
   StrictJsonValueSchema,
   PluginProjectionV2Schema,
   SessionCurrentProjectionRecordV1Schema,
@@ -61,6 +64,7 @@ import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtil
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { StorageState } from '@/sync/store/types';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { StoreApi, UseBoundStore } from 'zustand';
 import {
   deleteSessionDraft,
@@ -69,7 +73,7 @@ import {
   writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -261,6 +265,7 @@ const storageState = vi.hoisted(() => ({
 const shellStorageStoreState = vi.hoisted(() => ({
   current: null as UseBoundStore<StoreApi<StorageState>> | null,
 }));
+const pendingMessagesState = vi.hoisted(() => ({ current: [] as PendingMessage[] }));
 const recipientStateState = vi.hoisted(() => ({
   current: {
     recipient: null as any,
@@ -697,8 +702,15 @@ function syncShellStorageStore() {
 }
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { NavigationContext, useNavigation } = await import('@react-navigation/native');
 
 describe('SessionView (direct sessions)', () => {
+  const SessionNavigationBoundary = ({ children }: { children?: React.ReactNode }) => {
+    const navigation = useNavigation<NonNullable<React.ContextType<typeof NavigationContext>>>();
+    return <NavigationContext.Provider value={navigation}>
+      <AppPaneProvider>{children}</AppPaneProvider>
+    </NavigationContext.Provider>;
+  };
   const canonicalDraftScope: ServerAccountScope = {
     serverId: 'server-canonical',
     accountId: 'account-canonical',
@@ -706,6 +718,34 @@ describe('SessionView (direct sessions)', () => {
 
   function useCanonicalDraftScope() {
     activeServerAccountScopeState.current = canonicalDraftScope;
+  }
+
+  function publishUsageRecoveryAgentFixture(agentId: string, pluginId: string) {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: {
+        pluginProjectionById: {},
+        pluginProjectionV2: PluginProjectionV2Schema.parse({
+          v: 2,
+          generation: 42,
+          familiesById: {},
+          agentsById: {
+            [agentId]: {
+              id: agentId,
+              identity: { pluginId, localId: agentId },
+              capabilities: {
+                sessions: {
+                  open: ['resume'],
+                  delivery: ['newTurn'],
+                  cancel: true,
+                  usageLimitRecovery: { active: ['checkNow'] },
+                },
+              },
+            },
+          },
+        }),
+      },
+    };
   }
 
   function writeCanonicalSessionDraft(input: Readonly<{
@@ -937,6 +977,7 @@ describe('SessionView (direct sessions)', () => {
     resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
     sessionMessagesState.current = [];
+    pendingMessagesState.current = [];
     sessionTranscriptRenderState.current = { ids: ['m1'], isLoaded: true };
     storageState.sessionTranscriptLoadIssues = {};
     windowDimensionsState.current = { width: 1200, height: 800 };
@@ -1019,6 +1060,8 @@ describe('SessionView (direct sessions)', () => {
     vi.useRealTimers();
     vi.clearAllMocks();
   });
+
+  beforeEach(activateSessionShellStorageBoundary);
 
   it('keeps external control footer status conservative and exposes one explicit takeover preflight', async () => {
     await renderSessionView();
@@ -1548,19 +1591,23 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('passes session-scoped open approval artifacts to AgentInput', async () => {
+    const matchingApproval = ApprovalRequestV1Schema.parse({
+      v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent', sessionId: 's1' },
+      requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'List sessions',
+    });
+    const otherApproval = ApprovalRequestV1Schema.parse({
+      v: 1, status: 'open', createdAtMs: 2, updatedAtMs: 2,
+      createdBy: { surface: 'agent', sessionId: 's2' },
+      requestedSurface: 'agent', actionId: 'session.status.get', actionArgs: {}, summary: 'Read status',
+    });
     storageState.artifacts = {
       'approval-1': {
         id: 'approval-1',
-        header: {
-          v: 1,
-          kind: 'approval_request.v1',
-          title: 'Approve',
-          approvalStatus: 'open',
-          sessionId: 's1',
-          actionId: 'session.list',
-          approvalSummary: 'List sessions',
-        },
-        title: 'Approve',
+        header: buildApprovalRequestArtifactHeaderV1(matchingApproval, { legacyServerId: 'server-canonical' }),
+        title: 'List sessions',
+        body: JSON.stringify(matchingApproval),
+        bodyVersion: 1,
         headerVersion: 1,
         seq: 1,
         createdAt: 1,
@@ -1569,16 +1616,10 @@ describe('SessionView (direct sessions)', () => {
       },
       'approval-other': {
         id: 'approval-other',
-        header: {
-          v: 1,
-          kind: 'approval_request.v1',
-          title: 'Approve',
-          approvalStatus: 'open',
-          sessionId: 's2',
-          actionId: 'session.status.get',
-          approvalSummary: 'Read status',
-        },
-        title: 'Approve',
+        header: buildApprovalRequestArtifactHeaderV1(otherApproval, { legacyServerId: 'server-canonical' }),
+        title: 'Read status',
+        body: JSON.stringify(otherApproval),
+        bodyVersion: 1,
         headerVersion: 1,
         seq: 2,
         createdAt: 2,
@@ -2464,6 +2505,29 @@ describe('SessionView (direct sessions)', () => {
           memberProfileIds: ['active-profile', 'backup-profile'],
         }],
       }],
+      connectedAccountGroupsV4: [{
+        v: 1,
+        ref: {
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          groupId: 'happier',
+        },
+        incarnation: 'happier:1',
+        displayName: 'Happier pool',
+        policy: {
+          v: 1, strategy: 'least_limited', autoSwitch: true,
+          quotaLimitSelection: { mode: 'all' },
+          switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true },
+        },
+        activeConnectedAccountId: 'active-profile',
+        generation: 7,
+        runtimeStateRevision: 1,
+        state: { status: 'ready' },
+        createdAt: 0,
+        updatedAt: 0,
+        members: ['active-profile', 'backup-profile'].map((connectedAccountId) => ({
+          v: 1, connectedAccountId, priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0,
+        })),
+      }],
     };
     storageState.sessions.s1.metadata = {
       ...storageState.sessions.s1.metadata,
@@ -2714,8 +2778,13 @@ describe('SessionView (direct sessions)', () => {
 	    expect(linkFileChip?.collapsedContentPopover).toBeTruthy();
 	  });
 
-  it('does not surface delivery controls when live participant routing data is absent', async () => {
+  it('offers only Lead recovery for a retained recipient while live participant routing data is absent', async () => {
     participantTargetsState.current = [];
+    const emptyScreen = await renderSessionViewAndSettle();
+    const emptyInput = findAgentInput(emptyScreen);
+    expect((emptyInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('participants-recipient');
+    expect((emptyInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-requested-action');
+    await act(async () => { emptyScreen.unmount(); });
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
@@ -2727,8 +2796,37 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     const agentInput = findAgentInput(screen);
-    expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('participants-recipient');
-    expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-requested-action');
+    const deliveryChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'execution-run-requested-action');
+    expect(deliveryChip?.collapsedOptionsPopover?.selectedOptionId).toBe('send_now');
+    const deliverySection = deliveryChip?.collapsedOptionsPopover?.rootStep?.sections[0];
+    expect(deliverySection?.kind).toBe('static');
+    expect(deliverySection?.options.map((option: { id: string }) => option.id)).toEqual([
+      'enqueue', 'steer_if_active', 'send_now',
+    ]);
+    const renderedDelivery = deliveryChip.render({
+      chipStyle: () => null,
+      showLabel: true,
+      iconColor: 'chip-tint',
+      textStyle: null,
+      countTextStyle: null,
+      popoverAnchorRef: React.createRef(),
+    });
+    if (!React.isValidElement<{ recipient: unknown; requestedAction: unknown }>(renderedDelivery)) {
+      throw new Error('Expected the selected Run delivery control');
+    }
+    expect(renderedDelivery.props.recipient).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(renderedDelivery.props.requestedAction).toEqual({ v: 1, kind: 'send_now' });
+    const { resolveParticipantRoutingDescriptor } = await import('@/sync/domains/input/participants/resolveParticipantRoutedSend');
+    expect(resolveParticipantRoutingDescriptor({
+      targets: participantTargetsState.current,
+      recipient: ParticipantRecipientV1Schema.parse(renderedDelivery.props.recipient),
+    })).toEqual({ type: 'session_message', recipient: { kind: 'execution_run', runId: 'run-1' } });
+    const recipientChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'participants-recipient');
+    const section = recipientChip?.collapsedOptionsPopover?.rootStep?.sections[0];
+    expect(section?.kind).toBe('static');
+    expect(section?.options.map((option: { id: string }) => option.id)).toEqual(['lead']);
+    await act(async () => { section.options[0].onSelect(); });
+    expect(recipientStateState.current.setManualRecipient).toHaveBeenCalledWith(null);
   });
 
   it('surfaces delivery controls when live participant routing data resolves to an execution run', async () => {

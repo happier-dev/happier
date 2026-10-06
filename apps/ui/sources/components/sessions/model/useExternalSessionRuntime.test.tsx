@@ -231,6 +231,33 @@ describe('useExternalSessionRuntime', () => {
     vi.clearAllMocks();
   });
 
+  it('preserves the public runtime result identity until a returned field changes', async () => {
+    const { useExternalSessionRuntime } = await import('./useExternalSessionRuntime');
+    const metadata = { path: '/tmp/workspace', host: 'tester.local' };
+    const hook = await renderHook((sessionId: string) => useExternalSessionRuntime({
+      sessionId, metadata,
+    }), { initialProps: 'session-1' });
+    try {
+      const initial = hook.getCurrent();
+      await hook.rerender('session-1');
+      expect(hook.getCurrent().externalSessionLink).toBe(initial.externalSessionLink);
+      expect(hook.getCurrent().externalAgent).toBe(initial.externalAgent);
+      expect(hook.getCurrent().sessionServerId).toBe(initial.sessionServerId);
+      expect(hook.getCurrent().status).toBe(initial.status);
+      expect(hook.getCurrent().refreshNow).toBe(initial.refreshNow);
+      expect(hook.getCurrent()).toBe(initial);
+
+      await hook.rerender('session-2');
+      const changed = hook.getCurrent();
+      expect(changed.refreshNow).not.toBe(initial.refreshNow);
+      expect(changed).not.toBe(initial);
+      await hook.rerender('session-2');
+      expect(hook.getCurrent()).toBe(changed);
+    } finally {
+      await hook.unmount();
+    }
+  });
+
   it('keeps linked demo sessions inert while preserving their canonical link', async () => {
     enterDemoMode();
 

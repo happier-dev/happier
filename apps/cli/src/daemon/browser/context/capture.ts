@@ -1,16 +1,6 @@
-import {
-  BrowserContextItemV1Schema,
-  BrowserContextSnapshotV1Schema,
-  resolveBrowserContextPrivacyDenial,
-  type BrowserContextPrivacyState,
-  type BrowserContextItemV1,
-  type BrowserContextSnapshotAxNodeV1,
-  type BrowserContextSnapshotInteractiveElementV1,
-  type BrowserContextSnapshotV1,
-  type BrowserScreenshotMediaReferenceV1,
-  type BrowserTargetDisplayV1,
-  type BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema, BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
+import type { BrowserContextPrivacyState, BrowserContextItemV1, BrowserContextSnapshotAxNodeV1, BrowserContextSnapshotInteractiveElementV1, BrowserContextSnapshotV1, BrowserScreenshotMediaReferenceV1, BrowserTargetDisplayV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 
 import {
   buildSidecarContextUnavailableItem,

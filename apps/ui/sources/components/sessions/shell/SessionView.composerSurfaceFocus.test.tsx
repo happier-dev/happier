@@ -3,6 +3,7 @@ import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNaviga
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -11,8 +12,7 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -20,12 +20,17 @@ let authCredentials: any = { token: 't', secret: 's' };
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
+        serverId: 'server-1',
     metadata: null,
     accessLevel: 'edit',
     canApprovePermissions: true,
     agentState: { controlledByUser: true },
   } as any,
 }));
+sessionState.session = createSessionFixture({
+  id: 's1', serverId: 'server-1', metadata: null, accessLevel: 'edit',
+  canApprovePermissions: true, agentState: { controlledByUser: true },
+});
 
 const attachmentsTransferAvailableState = vi.hoisted(() => ({ value: true }));
 const attachmentsFeatureScopeState = vi.hoisted(() => ({ enabledForServerId: null as string | null }));
@@ -134,7 +139,7 @@ installSessionShellCommonModuleMocks({
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
       useSessionUsage: () => null,
-      useSetting: () => null,
+      useSetting: <K extends keyof typeof settingsDefaults>(key: K) => settingsDefaults[key],
       useSettings: () => ({ experiments: true, featureToggles: {} }),
       useAutomations: () => [],
       useMachine: () => null,
@@ -254,6 +259,7 @@ vi.mock('@/sync/sync', async () => {
   const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
   return {
     sync: {
+        getSessionAttachmentTransferContext: () => undefined,
       ...createAcceptedExternalSessionTailCursorSyncBoundary(),
       markSessionViewed: async () => {},
       fetchPendingMessages: async () => {},
@@ -427,19 +433,20 @@ function hostRequest(
 
 async function renderSessionSurface(input: Readonly<{ surfaceFocused: boolean }>) {
   return await renderScreen(<AppPaneProvider>
-    <SessionView id="s1" surfaceFocusedOverride={input.surfaceFocused} surfaceVisibleOverride />
+    <SessionView id="s1" routeServerId="server-1" surfaceFocusedOverride={input.surfaceFocused} surfaceVisibleOverride />
   </AppPaneProvider>);
 }
 
 function surfaceElement(input: Readonly<{ surfaceFocused: boolean }>) {
   return (<AppPaneProvider>
-    <SessionView id="s1" surfaceFocusedOverride={input.surfaceFocused} surfaceVisibleOverride />
+    <SessionView id="s1" routeServerId="server-1" surfaceFocusedOverride={input.surfaceFocused} surfaceVisibleOverride />
   </AppPaneProvider>);
 }
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 
 describe('SessionView composer surface focus', () => {
+  beforeEach(activateSessionShellStorageBoundary);
   it('stops being the active composer once its mounted surface is no longer focused', async () => {
     const screen = await renderSessionSurface({ surfaceFocused: true });
     await renderer.act(async () => {

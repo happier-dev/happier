@@ -1,12 +1,6 @@
-import {
-    ComposerRefV1Schema,
-    PluginHostedWebBridgeBootstrapPayloadV1Schema,
-    PluginUiHostApiWireIdentityV1Schema,
-    PluginUiLaunchInputV1Schema,
-    PluginUiSubPathV1Schema,
-    type ComposerRefV1,
-    type PluginUiHostApiWireIdentityV1,
-} from '@happier-dev/protocol/plugins/ui/client';
+import { ComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { PluginHostedWebBridgeBootstrapPayloadV1Schema, PluginUiHostApiWireIdentityV1Schema, PluginUiLaunchInputV1Schema, PluginUiSubPathV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import type { ComposerRefV1, PluginUiHostApiWireIdentityV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import type { JsonValue } from '../identity.js';
 import type { PluginUiHostApiClientTransport } from './clientTransport.js';

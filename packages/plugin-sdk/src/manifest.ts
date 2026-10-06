@@ -2,17 +2,11 @@
 import type { PluginLocalizedStringV2 as DtoPluginLocalizedStringV2, PluginDeclarativeToneV2 as DtoPluginDeclarativeToneV2, PluginDeclarativeControlV2 as DtoPluginDeclarativeControlV2, PluginDeclarativeActionNodeV2 as DtoPluginDeclarativeActionNodeV2, PluginContributionReference as DtoPluginContributionReference, PluginDeclarativeComposerApplyEffectV1 as DtoPluginDeclarativeComposerApplyEffectV1, PluginDeclarativeActionVariantV2 as DtoPluginDeclarativeActionVariantV2, PluginDeclarativeListNodeV2 as DtoPluginDeclarativeListNodeV2, PluginDeclarativeSectionNodeV2 as DtoPluginDeclarativeSectionNodeV2, PluginDeclarativeRowNodeV2 as DtoPluginDeclarativeRowNodeV2, PluginDeclarativeItemNodeV2 as DtoPluginDeclarativeItemNodeV2, PluginDeclarativeStateNodeV2 as DtoPluginDeclarativeStateNodeV2, PluginDeclarativeStateV2 as DtoPluginDeclarativeStateV2, PluginDeclarativeTargetedSurfaceNodeV2 as DtoPluginDeclarativeTargetedSurfaceNodeV2, PluginDeclarativeTargetedSurfaceReferenceV1 as DtoPluginDeclarativeTargetedSurfaceReferenceV1, PluginDeclarativeMetadataNodeV2 as DtoPluginDeclarativeMetadataNodeV2, PluginDeclarativeMetadataEntryV2 as DtoPluginDeclarativeMetadataEntryV2, PluginDeclarativeActionPanelNodeV2 as DtoPluginDeclarativeActionPanelNodeV2, PluginDeclarativeCollectionListNodeV2 as DtoPluginDeclarativeCollectionListNodeV2, PluginCollectionProjectedScalarFieldRefV1 as DtoPluginCollectionProjectedScalarFieldRefV1, PluginCollectionRowCommandV1 as DtoPluginCollectionRowCommandV1 } from './actions/dtos/actionDeclarativeNodeDto.generated.js';
 import type { PluginDeclarativeNodeV2 } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } from './actions/dtos/pluginActionDtoSupport.generated.js';
-import {
-  compilePluginJsonSchema as canonicalCompilePluginJsonSchema,
-  createPluginContributionIdentity as canonicalCreatePluginContributionIdentity,
-  ingestPluginManifestV2,
-  isValidPluginJsonSchemaValue as canonicalIsValidPluginJsonSchemaValue,
-  PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema,
-  PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema,
-  PluginIdJsonSchema as canonicalPluginIdJsonSchema,
-  PluginIdSchema as canonicalPluginIdSchema,
-  validatePublicPluginManifestPolicy,
-} from '@happier-dev/protocol/plugins/manifest';
+import { compilePluginJsonSchema as canonicalCompilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { isValidPluginJsonSchemaValue as canonicalIsValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { PluginIdJsonSchema as canonicalPluginIdJsonSchema, PluginIdSchema as canonicalPluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import type {
   ComposerContentMediaKindV1,
   ComposerContentMimeTypeV1,

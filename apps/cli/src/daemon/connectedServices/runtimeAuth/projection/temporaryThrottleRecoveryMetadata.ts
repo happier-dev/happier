@@ -1,8 +1,5 @@
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY as key,
-  SessionUsageLimitRecoveryV1Schema,
-  type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY as key, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import {
   hasSameUsageLimitRecoveryIdentity,
   mergeUsageLimitRecoveryIntent,

@@ -1,23 +1,14 @@
 import type { StoredCredentials } from '@/persistence';
-import {
-  buildBackendTargetKeyV2,
-  ProviderBoundModelRefSchema,
-  ProviderConnectionIdSchema,
-  SessionModelSelectionResolutionError,
-  SessionModelTransitionResultV1Schema,
-  SessionModelSelectionV2Schema,
-  isModelRefGrantedV1,
-  type CallerInputConstraintsV1,
-  type ProviderConnectionId,
-  type ProviderBoundModelRef,
-  type SessionModelSelectionV2,
-  type SessionModelTransitionResultV1,
-} from '@happier-dev/protocol';
-import {
-  TeamCredentialProviderModelSelectionV1Schema,
-  type TeamCredentialProviderModelSelectionV1,
-} from '@happier-dev/protocol/teams';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ProviderBoundModelRefSchema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { CallerInputConstraintsV1, ProviderConnectionId, ProviderBoundModelRef, SessionModelSelectionV2, SessionModelTransitionResultV1 } from '@happier-dev/protocol';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import {
   resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,

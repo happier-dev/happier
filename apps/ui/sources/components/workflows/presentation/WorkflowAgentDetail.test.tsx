@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
@@ -8,6 +8,14 @@ import { installWorkflowRendererCommonModuleMocks } from '@/components/tools/ren
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installWorkflowRendererCommonModuleMocks();
+
+// Transform the real transcript modules once, outside individual assertion budgets.
+let WorkflowAgentDetail: typeof import('./WorkflowAgentDetail')['WorkflowAgentDetail'];
+let WorkflowAgentRow: typeof import('./WorkflowAgentRow')['WorkflowAgentRow'];
+beforeAll(async () => {
+    ({ WorkflowAgentDetail } = await import('./WorkflowAgentDetail'));
+    ({ WorkflowAgentRow } = await import('./WorkflowAgentRow'));
+}, 300_000);
 
 function collectText(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -18,11 +26,21 @@ function collectText(value: unknown): string {
 }
 
 async function render(text: string) {
-    const { WorkflowAgentDetail } = await import('./WorkflowAgentDetail');
     return (await renderScreen(<WorkflowAgentDetail text={text} detailTestID="detail" />)).tree;
 }
 
 describe('WorkflowAgentDetail', () => {
+    it('keeps the long-detail disclosure outside the agent expansion button', async () => {
+        const text = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n');
+        const screen = await renderScreen(<WorkflowAgentRow title="Builder" status="complete" summary={text} testID="agent" />);
+        await screen.pressByTestIdAsync('agent');
+        expect(screen.tree.findHostByTestId('agent-detail-show-more')).toBeTruthy();
+        expect(screen.tree.findHostByTestId('agent')!.findAllByProps({ testID: 'agent-detail-show-more' })).toHaveLength(0);
+        await screen.pressByTestIdAsync('agent-detail-show-more');
+        expect(collectText(screen.tree.findHostByTestId('agent-detail-body')!.props.children).split('\n')).toHaveLength(20);
+        act(() => screen.tree.unmount());
+    });
+
     it('pretty-prints JSON payloads instead of dumping the raw source', async () => {
         const tree = await render('{"status":"done","count":2}');
         const body = tree.findHostByTestId('detail-body')!;

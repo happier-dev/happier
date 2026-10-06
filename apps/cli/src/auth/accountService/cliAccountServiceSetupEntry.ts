@@ -1,20 +1,10 @@
 import tweetnacl from 'tweetnacl';
-import {
-  ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1,
-  AccountDirectoryCapabilitiesSchema,
-  AccountDirectoryHomesResponseV1Schema,
-  HomeLoginAssertionResponseV1Schema,
-  HomeLoginCredentialPayloadV1Schema,
-  HomeLoginRedemptionResultV1Schema,
-  HOME_LOGIN_HTTP_PATH_V1,
-  buildAccountDirectoryHomeLoginAssertionHttpPathV1,
-  decodeBase64,
-  encodeBase64,
-  formatRecoveryKey,
-  normalizeServerIdentityIdCapability,
-  type AccountDirectoryHomeEntryV1,
-  type HomeSignInServicePolicyV1,
-} from '@happier-dev/protocol';
+import { ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1, AccountDirectoryHomesResponseV1Schema, HomeLoginAssertionResponseV1Schema, HomeLoginCredentialPayloadV1Schema, HomeLoginRedemptionResultV1Schema, HOME_LOGIN_HTTP_PATH_V1, buildAccountDirectoryHomeLoginAssertionHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { formatRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import type { AccountDirectoryHomeEntryV1, HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
 import {
   observeAccountServiceHomeApproval,
   resolveEffectiveSignInService,

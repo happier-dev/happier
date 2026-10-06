@@ -1903,7 +1903,7 @@ function normalizeUnavailableReason(reason: string): string {
     return reason === 'feature_gate_disabled' ? 'feature_disabled' : reason;
 }
 
-function resolvePluginSurfaceDescriptorRenderGate(
+export function resolvePluginSurfaceDescriptorRenderGate(
     descriptor: PluginSurfaceHostDescriptor,
     policyContext: PluginUiPolicyEvaluationContext,
 ): PluginSurfaceRenderGateDecision {
@@ -3077,10 +3077,10 @@ function PluginSurfaceHostMount(props: Readonly<(
     });
     entityDragHostControllerRef.current = controller;
     const entityDragBinding = entityDragBindingRef.current;
-    const entityDragPresentationHost = React.useMemo(() => entityDragBinding ? createPluginUiPrivatePresentationHost(undefined, {
+    const entityDragPresentationHost = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined, entityDragBinding ? {
         renderDragSource: dragInput => <PluginEntityDragSourceView binding={entityDragBinding} {...dragInput} />,
         renderDropTarget: dropInput => <PluginEntityDropTargetView binding={entityDragBinding} {...dropInput} />,
-    }) : undefined, [entityDragBinding]);
+    } : undefined), [entityDragBinding]);
     React.useLayoutEffect(() => {
         // Presentation focus remains available to every renderer, while the
         // existing layout owner separately names the one semantic-current

@@ -26,6 +26,18 @@ function flattenStyle(styleProp: unknown): Record<string, unknown> {
 }
 
 describe('RepositoryTreeTransferStatusBar', () => {
+    it('keeps native handoff progress visible without offering ineffective app cancellation', async () => {
+        const { RepositoryTreeTransferStatusBar } = await import('./RepositoryTreeTransferStatusBar');
+        const screen = await renderScreen(<RepositoryTreeTransferStatusBar
+            uploadState={{ status: 'idle' }}
+            downloadState={{ status: 'downloading', name: 'recording.mp4', downloadedBytes: 4, totalBytes: 4, cancelable: false }}
+            onCancelUploads={vi.fn()}
+            onCancelDownload={vi.fn()}
+        />);
+        expect(screen.findByTestId('repository-tree-download-status')).not.toBeNull();
+        expect(screen.findByTestId('repository-tree-download-cancel')).toBeNull();
+    });
+
     it.each([
         {
             label: 'upload',

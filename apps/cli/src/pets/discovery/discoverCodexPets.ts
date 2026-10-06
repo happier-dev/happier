@@ -1,12 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  PET_DISCOVERY_LIMITS_V1,
-  type DiscoveredPetPackageV1,
-  type PetDiscoveryDiagnosticV1,
-  type PetPackageValidationResultV1,
-} from '@happier-dev/protocol';
+import { PET_DISCOVERY_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { DiscoveredPetPackageV1, PetDiscoveryDiagnosticV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
 
 import type { PetDiscoveryRoot } from './resolveCodexPetRoots';
 import { createPetSourceKey } from './createPetSourceKey';

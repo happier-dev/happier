@@ -1,58 +1,24 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  applyWorkflowInvocationFactV1,
-  sameStrictJsonValue,
-  classifyWorkflowHoldV1,
-  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-  MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
-  StrictJsonValueSchema,
-  AutomationStoredContentEnvelopeV1Schema,
-  AutomationStoredWorkflowDefinitionV2Schema,
-  WorkflowAcceptedSnapshotV1Schema,
-  WorkflowAuthoredInputV1Schema,
-  WorkflowCheckpointEnvelopeV1Schema,
-  WorkflowProgressEnvelopeV1Schema,
-  WorkflowInvocationFactV1Schema,
-  WorkflowInvocationFactResultV1Schema,
-  WorkflowRunInvocationIndexV1Schema,
-  WorkflowRunSummaryV1Schema,
-  WorkflowOperationErrorCodeV1Schema,
-  WorkflowResolvedInputsV1Schema,
-  materializeWorkflowAcceptedSnapshotV1,
-  renderSessionRoleBlockV1,
-  resolveWorkflowDefinitionRefV1,
-  readTriggerTargetV1,
-  ReviewStartTerminalValueV1Schema,
-  openAccountScopedBlobCiphertext,
-  openWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  openWorkflowCheckpointStoredEnvelopeV1,
-  openWorkflowProgressStoredEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1,
-  sealWorkflowCheckpointStoredEnvelopeV1,
-  sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  sealWorkflowFinalResultStoredEnvelopeV1,
-  sealWorkflowProgressStoredEnvelopeV1,
-  serializeWorkflowStoredContentEnvelopeV1,
-  sameAutomationAccountCurrentnessWitnessV1,
-  sameAutomationAccountContentIdentityV1,
-  WorkflowRunRecipientCensusResponseV1Schema,
-  WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema,
-  prepareWorkflowRunDataKeyV1,
-  resolveWorkflowRunDataKeyV1,
-  runWorkflowRecipientKeyPreparationV1,
-  type WorkflowRunEncryptionV1,
-  type WorkflowRunRecipientCensusResponseV1,
-  type WorkflowCheckpointEnvelopeV1,
-  type WorkflowProgressEnvelopeV1,
-  type WorkflowRunInvocationIndexV1,
-  type WorkflowRunSummaryV1,
-  type WorkflowRunStepProgressV1,
-  type TriggerTargetV1,
-  type WorkflowDefinitionV1,
-  type MaterializeWorkflowAcceptedSnapshotV1Input,
-} from '@happier-dev/protocol';
-import { assertControllerDominates, type ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES, AutomationStoredContentEnvelopeV1ReadSchema } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { WorkflowAcceptedSnapshotV1Schema, WorkflowResolvedInputsV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
+import { readTriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { renderSessionRoleBlockV1 } from '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1';
+import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sameAutomationAccountCurrentnessWitnessV1, sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { WorkflowRunEncryptionV1, WorkflowRunRecipientCensusResponseV1, WorkflowCheckpointEnvelopeV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowRunStepProgressV1, TriggerTargetV1, WorkflowDefinitionV1, MaterializeWorkflowAcceptedSnapshotV1Input } from '@happier-dev/protocol';
+import { assertControllerDominates } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
@@ -147,7 +113,7 @@ function parseAutomationStoredEnvelope(serialized: string) {
   } catch {
     return null;
   }
-  const parsed = AutomationStoredContentEnvelopeV1Schema.safeParse(value);
+  const parsed = AutomationStoredContentEnvelopeV1ReadSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -1129,14 +1095,16 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : refuseWorkflowTriggerAdmission('content_unavailable');
     }
     let resolvedAcceptedEnvelope = claim.acceptedEnvelope;
-    if (claim.definitionEnvelope !== undefined) {
+    // Admission happens once. A reclaim/Continue uses the same immutable
+    // snapshot and recipient key custody as a direct Run, not the live source.
+    if (claim.definitionEnvelope !== undefined && resolvedAcceptedEnvelope === undefined) {
       if (!claim.automationId || !claim.automationCause) return refuseWorkflowTriggerAdmission('content_unavailable');
       const definitionContent = openAutomationStoredContent({
         serialized: claim.definitionEnvelope,
         kind: 'automation_template_payload',
         encryption: accountEncryption,
       });
-      const storedDefinition = AutomationStoredWorkflowDefinitionV2Schema.safeParse(definitionContent);
+    const storedDefinition = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(definitionContent);
       const target = readTriggerTargetV1(claim, definitionContent);
       if (!storedDefinition.success || target.kind !== 'available') return refuseWorkflowTriggerAdmission('source_unavailable');
       const source = await resolveWorkflowTriggerClaimSource({

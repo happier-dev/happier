@@ -341,7 +341,7 @@ function normalizeStackShorthandForPreflight(argv) {
   ];
 }
 
-const STACK_LOCAL_ENV_SUBCOMMANDS = new Set(['set', 'unset', 'remove', 'rm', 'get', 'list', 'path']);
+const STACK_LOCAL_ENV_SUBCOMMANDS = new Set(['set', 'unset', 'remove', 'rm', 'get', 'list', 'path', 'shared-db']);
 
 function shouldSkipBundledWorkspacePreflight(argv) {
   const args = Array.isArray(argv) ? argv : [];
@@ -453,10 +453,9 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // Read-only doctor only inspects the stack and daemon state. Keep --fix behind
   // the preflight because it can mutate the local environment.
   if (subcommand === 'doctor') return !rest.includes('--fix');
-  if (subcommand === 'runtime') {
-    const runtimeSubcommand = positionals[2] ?? '';
-    if (runtimeSubcommand !== 'activate') return true;
-  }
+  // Runtime activation composes already-built artifacts; it must not prepare
+  // the moving checkout before it can read the producer's immutable store.
+  if (subcommand === 'runtime') return true;
 
   // The explicit runtime CLI consumes the selected immutable snapshot just as
   // `stack start --runtime` does. Publishing source workspace packages before

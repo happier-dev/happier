@@ -8,12 +8,9 @@ import type {
   SignedProviderBrokerRouteGrantV1,
   UsageObservationTokens,
 } from '@happier-dev/protocol';
-import { encodeProviderBrokerAuthorityV1 } from '@happier-dev/protocol';
-import {
-  DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema,
-  type DaemonProviderTeamCredentialBrokerEligibilityRequestV1,
-  type DaemonProviderTeamCredentialBrokerEligibilityResponseV1,
-} from '@happier-dev/protocol/rpc';
+import { encodeProviderBrokerAuthorityV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import {
   providerBrokerRouteGrantExpectedBindingV1 as expectedBinding,

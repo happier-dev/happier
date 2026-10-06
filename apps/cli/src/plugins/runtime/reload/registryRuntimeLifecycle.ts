@@ -197,6 +197,11 @@ async function resolveCandidateContributes(
   const loadResult = await loadPluginsFromState(
     candidate.runtimeCatalog,
     materializationIdsByPluginId,
+    Object.fromEntries(Object.entries(candidate.installationState.plugins).flatMap(([pluginId, installation]) => (
+      installation.approvedAuthorityManifest === undefined
+        ? []
+        : [[pluginId, installation.approvedAuthorityManifest] as const]
+    ))),
   );
   const plugin = projectLoadedPluginContributes({
     loadResult,

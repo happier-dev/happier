@@ -1,29 +1,5 @@
-import {
-  DaemonBrowserRecordingCancelInputV1Schema,
-  DaemonBrowserRecordingCleanupInputV1Schema,
-  DaemonBrowserRecordingCleanupResultV1Schema,
-  DaemonBrowserRecordingListInputV1Schema,
-  DaemonBrowserRecordingListResponseV1Schema,
-  DaemonBrowserRecordingStartInputV1Schema,
-  DaemonBrowserRecordingStartResultV1Schema,
-  DaemonBrowserRecordingStatusInputV1Schema,
-  DaemonBrowserRecordingStatusResponseV1Schema,
-  DaemonBrowserRecordingStopInputV1Schema,
-  DaemonBrowserRecordingStopResultV1Schema,
-  DaemonBrowserRecordingTerminalResultV1Schema,
-  type BrowserRecordingCapabilities,
-  type BrowserRecordingSessionV1,
-  type DaemonBrowserRecordingCancelInputV1,
-  type DaemonBrowserRecordingCleanupInputV1,
-  type DaemonBrowserRecordingCleanupResultV1,
-  type DaemonBrowserRecordingListInputV1,
-  type DaemonBrowserRecordingStartInputV1,
-  type DaemonBrowserRecordingStartResultV1,
-  type DaemonBrowserRecordingStatusInputV1,
-  type DaemonBrowserRecordingStopInputV1,
-  type DaemonBrowserRecordingStopResultV1,
-  type DaemonBrowserRecordingTerminalResultV1,
-} from '@happier-dev/protocol';
+import { DaemonBrowserRecordingCancelInputV1Schema, DaemonBrowserRecordingCleanupInputV1Schema, DaemonBrowserRecordingCleanupResultV1Schema, DaemonBrowserRecordingListInputV1Schema, DaemonBrowserRecordingListResponseV1Schema, DaemonBrowserRecordingStartInputV1Schema, DaemonBrowserRecordingStartResultV1Schema, DaemonBrowserRecordingStatusInputV1Schema, DaemonBrowserRecordingStatusResponseV1Schema, DaemonBrowserRecordingStopInputV1Schema, DaemonBrowserRecordingStopResultV1Schema, DaemonBrowserRecordingTerminalResultV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import type { BrowserRecordingCapabilities, BrowserRecordingSessionV1, DaemonBrowserRecordingCancelInputV1, DaemonBrowserRecordingCleanupInputV1, DaemonBrowserRecordingCleanupResultV1, DaemonBrowserRecordingListInputV1, DaemonBrowserRecordingStartInputV1, DaemonBrowserRecordingStartResultV1, DaemonBrowserRecordingStatusInputV1, DaemonBrowserRecordingStopInputV1, DaemonBrowserRecordingStopResultV1, DaemonBrowserRecordingTerminalResultV1 } from '@happier-dev/protocol';
 
 import type { BrowserRecordingDaemonService } from './service';
 

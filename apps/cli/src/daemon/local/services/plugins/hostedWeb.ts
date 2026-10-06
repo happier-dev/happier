@@ -2,7 +2,7 @@ import type {
     LocalServicePreviewResourceV1,
     LocalServicePreviewTargetV1,
 } from '@happier-dev/protocol';
-import { buildPluginHostedWebStaticAssetPreviewId } from '@happier-dev/protocol/plugins/ui';
+import { buildPluginHostedWebStaticAssetPreviewId } from '@happier-dev/protocol/plugins/ui/hostedWebBuild';
 
 import { HOSTED_WEB_FRAME_ANCESTOR_TOKEN_QUERY_KEY } from './staticAssets/frameAncestors';
 

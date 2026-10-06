@@ -54,6 +54,51 @@ async function expectZellijStartupTimeoutFailure(action: () => Promise<unknown>,
 }
 
 describe('createZellijTerminalHostAdapter', () => {
+  it('discovers and probes each host through its own native session', async () => {
+    const actions = createActions({
+      runCommand: async (params) => ({ exitCode: 0, stdout: params.sessionName === 'first' ? 'terminal_42\n' : 'terminal_43\n', stderr: '' }),
+      listPanes: async (params) => [{
+        id: params.env.ZELLIJ_SESSION_NAME === 'first' ? 42 : 43,
+        is_plugin: false, terminal_command: '/managed/node',
+      }],
+    });
+    const adapter = createTestZellijAdapter({ zellijBinary: '/tools/zellij', socketDir: '/tmp/zellij-sock', actions });
+    const hosts = [];
+    for (const sessionName of ['first', 'second']) {
+      hosts.push(await adapter.createOrAttachHost({
+        sessionName, workingDirectory: '/workspace/project', spawnArgv: ['/managed/node'],
+        spawnEnv: { ZELLIJ_SESSION_NAME: 'ambient-session' }, isolatedEnv: true,
+      }));
+    }
+    expect(hosts.map(host => host.paneId)).toEqual(['terminal_42', 'terminal_43']);
+    for (const host of hosts) {
+      await expect(adapter.evaluateLiveness(host)).resolves.toMatchObject({ paneAlive: true, paneDead: false });
+    }
+  });
+
+  it('provides the same launch-only environment to the native server and command client', async () => {
+    let serverEnvironment: Readonly<Record<string, string>> = {};
+    let providerSuggestion: string | undefined;
+    const actions = createActions({
+      attachCreateBackground: async (params) => {
+        serverEnvironment = params.env;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      runCommand: async () => {
+        // The native Zellij server starts panes from its own inherited environment.
+        providerSuggestion = serverEnvironment.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION;
+        return { exitCode: 0, stdout: 'terminal_42\n', stderr: '' };
+      },
+    });
+    const adapter = createTestZellijAdapter({ zellijBinary: '/tools/zellij', socketDir: '/tmp/zellij-sock', actions });
+    await adapter.createOrAttachHost({
+      sessionName: 'session-a', workingDirectory: '/workspace/project',
+      spawnArgv: ['/managed/node', 'terminal_launch_spec_runner.cjs', '/tmp/launch.json'],
+      spawnEnv: { TERM: 'dumb', CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'false' }, isolatedEnv: true,
+    });
+    expect(providerSuggestion).toBe('false');
+  });
+
   it('gives staging and Enter their own bounded phase after a slow successful write', async () => {
     let nowMs = 1_000;
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
@@ -164,7 +209,7 @@ describe('createZellijTerminalHostAdapter', () => {
     });
     expect(actions.attachCreateBackground).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { HAPPIER_CLAUDE_PATH: '/opt/claude/cli.js', ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: '' },
       unsetEnvKeys: ['openai_api_key'],
     }));
     expect(actions.runCommand).toHaveBeenCalledWith(expect.objectContaining({
@@ -173,6 +218,7 @@ describe('createZellijTerminalHostAdapter', () => {
       env: {
         HAPPIER_CLAUDE_PATH: '/opt/claude/cli.js',
         ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock',
+        ZELLIJ_SESSION_NAME: '',
       },
       unsetEnvKeys: ['openai_api_key'],
     }));
@@ -1106,7 +1152,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.killSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: 'session-a' },
     }));
   });
 
@@ -1133,7 +1179,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.killSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: 'session-a' },
       timeoutMs: 123,
     }));
     expect(actions.runCommand).not.toHaveBeenCalled();
@@ -1162,7 +1208,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.killSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: 'session-a' },
       timeoutMs: 123,
     }));
   });
@@ -1189,7 +1235,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.killSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: 'session-a' },
       timeoutMs: 123,
     }));
   });
@@ -1218,7 +1264,7 @@ describe('createZellijTerminalHostAdapter', () => {
 
     expect(actions.killSession).toHaveBeenCalledWith(expect.objectContaining({
       sessionName: 'session-a',
-      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock' },
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock', ZELLIJ_SESSION_NAME: 'session-a' },
     }));
   });
 

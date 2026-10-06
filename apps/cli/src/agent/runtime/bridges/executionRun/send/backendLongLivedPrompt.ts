@@ -7,7 +7,7 @@ import type {
   ExecutionRunTurnResultV1,
   SessionInputCausalPermissionAuthorityV1,
 } from '@happier-dev/protocol';
-import { normalizeStrictJsonValue } from '@happier-dev/protocol';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
@@ -30,10 +30,7 @@ import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptP
 import { isExecutionRunTranscriptCustodyError } from '../executionRunTranscriptPublisher';
 import { settleExecutionRunController } from '../settleExecutionRunController';
 import { readExecutionRunErrorCode } from '../errors';
-import {
-  buildExecutionRunResultContractPrompt,
-  decodeExecutionRunProfileResult,
-} from '@happier-dev/protocol';
+import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { projectExecutionRunWorkflowInputAcceptance, type ExecutionRunWorkflowObservationSink } from '../executionRunWorkflowObservation';
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { publishExecutionRunTurn } from '../publishExecutionRunTurn';

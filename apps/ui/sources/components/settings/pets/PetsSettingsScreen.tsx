@@ -28,7 +28,7 @@ import {
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
-import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { storage, useLocalSettings, useSettingsSelector } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     useMachineAdministrationTargetSelection,
@@ -81,7 +81,11 @@ function machineAdministrationExecutionTargetKey(
 }
 
 export function PetsSettingsScreen() {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        petsSelectedPetRef: settings.petsSelectedPetRef,
+        petsEnabled: settings.petsEnabled,
+        petsDesktopOverlayDefaultEnabled: settings.petsDesktopOverlayDefaultEnabled,
+    }));
     const localSettings = useLocalSettings();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.pets,

@@ -38,7 +38,7 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
 import { applyVoiceWelcomeSelection, resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
@@ -88,7 +88,10 @@ export function LocalConversationSection(props: {
         ? t('voice.readiness.server_feature_disabled')
         : t('voice.readiness.runtime_unknown');
   const enabledAgentIds = useEnabledAgentIds();
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+      backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+  }));
   // "Custom…" in a model or agent menu opens an inline field under that menu, not a prompt.
   const [advancedAgentExpanded, setAdvancedAgentExpanded] = React.useState(false);
   const [customEntry, setCustomEntry] = React.useState<null | 'agentId' | 'chatModelId' | 'commitModelId'>(null);

@@ -44,8 +44,6 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
         icon: <Icon name="lightning" />,
     };
     const workflowItems: readonly DropdownMenuItem[] = [
-        { id: 'agent', testID: 'workflows-column:add:agent', title: t('workflows.authoring.create'), icon: <Icon name="sparkle" /> },
-        { id: 'example', testID: 'workflows-column:add:example', title: t('workflows.examples.fromExample'), icon: <Icon name="tree-structure" /> },
         {
             id: 'new',
             testID: 'workflows-column:add:new',
@@ -53,6 +51,11 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
             subtitle: t('workflows.destination.addMenu.newWorkflowSubtitle'),
             icon: <Icon name="plus" />,
         },
+        { id: 'agent', testID: 'workflows-column:add:agent', title: t('workflows.authoring.create'),
+            subtitle: t('workflows.authoring.description'), icon: <Icon name="sparkle" /> },
+        newTriggerItem,
+        { id: 'example', testID: 'workflows-column:add:example', title: t('workflows.examples.fromExample'),
+            subtitle: t('workflows.examples.description'), icon: <Icon name="tree-structure" /> },
         {
             id: 'import',
             testID: 'workflows-column:add:import',
@@ -61,7 +64,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
             icon: <Icon name="download" />,
         },
     ];
-    const addItems: readonly DropdownMenuItem[] = props.canCreate ? [...workflowItems, newTriggerItem] : [newTriggerItem];
+    const addItems: readonly DropdownMenuItem[] = props.canCreate ? workflowItems : [newTriggerItem];
     const moreItems: readonly DropdownMenuItem[] = [
         {
             id: 'settings',

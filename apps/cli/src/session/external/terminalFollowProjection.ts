@@ -1,9 +1,7 @@
 import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
-import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol';
-import {
-  AgentSessionRuntimeEventSchema,
-  type AgentSessionRuntimeEvent,
-} from '@happier-dev/protocol/runtime';
+import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 
 import type { CommittedTranscriptAdmission } from '@/api/session/transcriptPort';
 

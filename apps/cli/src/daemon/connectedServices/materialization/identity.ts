@@ -1,10 +1,7 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import {
-  ConnectedServiceMaterializationIdentityV1Schema,
-  readConnectedServiceMaterializationIdentityV1FromMetadata,
-  type ConnectedServiceMaterializationIdentityV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceMaterializationIdentityV1Schema, readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {

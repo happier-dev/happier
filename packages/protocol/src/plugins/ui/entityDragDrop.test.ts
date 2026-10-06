@@ -3,6 +3,18 @@ import { EntityDragItemV1Schema, EntityDropEffectV1Schema, entityDragKindV1, isE
 
 const scope = { serverId: 'home-a', accountId: 'account-a' };
 describe('transient entity identity', () => {
+    it('isolates navigation placement carries by surface and item instead of accepting them as destinations', () => {
+        const item = { kind: 'navigation-item', scope, surfaceId: 'appRail', itemId: 'plugin:example:review' };
+        expect(EntityDragItemV1Schema.safeParse(item).success).toBe(true);
+        expect(isEntityDragKindV1('navigation-item')).toBe(true);
+        expect(EntityDragItemV1Schema.safeParse({ ...item, href: '/settings' }).success).toBe(false);
+        expect(EntityDragItemV1Schema.safeParse({ ...item, itemId: '' }).success).toBe(false);
+    });
+    it('admits declared bounded drop marks while rejecting arbitrary glyphs', () => {
+        const effect = { actionId: 'example.link', input: {}, preview: { verb: 'Link', target: 'Release', glyph: 'copy' } };
+        expect(EntityDropEffectV1Schema.safeParse(effect).success).toBe(true);
+        expect(EntityDropEffectV1Schema.safeParse({ ...effect, preview: { ...effect.preview, glyph: 'anything' } }).success).toBe(false);
+    });
     it('recognizes actual Board/session kinds through the same grammar without accepting widget or raw plugin kinds', () => {
         expect(isEntityDragKindV1('work-board-item')).toBe(true);
         expect(isEntityDragKindV1('session')).toBe(true);

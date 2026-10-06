@@ -2,15 +2,10 @@
  * Browser authoring exposes declaration primitives only. Structural parsing
  * remains on the Node manifest owner because it performs canonical ingestion.
  */
-export {
-  compilePluginJsonSchema,
-  createPluginContributionIdentity,
-  isValidPluginJsonSchemaValue,
-  PluginContributionIdentityV1JsonSchema,
-  PluginContributionIdentityV1Schema,
-  PluginIdJsonSchema,
-  PluginIdSchema,
-} from '@happier-dev/protocol/plugins/manifest/declaration';
+export { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+export { createPluginContributionIdentity, PluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+export { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+export { PluginIdJsonSchema, PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 export type {
   PluginContributionIdentity,
   PluginJsonSchemaValidator,

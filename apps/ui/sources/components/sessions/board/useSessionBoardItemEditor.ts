@@ -325,11 +325,12 @@ export function useSessionBoardItemEditor<TInvalid extends string>(
         intent: SessionBoardItemUpsertInputV1,
         recovery: SessionBoardActionRecoveryEvidenceV1 | null,
     ) => {
+        const requestRecoveryRefresh = inputRef.current.requestRecoveryRefresh;
         recoveryRefreshObservedRef.current = false;
-        recoveryRefreshRequestedRef.current = true;
+        recoveryRefreshRequestedRef.current = requestRecoveryRefresh !== undefined;
         recoveryRefreshRequestOwnerRef.current = draft.editorOwnerRef.current;
         updateStatus({ kind: 'outcomeUnknown', intent, recovery });
-        inputRef.current.requestRecoveryRefresh?.();
+        requestRecoveryRefresh?.();
     }, [draft, inputRef, recoveryRefreshObservedRef, recoveryRefreshRequestedRef, recoveryRefreshRequestOwnerRef, updateStatus]);
 
     const settleSaved = React.useCallback(async (

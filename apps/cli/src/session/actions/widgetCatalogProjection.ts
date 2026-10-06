@@ -1,9 +1,17 @@
 import { z } from 'zod';
-import { buildQualifiedPluginContributionKey, PluginJsonSchemaV2Schema, PluginContributionIdentityV1Schema, type PluginProjectionV2 } from '@happier-dev/protocol';
-import { InputHintsSchema, InputPathSchema } from '@happier-dev/protocol/inputs';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import { InputHintsSchema } from '@happier-dev/protocol/inputs/inputFields';
+import { InputPathSchema } from '@happier-dev/protocol/inputs/inputPredicates';
 import { defineProtocolArray } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { PluginUiSurfaceBindingV1Schema, PluginUiWidgetHomeV1Schema, selectPluginUiWidgetEntriesV1 } from '@happier-dev/protocol/plugins/ui';
-import { BUILTIN_WIDGET_DESCRIPTORS_V1, WidgetConnectedAccountPurposeBindingV1Schema, widgetCandidateDefinitionV1, type WidgetCatalogEntryV1 } from '@happier-dev/protocol/widgets';
+import { PluginUiSurfaceBindingV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
+import { selectPluginUiWidgetEntriesV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetInventory';
+import { PluginUiWidgetHomeV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
+import { WidgetConnectedAccountPurposeBindingV1Schema } from '@happier-dev/protocol/widgets/widgetConnectedAccountPurposeBindingV1';
+import type { WidgetCatalogEntryV1 } from '@happier-dev/protocol/widgets';
 
 const display = z.object({ title: z.string().trim().min(1).optional(), developerFallback: z.string().trim().min(1).optional() }).passthrough();
 

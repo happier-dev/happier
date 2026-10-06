@@ -23,18 +23,8 @@ import type {
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 } from '@happier-dev/protocol';
-import {
-    createReviewCommentLinkedIssueIdV1,
-    createReviewCommentPublicationSettlementRequestV1,
-    formatReviewCommentPublicationMarkerV1,
-    matchReviewCommentPublicationMarkerV1,
-    parseReviewCommentPublicationPlanV1,
-    preflightReviewCommentPublicationRoutingV1,
-    reviewCommentPublicationEntryIsDiffLessV1,
-    reviewCommentPublicationTargetMatchesV1,
-    validateReviewCommentPublicationClaimAgainstPlanV1,
-    validateReviewCommentPublicationResultAgainstPlanV1,
-} from '@happier-dev/protocol';
+import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { createReviewCommentPublicationSettlementRequestV1, formatReviewCommentPublicationMarkerV1, matchReviewCommentPublicationMarkerV1, parseReviewCommentPublicationPlanV1, preflightReviewCommentPublicationRoutingV1, reviewCommentPublicationEntryIsDiffLessV1, reviewCommentPublicationTargetMatchesV1, validateReviewCommentPublicationClaimAgainstPlanV1, validateReviewCommentPublicationResultAgainstPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
 import {

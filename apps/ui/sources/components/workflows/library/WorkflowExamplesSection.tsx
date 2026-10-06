@@ -1,16 +1,19 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPageSheet } from '@happier-dev/plugin-ui/presentation';
 import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { t, tLoose } from '@/text';
+import { getPreferredLanguage, t, tLoose } from '@/text';
+import { workflowExamplesTranslations } from '@/text/translations/workflowExamplesTranslations';
 import { WorkflowFlowView } from '../flow/WorkflowFlowView';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
 
@@ -25,9 +28,15 @@ export function WorkflowExamplesSection(props: Readonly<{
         if (props.onUse) props.onUse(example);
         else router.push({ pathname: '/workflows/new', params: { example: example.key } } as never);
     };
-    return <ItemGroup title={t('workflows.examples.title')} columns={2}
+    return <ItemGroup title={t('workflows.examples.title')} surface="none"
         {...(props.opensDraft === false ? {} : { description: t('workflows.examples.description') })}>
-        {WORKFLOW_STARTER_EXAMPLES_V1.map((example) => <ExampleCard key={example.key} example={example} onUse={() => useExample(example)} />)}
+        <SectionContentRow showDivider={false}>
+            <ItemGroupColumns columns={2} paddingHorizontal={0} paddingVertical={0}>
+                {WORKFLOW_STARTER_EXAMPLES_V1.map((example) => <ItemGroupColumn key={example.key} style={styles.cell}>
+                    <ExampleCard example={example} onUse={() => useExample(example)} />
+                </ItemGroupColumn>)}
+            </ItemGroupColumns>
+        </SectionContentRow>
     </ItemGroup>;
 }
 
@@ -37,12 +46,21 @@ export function WorkflowExamplesSection(props: Readonly<{
  */
 function ExampleCard(props: Readonly<{ example: WorkflowStarterExampleV1; onUse: () => void }>) {
     const { example } = props;
-    const projection = React.useMemo(() => projectWorkflowFlow(example.definition), [example.definition]);
+    const { theme } = useUnistyles();
+    const language = getPreferredLanguage();
+    const projection = React.useMemo(() => projectWorkflowFlow(example.definition, {}, Object.fromEntries(
+        Object.keys(workflowExamplesTranslations.en.nodes).map(key => [key,
+            t(`workflows.examples.nodes.${key as keyof typeof workflowExamplesTranslations.en.nodes}`)]),
+    )), [example.definition, language]);
     const stepCount = React.useMemo(
         () => countWorkflowStepsV1(example.definition.blocks),
         [example.definition],
     );
-    return <SectionContentRow testID={`workflow-examples:${example.key}`} showDivider={false}><View style={styles.card}>
+    const structure = projection.nodes.find(node => node.kind === 'parallel' || node.kind === 'loop' || node.kind === 'if');
+    const shape = structure?.kind === 'parallel' ? t('workflows.editor.addParallel') : structure?.label;
+    return <HappierPageSheet testID={`workflow-examples:${example.key}`} rowDividers={false} style={styles.sheet}
+        colors={{ sheet: theme.colors.surface.base, sheetBorder: theme.colors.border.default,
+            rowDivider: theme.colors.border.subtle, groupDivider: theme.colors.border.subtle }}><View style={styles.card}>
         <View style={styles.copy}>
             <Text style={styles.title}>{tLoose(example.titleKey)}</Text>
             <Text style={styles.description}>{tLoose(example.descriptionKey)}</Text>
@@ -51,24 +69,38 @@ function ExampleCard(props: Readonly<{ example: WorkflowStarterExampleV1; onUse:
             <WorkflowFlowView projection={projection} selectedNodeId={null} density="compact" testIDPrefix={`workflow-examples:${example.key}:flow`} />
         </View>
         <View style={styles.footer}>
-            <Text style={styles.meta} numberOfLines={1}>{t('workflows.examples.stepCount', { count: stepCount })}</Text>
+            <Text style={styles.meta}>{[t('workflows.examples.stepCount', { count: stepCount }), shape].filter(Boolean).join(' · ')}</Text>
             <RoundButton testID={`workflow-examples:${example.key}:use`} size="small" display="secondary"
                 title={t('workflows.examples.use')} accessibilityLabel={`${t('workflows.examples.use')}: ${tLoose(example.titleKey)}`} onPress={props.onUse} />
         </View>
-    </View></SectionContentRow>;
+    </View></HappierPageSheet>;
 }
 
 const styles = StyleSheet.create((theme) => ({
-    card: { flexGrow: 1, minWidth: 0, gap: theme.margins.md },
-    copy: { gap: theme.margins.xs },
+    // A row's cells share its height, and each card fills its cell, so cards side by side end together.
+    cell: { flexGrow: 1 },
+    // The map band runs edge to edge, so the sheet clips it to its own corners.
+    sheet: { flexGrow: 1, minWidth: 0, overflow: 'hidden' },
+    card: { flexGrow: 1, minWidth: 0 },
+    copy: { gap: theme.margins.xs, padding: theme.margins.md },
     title: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
     description: { ...Typography.default(), color: theme.colors.text.secondary },
     // The example itself, on the canvas tone the visual tiles' previews use.
     preview: {
+        flexGrow: 1,
         backgroundColor: theme.colors.background.canvas,
-        borderRadius: theme.borderRadius.md,
-        padding: theme.margins.sm,
+        padding: theme.margins.md,
     },
-    footer: { marginTop: 'auto', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.margins.sm },
+    footer: {
+        marginTop: 'auto',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.margins.sm,
+        paddingHorizontal: theme.margins.md,
+        paddingVertical: theme.margins.sm,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.subtle,
+    },
     meta: { ...Typography.default(), flexShrink: 1, color: theme.colors.text.tertiary },
 }));

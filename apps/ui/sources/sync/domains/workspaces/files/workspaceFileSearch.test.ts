@@ -82,9 +82,13 @@ const disagreeingKeyAndScope: SearchWorkspaceFilesInput = {
 };
 void disagreeingKeyAndScope;
 
+const { workspaceFileSearchCache } = await import('./workspaceFileSearch');
+
 describe('workspaceFileSearch', () => {
     beforeEach(() => {
-        vi.resetModules();
+        // Isolate the state this suite owns without reloading the complete
+        // workspace dependency graph inside each test's execution budget.
+        workspaceFileSearchCache.clearAll();
         machineRipgrepMock.mockReset();
         machineFilesystemListDirectoryMock.mockReset();
         machineFilesystemListDirectoryMock.mockResolvedValue({ ok: false });
@@ -635,6 +639,31 @@ describe('workspaceFileSearch', () => {
         expect(page.hasMore).toBe(true);
     });
 
+    it('queries a truncated corpus with no local hit and merges the daemon matches without losing coverage', async () => {
+        machineRipgrepMock
+            .mockResolvedValueOnce({ ok: true, paths: ['src/unrelated.ts'], truncated: true })
+            .mockResolvedValueOnce({ ok: true, paths: ['packages/exact-needle.ts'], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const input = { scope: SCOPE_A, query: 'needle', limit: 20, resultType: 'file' as const, includeCoverage: true as const };
+        const page = await searchWorkspaceFiles(input);
+        expect(page.items.map((item) => item.fullPath)).toEqual(['packages/exact-needle.ts']);
+        expect(page.corpusTruncated).toBe(true);
+        expect(page.hasMore).toBe(true);
+        machineRipgrepMock.mockResolvedValueOnce({ ok: true, paths: ['packages/exact-needle.ts'], truncated: false });
+        const repeated = await searchWorkspaceFiles(input);
+        expect(repeated.items.map((item) => item.fullPath)).toEqual(['packages/exact-needle.ts']);
+        expect(machineRipgrepMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('surfaces a genuine targeted-query failure instead of an empty partial result', async () => {
+        machineRipgrepMock
+            .mockResolvedValueOnce({ ok: true, paths: ['src/unrelated.ts'], truncated: true })
+            .mockResolvedValueOnce({ ok: false, errorCode: 'ripgrep_failed', exitCode: 2 });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        await expect(searchWorkspaceFiles({ scope: SCOPE_A, query: 'needle', includeCoverage: true }))
+            .rejects.toMatchObject({ code: 'WORKSPACE_FILE_SEARCH_UNAVAILABLE', errorCode: 'ripgrep_failed' });
+    });
+
     it('retains targeted-query truncation so repeated queries do not report complete coverage', async () => {
         machineRipgrepMock
             .mockResolvedValueOnce({
@@ -642,7 +671,7 @@ describe('workspaceFileSearch', () => {
                 paths: ['src/index.ts'],
                 truncated: false,
             })
-            .mockResolvedValueOnce({
+            .mockResolvedValue({
                 ok: true,
                 paths: ['packages/exact-needle.ts'],
                 truncated: true,

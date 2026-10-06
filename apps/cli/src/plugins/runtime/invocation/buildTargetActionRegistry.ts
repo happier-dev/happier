@@ -1,16 +1,15 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    derivePluginDaemonContributionRegistrationRights,
-    PluginActionConfirmationV2Schema,
-    PluginActionDangerLevelV2Schema,
-    ActionOperationDeclarationV1Schema,
-    type PluginActionPresentUserGatePolicy,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
-import { ActionSurfaceSchema } from '@happier-dev/protocol/actions';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PluginActionConfirmationV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginActionDangerLevelV2Schema } from '@happier-dev/protocol/plugins/actions/vocabulary';
+import { ActionOperationDeclarationV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import type { PluginActionPresentUserGatePolicy, PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveEffectiveInputFields, readInputPath, type InputOption } from '@happier-dev/protocol/inputs';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+import type { InputOption } from '@happier-dev/protocol/inputs';
 import { resolveInputTypeOptions, validateInputTypeValue } from '@happier-dev/protocol/inputs/runtime';
 import { createRegistryInputTypeDeps } from './actions/createCommittedContributedActionDeps';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';

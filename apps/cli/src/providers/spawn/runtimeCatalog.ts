@@ -1,17 +1,7 @@
-import {
-  ProviderModelDescriptorV1Schema,
-  createProviderManagedRuntimeDeclarationEqualityKeyV1,
-  createProviderManagedProbeRequestFingerprintV1,
-  createProviderProbeRequestFingerprintV1,
-  resolveProviderManagedRuntimeDeclarationV1,
-  type ProviderCatalogFingerprintV1,
-  type ProviderModelDescriptorV1,
-  type ProviderModelLoadStateV1,
-  type ProviderObservationAuthorizationFingerprintV1,
-  type ProviderRuntimeStateFileV1,
-  type ProviderSettingsV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import type { ProviderCatalogFingerprintV1, ProviderModelDescriptorV1, ProviderModelLoadStateV1, ProviderObservationAuthorizationFingerprintV1, ProviderRuntimeStateFileV1, ProviderSettingsV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
 import { selectCurrentProviderCatalogRuntimeRecord } from '../modelManagement/catalog';
 import type { ProviderRuntimeStateStore } from '../runtimeState';

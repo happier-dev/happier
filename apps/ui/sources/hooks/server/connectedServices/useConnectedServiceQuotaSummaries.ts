@@ -6,7 +6,8 @@ import {
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
+import type { Settings } from '@/sync/domains/settings/settings';
 import {
     connectedServiceProfileKey,
     resolveQualifiedConnectedAccountLabel,
@@ -104,7 +105,7 @@ export type ConnectedServiceAccountNeedingSignIn = Readonly<{
 
 function resolveQualifiedSummaryService(params: Readonly<{
     ref: Readonly<{ service: PluginContributionIdentityV1; accountId: string }>;
-    settings: ReturnType<typeof useSettings>;
+    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     registryEntries: readonly ConnectedServiceRegistryEntry[];
     localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
@@ -138,7 +139,7 @@ function resolveQualifiedSummaryService(params: Readonly<{
 function resolveLegacySummaryService(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
-    settings: ReturnType<typeof useSettings>;
+    settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
     service: PluginContributionIdentityV1;
@@ -213,7 +214,11 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
 }> {
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const profile = useProfile();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesQuotaPinnedMeterIdsByKey: settings.connectedServicesQuotaPinnedMeterIdsByKey,
+        connectedServicesQuotaSummaryStrategyByKey: settings.connectedServicesQuotaSummaryStrategyByKey,
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+    }));
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const serverFeatures = useServerFeaturesRuntimeSnapshot({

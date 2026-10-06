@@ -3,7 +3,7 @@ import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
-import { PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS } from '@/plugins/authoring/developmentDependencyInputs';
+import { isPluginAuthorTransientWorkspaceConfig, PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS } from '@/plugins/authoring/developmentDependencyInputs';
 import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
 import { resolvePluginAuthoringSource } from './sourceModule';
 
@@ -88,6 +88,9 @@ async function readDependencyInputSignatures(
   const entries = await Promise.all(PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS.map(async (relativePath) => {
     try {
       const contents = await readFile(join(projectRoot, relativePath));
+      if (relativePath === 'pnpm-workspace.yaml' && isPluginAuthorTransientWorkspaceConfig(contents.toString('utf8'))) {
+        return [relativePath, null] as const;
+      }
       return [relativePath, createHash('sha256').update(contents).digest('hex')] as const;
     } catch (error) {
       if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
@@ -181,6 +184,8 @@ async function readObservedFileSignatures(
     try {
       const metadata = await lstat(absolutePath);
       if (metadata.isSymbolicLink() || !metadata.isFile()) return null;
+      if (relativePath === 'pnpm-workspace.yaml'
+        && isPluginAuthorTransientWorkspaceConfig(await readFile(absolutePath, 'utf8'))) return null;
       return [
         relativePath,
         `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeMs}:${metadata.ctimeMs}`,
@@ -373,6 +378,10 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
   let refreshAgain = false;
   let dependencyInputSignatures: ReadonlyMap<string, string | null> | undefined;
   let observedFileSignatures: ReadonlyMap<string, string> | undefined;
+  // Adoption controls which inputs remain pending, while the last attempt
+  // prevents output-only watcher events from replaying a rejected candidate.
+  let attemptedFileSignatures: ReadonlyMap<string, string> | undefined;
+  let attemptedDependencySignatures: ReadonlyMap<string, string | null> | undefined;
 
   let rejectFailure!: (error: Error) => void;
   const failure = new Promise<Error>((_resolve, rejectPromise) => {
@@ -441,6 +450,12 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
         nextDependencyInputSignatures = observation.sourceKind === 'singleFile'
           ? new Map<string, string | null>()
           : await readDependencyInputSignatures(observation.sourceRootPath);
+        if (attemptedFileSignatures && attemptedDependencySignatures
+          && diffObservedFileSignatures(attemptedFileSignatures, nextObservedFileSignatures).length === 0
+          && [...nextDependencyInputSignatures].every(([path, signature]) => attemptedDependencySignatures?.get(path) === signature)) {
+          await reconcileWatches(observation);
+          return;
+        }
         const portableChangedPaths = previousObservedFileSignatures
           ? diffObservedFileSignatures(previousObservedFileSignatures, nextObservedFileSignatures)
           : [];
@@ -471,6 +486,10 @@ export async function startPluginDevelopmentSourceObserver(input: Readonly<{
       // of a change request raised on its behalf.
       if (stopped) return;
       const delivery = await input.onObservation(observation);
+      if (observation.ok && nextObservedFileSignatures && nextDependencyInputSignatures) {
+        attemptedFileSignatures = nextObservedFileSignatures;
+        attemptedDependencySignatures = nextDependencyInputSignatures;
+      }
       if (
         observation.ok
         && delivery === 'adopted'

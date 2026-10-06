@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import type {
   AgentSessionRealtimeVoiceAuthority,

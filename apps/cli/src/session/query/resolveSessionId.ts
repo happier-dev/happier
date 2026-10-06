@@ -1,4 +1,4 @@
-import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol';
+import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol/sessions/control/contract';
 
 import type { StoredCredentials } from '@/persistence';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

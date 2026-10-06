@@ -1,12 +1,8 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  QualifiedConnectedServiceUsageSourceV4Schema,
-  ProviderAccountUsageSnapshotV1Schema,
-  sealProviderAccountUsageSnapshot,
-  type ConnectedServiceCredentialRevisionV1,
-  type QualifiedConnectedServiceUsageSourceV4,
-  type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import type { ConnectedServiceCredentialRevisionV1, QualifiedConnectedServiceUsageSourceV4, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 
 import {
   QualifiedConnectedAccountCompatibilityError,

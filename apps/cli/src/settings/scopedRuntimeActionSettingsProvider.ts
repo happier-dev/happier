@@ -1,4 +1,5 @@
-import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import type { RuntimeActionSettingsProvider } from './actionsSettingsProvider';
 

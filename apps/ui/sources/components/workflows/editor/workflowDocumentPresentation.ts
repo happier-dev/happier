@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 /**
  * The workflow document's presentation contract (04 §4.11): one document
@@ -9,6 +10,8 @@ import type * as React from 'react';
  * state.
  */
 export type WorkflowDocumentStepSlots = Readonly<{
+    /** Accepted nested content for a Run; null means it is unavailable, never a live catalog read. */
+    nestedDefinition?: WorkflowDefinitionV1 | null;
     /** The state word with its tone, in the block heading line. */
     state?: React.ReactNode;
     /** A repeated body's occurrence selector, in the container heading line. */

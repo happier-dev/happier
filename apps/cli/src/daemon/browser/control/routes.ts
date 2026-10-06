@@ -1,12 +1,5 @@
-import {
-  BrowserCommandDispatchResultV1Schema,
-  BrowserCommandV1Schema,
-  BrowserDaemonViewV1Schema,
-  type BrowserCommandDispatchResultV1,
-  type BrowserDaemonViewV1,
-  type BrowserEventV1,
-  type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { BrowserCommandDispatchResultV1Schema, BrowserCommandV1Schema, BrowserDaemonViewV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserCommandDispatchResultV1, BrowserDaemonViewV1, BrowserEventV1, ActionExecutorContext } from '@happier-dev/protocol';
 
 import {
   browserCommandDispatchFailure,

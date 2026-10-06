@@ -1,9 +1,6 @@
-import {
-  materializeExternalSessionSourceInstances,
-  parseExternalSessionsSourceForDeclaration,
-  type ExternalSessionsSource,
-  type PluginBackendExternalSessionSourceDeclarationV1,
-} from '@happier-dev/protocol';
+import { materializeExternalSessionSourceInstances } from '@happier-dev/protocol/plugins/backendExternalSessionSourceInstances';
+import { parseExternalSessionsSourceForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { ExternalSessionsSource, PluginBackendExternalSessionSourceDeclarationV1 } from '@happier-dev/protocol';
 
 /**
  * The one host rule for caller-chosen external-session source fields.

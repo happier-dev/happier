@@ -6,11 +6,8 @@ import { z } from 'zod';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
-import {
-    ComposerAttachmentMessageAcceptedV1Schema,
-    ComposerAttachmentResolveRequestV1Schema,
-    pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentMessageAcceptedV1Schema, ComposerAttachmentResolveRequestV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type {
     PluginRuntimeAuthoritySnapshotV1,
 } from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';

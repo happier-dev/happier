@@ -1,19 +1,9 @@
-import {
-  buildQualifiedPluginContributionKey,
-  ConnectedServiceIdSchema,
-  ConnectedServiceUsageSourceV1Schema,
-  QualifiedConnectedAccountGroupV4Schema,
-  QualifiedConnectedAccountProfileV4Schema,
-  QualifiedConnectedAccountServiceRefSchema,
-  QualifiedConnectedServiceUsageSourceV4Schema,
-  type ConnectedServiceId,
-  type ConnectedServiceUsageSourceV1,
-  type ProviderAccountUsageRecordId,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountServiceRef,
-  type QualifiedConnectedServiceUsageSourceV4,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountProfileV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { ConnectedServiceId, ConnectedServiceUsageSourceV1, ProviderAccountUsageRecordId, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountServiceRef, QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol';
 
 import {
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,

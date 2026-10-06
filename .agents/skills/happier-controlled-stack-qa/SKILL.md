@@ -5,7 +5,7 @@ description: Operate one dedicated, isolated, snapshot-backed Happier stack with
 
 # Happier Controlled Stack QA
 
-Use the existing named-stack and runtime-snapshot architecture. Do not create a QA-only runtime, wrapper command, build store, or mutable-state sharing path.
+Use the existing named-stack and runtime-snapshot architecture. Do not create a QA-only runtime, wrapper command, or build store. Mutable-data sharing uses only the explicit preset below when authorized.
 
 Canonical human documentation:
 
@@ -45,7 +45,7 @@ Own exactly one controlled QA stack for the session unless the human explicitly 
 5. After context compaction or uncertainty, recover the name from the conversation and `node ./apps/stack/scripts/repo_local.mjs stack list --json`/`node ./apps/stack/scripts/repo_local.mjs stack info <name> --json`. Do not create a replacement merely because the name was forgotten.
 6. Create another stack only when the human explicitly asks for multiple stacks, a separate mutable-data lane, or replacement of the current stack. Name and track each authorized stack distinctly.
 
-Never commandeer the human's development stack or another agent's mutable QA stack. Multiple stacks may share runtime snapshots, but they must not share SQLite, ports, CLI homes, daemon state, logs, or process ownership.
+Never commandeer the human's development stack or another agent's mutable QA stack. Multiple stacks may share runtime snapshots. SQLite and blob sharing requires the explicit shared-development-database preset below and human authorization; ports, CLI homes, daemon state, logs, and process ownership stay separate.
 
 ## Establish the controlled stack
 
@@ -68,7 +68,7 @@ node ./apps/stack/scripts/repo_local.mjs stack new <qa-stack> \
   --non-interactive
 ```
 
-Choose server flavor and database provider from the requested QA contract; do not copy or share another stack's database. Persist the controlled policy:
+Choose server flavor and database provider from the requested QA contract. Keep data isolated unless the human explicitly requests the shared-development-database preset below. Persist the controlled policy:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack env <qa-stack> set HAPPIER_STACK_RUNTIME_MODE=require
@@ -106,6 +106,29 @@ node ./apps/stack/scripts/repo_local.mjs stack auth <qa-stack> -- copy-from <hum
 
 Auth seeding does not authorize database sharing or destructive database reconciliation. A SQLite source database is read without mutating or reconciling its migration ledger.
 
+## Explicit shared-development-database QA (0.3 development)
+
+Use this only when the human requests shared development data. Apply it to the remembered fresh SQLite stack before starting it:
+
+The shared-database workflow is not yet live-certified. Confirm that its source env resolves the running development server's database, not another retained database on the same host; pause on an authority/path conflict rather than starting QA against the other copy.
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack env <qa-stack> shared-db <dev-stack> --json
+```
+
+The preset pins the QA server to the dev database's explicitly configured remote host and leaves the QA daemon on this VM. The server reads the dev stack's existing SQLite URL, at-rest secret, and blob roots on that host. Never print or transport the secret. QA keeps its own data/runtime directory, ports, CLI home, daemon state, and logs. Metrics are disabled, automatic migration is off, and Stack migration is skipped. Never migrate, reset, reconcile, or restart the dev database/server to recover QA.
+
+All Accounts and sessions live in the same database, with normal Account authorization unchanged. A new QA Account does not inherit the dev Account's connected services: sign into the dev Account only when authorized and needed to test those services. Separate servers do not share their in-memory socket/RPC relay; do not assume live cross-server delivery to a daemon connected to the other server.
+
+For a macOS ARM64 database host, request only the server through the existing build flight:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack build <qa-stack> --server --target=darwin-arm64 --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime <qa-stack> select --json
+```
+
+The shared preset selects the Darwin server component. CLI/auth/daemon use the authority's native daemon component without replacing the server selection. Borrow the existing Expo endpoint as below; no Darwin daemon or web artifact is required. If the schema advances beyond the loaded QA snapshot, P2021/P2022 report `shared_qa_schema_mismatch`; build/select a newer server snapshot and explicitly restart only this QA stack.
+
 ## Select the UI provider
 
 Default to the repository stack's already-running Expo/Metro endpoint. Do not start a consumer-owned Expo process and do not require the human to request the fast path separately.
@@ -131,7 +154,7 @@ node ./apps/stack/scripts/repo_local.mjs stack info <producer-stack> --json
 node ./apps/stack/scripts/repo_local.mjs stack runtime <qa-stack> select --json
 ```
 
-`select` validates the producer's current complete snapshot and writes only the consumer's selection; it does not change the consumer's launch mode. It does not build, publish, activate, restart, or otherwise mutate that producer. The checkout-pinned repository authority remains the sole build owner; do not set up another build store, monitor, or fallback producer.
+`select` validates the producer's newest complete snapshot for the consumer's observed execution target and writes only the consumer's selection; it does not change the consumer's launch mode. It does not build, publish, activate, restart, or otherwise mutate that producer. The checkout-pinned repository authority remains the sole build owner; do not set up another build store, monitor, or fallback producer.
 
 If the producer's active snapshot already contains the bytes under test, select and reuse it. Do not build merely because the controlled stack is new.
 
@@ -139,14 +162,16 @@ When current server or daemon bytes are required, request them through the remem
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack build <qa-stack> --server --daemon --json
-node ./apps/stack/scripts/repo_local.mjs stack runtime <qa-stack> activate --all --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime <qa-stack> select --json
 ```
+
+Native component builds publish a complete snapshot, reusing the target's current unrequested components; initialize a native target with `--all` if needed. An explicit foreign-target server-only request can publish just the server without fabricating a daemon or web component. Native publication advances the producer's current selection; foreign publication remains selectable without replacing its native pin. The build returns `snapshotId`; the consumer's selection stays unchanged until `select` (or `--activate-runtime`). Other consumers use only `select` to pick up these fixes without rebuilding. A failed build keeps the prior producer snapshot. `runtime activate` explicitly recomposes stored artifacts without source preparation or compilation.
 
 If the shared publication fails (for example, another program's in-flight compile error in the moving checkout), do not retry in a loop or build elsewhere. Keep QA on the last complete snapshot that the consumer can select, record the snapshot id and the publication failure, and mark any evidence that needs the newer bytes as blocked on publication.
 
 A live publication may exclude a broken optional bundled plugin and still succeed. The daemon catalog then shows that plugin as a disabled `load_error` row carrying its build diagnostic, while required plugins still fail publication. Before attributing a missing plugin surface to a product defect, check the catalog diagnostic and record excluded plugins with the result.
 
-Use only the changed component flag when narrower (`--server` or `--daemon`). `runtime activate --all` composes the latest authority artifacts into one complete snapshot and selects it for the consumer; it does not restart the consumer or the producer's running services. Run one build request and wait for it. Do not launch retrying publishers, a second monitor-owned build, another artifact store, or a direct build against the human's producer lifecycle.
+Use only the changed component flag when narrower (`--server` or `--daemon`), then `runtime select`. Publication and selection do not restart the consumer or the producer's running services. Run one build request and wait for it. Do not launch retrying publishers, a second monitor-owned build, another artifact store, or a direct build against the human's producer lifecycle.
 
 Borrowed Expo does not need a new web build. Managed server and web artifacts are independent: a server-only request publishes server code/support without a web export. Strict snapshot UI requires an explicit `--web` request. Runtime snapshots reference canonical producer payloads and managed support references are dev/QA-only; release/self-host packaging uses its existing per-target self-contained builders directly and does not consume or flatten a managed snapshot.
 
@@ -195,8 +220,8 @@ Use the existing TUI `r` action, the stack service restart, or an explicit `star
 For a component-only change, keep the ownership boundary intact:
 
 - UI-only with borrowed Expo: manually reload the browser; it receives the producer's current bundle. Do not build a consumer web artifact.
-- Server or daemon: run the matching `stack build <qa-stack> --server|--daemon`, then `stack runtime <qa-stack> activate --all`. The checkout authority coalesces publication; the consumer owns only its selection and explicit restart boundary.
-- Strict snapshot UI: run `stack build <qa-stack> --web`, then `stack runtime <qa-stack> activate --all` before selecting/restarting as needed.
+- Server or daemon: run the matching `stack build <qa-stack> --server|--daemon`, then `stack runtime <qa-stack> select`. The checkout authority coalesces publication; every other consumer uses `select` to adopt the result without rebuilding. The consumer owns its explicit restart boundary.
+- Strict snapshot UI: run `stack build <qa-stack> --web`, then `stack runtime <qa-stack> select` before restarting/reloading as needed.
 
 Selection is non-disruptive. Restart before claiming a server or daemon change is loaded.
 
@@ -236,11 +261,22 @@ node ./apps/stack/scripts/repo_local.mjs tui stack start <qa-stack> --runtime
 
 ## Remote placement boundary (0.3 development)
 
-The current `stack start --runtime` owner loads the consumer's snapshot locally; it does not consume `dev-targets` service placement. The remote supervisor currently runs `stack dev --watch`. Do not substitute that source lifecycle for a controlled snapshot or interpret a placement config write as a service or data move.
+`stack start --runtime` resolves explicitly configured consumer `runtimePlacement.qa` through the existing dev-targets config and service-placement owners. Automatic rollout of the producer QA default is not active until the full remote path is live-proven: existing/unplaced stacks stay local without probing targets, even if the producer default is invalid. Retained local server data always stays local until explicit data handoff, regardless of a QA placement write. Configure build and runtime placement separately in the same config:
 
-Before a controlled stack can move, its canonical placement/runtime owners must transfer and validate the selected snapshot's complete component/support closure, preserve the retained server-light directory (database, signing secret, public and private files), isolate the target CLI state per stack, and provide a writable session workspace outside the one-way source replica. Preserve the consumer's canonical server origin and browser state through the existing forwards. Observe selected == loaded for the actual remote server and daemon before claiming the pin is running there.
+```bash
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set build mac2-linux --stack=<producer-stack>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa auto --targets=linux2,linux3,windows1-linux,windows2-linux,linux1 --fallback=local --stack=<producer-stack>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa auto --targets=linux2,linux3,windows1-linux,windows2-linux,linux1 --fallback=local --stack=<fresh-qa-stack>
+node ./apps/stack/scripts/repo_local.mjs dev-targets placement set qa local --stack=<qa-stack>
+```
 
-Managed snapshots are target-specific: compare the manifest's platform/architecture with the target's observed host identity. WSL is a Linux target, but its architecture must still match. An ARM64 snapshot cannot be used on an x64 worker by copying files or changing its manifest. If the requested worker cannot load the producer's pin, report the target choice or producer-publication decision instead of starting a consumer publisher. A placement change must use the canonical retained-data handoff; never copy a live SQLite file manually or initialize a replacement database to make remote startup pass.
+The automatic QA pool uses the existing commands least-load owner. An ordered override uses `placement set qa ordered --targets=NAME,... --fallback=local --stack=<qa-stack>`. Unavailable hosts are skipped observably, with local execution last. Persisted remote server data is the exception: its host remains authoritative even with a local QA override, and an unavailable host fails closed. Do not alter the producer's existing placement merely to run one QA session without the necessary authority.
+
+The existing supervisor transfers and validates the selected snapshot's complete component/support closure and launches `stack start --runtime --no-dev-targets`, not source watch. CLI state and writable session workspaces are per-stack outside the one-way source replica. Existing forwards preserve the consumer's canonical server origin. Observe selected == loaded for the actual remote server and daemon before claiming the pin is running there.
+
+Managed snapshots are target-specific: compare the manifest's platform/architecture with the target's observed host identity. WSL is a Linux target, but its architecture must still match. An ARM64 snapshot cannot be used on an x64 worker by copying files or changing its manifest. If no matching complete snapshot exists, request `stack build <qa-stack> --all --activate-runtime --target=linux-x64 --json` through the same producer flight; never start a consumer publisher. This initial complete publication needs matching web/server/daemon artifacts even when the consumer borrows Expo. Once that target has a complete snapshot, later narrow server/daemon requests reuse its web artifact. Build placement chooses the build host, independently of QA placement.
+
+For retained local light-server data, first stop only this consumer, then use `dev-targets move-server <target> --stack=<qa-stack>`. This canonical explicit operation copies the full server directory, verifies checksums and SQLite integrity, retains the local source, and commits placement only after verification. It rejects a running stack, conflicting target data, and unsupported layouts. An already-remote stack stays on its data host. Never copy a live SQLite file manually, remove the retained source, or initialize a replacement database to make remote startup pass.
 
 ## Preserve ownership and evidence
 

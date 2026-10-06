@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizeProviderOriginRelativePathSyntax } from './safety/index.js';
+import { normalizeProviderOriginRelativePathSyntax } from './safety/url.js';
 
 export const ProviderOriginRelativePathSchema = z.string().transform((value, ctx) => {
   try {

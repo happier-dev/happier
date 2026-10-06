@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
+import { TransferSessionIdSchema } from '../transfers/sessions/transferSessionIds.js';
 import {
   ModelPackKindSchema,
   ModelPackRuntimeFamilySchema,
@@ -16,7 +17,7 @@ import {
 } from '../machines/peer/mediation/peerApplicationEncryptionV1.js';
 import { DevelopmentPluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 
-export const LocalNeuralExecutionSchema = z.enum(['auto', 'device', 'daemon']);
+export const LocalNeuralExecutionSchema = lazyZodSchema(() => z.enum(['auto', 'device', 'daemon']));
 export type LocalNeuralExecution = z.infer<typeof LocalNeuralExecutionSchema>;
 export const DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH = 256;
 export const DAEMON_VOICE_INFERENCE_STREAM_ID_MAX_LENGTH = 256;
@@ -24,55 +25,55 @@ export const DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK_BASE64_MAX_LENGTH = 1024 * 
 export const DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_AUDIO_BASE64_MAX_LENGTH = 16 * 1024 * 1024;
 export const DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_TEXT_MAX_LENGTH = 4_000;
 
-export const DaemonVoiceInferenceServiceStateSchema = z.enum(['unavailable', 'idle', 'warming', 'ready', 'degraded']);
+export const DaemonVoiceInferenceServiceStateSchema = lazyZodSchema(() => z.enum(['unavailable', 'idle', 'warming', 'ready', 'degraded']));
 export type DaemonVoiceInferenceServiceState = z.infer<typeof DaemonVoiceInferenceServiceStateSchema>;
 
 // The packaged daemon runtime currently has exactly one codec owner and always
 // produces WAV. Additive codecs belong here only after a runtime encoder exists.
-export const DaemonVoiceInferenceAudioCodecSchema = z.literal('wav');
+export const DaemonVoiceInferenceAudioCodecSchema = lazyZodSchema(() => z.literal('wav'));
 export type DaemonVoiceInferenceAudioCodec = z.infer<typeof DaemonVoiceInferenceAudioCodecSchema>;
 
-export const DaemonVoiceInferenceAudioOutputSchema = z.object({
+export const DaemonVoiceInferenceAudioOutputSchema = lazyZodSchema(() => z.object({
   codec: z.literal('wav'),
   mimeType: z.literal('audio/wav'),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceAudioOutput = z.infer<typeof DaemonVoiceInferenceAudioOutputSchema>;
 
-export const DaemonVoiceInferenceNormalizationStrategySchema = z.enum(['daemon_decode', 'ui_pretranscoded_pcm16_fallback']);
+export const DaemonVoiceInferenceNormalizationStrategySchema = lazyZodSchema(() => z.enum(['daemon_decode', 'ui_pretranscoded_pcm16_fallback']));
 export type DaemonVoiceInferenceNormalizationStrategy = z.infer<typeof DaemonVoiceInferenceNormalizationStrategySchema>;
 
-export const DaemonVoiceInferenceNormalizationDecisionSchema = z.object({
+export const DaemonVoiceInferenceNormalizationDecisionSchema = lazyZodSchema(() => z.object({
   inputTransport: z.literal('upload_transfer'),
   strategy: DaemonVoiceInferenceNormalizationStrategySchema,
   systemFfmpegAllowed: z.literal(false),
-});
+}));
 export type DaemonVoiceInferenceNormalizationDecision = z.infer<typeof DaemonVoiceInferenceNormalizationDecisionSchema>;
 
-export const DaemonVoiceInferenceInstallPhaseSchema = z.enum([
+export const DaemonVoiceInferenceInstallPhaseSchema = lazyZodSchema(() => z.enum([
   'queued',
   'downloading',
   'verifying',
   'installing',
   'complete',
   'error',
-]);
+]));
 export type DaemonVoiceInferenceInstallPhase = z.infer<typeof DaemonVoiceInferenceInstallPhaseSchema>;
 
-export const DaemonVoiceInferenceInstallProgressSchema = z.object({
+export const DaemonVoiceInferenceInstallProgressSchema = lazyZodSchema(() => z.object({
   phase: DaemonVoiceInferenceInstallPhaseSchema,
   progress: z.number().min(0).max(1),
   bytesDownloaded: z.number().int().min(0).nullable().default(null),
   totalBytes: z.number().int().min(0).nullable().default(null),
   message: z.string().min(1).nullable().default(null),
-});
+}));
 export type DaemonVoiceInferenceInstallProgress = z.infer<typeof DaemonVoiceInferenceInstallProgressSchema>;
 
-export const DaemonVoiceInferenceModelInstallStateSchema = z.enum([
+export const DaemonVoiceInferenceModelInstallStateSchema = lazyZodSchema(() => z.enum([
   'not_installed',
   'installing',
   'installed',
   'error',
-]);
+]));
 export type DaemonVoiceInferenceModelInstallState = z.infer<typeof DaemonVoiceInferenceModelInstallStateSchema>;
 
 /**
@@ -81,12 +82,12 @@ export type DaemonVoiceInferenceModelInstallState = z.infer<typeof DaemonVoiceIn
  * `ready` = loaded, primed, and serving; `evicted` = unloaded by the memory-budget
  * LRU (re-warms on next use). Additive, optional readiness telemetry.
  */
-export const DaemonVoiceInferenceModelRuntimeStateSchema = z.enum([
+export const DaemonVoiceInferenceModelRuntimeStateSchema = lazyZodSchema(() => z.enum([
   'cold',
   'warming',
   'ready',
   'evicted',
-]);
+]));
 export type DaemonVoiceInferenceModelRuntimeState = z.infer<typeof DaemonVoiceInferenceModelRuntimeStateSchema>;
 
 /**
@@ -94,7 +95,7 @@ export type DaemonVoiceInferenceModelRuntimeState = z.infer<typeof DaemonVoiceIn
  * integrity and local immutable materialization are intentionally distinct:
  * neither is a substitute for the other.
  */
-export const DaemonVoiceModelPackArtifactBindingV1Schema = z.discriminatedUnion('kind', [
+export const DaemonVoiceModelPackArtifactBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('sourceIntegrity'),
     integrity: z.string().min(1).max(1024).refine((value) => value.trim() === value),
@@ -103,10 +104,10 @@ export const DaemonVoiceModelPackArtifactBindingV1Schema = z.discriminatedUnion(
     kind: z.literal('materialization'),
     sourceCustody: DevelopmentPluginSourceCustodyV1Schema,
   }).strict(),
-]);
+]));
 export type DaemonVoiceModelPackArtifactBindingV1 = z.infer<typeof DaemonVoiceModelPackArtifactBindingV1Schema>;
 
-export const DaemonVoiceModelPackLicenseReviewV1Schema = z.object({
+export const DaemonVoiceModelPackLicenseReviewV1Schema = lazyZodSchema(() => z.object({
   pluginId: VoiceModelPackIdentityV1Schema.shape.pluginId,
   packId: VoiceModelPackIdentityV1Schema.shape.packId,
   pluginVersion: z.string().min(1).max(128),
@@ -118,10 +119,10 @@ export const DaemonVoiceModelPackLicenseReviewV1Schema = z.object({
   licenseTextDigest: z.string().regex(/^(?:sha256:)?[0-9a-f]{64}$/i),
   artifactBinding: DaemonVoiceModelPackArtifactBindingV1Schema,
   accepted: z.boolean(),
-}).strict();
+}).strict());
 export type DaemonVoiceModelPackLicenseReviewV1 = z.infer<typeof DaemonVoiceModelPackLicenseReviewV1Schema>;
 
-export const DaemonVoiceInferenceModelStatusSchema = z.object({
+export const DaemonVoiceInferenceModelStatusSchema = lazyZodSchema(() => z.object({
   packId: z.string().min(1),
   /** Null is the built-in/legacy namespace; non-null is a structured public-plugin identity. */
   pluginIdentity: VoiceModelPackIdentityV1Schema.nullable().default(null),
@@ -168,10 +169,10 @@ export const DaemonVoiceInferenceModelStatusSchema = z.object({
       message: 'The default voice must identify a projected voice.',
     });
   }
-});
+}));
 export type DaemonVoiceInferenceModelStatus = z.infer<typeof DaemonVoiceInferenceModelStatusSchema>;
 
-export const DaemonVoiceInferenceErrorCodeSchema = z.enum([
+export const DaemonVoiceInferenceErrorCodeSchema = lazyZodSchema(() => z.enum([
   'runtime_unavailable',
   'model_not_installed',
   'machine_unreachable',
@@ -184,43 +185,43 @@ export const DaemonVoiceInferenceErrorCodeSchema = z.enum([
   'stream_not_found',
   'invalid_stream_state',
   'internal_error',
-]);
+]));
 export type DaemonVoiceInferenceErrorCode = z.infer<typeof DaemonVoiceInferenceErrorCodeSchema>;
 
-export const DaemonVoiceInferenceErrorSchema = z.object({
+export const DaemonVoiceInferenceErrorSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   errorCode: DaemonVoiceInferenceErrorCodeSchema,
   error: z.string().min(1),
   retryable: z.boolean().optional(),
-});
+}));
 export type DaemonVoiceInferenceError = z.infer<typeof DaemonVoiceInferenceErrorSchema>;
 
-export const DaemonVoiceInferenceStreamIdSchema = z
+export const DaemonVoiceInferenceStreamIdSchema = lazyZodSchema(() => z
   .string()
   .min(1)
-  .max(DAEMON_VOICE_INFERENCE_STREAM_ID_MAX_LENGTH);
+  .max(DAEMON_VOICE_INFERENCE_STREAM_ID_MAX_LENGTH));
 export type DaemonVoiceInferenceStreamId = z.infer<typeof DaemonVoiceInferenceStreamIdSchema>;
 
-const DaemonVoiceInferenceStreamGenerationSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const DaemonVoiceInferenceStreamSeqSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const DaemonVoiceInferenceStreamAckSeqSchema = z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER);
-const DaemonVoiceInferenceSegmentIndexSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-const DaemonVoiceInferenceSegmentCountSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const DaemonVoiceInferenceStreamGenerationSchema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
+const DaemonVoiceInferenceStreamSeqSchema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
+const DaemonVoiceInferenceStreamAckSeqSchema = lazyZodSchema(() => z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER));
+const DaemonVoiceInferenceSegmentIndexSchema = lazyZodSchema(() => z.number().int().min(0).max(Number.MAX_SAFE_INTEGER));
+const DaemonVoiceInferenceSegmentCountSchema = lazyZodSchema(() => z.number().int().min(1).max(Number.MAX_SAFE_INTEGER));
 
-export const DaemonVoiceInferenceSttStreamPcmFormatSchema = z.object({
+export const DaemonVoiceInferenceSttStreamPcmFormatSchema = lazyZodSchema(() => z.object({
   sampleRateHz: z.literal(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.sampleRateHz),
   channelCount: z.literal(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.channelCount),
   bitsPerSample: z.literal(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.bitsPerSample),
   ffmpegCodec: z.literal(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.ffmpegCodec),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamPcmFormat = z.infer<typeof DaemonVoiceInferenceSttStreamPcmFormatSchema>;
 
 export const DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT = VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT;
 
-export const DaemonVoiceInferenceStatusRequestSchema = z.object({}).passthrough();
+export const DaemonVoiceInferenceStatusRequestSchema = lazyZodSchema(() => z.object({}).passthrough());
 export type DaemonVoiceInferenceStatusRequest = z.infer<typeof DaemonVoiceInferenceStatusRequestSchema>;
 
-export const DaemonVoiceInferenceStatusResponseSchema = z.union([
+export const DaemonVoiceInferenceStatusResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     serviceState: DaemonVoiceInferenceServiceStateSchema,
@@ -228,87 +229,87 @@ export const DaemonVoiceInferenceStatusResponseSchema = z.union([
     models: z.array(DaemonVoiceInferenceModelStatusSchema),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceStatusResponse = z.infer<typeof DaemonVoiceInferenceStatusResponseSchema>;
 
-export const DaemonVoiceInferenceModelsListRequestSchema = z.object({}).passthrough();
+export const DaemonVoiceInferenceModelsListRequestSchema = lazyZodSchema(() => z.object({}).passthrough());
 export type DaemonVoiceInferenceModelsListRequest = z.infer<typeof DaemonVoiceInferenceModelsListRequestSchema>;
 
-export const DaemonVoiceInferenceModelsListResponseSchema = z.union([
+export const DaemonVoiceInferenceModelsListResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     models: z.array(DaemonVoiceInferenceModelStatusSchema),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelsListResponse = z.infer<typeof DaemonVoiceInferenceModelsListResponseSchema>;
 
-export const DaemonVoiceInferenceModelsInstallRequestSchema = z.object({
+export const DaemonVoiceInferenceModelsInstallRequestSchema = lazyZodSchema(() => z.object({
   packId: z.string().min(1),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceModelsInstallRequest = z.infer<typeof DaemonVoiceInferenceModelsInstallRequestSchema>;
 
-export const DaemonVoiceInferenceModelsInstallResponseSchema = z.union([
+export const DaemonVoiceInferenceModelsInstallResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     model: DaemonVoiceInferenceModelStatusSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelsInstallResponse = z.infer<typeof DaemonVoiceInferenceModelsInstallResponseSchema>;
 
-export const DaemonVoiceInferenceModelLicenseAcceptRequestSchema = DaemonVoiceModelPackLicenseReviewV1Schema
+export const DaemonVoiceInferenceModelLicenseAcceptRequestSchema = lazyZodSchema(() => DaemonVoiceModelPackLicenseReviewV1Schema
   .omit({ licenseTitle: true, licenseText: true, accepted: true })
   .extend({ qualifiedPackId: z.string().min(1).max(2048) })
-  .strict();
+  .strict());
 export type DaemonVoiceInferenceModelLicenseAcceptRequest = z.infer<typeof DaemonVoiceInferenceModelLicenseAcceptRequestSchema>;
 
-export const DaemonVoiceInferenceModelLicenseAcceptResponseSchema = z.union([
+export const DaemonVoiceInferenceModelLicenseAcceptResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true), model: DaemonVoiceInferenceModelStatusSchema }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelLicenseAcceptResponse = z.infer<typeof DaemonVoiceInferenceModelLicenseAcceptResponseSchema>;
 
-export const DaemonVoiceInferenceModelsRemoveRequestSchema = z.object({
+export const DaemonVoiceInferenceModelsRemoveRequestSchema = lazyZodSchema(() => z.object({
   packId: z.string().min(1),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceModelsRemoveRequest = z.infer<typeof DaemonVoiceInferenceModelsRemoveRequestSchema>;
 
-export const DaemonVoiceInferenceModelsRemoveResponseSchema = z.union([
+export const DaemonVoiceInferenceModelsRemoveResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelsRemoveResponse = z.infer<typeof DaemonVoiceInferenceModelsRemoveResponseSchema>;
 
-export const DaemonVoiceInferenceModelsStatusRequestSchema = z.object({
+export const DaemonVoiceInferenceModelsStatusRequestSchema = lazyZodSchema(() => z.object({
   packIds: z.array(z.string().min(1)).optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceModelsStatusRequest = z.infer<typeof DaemonVoiceInferenceModelsStatusRequestSchema>;
 
-export const DaemonVoiceInferenceModelsWarmRequestSchema = z.object({
+export const DaemonVoiceInferenceModelsWarmRequestSchema = lazyZodSchema(() => z.object({
   packIds: z.array(z.string().min(1)).min(1),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceModelsWarmRequest = z.infer<typeof DaemonVoiceInferenceModelsWarmRequestSchema>;
 
-export const DaemonVoiceInferenceModelsStatusResponseSchema = z.union([
+export const DaemonVoiceInferenceModelsStatusResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     models: z.array(DaemonVoiceInferenceModelStatusSchema),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelsStatusResponse = z.infer<typeof DaemonVoiceInferenceModelsStatusResponseSchema>;
 
-export const DaemonVoiceInferenceModelsWarmResponseSchema = z.union([
+export const DaemonVoiceInferenceModelsWarmResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     models: z.array(DaemonVoiceInferenceModelStatusSchema),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceModelsWarmResponse = z.infer<typeof DaemonVoiceInferenceModelsWarmResponseSchema>;
 
-export const DaemonVoiceInferenceTtsSynthesizeRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsSynthesizeRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
   text: z.string().min(1).max(200_000),
   packId: z.string().min(1).nullable().default(null),
@@ -316,10 +317,10 @@ export const DaemonVoiceInferenceTtsSynthesizeRequestSchema = z.object({
   speed: z.number().min(0.5).max(2).nullable().default(null),
   output: DaemonVoiceInferenceAudioOutputSchema.default({ codec: 'wav', mimeType: 'audio/wav' }),
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsSynthesizeRequest = z.infer<typeof DaemonVoiceInferenceTtsSynthesizeRequestSchema>;
 
-export const DaemonVoiceInferenceTtsSynthesizeResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsSynthesizeResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     requestId: z.string().min(1),
@@ -330,16 +331,16 @@ export const DaemonVoiceInferenceTtsSynthesizeResponseSchema = z.union([
     name: z.string().min(1),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsSynthesizeResponse = z.infer<typeof DaemonVoiceInferenceTtsSynthesizeResponseSchema>;
 
-export const DaemonVoiceInferenceTtsChunkRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsChunkRequestSchema = lazyZodSchema(() => z.object({
   downloadId: TransferSessionIdSchema,
   index: z.number().int().min(0),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsChunkRequest = z.infer<typeof DaemonVoiceInferenceTtsChunkRequestSchema>;
 
-export const DaemonVoiceInferenceTtsChunkResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsChunkResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     success: z.literal(true),
     contentBase64: z.string().min(1).optional(),
@@ -352,45 +353,45 @@ export const DaemonVoiceInferenceTtsChunkResponseSchema = z.union([
     error: z.string().min(1),
     errorCode: z.string().min(1).optional(),
   }).passthrough(),
-]);
+]));
 export type DaemonVoiceInferenceTtsChunkResponse = z.infer<typeof DaemonVoiceInferenceTtsChunkResponseSchema>;
 
-export const DaemonVoiceInferenceTtsFinalizeRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsFinalizeRequestSchema = lazyZodSchema(() => z.object({
   downloadId: TransferSessionIdSchema,
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsFinalizeRequest = z.infer<typeof DaemonVoiceInferenceTtsFinalizeRequestSchema>;
 
-export const DaemonVoiceInferenceTtsFinalizeResponseSchema = z.object({
+export const DaemonVoiceInferenceTtsFinalizeResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsFinalizeResponse = z.infer<typeof DaemonVoiceInferenceTtsFinalizeResponseSchema>;
 
-export const DaemonVoiceInferenceTtsAbortRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsAbortRequestSchema = lazyZodSchema(() => z.object({
   downloadId: TransferSessionIdSchema,
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsAbortRequest = z.infer<typeof DaemonVoiceInferenceTtsAbortRequestSchema>;
 
-export const DaemonVoiceInferenceTtsAbortResponseSchema = z.object({
+export const DaemonVoiceInferenceTtsAbortResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsAbortResponse = z.infer<typeof DaemonVoiceInferenceTtsAbortResponseSchema>;
 
-export const DaemonVoiceInferenceTtsCancelRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsCancelRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceTtsCancelRequest = z.infer<typeof DaemonVoiceInferenceTtsCancelRequestSchema>;
 
-export const DaemonVoiceInferenceTtsCancelResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsCancelResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsCancelResponse = z.infer<typeof DaemonVoiceInferenceTtsCancelResponseSchema>;
 
-export const DaemonVoiceInferenceTtsStreamStartRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamStartRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
   text: z.string().min(1).max(200_000),
   packId: z.string().min(1).nullable().default(null),
@@ -399,10 +400,10 @@ export const DaemonVoiceInferenceTtsStreamStartRequestSchema = z.object({
   output: DaemonVoiceInferenceAudioOutputSchema.default({ codec: 'wav', mimeType: 'audio/wav' }),
   prefetchDepth: z.number().int().min(1).max(2).optional(),
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamStartRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamStartRequestSchema>;
 
-export const DaemonVoiceInferenceTtsStreamStartResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsStreamStartResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     requestId: z.string().min(1),
@@ -412,16 +413,16 @@ export const DaemonVoiceInferenceTtsStreamStartResponseSchema = z.union([
     output: DaemonVoiceInferenceAudioOutputSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamStartResponse = z.infer<typeof DaemonVoiceInferenceTtsStreamStartResponseSchema>;
 
-export const DaemonVoiceInferenceTtsStreamSegmentAudioSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamSegmentAudioSchema = lazyZodSchema(() => z.object({
   contentBase64: z.string().min(1).max(DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_AUDIO_BASE64_MAX_LENGTH),
   sizeBytes: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamSegmentAudio = z.infer<typeof DaemonVoiceInferenceTtsStreamSegmentAudioSchema>;
 
-export const DaemonVoiceInferenceTtsStreamEventSchema = z.discriminatedUnion('type', [
+export const DaemonVoiceInferenceTtsStreamEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({
     type: z.literal('segment'),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -454,16 +455,16 @@ export const DaemonVoiceInferenceTtsStreamEventSchema = z.discriminatedUnion('ty
     error: z.string().min(1),
     retryable: z.boolean().default(false),
   }).passthrough(),
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamEvent = z.infer<typeof DaemonVoiceInferenceTtsStreamEventSchema>;
 
-export const DaemonVoiceInferenceTtsStreamNextRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamNextRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamNextRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamNextRequestSchema>;
 
-export const DaemonVoiceInferenceTtsStreamNextResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsStreamNextResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -471,18 +472,18 @@ export const DaemonVoiceInferenceTtsStreamNextResponseSchema = z.union([
     event: DaemonVoiceInferenceTtsStreamEventSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamNextResponse = z.infer<typeof DaemonVoiceInferenceTtsStreamNextResponseSchema>;
 
-export const DaemonVoiceInferenceTtsStreamAckRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamAckRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
   segmentId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_STREAM_ID_MAX_LENGTH),
   segmentIndex: DaemonVoiceInferenceSegmentIndexSchema,
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamAckRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamAckRequestSchema>;
 
-export const DaemonVoiceInferenceTtsStreamAckResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsStreamAckResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -491,44 +492,44 @@ export const DaemonVoiceInferenceTtsStreamAckResponseSchema = z.union([
     complete: z.boolean(),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamAckResponse = z.infer<typeof DaemonVoiceInferenceTtsStreamAckResponseSchema>;
 
-export const DaemonVoiceInferenceTtsStreamCancelReasonSchema = z.enum([
+export const DaemonVoiceInferenceTtsStreamCancelReasonSchema = lazyZodSchema(() => z.enum([
   'client_abort',
   'barge_in',
   'stale_generation',
   'client_dispose',
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamCancelReason = z.infer<typeof DaemonVoiceInferenceTtsStreamCancelReasonSchema>;
 
-export const DaemonVoiceInferenceTtsStreamCancelRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamCancelRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
   reason: DaemonVoiceInferenceTtsStreamCancelReasonSchema.default('client_abort'),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamCancelRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamCancelRequestSchema>;
 
-export const DaemonVoiceInferenceTtsStreamCancelResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsStreamCancelResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
     generation: DaemonVoiceInferenceStreamGenerationSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamCancelResponse = z.infer<typeof DaemonVoiceInferenceTtsStreamCancelResponseSchema>;
 
-export const DaemonVoiceInferenceTtsStreamStateSchema = z.enum(['open', 'error', 'closed']);
+export const DaemonVoiceInferenceTtsStreamStateSchema = lazyZodSchema(() => z.enum(['open', 'error', 'closed']));
 export type DaemonVoiceInferenceTtsStreamState = z.infer<typeof DaemonVoiceInferenceTtsStreamStateSchema>;
 
-export const DaemonVoiceInferenceTtsStreamStatusRequestSchema = z.object({
+export const DaemonVoiceInferenceTtsStreamStatusRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceTtsStreamStatusRequest = z.infer<typeof DaemonVoiceInferenceTtsStreamStatusRequestSchema>;
 
-export const DaemonVoiceInferenceTtsStreamStatusResponseSchema = z.union([
+export const DaemonVoiceInferenceTtsStreamStatusResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -540,17 +541,17 @@ export const DaemonVoiceInferenceTtsStreamStatusResponseSchema = z.union([
     outstandingSegmentCount: z.number().int().min(0),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceTtsStreamStatusResponse = z.infer<typeof DaemonVoiceInferenceTtsStreamStatusResponseSchema>;
 
-export const DaemonVoiceInferenceSttUploadInitRequestSchema = z.object({
+export const DaemonVoiceInferenceSttUploadInitRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
   sizeBytes: z.number().int().positive(),
   inputMimeType: z.string().min(1),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttUploadInitRequest = z.infer<typeof DaemonVoiceInferenceSttUploadInitRequestSchema>;
 
-export const DaemonVoiceInferenceSttUploadInitResponseSchema = z.union([
+export const DaemonVoiceInferenceSttUploadInitResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     success: z.literal(true),
     uploadId: TransferSessionIdSchema,
@@ -562,30 +563,30 @@ export const DaemonVoiceInferenceSttUploadInitResponseSchema = z.union([
     error: z.string().min(1),
     errorCode: z.string().min(1).optional(),
   }).passthrough(),
-]);
+]));
 export type DaemonVoiceInferenceSttUploadInitResponse = z.infer<typeof DaemonVoiceInferenceSttUploadInitResponseSchema>;
 
-export const DaemonVoiceInferenceSttUploadChunkRequestSchema = z.object({
+export const DaemonVoiceInferenceSttUploadChunkRequestSchema = lazyZodSchema(() => z.object({
   uploadId: TransferSessionIdSchema,
   index: z.number().int().min(0),
   payloadBase64: z.string().min(1),
   encryptedDataKeyEnvelopeBase64: z.string().min(1),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttUploadChunkRequest = z.infer<typeof DaemonVoiceInferenceSttUploadChunkRequestSchema>;
 
-export const DaemonVoiceInferenceSttUploadChunkResponseSchema = z.object({
+export const DaemonVoiceInferenceSttUploadChunkResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttUploadChunkResponse = z.infer<typeof DaemonVoiceInferenceSttUploadChunkResponseSchema>;
 
-export const DaemonVoiceInferenceSttUploadFinalizeRequestSchema = z.object({
+export const DaemonVoiceInferenceSttUploadFinalizeRequestSchema = lazyZodSchema(() => z.object({
   uploadId: TransferSessionIdSchema,
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttUploadFinalizeRequest = z.infer<typeof DaemonVoiceInferenceSttUploadFinalizeRequestSchema>;
 
-export const DaemonVoiceInferenceSttUploadFinalizeResponseSchema = z.union([
+export const DaemonVoiceInferenceSttUploadFinalizeResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     success: z.literal(true),
     uploadId: TransferSessionIdSchema,
@@ -598,32 +599,32 @@ export const DaemonVoiceInferenceSttUploadFinalizeResponseSchema = z.union([
     error: z.string().min(1),
     errorCode: z.string().min(1).optional(),
   }).passthrough(),
-]);
+]));
 export type DaemonVoiceInferenceSttUploadFinalizeResponse = z.infer<typeof DaemonVoiceInferenceSttUploadFinalizeResponseSchema>;
 
-export const DaemonVoiceInferenceSttUploadAbortRequestSchema = z.object({
+export const DaemonVoiceInferenceSttUploadAbortRequestSchema = lazyZodSchema(() => z.object({
   uploadId: TransferSessionIdSchema,
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttUploadAbortRequest = z.infer<typeof DaemonVoiceInferenceSttUploadAbortRequestSchema>;
 
-export const DaemonVoiceInferenceSttUploadAbortResponseSchema = z.object({
+export const DaemonVoiceInferenceSttUploadAbortResponseSchema = lazyZodSchema(() => z.object({
   success: z.boolean(),
   error: z.string().min(1).optional(),
   errorCode: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttUploadAbortResponse = z.infer<typeof DaemonVoiceInferenceSttUploadAbortResponseSchema>;
 
-export const DaemonVoiceInferenceSttTranscribeRequestSchema = z.object({
+export const DaemonVoiceInferenceSttTranscribeRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
   uploadId: TransferSessionIdSchema,
   packId: z.string().min(1).nullable().default(null),
   language: z.string().min(1).nullable().default(null),
   normalization: DaemonVoiceInferenceNormalizationDecisionSchema,
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttTranscribeRequest = z.infer<typeof DaemonVoiceInferenceSttTranscribeRequestSchema>;
 
-export const DaemonVoiceInferenceSttTranscribeResponseSchema = z.union([
+export const DaemonVoiceInferenceSttTranscribeResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     requestId: z.string().min(1),
@@ -632,21 +633,21 @@ export const DaemonVoiceInferenceSttTranscribeResponseSchema = z.union([
     modelPackId: z.string().min(1).nullable().default(null),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttTranscribeResponse = z.infer<typeof DaemonVoiceInferenceSttTranscribeResponseSchema>;
 
-export const DaemonVoiceInferenceSttCancelRequestSchema = z.object({
+export const DaemonVoiceInferenceSttCancelRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
-}).passthrough();
+}).passthrough());
 export type DaemonVoiceInferenceSttCancelRequest = z.infer<typeof DaemonVoiceInferenceSttCancelRequestSchema>;
 
-export const DaemonVoiceInferenceSttCancelResponseSchema = z.union([
+export const DaemonVoiceInferenceSttCancelResponseSchema = lazyZodSchema(() => z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttCancelResponse = z.infer<typeof DaemonVoiceInferenceSttCancelResponseSchema>;
 
-export const DaemonVoiceInferenceSttStreamStartRequestSchema = z.object({
+export const DaemonVoiceInferenceSttStreamStartRequestSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1).max(DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH),
   packId: z.string().min(1).nullable().default(null),
   language: z.string().min(1).nullable().default(null),
@@ -654,10 +655,10 @@ export const DaemonVoiceInferenceSttStreamStartRequestSchema = z.object({
   format: DaemonVoiceInferenceSttStreamPcmFormatSchema.default(DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT),
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1Schema.optional(),
   peerApplicationEncryption: PeerApplicationEncryptionAuthorityBindingV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamStartRequest = z.infer<typeof DaemonVoiceInferenceSttStreamStartRequestSchema>;
 
-export const DaemonVoiceInferenceSttStreamStartResponseSchema = z.union([
+export const DaemonVoiceInferenceSttStreamStartResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     requestId: z.string().min(1),
@@ -668,10 +669,10 @@ export const DaemonVoiceInferenceSttStreamStartResponseSchema = z.union([
     peerApplicationEncryption: PeerApplicationEncryptionStartResponseV1Schema.optional(),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttStreamStartResponse = z.infer<typeof DaemonVoiceInferenceSttStreamStartResponseSchema>;
 
-export const DaemonVoiceInferenceSttStreamEventSchema = z.discriminatedUnion('type', [
+export const DaemonVoiceInferenceSttStreamEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.object({
     type: z.literal('partial'),
     seq: DaemonVoiceInferenceStreamSeqSchema,
@@ -692,18 +693,18 @@ export const DaemonVoiceInferenceSttStreamEventSchema = z.discriminatedUnion('ty
     language: z.string().min(1).nullable().default(null),
     modelPackId: z.string().min(1).nullable().default(null),
   }).passthrough(),
-]);
+]));
 export type DaemonVoiceInferenceSttStreamEvent = z.infer<typeof DaemonVoiceInferenceSttStreamEventSchema>;
 
-export const DaemonVoiceInferenceSttStreamChunkRequestSchema = z.object({
+export const DaemonVoiceInferenceSttStreamChunkRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
   seq: DaemonVoiceInferenceStreamSeqSchema,
   pcm16Base64: z.string().min(1).max(DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK_BASE64_MAX_LENGTH),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamChunkRequest = z.infer<typeof DaemonVoiceInferenceSttStreamChunkRequestSchema>;
 
-export const DaemonVoiceInferenceSttStreamChunkResponseSchema = z.union([
+export const DaemonVoiceInferenceSttStreamChunkResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -712,17 +713,17 @@ export const DaemonVoiceInferenceSttStreamChunkResponseSchema = z.union([
     events: z.array(DaemonVoiceInferenceSttStreamEventSchema).default([]),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttStreamChunkResponse = z.infer<typeof DaemonVoiceInferenceSttStreamChunkResponseSchema>;
 
-export const DaemonVoiceInferenceSttStreamFinishRequestSchema = z.object({
+export const DaemonVoiceInferenceSttStreamFinishRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
   finalSeq: DaemonVoiceInferenceStreamSeqSchema,
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamFinishRequest = z.infer<typeof DaemonVoiceInferenceSttStreamFinishRequestSchema>;
 
-export const DaemonVoiceInferenceSttStreamFinishResponseSchema = z.union([
+export const DaemonVoiceInferenceSttStreamFinishResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -734,35 +735,35 @@ export const DaemonVoiceInferenceSttStreamFinishResponseSchema = z.union([
     events: z.array(DaemonVoiceInferenceSttStreamEventSchema).default([]),
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttStreamFinishResponse = z.infer<typeof DaemonVoiceInferenceSttStreamFinishResponseSchema>;
 
-export const DaemonVoiceInferenceSttStreamCancelRequestSchema = z.object({
+export const DaemonVoiceInferenceSttStreamCancelRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema,
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamCancelRequest = z.infer<typeof DaemonVoiceInferenceSttStreamCancelRequestSchema>;
 
-export const DaemonVoiceInferenceSttStreamCancelResponseSchema = z.union([
+export const DaemonVoiceInferenceSttStreamCancelResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
     generation: DaemonVoiceInferenceStreamGenerationSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttStreamCancelResponse = z.infer<typeof DaemonVoiceInferenceSttStreamCancelResponseSchema>;
 
-export const DaemonVoiceInferenceSttStreamStateSchema = z.enum(['open', 'finishing', 'closed']);
+export const DaemonVoiceInferenceSttStreamStateSchema = lazyZodSchema(() => z.enum(['open', 'finishing', 'closed']));
 export type DaemonVoiceInferenceSttStreamState = z.infer<typeof DaemonVoiceInferenceSttStreamStateSchema>;
 
-export const DaemonVoiceInferenceSttStreamStatusRequestSchema = z.object({
+export const DaemonVoiceInferenceSttStreamStatusRequestSchema = lazyZodSchema(() => z.object({
   streamId: DaemonVoiceInferenceStreamIdSchema,
   generation: DaemonVoiceInferenceStreamGenerationSchema.optional(),
-}).strict();
+}).strict());
 export type DaemonVoiceInferenceSttStreamStatusRequest = z.infer<typeof DaemonVoiceInferenceSttStreamStatusRequestSchema>;
 
-export const DaemonVoiceInferenceSttStreamStatusResponseSchema = z.union([
+export const DaemonVoiceInferenceSttStreamStatusResponseSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     streamId: DaemonVoiceInferenceStreamIdSchema,
@@ -771,5 +772,5 @@ export const DaemonVoiceInferenceSttStreamStatusResponseSchema = z.union([
     state: DaemonVoiceInferenceSttStreamStateSchema,
   }).passthrough(),
   DaemonVoiceInferenceErrorSchema,
-]);
+]));
 export type DaemonVoiceInferenceSttStreamStatusResponse = z.infer<typeof DaemonVoiceInferenceSttStreamStatusResponseSchema>;

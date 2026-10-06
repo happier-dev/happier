@@ -2,8 +2,9 @@ import type { WorkBoardArtifactPortV1 } from '../boards/workBoardArtifactV1.js';
 import { WorkBoardMutationErrorV1 } from '../boards/workBoardArtifactV1.js';
 import { buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1, WorkBoardWidgetMutationErrorV1,
   type WorkBoardWidgetIntentV1, type WorkBoardV1 } from '../boards/workBoardV1.js';
-import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1 } from './actionsV1.js';
-import type { WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
+import type { WidgetActionSurfacePortV1 } from './actionsV1.js';
+import type { WidgetInstanceV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
+import type { WidgetExpectedPresentationV1 } from './widgetPresentationV1.js';
 
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 const ordered = (board: WorkBoardV1, surface: WidgetSurfaceRefV1) => {
@@ -11,7 +12,11 @@ const ordered = (board: WorkBoardV1, surface: WidgetSurfaceRefV1) => {
   return (board.widgets ?? []).filter(item => item.ref.surface.serverId === surface.serverId && item.ref.surface.accountId === surface.accountId)
     .slice().sort((a, b) => order.indexOf(buildWorkBoardWidgetKeyV1(a.ref)) - order.indexOf(buildWorkBoardWidgetKeyV1(b.ref)));
 };
-const capture = (board: WorkBoardV1, surface: WidgetSurfaceRefV1, instanceId: string): WidgetMoveCaptureV1 | null => {
+/** The Board's acknowledged instance and placement facts, shared by transfer and arrival Undo. */
+export function captureWorkBoardWidgetMoveV1(board: WorkBoardV1, surface: WidgetSurfaceRefV1, instanceId: string): Readonly<{
+  expectedInstance: WidgetInstanceV1;
+  expectedPresentation: WidgetExpectedPresentationV1;
+}> | null {
   const item = ordered(board, surface).find(item => item.instance.id === instanceId);
   const position = item ? board.positionsByItemRef[buildWorkBoardWidgetKeyV1(item.ref)] : undefined;
   return item ? { expectedInstance: item.instance, expectedPresentation: {
@@ -19,7 +24,7 @@ const capture = (board: WorkBoardV1, surface: WidgetSurfaceRefV1, instanceId: st
     width: item.width === 2 ? 'full' : 'half', frameStyle: item.frameStyle ?? null,
     canvasPosition: position ? [position.x, position.y] : null,
   } } : null;
-};
+}
 
 /** A translation into the Board semantic writer, shared by UI and daemon Actions. */
 export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPortV1, 'read' | 'apply'> & Partial<Pick<WorkBoardArtifactPortV1, 'readBoard'>>): WidgetActionSurfacePortV1 {
@@ -44,7 +49,7 @@ export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPo
       }
     },
     async captureMove(surface, instanceId, _context, signal) {
-      try { return capture(await read(surface, signal), surface, instanceId) ?? failure('widget_instance_not_found'); }
+      try { return captureWorkBoardWidgetMoveV1(await read(surface, signal), surface, instanceId) ?? failure('widget_instance_not_found'); }
       catch (error) {
         if (error instanceof WorkBoardMutationErrorV1 || error instanceof WorkBoardWidgetMutationErrorV1) return failure(error.code);
         throw error;
@@ -82,7 +87,7 @@ export function createWorkBoardWidgetActionPortV1(port: Pick<WorkBoardArtifactPo
         const board = result.boards.find(board => board.id === target.boardId)!;
         const item = ordered(board, surface).find(item => item.instance.id === instanceId);
         return { ok: true, result: { ref: target.ref, instance: item?.instance ?? null,
-          ...(intent.kind === 'add' && intent.captureForMove ? { moveCapture: capture(board, surface, instanceId) } : {}) } };
+          ...(intent.kind === 'add' && intent.captureForMove ? { moveCapture: captureWorkBoardWidgetMoveV1(board, surface, instanceId) } : {}) } };
       } catch (error) {
         if (error instanceof WorkBoardMutationErrorV1 || error instanceof WorkBoardWidgetMutationErrorV1) return failure(error.code);
         throw error;

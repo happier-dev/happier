@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { z } from 'zod';
 import { SessionPermissionApprovalReviewerClaimV1Schema } from '../permissions/v1.js';
@@ -66,23 +67,23 @@ export const SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND =
   'session_owner_metadata' as const;
 export const SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND_BYTE_V1 = 26 as const;
 
-const BoundedIdentifierSchema = z.string().trim().min(1).max(256);
-const BoundedPresentationTextSchema = z.string().trim().min(1).max(2_048);
-const TimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const BoundedIdentifierSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
+const BoundedPresentationTextSchema = lazyZodSchema(() => z.string().trim().min(1).max(2_048));
+const TimestampSchema = lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 const SessionEnvelopeVersionSchema =
-  z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const SessionOpaqueCiphertextSchema = z.string().min(1).max(10_000_000);
+  lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+const SessionOpaqueCiphertextSchema = lazyZodSchema(() => z.string().min(1).max(10_000_000));
 const MAX_PUBLIC_COMPLETED_REQUESTS_V1 = 2_048;
 
 export const SessionOwnerMetadataCiphertextV1Schema =
-  SessionOpaqueCiphertextSchema.refine(isSessionOwnerMetadataCiphertextV1, {
+  lazyZodSchema(() => SessionOpaqueCiphertextSchema.refine(isSessionOwnerMetadataCiphertextV1, {
     message: 'Expected canonical Session owner-metadata ciphertext',
-  });
+  }));
 export type SessionOwnerMetadataCiphertextV1 = z.infer<
   typeof SessionOwnerMetadataCiphertextV1Schema
 >;
 
-export const SessionOwnerMetadataEnvelopeV1Schema = z.discriminatedUnion('t', [
+export const SessionOwnerMetadataEnvelopeV1Schema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.object({
     t: z.literal('plain'),
     v: z.lazy(() => SessionOwnerMetadataV1Schema),
@@ -91,7 +92,7 @@ export const SessionOwnerMetadataEnvelopeV1Schema = z.discriminatedUnion('t', [
     t: z.literal('encrypted'),
     c: SessionOwnerMetadataCiphertextV1Schema,
   }).strict(),
-]);
+]));
 export type SessionOwnerMetadataEnvelopeV1 = z.infer<
   typeof SessionOwnerMetadataEnvelopeV1Schema
 >;
@@ -120,7 +121,7 @@ export type OpenSessionOwnerMetadataEnvelopeV1Result =
       | 'invalid_ciphertext';
   }>;
 
-export const SessionMetadataEnvelopeTupleV1Schema = z.object({
+export const SessionMetadataEnvelopeTupleV1Schema = lazyZodSchema(() => z.object({
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   sharedMetadata: z.object({
     ciphertext: SessionOpaqueCiphertextSchema,
@@ -131,23 +132,23 @@ export const SessionMetadataEnvelopeTupleV1Schema = z.object({
     ciphertext: SessionOpaqueCiphertextSchema.nullable(),
     version: SessionEnvelopeVersionSchema,
   }).strict(),
-}).strict();
+}).strict());
 export type SessionMetadataEnvelopeTupleV1 = z.infer<
   typeof SessionMetadataEnvelopeTupleV1Schema
 >;
 
-const SessionMetadataSharedPatchV1Schema = z.object({
+const SessionMetadataSharedPatchV1Schema = lazyZodSchema(() => z.object({
   ciphertext: SessionOpaqueCiphertextSchema,
   expectedVersion: SessionEnvelopeVersionSchema,
-}).strict();
+}).strict());
 
-export const SessionAgentStateActivitySummaryV1Schema = z.object({
+export const SessionAgentStateActivitySummaryV1Schema = lazyZodSchema(() => z.object({
   pendingPermissionRequestCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   pendingUserActionRequestCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   pendingRequestNewestCreatedAt: TimestampSchema.nullable(),
-}).strict();
+}).strict());
 
-const SessionMetadataOwnerMigrationPatchBaseV1Schema = z.object({
+const SessionMetadataOwnerMigrationPatchBaseV1Schema = lazyZodSchema(() => z.object({
   mode: z.literal('owner_migration'),
   activitySummaryV1: SessionAgentStateActivitySummaryV1Schema.optional(),
   source: z.object({
@@ -172,10 +173,10 @@ const SessionMetadataOwnerMigrationPatchBaseV1Schema = z.object({
       ciphertext: SessionOpaqueCiphertextSchema.nullable(),
     }).strict(),
   }).strict(),
-}).strict();
+}).strict());
 
 export const SessionMetadataOwnerMigrationPatchV1Schema =
-  z.discriminatedUnion('expectedAccountEncryptionMode', [
+  lazyZodSchema(() => z.discriminatedUnion('expectedAccountEncryptionMode', [
     SessionMetadataOwnerMigrationPatchBaseV1Schema.extend({
       expectedAccountEncryptionMode: z.literal('plain'),
       expectedAccountContentPublicKeyFingerprint: z.null(),
@@ -185,38 +186,38 @@ export const SessionMetadataOwnerMigrationPatchV1Schema =
       expectedAccountContentPublicKeyFingerprint:
         ContentPublicKeyFingerprintSchema,
     }),
-  ]);
+  ]));
 export type SessionMetadataOwnerMigrationPatchV1 = z.infer<
   typeof SessionMetadataOwnerMigrationPatchV1Schema
 >;
 
-export const SessionMetadataInactiveModelIntentExpectationV1Schema = z.object({
+export const SessionMetadataInactiveModelIntentExpectationV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('inactive_model_intent'),
-}).strict();
+}).strict());
 export type SessionMetadataInactiveModelIntentExpectationV1 = z.infer<
   typeof SessionMetadataInactiveModelIntentExpectationV1Schema
 >;
 
-export const SessionMetadataInactiveModelIntentPatchV1Schema = z.object({
+export const SessionMetadataInactiveModelIntentPatchV1Schema = lazyZodSchema(() => z.object({
   inactiveModelIntent: z.object({
     metadata: SessionMetadataSharedPatchV1Schema,
     sessionExpectation:
       SessionMetadataInactiveModelIntentExpectationV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 export type SessionMetadataInactiveModelIntentPatchV1 = z.infer<
   typeof SessionMetadataInactiveModelIntentPatchV1Schema
 >;
 
-export const SessionMetadataPublisherPreconditionV1Schema = z.object({
+export const SessionMetadataPublisherPreconditionV1Schema = lazyZodSchema(() => z.object({
   machineId: BoundedIdentifierSchema,
   committedFenceMs: TimestampSchema,
-}).strict();
+}).strict());
 export type SessionMetadataPublisherPreconditionV1 = z.infer<
   typeof SessionMetadataPublisherPreconditionV1Schema
 >;
 
-export const SessionMetadataOwnerPatchV1Schema = z.object({
+export const SessionMetadataOwnerPatchV1Schema = lazyZodSchema(() => z.object({
   mode: z.literal('owner'),
   activitySummaryV1: SessionAgentStateActivitySummaryV1Schema.optional(),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
@@ -229,25 +230,25 @@ export const SessionMetadataOwnerPatchV1Schema = z.object({
     ciphertext: SessionOpaqueCiphertextSchema.nullable(),
     expectedVersion: SessionEnvelopeVersionSchema,
   }).strict(),
-}).strict();
+}).strict());
 export type SessionMetadataOwnerPatchV1 = z.infer<
   typeof SessionMetadataOwnerPatchV1Schema
 >;
 
 export const SessionMetadataInactiveModelIntentOwnerPatchV1Schema =
-  SessionMetadataOwnerPatchV1Schema.omit({
+  lazyZodSchema(() => SessionMetadataOwnerPatchV1Schema.omit({
     publisherPrecondition: true,
     activitySummaryV1: true,
   }).extend({
     mode: z.literal('owner_inactive_model_intent'),
     sessionExpectation:
       SessionMetadataInactiveModelIntentExpectationV1Schema,
-  });
+  }));
 export type SessionMetadataInactiveModelIntentOwnerPatchV1 = z.infer<
   typeof SessionMetadataInactiveModelIntentOwnerPatchV1Schema
 >;
 
-export const SessionMetadataTuplePatchV1Schema = z.discriminatedUnion('mode', [
+export const SessionMetadataTuplePatchV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   SessionMetadataOwnerMigrationPatchV1Schema,
   SessionMetadataOwnerPatchV1Schema,
   z.object({
@@ -256,12 +257,12 @@ export const SessionMetadataTuplePatchV1Schema = z.discriminatedUnion('mode', [
     metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
     sharedMetadata: SessionMetadataSharedPatchV1Schema,
   }).strict(),
-]);
+]));
 export type SessionMetadataTuplePatchV1 = z.infer<
   typeof SessionMetadataTuplePatchV1Schema
 >;
 
-export const SessionMetadataTuplePatchSuccessV1Schema = z.object({
+export const SessionMetadataTuplePatchSuccessV1Schema = lazyZodSchema(() => z.object({
   success: z.literal(true),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   sharedMetadata: z.object({
@@ -270,12 +271,12 @@ export const SessionMetadataTuplePatchSuccessV1Schema = z.object({
   agentState: z.object({
     version: SessionEnvelopeVersionSchema,
   }).strict().optional(),
-}).strict();
+}).strict());
 export type SessionMetadataTuplePatchSuccessV1 = z.infer<
   typeof SessionMetadataTuplePatchSuccessV1Schema
 >;
 
-export const SessionMetadataVersionConflictV1Schema = z.object({
+export const SessionMetadataVersionConflictV1Schema = lazyZodSchema(() => z.object({
   code: z.literal('session_metadata_version_conflict'),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   sharedMetadata: z.object({
@@ -284,56 +285,56 @@ export const SessionMetadataVersionConflictV1Schema = z.object({
   agentState: z.object({
     version: SessionEnvelopeVersionSchema,
   }).strict().optional(),
-}).strict();
+}).strict());
 export type SessionMetadataVersionConflictV1 = z.infer<
   typeof SessionMetadataVersionConflictV1Schema
 >;
 
-export const SessionMetadataActiveConflictV1Schema = z.object({
+export const SessionMetadataActiveConflictV1Schema = lazyZodSchema(() => z.object({
   code: z.literal('session_active'),
-}).strict();
+}).strict());
 export type SessionMetadataActiveConflictV1 = z.infer<
   typeof SessionMetadataActiveConflictV1Schema
 >;
 
 export const SessionMetadataInactiveModelIntentPatchSuccessV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
     success: z.literal(true),
     metadata: z.object({
       version: SessionEnvelopeVersionSchema,
     }).strict(),
-  }).strict();
+  }).strict());
 export type SessionMetadataInactiveModelIntentPatchSuccessV1 = z.infer<
   typeof SessionMetadataInactiveModelIntentPatchSuccessV1Schema
 >;
 
 export const SessionMetadataInactiveModelIntentVersionConflictV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
     success: z.literal(false),
     error: z.literal('version-mismatch'),
     metadata: z.object({
       version: SessionEnvelopeVersionSchema,
       value: z.string().nullable(),
     }).strict(),
-  }).strict();
+  }).strict());
 export type SessionMetadataInactiveModelIntentVersionConflictV1 = z.infer<
   typeof SessionMetadataInactiveModelIntentVersionConflictV1Schema
 >;
 
-const SessionMetadataSharedRecipientProjectionV1Schema = z.object({
+const SessionMetadataSharedRecipientProjectionV1Schema = lazyZodSchema(() => z.object({
   metadata: SessionOpaqueCiphertextSchema,
   metadataVersion: SessionEnvelopeVersionSchema,
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),
   agentState: z.null(),
   agentStateVersion: SessionEnvelopeVersionSchema,
-}).strict();
+}).strict());
 
 const SessionMetadataOwnerRecipientProjectionV1Schema =
-  SessionMetadataSharedRecipientProjectionV1Schema.extend({
+  lazyZodSchema(() => SessionMetadataSharedRecipientProjectionV1Schema.extend({
     ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema,
     agentState: SessionOpaqueCiphertextSchema.nullable(),
     agentStateVersion: SessionEnvelopeVersionSchema,
-  }).strict();
+  }).strict());
 
 /**
  * Layout-v1 recipient wire projection. A shared participant/public recipient
@@ -342,43 +343,43 @@ const SessionMetadataOwnerRecipientProjectionV1Schema =
  * owner branch may carry a non-null full Agent-state ciphertext, and it also
  * requires the owner envelope.
  */
-export const SessionMetadataRecipientProjectionV1Schema = z.union([
+export const SessionMetadataRecipientProjectionV1Schema = lazyZodSchema(() => z.union([
   SessionMetadataOwnerRecipientProjectionV1Schema,
   SessionMetadataSharedRecipientProjectionV1Schema,
-]);
+]));
 export type SessionMetadataRecipientProjectionV1 = z.infer<
   typeof SessionMetadataRecipientProjectionV1Schema
 >;
 
-export const SessionSharedSummaryV1Schema = z.object({
+export const SessionSharedSummaryV1Schema = lazyZodSchema(() => z.object({
   text: BoundedPresentationTextSchema,
   updatedAt: TimestampSchema,
-}).strict();
+}).strict());
 export type SessionSharedSummaryV1 = z.infer<
   typeof SessionSharedSummaryV1Schema
 >;
 
-export const SessionSharedAgentPresentationV1Schema = z.object({
+export const SessionSharedAgentPresentationV1Schema = lazyZodSchema(() => z.object({
   agentId: BoundedIdentifierSchema,
   label: z.string().trim().min(1).max(256).optional(),
-}).strict();
+}).strict());
 export type SessionSharedAgentPresentationV1 = z.infer<
   typeof SessionSharedAgentPresentationV1Schema
 >;
 
-export const SessionPublicCompletedRequestV1Schema = z.object({
+export const SessionPublicCompletedRequestV1Schema = lazyZodSchema(() => z.object({
   tool: BoundedIdentifierSchema,
   kind: z.string().trim().min(1).max(128).optional(),
   createdAt: TimestampSchema,
   completedAt: TimestampSchema,
   status: z.enum(['canceled', 'denied', 'approved']),
   permissionDecisionClaimV1: SessionPermissionApprovalReviewerClaimV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionPublicCompletedRequestV1 = z.infer<
   typeof SessionPublicCompletedRequestV1Schema
 >;
 
-export const SessionPublicAgentStateV1Schema = z.object({
+export const SessionPublicAgentStateV1Schema = lazyZodSchema(() => z.object({
   completedRequests: z.record(
     z.string().trim().min(1).max(512),
     SessionPublicCompletedRequestV1Schema,
@@ -387,7 +388,7 @@ export const SessionPublicAgentStateV1Schema = z.object({
       Object.keys(completedRequests).length <= MAX_PUBLIC_COMPLETED_REQUESTS_V1,
     { message: 'completedRequests exceeds the v1 projection limit' },
   ),
-}).strict();
+}).strict());
 export type SessionPublicAgentStateV1 = z.infer<
   typeof SessionPublicAgentStateV1Schema
 >;
@@ -397,7 +398,7 @@ export type SessionPublicAgentStateV1 = z.infer<
  * passthrough behavior: additive fields require an explicit schema/projector
  * decision before they can cross a share boundary.
  */
-export const SessionSharedMetadataV1Schema = z.object({
+export const SessionSharedMetadataV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(SESSION_SHARED_METADATA_VERSION_V1),
   summary: SessionSharedSummaryV1Schema.optional(),
   agentPresentation: SessionSharedAgentPresentationV1Schema.optional(),
@@ -405,17 +406,17 @@ export const SessionSharedMetadataV1Schema = z.object({
     ExternalSessionOperationSharedPresentationV1Schema.optional(),
   publicAgentState: SessionPublicAgentStateV1Schema.optional(),
   actionConfirmationsV1: SessionActionConfirmationsV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionSharedMetadataV1 = z.infer<
   typeof SessionSharedMetadataV1Schema
 >;
 
-const OptionalOwnerStringSchema = z.string().max(100_000).nullable();
-const OptionalOwnerIdentifierSchema = z.string().trim().min(1).max(2_000).nullable();
+const OptionalOwnerStringSchema = lazyZodSchema(() => z.string().max(100_000).nullable());
+const OptionalOwnerIdentifierSchema = lazyZodSchema(() => z.string().trim().min(1).max(2_000).nullable());
 const OptionalOwnerOpaqueIdentifierSchema =
-  NonBlankOpaqueIdentifierSchema.max(2_000).nullable();
+  lazyZodSchema(() => NonBlankOpaqueIdentifierSchema.max(2_000).nullable());
 
-const SessionOwnerWorkspaceV1Schema = z.object({
+const SessionOwnerWorkspaceV1Schema = lazyZodSchema(() => z.object({
   path: OptionalOwnerStringSchema.optional(),
   host: OptionalOwnerStringSchema.optional(),
   version: OptionalOwnerStringSchema.optional(),
@@ -434,13 +435,13 @@ const SessionOwnerWorkspaceV1Schema = z.object({
   workspaceCheckoutId: OptionalOwnerIdentifierSchema.optional(),
   sessionWorkspaceLocationV1: SessionWorkspaceLocationV1Schema.optional(),
   sessionDirectoryV1: SessionDirectoryV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const SessionOwnerRuntimeDescriptorV1Schema = z.object({
+export const SessionOwnerRuntimeDescriptorV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: BoundedIdentifierSchema,
   agent: z.record(z.string(), PluginJsonValueV2Schema),
-}).strict();
+}).strict());
 export type SessionOwnerRuntimeDescriptorV1 = z.infer<
   typeof SessionOwnerRuntimeDescriptorV1Schema
 >;
@@ -525,10 +526,10 @@ function createSessionOwnerLinkedSessionVariantSchema(
 }
 
 const SessionOwnerExternalSessionLinkV1Schema =
-  createSessionOwnerLinkedSessionVariantSchema('externalSessionV1');
+  lazyZodSchema(() => createSessionOwnerLinkedSessionVariantSchema('externalSessionV1'));
 
 const SessionOwnerDirectSessionLinkV1Schema =
-  createSessionOwnerLinkedSessionVariantSchema('directSessionV1');
+  lazyZodSchema(() => createSessionOwnerLinkedSessionVariantSchema('directSessionV1'));
 
 function createSessionOwnerCompatibilityLinkedSessionVariantSchema(
   variant: 'externalSessionV1' | 'directSessionV1',
@@ -563,15 +564,15 @@ function createSessionOwnerCompatibilityLinkedSessionVariantSchema(
 }
 
 const SessionOwnerCompatibilityExternalSessionLinkV1Schema =
-  createSessionOwnerCompatibilityLinkedSessionVariantSchema(
+  lazyZodSchema(() => createSessionOwnerCompatibilityLinkedSessionVariantSchema(
     'externalSessionV1',
-  );
+  ));
 const SessionOwnerCompatibilityDirectSessionLinkV1Schema =
-  createSessionOwnerCompatibilityLinkedSessionVariantSchema(
+  lazyZodSchema(() => createSessionOwnerCompatibilityLinkedSessionVariantSchema(
     'directSessionV1',
-  );
+  ));
 
-const SessionOwnerNativeSessionV1Schema = z.object({
+const SessionOwnerNativeSessionV1Schema = lazyZodSchema(() => z.object({
   runtimeDescriptorV1: SessionOwnerRuntimeDescriptorV1Schema.optional(),
   nativeResumeIdentityV1: AgentNativeResumeIdentityV1Schema.optional(),
   claudeSessionId: OptionalOwnerOpaqueIdentifierSchema.optional(),
@@ -639,7 +640,7 @@ const SessionOwnerNativeSessionV1Schema = z.object({
     path: ['directSessionV1'],
     message: `Conflicting linked-session owner metadata: ${resolved.reason}`,
   });
-});
+}));
 
 // Stable cli-v0.2.1 and preview cli-v0.2.2 flattened metadata exposed this
 // Codex selector directly. Current owner envelopes are Agent-neutral and carry
@@ -647,42 +648,42 @@ const SessionOwnerNativeSessionV1Schema = z.object({
 // compatibility view until those readers and their stored flat rows are no
 // longer supported.
 const SessionOwnerCompatibilityNativeSessionV1Schema =
-  SessionOwnerNativeSessionV1Schema.safeExtend({
+  lazyZodSchema(() => SessionOwnerNativeSessionV1Schema.safeExtend({
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
-  });
+  }));
 
-const SessionOwnerSlashCommandDetailV1Schema = z.object({
+const SessionOwnerSlashCommandDetailV1Schema = lazyZodSchema(() => z.object({
   command: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerScalarValueV1Schema = z.union([
+const SessionOwnerScalarValueV1Schema = lazyZodSchema(() => z.union([
   z.string().max(20_000),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 
-const SessionOwnerTerminalV1Schema = createSessionTerminalMetadataSchema(z, 'owner');
+const SessionOwnerTerminalV1Schema = lazyZodSchema(() => createSessionTerminalMetadataSchema(z, 'owner'));
 
-const SessionOwnerModeCatalogItemV1Schema = z.object({
+const SessionOwnerModeCatalogItemV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
-}).strict();
-export const SessionOwnerModeCatalogV1Schema = z.object({
+}).strict());
+export const SessionOwnerModeCatalogV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: BoundedIdentifierSchema,
   updatedAt: TimestampSchema,
   currentModeId: BoundedIdentifierSchema,
   availableModes: z.array(SessionOwnerModeCatalogItemV1Schema).max(2_048),
-}).strict();
+}).strict());
 
 /** Mode availability and accepted current selection are orthogonal native facts. */
-export const SessionOwnerModeCatalogV2Schema = SessionOwnerModeCatalogV1Schema.extend({
+export const SessionOwnerModeCatalogV2Schema = lazyZodSchema(() => SessionOwnerModeCatalogV1Schema.extend({
   v: z.literal(2),
   currentModeId: BoundedIdentifierSchema.nullable(),
-}).strict();
+}).strict());
 export type SessionOwnerModeCatalogV2 = z.infer<typeof SessionOwnerModeCatalogV2Schema>;
 
 export function readSessionModesMetadata(metadata: Readonly<Record<string, unknown>> | null | undefined): SessionOwnerModeCatalogV2 | null {
@@ -699,12 +700,12 @@ export function projectSessionModesV1Compatibility(state: SessionOwnerModeCatalo
   return state.currentModeId === null ? undefined : { ...state, v: 1, currentModeId: state.currentModeId };
 }
 
-const SessionOwnerCatalogValueOptionV1Schema = z.object({
+const SessionOwnerCatalogValueOptionV1Schema = lazyZodSchema(() => z.object({
   value: SessionOwnerScalarValueV1Schema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
-}).strict();
-const SessionOwnerModelOptionV1Schema = z.object({
+}).strict());
+const SessionOwnerModelOptionV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
@@ -715,16 +716,16 @@ const SessionOwnerModelOptionV1Schema = z.object({
   // Producer-declared; see AgentModelOptionOverrideRule. These envelopes are strict, so an
   // undeclared field would reject the WHOLE owner metadata rather than drop the rule.
   overridesWhenOn: AgentModelOptionOverrideRuleSchema.optional(),
-}).strict();
-const SessionOwnerModelCatalogItemV1Schema = z.object({
+}).strict());
+const SessionOwnerModelCatalogItemV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
   contextWindowTokens: z.number().int().positive().optional(),
   extendedContextModelId: BoundedIdentifierSchema.optional(),
   modelOptions: z.array(SessionOwnerModelOptionV1Schema).max(2_048).optional(),
-}).strict();
-const SessionOwnerModelCatalogV1Schema = z.object({
+}).strict());
+const SessionOwnerModelCatalogV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: BoundedIdentifierSchema,
   updatedAt: TimestampSchema,
@@ -733,14 +734,14 @@ const SessionOwnerModelCatalogV1Schema = z.object({
   // Optional for mixed-version producer compatibility. Absence is valid and
   // does not authorize owner-migration or backfill.
   activeSelectionV1: SessionActiveModelSelectionV1Schema.optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerConfigOptionGroupV1Schema = z.object({
+const SessionOwnerConfigOptionGroupV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   options: z.array(SessionOwnerCatalogValueOptionV1Schema).max(2_048),
-}).strict();
-const SessionOwnerConfigOptionV1Schema = z.object({
+}).strict());
+const SessionOwnerConfigOptionV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   name: z.string().trim().min(1).max(2_000),
   description: z.string().max(20_000).optional(),
@@ -752,20 +753,20 @@ const SessionOwnerConfigOptionV1Schema = z.object({
   // Producer-declared; see AgentModelOptionOverrideRule. These envelopes are strict, so an
   // undeclared field would reject the WHOLE owner metadata rather than drop the rule.
   overridesWhenOn: AgentModelOptionOverrideRuleSchema.optional(),
-}).strict();
-const SessionOwnerConfigCatalogV1Schema = z.object({
+}).strict());
+const SessionOwnerConfigCatalogV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   agentId: BoundedIdentifierSchema,
   updatedAt: TimestampSchema,
   configOptions: z.array(SessionOwnerConfigOptionV1Schema).max(2_048),
-}).strict();
+}).strict());
 
-const SessionOwnerModeOverrideV1Schema = z.object({
+const SessionOwnerModeOverrideV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   updatedAt: z.number().finite(),
   modeId: z.string().max(20_000).nullable(),
-}).strict();
-const SessionOwnerConfigOverridesV1Schema = z.object({
+}).strict());
+const SessionOwnerConfigOverridesV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   updatedAt: z.number().finite(),
   overrides: z.record(
@@ -775,25 +776,25 @@ const SessionOwnerConfigOverridesV1Schema = z.object({
       value: SessionOwnerScalarValueV1Schema,
     }).strict(),
   ),
-}).strict();
+}).strict());
 
-const SessionOwnerAgentRuntimeFacetsV1Schema = z.object({
+const SessionOwnerAgentRuntimeFacetsV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   transcriptSource: z.object({
     supported: z.literal(true),
     followLeaseSupported: z.literal(true).optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerCapabilitySupportV1Schema = z.object({
+const SessionOwnerCapabilitySupportV1Schema = lazyZodSchema(() => z.object({
   supported: z.boolean(),
-}).strict();
-const SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema = z.enum([
+}).strict());
+const SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema = lazyZodSchema(() => z.enum([
   'supported',
   'experimental',
   'unsupported',
-]);
-const SessionOwnerAgentRuntimeCapabilitiesV1Schema = z.object({
+]));
+const SessionOwnerAgentRuntimeCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   localControl: z.object({
     supported: z.boolean(),
     topology: z.enum(['exclusive', 'shared']).optional(),
@@ -898,9 +899,9 @@ const SessionOwnerAgentRuntimeCapabilitiesV1Schema = z.object({
       }).strict(),
     }).strict(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerRollbackRangesV1Schema = z.object({
+const SessionOwnerRollbackRangesV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   updatedAt: z.number().finite(),
   ranges: z.array(z.object({
@@ -912,16 +913,16 @@ const SessionOwnerRollbackRangesV1Schema = z.object({
     (value) => value.endSeqInclusive >= value.startSeqInclusive,
     { path: ['endSeqInclusive'], message: 'Invalid rollback range' },
   )).max(20_000),
-}).strict();
+}).strict());
 
-const SessionOwnerMcpSelectionV1Schema = z.object({
+const SessionOwnerMcpSelectionV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   managedServersEnabled: z.boolean(),
   forceIncludeServerIds: z.array(BoundedIdentifierSchema).max(2_048),
   forceExcludeServerIds: z.array(BoundedIdentifierSchema).max(2_048),
-}).strict();
+}).strict());
 
-const SessionOwnerRuntimeV1Schema = z.object({
+const SessionOwnerRuntimeV1Schema = lazyZodSchema(() => z.object({
   externalSessionOperationV1: ExternalSessionOperationStateV1Schema.optional(),
   terminal: SessionOwnerTerminalV1Schema.optional(),
   tools: z.array(z.string().max(2_000)).max(4_096).optional(),
@@ -975,9 +976,9 @@ const SessionOwnerRuntimeV1Schema = z.object({
     SessionRuntimeActivitySnapshotSchema,
     SessionRuntimeActivityProjectionSchema,
   ]).optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerConnectedServicesV1Schema = z.object({
+const SessionOwnerConnectedServicesV1Schema = lazyZodSchema(() => z.object({
   connectedServices: ConnectedServiceBindingsV2IngressSchema.optional(),
   connectedServicesUpdatedAt: TimestampSchema.optional(),
   connectedServiceMaterializationIdentityV1: z.object({
@@ -1026,9 +1027,9 @@ const SessionOwnerConnectedServicesV1Schema = z.object({
     mode: z.enum(['daemon_callback', 'unavailable']),
     serviceIds: z.array(ConnectedServiceIdSchema).max(64),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerHistoryV1Schema = z.object({
+const SessionOwnerHistoryV1Schema = lazyZodSchema(() => z.object({
   externalHistoryImportV1: ExternalHistoryImportV1Schema.optional(),
   acpHistoryImportV1: z.object({
     v: z.literal(1),
@@ -1087,9 +1088,9 @@ const SessionOwnerHistoryV1Schema = z.object({
     sourceCutoffSeqInclusive: z.number().int().nonnegative(),
     referencedWorkspacePaths: z.array(z.string().max(100_000)).max(20_000),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerWorkStateItemV1Schema = z.object({
+const SessionOwnerWorkStateItemV1Schema = lazyZodSchema(() => z.object({
   id: BoundedIdentifierSchema,
   kind: z.enum(['goal', 'task', 'todo']),
   origin: z.enum(['vendor', 'happier', 'derived']),
@@ -1116,9 +1117,9 @@ const SessionOwnerWorkStateItemV1Schema = z.object({
   startedAt: TimestampSchema.optional(),
   completedAt: TimestampSchema.optional(),
   updatedAt: TimestampSchema,
-}).strict();
+}).strict());
 
-const SessionOwnerWorkStateV1Schema = z.object({
+const SessionOwnerWorkStateV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   backendId: BoundedIdentifierSchema,
   agentId: BoundedIdentifierSchema.optional(),
@@ -1129,9 +1130,9 @@ const SessionOwnerWorkStateV1Schema = z.object({
     reason: z.enum(['item_limit', 'provider_limit']),
     omittedCount: z.number().int().nonnegative().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerWorkflowRunHeadlineV1Schema = z.object({
+const SessionOwnerWorkflowRunHeadlineV1Schema = lazyZodSchema(() => z.object({
   runId: BoundedIdentifierSchema,
   title: z.string().trim().min(1).max(4_000),
   status: z.enum(['active', 'complete', 'failed', 'stopped', 'blocked', 'cancelled', 'unknown']),
@@ -1144,7 +1145,7 @@ const SessionOwnerWorkflowRunHeadlineV1Schema = z.object({
   completedAgents: z.number().int().nonnegative(),
   failedAgents: z.number().int().nonnegative().optional(),
   blockedAgents: z.number().int().nonnegative().optional(),
-}).strict();
+}).strict());
 
 /**
  * Owner-envelope mirror of `SessionAgentActivityEntryV1`.
@@ -1156,7 +1157,7 @@ const SessionOwnerWorkflowRunHeadlineV1Schema = z.object({
  * `agentActivityHeadlineMetadataKey.test.ts` round-trips a builder-produced headline through here so
  * the mirror cannot drift away from the vocabulary it bounds.
  */
-const SessionOwnerAgentActivityEntryV1Schema = z.object({
+const SessionOwnerAgentActivityEntryV1Schema = lazyZodSchema(() => z.object({
   entryId: BoundedIdentifierSchema,
   kind: z.enum(['workflow_run', 'workflow_agent']),
   title: z.string().trim().min(1).max(200),
@@ -1178,9 +1179,9 @@ const SessionOwnerAgentActivityEntryV1Schema = z.object({
   runId: BoundedIdentifierSchema.optional(),
   parentId: BoundedIdentifierSchema.optional(),
   recordRevision: BoundedIdentifierSchema.optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerWorkV1Schema = z.object({
+const SessionOwnerWorkV1Schema = lazyZodSchema(() => z.object({
   sessionRolesV1: SessionRolesV1Schema.optional(),
   sessionWorkStateV1: SessionOwnerWorkStateV1Schema.optional(),
   sessionWorkflowActivityHeadlineV1: z.object({
@@ -1212,15 +1213,15 @@ const SessionOwnerWorkV1Schema = z.object({
       omittedCount: z.number().int().nonnegative(),
     }).strict().optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerRoleWorkV1Schema = SessionOwnerWorkV1Schema.pick({ sessionRolesV1: true });
+const SessionOwnerRoleWorkV1Schema = lazyZodSchema(() => SessionOwnerWorkV1Schema.pick({ sessionRolesV1: true }));
 const {
   sessionRolesV1: _sessionOwnerRoleSnapshot,
   ...SessionOwnerCompatibilityFlatWorkShapeV1
 } = SessionOwnerWorkV1Schema.shape;
 
-const SessionOwnerBackendTargetV1Schema = z.union([
+const SessionOwnerBackendTargetV1Schema = lazyZodSchema(() => z.union([
   z.object({
     kind: z.literal('builtInAgent'),
     agentId: BoundedIdentifierSchema,
@@ -1229,14 +1230,14 @@ const SessionOwnerBackendTargetV1Schema = z.union([
     kind: z.literal('configuredAcpBackend'),
     backendId: BoundedIdentifierSchema,
   }).strict(),
-]);
-const SessionOwnerBackendTargetV2Schema = z.object({
+]));
+const SessionOwnerBackendTargetV2Schema = lazyZodSchema(() => z.object({
   kind: z.literal('backend'),
   backendId: BoundedIdentifierSchema,
   configuredBackendId: BoundedIdentifierSchema.optional(),
   sourceKind: z.enum(['built_in', 'configured']).optional(),
-}).strict();
-const SessionOwnerResumeHandleV1Schema = z.discriminatedUnion('kind', [
+}).strict());
+const SessionOwnerResumeHandleV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('provider_session.v1'),
     backendTarget: SessionOwnerBackendTargetV2Schema,
@@ -1248,9 +1249,9 @@ const SessionOwnerResumeHandleV1Schema = z.discriminatedUnion('kind', [
     chatProviderSessionId: NonBlankOpaqueIdentifierSchema.max(20_000),
     commitProviderSessionId: NonBlankOpaqueIdentifierSchema.max(20_000),
   }).strict(),
-]);
+]));
 
-const SessionOwnerSystemV1Schema = z.object({
+const SessionOwnerSystemV1Schema = lazyZodSchema(() => z.object({
   sessionCreationCorrespondenceV1: SessionCreationCorrespondenceV1Schema.optional(),
   placementOrigin: MachinePoolSelectionOriginV1Schema.optional(),
   systemSessionV1: z.object({
@@ -1287,9 +1288,9 @@ const SessionOwnerSystemV1Schema = z.object({
   }).strict().optional(),
   voiceAgentStartupInstructionsV1:
     AgentSessionStartupInstructionsMarkerV1Schema.optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerHandoffV1Schema = z.object({
+const SessionOwnerHandoffV1Schema = lazyZodSchema(() => z.object({
   handoffV1: z.object({
     v: z.literal(1),
     sourceMachineId: BoundedIdentifierSchema,
@@ -1306,9 +1307,9 @@ const SessionOwnerHandoffV1Schema = z.object({
     v: z.literal(1),
     agentId: BoundedIdentifierSchema,
   }).strict().optional(),
-}).strict();
+}).strict());
 
-const SessionOwnerCursorsV1Schema = z.object({
+const SessionOwnerCursorsV1Schema = lazyZodSchema(() => z.object({
   externalSessionAttentionV1: z.object({
     v: z.literal(1),
     observedProgressToken: z.string().max(20_000).optional(),
@@ -1324,13 +1325,13 @@ const SessionOwnerCursorsV1Schema = z.object({
   }).strict().optional(),
   discardedCommittedMessageLocalIds: z.array(z.string().max(2_000)).max(20_000).optional(),
   locallyConsumedUserMessageSeqsV1: z.array(z.number().int().nonnegative()).max(20_000).optional(),
-}).strict();
+}).strict());
 
 /**
  * Strict plaintext inside the account/domain encrypted owner ciphertext.
  * Categories are deliberately disjoint; there is no raw metadata carrier.
  */
-export const SessionOwnerMetadataV1Schema = z.object({
+export const SessionOwnerMetadataV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(SESSION_OWNER_METADATA_VERSION_V1),
   workspace: SessionOwnerWorkspaceV1Schema.optional(),
   nativeSession: SessionOwnerNativeSessionV1Schema.optional(),
@@ -1341,7 +1342,7 @@ export const SessionOwnerMetadataV1Schema = z.object({
   cursors: SessionOwnerCursorsV1Schema.optional(),
   work: SessionOwnerWorkV1Schema.optional(),
   system: SessionOwnerSystemV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionOwnerMetadataV1 = z.infer<
   typeof SessionOwnerMetadataV1Schema
 >;
@@ -1361,7 +1362,7 @@ const SessionOwnerCompatibilityRuntimeDescriptorV1Schema =
  * Role snapshots retain their canonical nested `work.sessionRolesV1` owner;
  * incumbent work-state and headline fields remain flat.
  */
-export const SessionOwnerCompatibilityViewV1Schema = z.object({
+export const SessionOwnerCompatibilityViewV1Schema = lazyZodSchema(() => z.object({
   summary: SessionSharedSummaryV1Schema.optional(),
   agentPresentation: SessionSharedAgentPresentationV1Schema.optional(),
   externalSessionOperationPresentationV1:
@@ -1416,7 +1417,7 @@ export const SessionOwnerCompatibilityViewV1Schema = z.object({
     path: ['directSessionV1'],
     message: `Conflicting linked-session compatibility metadata: ${resolved.reason}`,
   });
-});
+}));
 export type SessionOwnerCompatibilityViewV1 = z.infer<
   typeof SessionOwnerCompatibilityViewV1Schema
 >;

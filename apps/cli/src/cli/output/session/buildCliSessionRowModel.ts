@@ -5,15 +5,12 @@ import {
   resolveVendorResumeIdFromSessionMetadata,
   type VendorResumeEligibility,
 } from '@happier-dev/agents';
-import {
-  isBackendTargetDisabledByAccountSettings,
-  readAcpConfiguredBackendV1FromMetadata,
-  readLegacyConfiguredAcpBackendId,
-  readRuntimeDescriptorV1FromMetadata,
-  readSystemSessionMetadataFromMetadata,
-  type AccountSettings,
-  type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import type { AccountSettings, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';

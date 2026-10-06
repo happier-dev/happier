@@ -5,6 +5,8 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatWorkflowAgentStatusLabel } from '@/components/workflows/presentation/workflowStatusLabel';
@@ -94,7 +96,40 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.button.secondary.tint,
     },
+    /** The node's one quiet line: what it returns, or that it is the final output. */
+    subtitle: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.secondary,
+    },
+    /** The step's ordinal rides the mark's corner, as the editor numbers the same block. */
+    ordinal: {
+        position: 'absolute',
+        left: -theme.margins.xs,
+        top: -theme.margins.xs,
+        minWidth: theme.margins.lg,
+        paddingHorizontal: theme.margins.xs,
+        borderRadius: theme.borderRadius.md,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        alignItems: 'center',
+    },
+    ordinalText: {
+        ...Typography.pillLabel(),
+        ...Typography.tabular(),
+        color: theme.colors.text.secondary,
+    },
 }));
+
+/** Leaf kinds that are numbered steps and carry a mark (lab `.wm-g`); containers are headers. */
+const FLOW_MARKED_KINDS: ReadonlySet<WorkflowFlowNode['kind']> = new Set(['step', 'action', 'wait', 'workflow', 'evaluator']);
+
+/** A non-agent leaf's kind glyph: the same glyphs the editor's block headings use. */
+const FLOW_KIND_GLYPH: Readonly<Partial<Record<WorkflowFlowNode['kind'], IconName>>> = {
+    action: 'lightning',
+    wait: 'person',
+    workflow: 'tree-structure',
+};
 
 /**
  * How each workflow construct sits on the map (lab `map-M1`): side-by-side work in lanes under its
@@ -154,6 +189,8 @@ export function WorkflowFlowView(props: Readonly<{
     testIDPrefix?: string;
     /** `compact`: the live mini-map under a Work row — structure and state only. */
     density?: HappierWorkMapDensity;
+    /** The Agent mark of a step's accepted selection, when the caller knows it; else a neutral mark. */
+    agentMarkForNode?: (node: WorkflowFlowNode) => React.ReactNode | null;
 }>): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'workflow-flow';
     const { theme } = useUnistyles();
@@ -200,6 +237,30 @@ export function WorkflowFlowView(props: Readonly<{
                     ? structure
                     : t('workflows.a11y.flowNode', { node: structure, state: stateLabel });
             }}
+            // A definition's top-level blocks run one after another; observed activity proves no order.
+            rootLayout={props.projection.source === 'definition' ? 'sequence' : 'separate'}
+            renderLeading={(node) => {
+                if (!FLOW_MARKED_KINDS.has(node.kind)) return null;
+                const glyph = FLOW_KIND_GLYPH[node.kind];
+                return (
+                    <>
+                        {glyph !== undefined
+                            ? <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                            : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={compact ? 22 : 28} />}
+                        {compact || node.observed ? null : (
+                            <View testID={`${testIDPrefix}-node-${node.nodeId}-ordinal`} style={styles.ordinal}>
+                                <Text style={styles.ordinalText}>{node.ordinal}</Text>
+                            </View>
+                        )}
+                    </>
+                );
+            }}
+            renderSubtitle={(node) => {
+                const line = node.finalOutput === true
+                    ? t('workflows.finalOutput.title')
+                    : node.returns === undefined ? null : t('workflows.page.blocks.returnsFields', { fields: node.returns.join(' · ') });
+                return line === null ? null : <Text style={styles.subtitle} numberOfLines={1}>{line}</Text>;
+            }}
             presentNode={(node) => {
                 const runState = runStateOf(node);
                 const layout = FLOW_NODE_LAYOUT[node.kind];
@@ -238,10 +299,13 @@ export function WorkflowFlowView(props: Readonly<{
                         )}
                         {runState !== undefined ? (
                             <View style={styles.trailingStatus}>
+                                {/* Healthy finished work is quiet: its mark alone; the node's name says the word. */}
                                 <WorkflowLifecycleStatus
                                     testID={`${testIDPrefix}-node-${node.nodeId}-state`}
                                     lifecycle={runState.lifecycle}
                                     blockKind={node.kind}
+                                    chrome="plain"
+                                    markerOnly={runState.lifecycle === 'completed'}
                                 />
                             </View>
                         ) : stateLabel === null ? null : (

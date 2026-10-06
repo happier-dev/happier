@@ -1,14 +1,8 @@
-import {
-  ACTION_ID_FAMILIES_V1,
-  BrowserCommandV1Schema,
-  createUnavailableRuntimeActionExecutor,
-  getActionSpec,
-  resolveRuntimeActionExecutionFamily,
-  type ActionExecuteResult,
-  type RuntimeActionExecute,
-  type RuntimeActionExecuteArgs,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { BrowserCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, RuntimeActionExecute, RuntimeActionExecuteArgs, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserDaemonControlRoutes } from '../control/routes';
 import type { BrowserContextRoutes } from '../context/routes';

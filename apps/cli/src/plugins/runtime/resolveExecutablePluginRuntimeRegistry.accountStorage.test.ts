@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { evaluateManifestPluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
+import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
+import { bindPluginRuntimeSourceAuthority } from './sourceAuthority';
+import { registerDaemonContributionRegistryProjectionHandler, invalidateDaemonContributionRegistryProjectionCache } from '@/rpc/handlers/daemonContributionRegistryProjection';
 import type { StoredCredentials } from '@/persistence';
 
 import {
@@ -133,6 +141,7 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
     happyHomeDir: string;
     pluginRoot: string;
     declareAccountStorage?: boolean;
+    includePage?: boolean;
 }>): Promise<void> {
     await mkdir(join(params.pluginRoot, '.happier-plugin'), { recursive: true });
     await writeFile(join(params.pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
@@ -142,7 +151,7 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
         displayName: 'Account Collections fixture',
         engines: { happier: '^0.2.0' },
         runtime: { apiVersion: 1 },
-        entrypoints: { daemon: './daemon.mjs' },
+        entrypoints: { daemon: './daemon.mjs', ...(params.includePage ? { development: './daemon.mjs' } : {}) },
         hostAccess: params.declareAccountStorage === false
             ? { required: [], optional: [] }
             : {
@@ -155,6 +164,10 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
                 optional: [],
             },
         contributes: {
+            ...(params.includePage ? { ui: {
+                renderers: [{ id: 'page-renderer', kind: 'declarative', root: { kind: 'text', text: 'Account page' } }],
+                views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'page-renderer', title: 'Account page' }],
+            } } : {}),
             actions: [{
                 id: 'read-channel-state',
                 title: 'Read channel state',
@@ -184,7 +197,8 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
             }],
         },
     }), 'utf8');
-    await writeFile(join(params.pluginRoot, 'daemon.mjs'), `export function activate(api) {
+    await writeFile(join(params.pluginRoot, 'daemon.mjs'), `${params.includePage ? `export const collectionMigrations = { '${COLLECTION_ID}': [] };` : ''}
+    export function activate(api) {
         api.actions.register('read-channel-state', async (_input, context) => {
             const accountStorage = context.services.storage.account;
             if (!accountStorage) return { marker: null, accountStorage: 'absent' };
@@ -212,6 +226,7 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
         pluginRoot: params.pluginRoot,
         pluginId: PLUGIN_ID,
         manifestVersion: '1.0.0',
+        ...(params.includePage ? { devWatch: true } : {}),
     });
 }
 
@@ -449,6 +464,65 @@ describe('executable plugin Account Collections binding', () => {
     afterEach(() => {
         resetActiveAccountSettingsSnapshotForTests();
     });
+
+    it('keeps release-less Account declaration identity out of app-page origin selection', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-release-less-page-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-release-less-page-plugin-'));
+        let runtime: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+        try {
+            await seedAccountCollectionsActionFixture({ happyHomeDir, pluginRoot, includePage: true });
+            const loaded = await resolvePluginContributes({ happyHomeDir, existingAgentIds: new Set() });
+            const target = loaded.activationTargets?.find((entry) => entry.pluginId === PLUGIN_ID);
+            if (!target?.devDaemonEntryPath) throw new Error('Expected the fixture development entry');
+            const source = await resolveLocalPathPluginSource({ locator: dirname(target.devDaemonEntryPath) });
+            if (!source.ok) throw new Error('Expected the fixture development source');
+            const sourceAuthority = bindPluginRuntimeSourceAuthority({
+                custody: { kind: 'development', registeredRootId: source.pluginRootPath },
+                resolvedRoot: source.pluginRootPath, observedRevision: 1,
+            });
+            if (sourceAuthority.kind !== 'development') throw new Error('Expected development custody');
+            const development = await evaluateManifestPluginDevelopmentCandidate({ source, sourceAuthority });
+            // A daemon-selected development declaration has no install materialization.
+            // Keep the real manifest, activation graph and Account storage below this input.
+            const contributes = createResolvedContributionRegistry({ ...loaded, materializationIdsByPluginId: {} });
+            runtime = await resolveExecutablePluginRuntimeRegistry({
+                happyHomeDir, contributes,
+                preparedDevelopmentActivationGraphsByPluginId: new Map([[PLUGIN_ID, development.graph]]),
+                resolveCurrentMachineId: () => 'machine-page',
+                accountStorageDependencies: createFixtureAccountStorageDependencies({ token: 'fixture-account-token', encryption: null }),
+            });
+            const handlers = new Map<string, RpcHandler>();
+            const registrar: RpcHandlerRegistrar = { registerHandler: (method, handler) => { handlers.set(method, handler); } };
+            invalidateDaemonContributionRegistryProjectionCache();
+            registerDaemonContributionRegistryProjectionHandler(registrar, {
+                resolveRuntimeRegistry: async () => runtime!,
+                resolveGeneration: async () => 1,
+                resolveInstalledPackages: async () => [],
+                resolvePluginProjectionExecutionOriginContext: async () => ({ serverIdentityId: 'srv_page', machineId: 'machine-page' }),
+            });
+            const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await handlers.get(
+                RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+            )!({ machineId: 'machine-page' }));
+            const page = response.projection.familiesById.pluginUi?.entriesById[`surfacePlacement:${PLUGIN_ID}:page`];
+            expect(page).toMatchObject({ contributionKind: 'surfacePlacement', availability: { state: 'available' } });
+            expect(page).not.toHaveProperty('materializationRef');
+            expect(page).not.toHaveProperty('serverIdentityId');
+
+            await runtime.activateContributionsOnDemand([{ pluginId: PLUGIN_ID, family: 'actions', localId: 'read-channel-state' }]);
+            expect(runtime.resolveCurrentPluginMaterializationRef?.(PLUGIN_ID)).toEqual({
+                pluginId: PLUGIN_ID, machineId: 'machine-page', materializationId: `daemon-selected:${PLUGIN_ID}`,
+            });
+            await expect(runtime.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'read-channel-state', input: {}, surface: 'cli' }))
+                .resolves.toEqual({ status: 'executed', value: { marker: HOST_MARKER } });
+            runtime.retireConsumers();
+            expect(runtime.resolveCurrentPluginMaterializationRef?.(PLUGIN_ID)).toBeNull();
+        } finally {
+            invalidateDaemonContributionRegistryProjectionCache();
+            await runtime?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    }, 60_000);
 
     it('makes the canonical Account Data scope available to an activated action', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-collections-home-'));

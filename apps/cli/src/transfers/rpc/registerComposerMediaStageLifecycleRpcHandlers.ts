@@ -1,10 +1,7 @@
-import {
-  COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
-  ComposerContentHandleV1Schema,
-  ComposerInstanceIdSchema,
-  ComposerRefV1Schema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { COMPOSER_MEDIA_CONTENT_CAPABILITY_V1, ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { ComposerInstanceIdSchema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type {

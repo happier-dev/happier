@@ -4,7 +4,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { computePoolMembershipDiff } from './poolMembershipDiff';
-import { PoolMultiSelectField } from './PoolMultiSelectField';
+import { MultiSelectField } from '@/components/ui/forms/dropdown/MultiSelectField';
 
 /** An account eligible for pool membership. */
 export type PoolMembershipCandidate = Readonly<{
@@ -23,7 +23,7 @@ export type PoolMembersSelectFieldProps = Readonly<{
     testID?: string;
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
-    renderTrigger?: React.ComponentProps<typeof PoolMultiSelectField>['renderTrigger'];
+    renderTrigger?: React.ComponentProps<typeof MultiSelectField>['renderTrigger'];
     searchPlaceholder?: string;
     onConnectAccount?: () => void;
     serviceLabel?: string;
@@ -64,7 +64,7 @@ export const PoolMembersSelectField = React.memo(function PoolMembersSelectField
     }, [candidates, onCommit, selectedAccountIds]);
 
     return (
-        <PoolMultiSelectField
+        <MultiSelectField
             candidates={candidates.map((candidate) => ({
                 id: candidate.accountId,
                 title: candidate.title,

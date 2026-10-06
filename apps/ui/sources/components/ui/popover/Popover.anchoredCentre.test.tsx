@@ -108,4 +108,16 @@ describe('Popover: content-sized and centred on its anchor (tooltips)', () => {
         expect(readNumber(style, 'top') + Number(style.paddingTop ?? 0)).toBe(44);
         expect(style.bottom).toBeUndefined();
     });
+
+    it('keeps explicit-side popovers reachable near the window edge by default', async () => {
+        const { style } = await renderCentredPopover({ left: 400, top: 10, width: 28, height: 28 }, { width: 64, height: 28 });
+        expect(readNumber(style, 'top') + Number(style.paddingTop ?? 0)).toBe(44);
+        expect(style.bottom).toBeUndefined();
+    });
+
+    it('honors a caller that explicitly retains its requested side', async () => {
+        const { style } = await renderCentredPopover({ left: 400, top: 10, width: 28, height: 28 }, { width: 64, height: 28 }, { flip: false });
+        expect(style.top).toBeUndefined();
+        expect(typeof style.bottom).toBe('number');
+    });
 });

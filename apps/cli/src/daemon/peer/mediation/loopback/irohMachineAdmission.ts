@@ -1,14 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import {
-  IrohEndpointIdV1Schema,
-  IrohMachineHandshakeV1Schema,
-  IrohProviderBrokerHandshakeV1Schema,
-  RunnerBrokerReadinessRequestV1Schema,
-  type IrohMachineCarrierFlowV1,
-  type IrohMachineHandshakeV1,
-  type IrohProviderBrokerHandshakeV1,
-  type RunnerBrokerReadinessRequestV1,
-} from '@happier-dev/protocol';
+import { IrohEndpointIdV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { IrohProviderBrokerHandshakeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
+import type { IrohMachineCarrierFlowV1, IrohMachineHandshakeV1, IrohProviderBrokerHandshakeV1, RunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol';
 import {
   IROH_MACHINE_ADMISSION_PATH,
   IROH_MACHINE_APPLICATION_CAPABILITY_HEADER,

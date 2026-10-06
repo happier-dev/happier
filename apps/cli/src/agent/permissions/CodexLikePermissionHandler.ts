@@ -20,10 +20,8 @@ import {
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveProviderPermissionForHappierAction } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
-import {
-  extractShellCommand,
-  type AccountSettings,
-} from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import type { AccountSettings } from '@happier-dev/protocol';
 import { parseTrustedHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 import { isSharedHappierShellBridgeToolName, isSharedPermissionSafeToolName } from './permissionTaxonomy';

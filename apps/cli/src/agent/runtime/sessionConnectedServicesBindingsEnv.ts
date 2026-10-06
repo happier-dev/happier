@@ -1,8 +1,5 @@
-import {
-    ConnectedServiceBindingsV2IngressSchema,
-    ConnectedServiceBindingsV2Schema,
-    type ConnectedServiceBindingsV2,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 
 export const HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_JSON' as const;

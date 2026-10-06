@@ -1,10 +1,8 @@
-import {
-  buildAgentRequestNotificationContent,
-  buildReadyNotificationContent,
-  redactBugReportSensitiveText,
-  WorkflowRunUpdateNotificationV1Schema,
-  type AttentionPreviewBehavior,
-} from '@happier-dev/protocol';
+import { buildAgentRequestNotificationContent } from '@happier-dev/protocol/activity/agentRequestNotificationContent';
+import { buildReadyNotificationContent } from '@happier-dev/protocol/push/readyNotificationContent';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { WorkflowRunUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
+import type { AttentionPreviewBehavior } from '@happier-dev/protocol';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 

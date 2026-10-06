@@ -76,6 +76,47 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         expect(result?.serverUrl).toBe('http://localhost:57010');
     });
 
+    it('treats an explicit URL matching the seeded Home as a Home selection', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://canonical.example.test';
+        stubWebLocation('https://app.example.test/?server=https%3A%2F%2Fcanonical.example.test');
+
+        const { bootstrapActiveServerFromWebLocation } = await importFreshBootstrap();
+        const profiles = await importFreshServerProfiles();
+        expect(profiles.getActiveServerSnapshot().isSelectionExplicit).toBe(false);
+
+        await bootstrapActiveServerFromWebLocation({ scope: 'device' });
+
+        expect(profiles.getActiveServerUrl()).toBe('https://canonical.example.test');
+        expect(profiles.getActiveServerSnapshot().isSelectionExplicit).toBe(true);
+    });
+
+    it.each([
+        { target: 'id', scope: 'device' },
+        { target: 'url', scope: 'device' },
+        { target: 'id', scope: 'tab' },
+        { target: 'url', scope: 'tab' },
+    ] as const)('retains explicit intent when selecting the already focused implicit Home by $target in $scope scope', async ({ target, scope }) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://canonical.example.test';
+        stubWebLocation('https://app.example.test/');
+        const profiles = await importFreshServerProfiles();
+        const active = profiles.getActiveServerSnapshot();
+        expect(active.isSelectionExplicit).toBe(false);
+        const switches = await import('../activeServerSwitch');
+
+        const result = target === 'id'
+            ? await switches.setActiveServerAndSwitch({ serverId: active.serverId, scope })
+            : await switches.upsertActivateAndSwitchServer({ serverUrl: active.serverUrl, scope });
+
+        expect(result).toBe('already_active');
+        expect(profiles.getActiveServerSnapshot()).toMatchObject({
+            serverId: active.serverId,
+            serverUrl: active.serverUrl,
+            isSelectionExplicit: true,
+        });
+    });
+
     it('keeps an unknown Home URL pending until the connect flow admits it', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://retained.example.test';

@@ -307,7 +307,7 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
                 argv: ['/usr/local/bin/node', join(snapshotRoot, 'index.mjs')],
                 processEnv: { HAPPIER_STACK_CLI_ROOT_DIR: runtimeRoot },
             })).toEqual({
-                root: runtimeRoot,
+                root: snapshotRoot,
                 provenance: 'packaged-snapshot',
             });
         } finally {
@@ -324,7 +324,7 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
             argv: ['/usr/local/bin/node', '/runtime/current/.runner-snapshots/0123456789abcdef/index.mjs'],
             processEnv: {},
         })).toEqual({
-            root: '/runtime/current',
+            root: '/runtime/current/.runner-snapshots/0123456789abcdef',
             provenance: 'packaged-snapshot',
         });
     });

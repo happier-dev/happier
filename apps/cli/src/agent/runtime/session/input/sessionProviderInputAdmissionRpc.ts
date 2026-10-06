@@ -1,5 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 
 import type { SessionProviderInputConsumer } from './_types';

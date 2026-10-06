@@ -85,6 +85,15 @@ function InspectorHarness(props: Readonly<{
 }
 
 describe('workflow step inspector field controls', () => {
+    it('uses visible default copy rather than accessibility-only state copy', async () => {
+        const harness = await loadHarness();
+        const screen = await renderScreen(<InspectorHarness harness={harness} fields={['permissionMode']}
+            draft={buildDraft(harness)} onChangeField={() => {}} />);
+        expect(screen.findByTestId('workflow-inspector-permissionMode-state')?.props.children).toBe('workflows.page.blocks.workflowDefaults');
+        expect(screen.getTextContent()).not.toContain('workflows.a11y.inherited');
+        await screen.unmount();
+    });
+
     it('presents an authored engine once and resets its whole arm to the workflow default', async () => {
         const draft = draftModule.createWorkflowEditorDraft({ draftId: 'engine', name: 'Review' });
         const step = draft.blocks[0]!;
@@ -96,7 +105,7 @@ describe('workflow step inspector field controls', () => {
             onChangeFields={() => {}} onChangeEngine={() => {}} onResetEngine={reset}
             onResetField={() => {}} onChangeField={() => {}} />);
         expect(screen.root.findAllByType('Control').filter(node => ['agentTarget', 'modelSelection', 'acpSessionModeId', 'sessionConfigOptionOverrides'].includes(node.props.field))).toHaveLength(1);
-        expect(screen.findByTestId('workflow-inspector-agentTarget-state')?.props.children).toBe('workflows.a11y.overridden');
+        expect(screen.findByTestId('workflow-inspector-agentTarget-state')?.props.children).toBe('workflows.page.changedForStep');
         await screen.pressByTestIdAsync('workflow-inspector-agentTarget-reset');
         expect(reset).toHaveBeenCalledOnce();
     });
@@ -146,7 +155,8 @@ describe('workflow step inspector field controls', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('workflows.a11y.overridden');
+        expect(screen.getTextContent()).toContain('workflows.page.changedForStep');
+        expect(screen.getTextContent()).not.toContain('workflows.a11y.overridden');
         expect(screen.getTextContent()).not.toContain('workflows.a11y.inherited');
         // Reset is the only way back to inheriting; choosing the same value is not.
         expect(screen.findByTestId('workflow-inspector-permissionMode-reset')).toBeTruthy();

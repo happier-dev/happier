@@ -1,11 +1,5 @@
-import {
-  type BackendTargetRefV1,
-  type ExecutionRunRetentionPolicy,
-  ReviewFindingsV2Schema,
-  type ReviewFinding,
-  type ReviewFindingsV2,
-  type ReviewCommentProposalsV1,
-} from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunRetentionPolicy, ReviewFinding, ReviewFindingsV2, ReviewCommentProposalsV1 } from '@happier-dev/protocol';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 
 export function buildReviewFindingsV2Payload(params: Readonly<{
   runId: string;

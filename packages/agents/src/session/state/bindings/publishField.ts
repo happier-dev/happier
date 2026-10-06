@@ -1,4 +1,5 @@
-import { SESSION_RUNNER_RUNTIME_METADATA_KEY, type SessionMetadata, type SessionStateFieldId, type SessionStateFieldValue } from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import type { SessionMetadata, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
 
 import type {
   MetadataUpdatePort,

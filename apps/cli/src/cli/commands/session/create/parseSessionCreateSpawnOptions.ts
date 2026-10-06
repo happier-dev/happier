@@ -1,13 +1,8 @@
-import {
-  AcpConfigOptionOverridesV1Schema,
-  ConnectedServiceBindingsV2IngressSchema,
-  ExternalActionRequestIdV1Schema,
-  SessionMcpSelectionV1Schema,
-  type AcpConfigOptionOverridesV1,
-  type ConnectedServiceBindingsV2,
-  type SessionMcpSelectionV1,
-  type SpawnConfigOptionValue,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV2, SessionMcpSelectionV1, SpawnConfigOptionValue } from '@happier-dev/protocol';
 
 import { readCommandPositionals, readFlagValue, readRawFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { normalizeBackendTargetKeysFromCsv } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';

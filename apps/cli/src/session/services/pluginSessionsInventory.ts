@@ -34,7 +34,8 @@ import { getSessionTranscript } from './getSessionTranscript';
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
-import { hasPluginSessionAccess, projectPluginSessionAccessIdentity, type PluginSessionAccess, type PluginSessionAccessScope } from '@happier-dev/protocol';
+import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
+import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 export type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 
 const CURSOR_PREFIX = 'plugin_sessions_v1_';

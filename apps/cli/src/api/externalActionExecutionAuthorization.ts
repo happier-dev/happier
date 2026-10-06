@@ -1,24 +1,8 @@
 import axios from 'axios';
 
-import {
-  EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
-  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
-  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
-  EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
-  ExternalActionActionIdV1Schema,
-  ExternalActionExecutionAuthorizationV1Schema,
-  ExternalActionExecutionAuthorizationVerifyResponseV1Schema,
-  bindExternalActionExecutionAuthorizationHttpPathV1,
-  bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
-  encodeExternalActionResolvedTargetV1,
-  signExternalActionMachineRequestV1,
-  signExternalActionMachineRpcRequestV1,
-  type ActionExecutorContext,
-  type ExternalActionExecutionAuthorizationV1,
-  type ExternalActionMachineRpcExecutionV1,
-  type ExternalActionRequestEnvelope,
-  type ExternalActionTargetV1,
-} from '@happier-dev/protocol';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import type { ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionMachineRpcExecutionV1, ExternalActionRequestEnvelope, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 export type ExternalActionMachineRequestSigningKey = string | Uint8Array;

@@ -1,7 +1,5 @@
-import {
-    buildBackendTargetKeyV2,
-    type AgentExecutionTargetV1,
-} from '@happier-dev/protocol/plugins/agents';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/plugins/agents';
 
 export type { AgentExecutionTargetV1 } from '@happier-dev/protocol/plugins/agents';
 
@@ -11,10 +9,8 @@ export type {
 } from '@happier-dev/agents';
 export type { AgentSessionRuntimeCapabilities } from './agentRuntime/session.js';
 
-export {
-    AgentSurfaceOperationCatalogV1,
-    PluginAgentCapabilitiesV1Schema,
-} from '@happier-dev/protocol/plugins/agents';
+export { BackendSurfaceOperationCatalogV1 as AgentSurfaceOperationCatalogV1 } from '@happier-dev/protocol/plugins/backend-surface-declaration';
+export { PluginBackendCapabilitiesV1Schema as PluginAgentCapabilitiesV1Schema } from '@happier-dev/protocol/plugins/backendDefinitionV1';
 export type {
     AIBackendProfile as AgentProfile,
     AgentModelDescriptor,
@@ -32,10 +28,7 @@ export type {
 } from '@happier-dev/protocol';
 export type { PluginAgentDefinition } from './definePlugin.js';
 
-export {
-    CodexPassiveRealtimeSetupResultV1Schema as AgentPassiveRealtimeSetupResultV1Schema,
-    CodexPassiveRealtimeSetupStatusV1Schema as AgentPassiveRealtimeSetupStatusV1Schema,
-} from '@happier-dev/protocol/capabilities';
+export { CodexPassiveRealtimeSetupResultV1Schema as AgentPassiveRealtimeSetupResultV1Schema, CodexPassiveRealtimeSetupStatusV1Schema as AgentPassiveRealtimeSetupStatusV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
 export type {
     CodexPassiveRealtimeSetupResultV1 as AgentPassiveRealtimeSetupResultV1,
     CodexPassiveRealtimeSetupStatusV1 as AgentPassiveRealtimeSetupStatusV1,

@@ -11,8 +11,8 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { createTmuxTerminalHostAdapter, TmuxUtilities } from '@/integrations/tmux';
+import { spawn, spawnSync } from 'node:child_process';
+import { TmuxUtilities } from './TmuxUtilities.js';
 
 function isTmuxInstalled(): boolean {
     const result = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
@@ -132,7 +132,7 @@ type TmuxRunResult = {
     error: Error | undefined;
 };
 
-function runTmux(args: string[], options?: { env?: Record<string, string | undefined> }): TmuxRunResult {
+function isolatedTmuxEnvironment(overrides?: Record<string, string | undefined>): NodeJS.ProcessEnv {
     // Never inherit the user's existing tmux context (TMUX/TMUX_PANE) or TMUX_TMPDIR.
     // These tests must only ever talk to isolated servers created by the test itself.
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -140,13 +140,11 @@ function runTmux(args: string[], options?: { env?: Record<string, string | undef
     delete env.TMUX_PANE;
     delete env.TMUX_TMPDIR;
 
-    const result = spawnSync('tmux', args, {
-        encoding: 'utf8',
-        env: {
-            ...env,
-            ...(options?.env ?? {}),
-        } as NodeJS.ProcessEnv,
-    });
+    return { ...env, ...overrides };
+}
+
+function runTmux(args: string[], options?: { env?: Record<string, string | undefined> }): TmuxRunResult {
+    const result = spawnSync('tmux', args, { encoding: 'utf8', env: isolatedTmuxEnvironment(options?.env) });
     return {
         status: result.status,
         stdout: result.stdout ?? '',
@@ -201,6 +199,65 @@ function shellSingleQuote(value: string): string {
 }
 
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
+    it.each([
+        [true, 'latest', false], [false, 'latest', false],
+        [true, 'smallest', false], [false, 'smallest', true],
+    ] as const)('uses configured detached geometry without borrowing another session client (exclusive=%s, policy=%s, local=%s)', async (requireNewSession, policy, localLatest) => {
+        const dir = mkdtempSync(join(tmpdir(), 'hp-tmux-size-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const prefix = ['-S', socketPath];
+        const smallSession = 'small-client';
+        let client: ReturnType<typeof spawn> | undefined;
+        try {
+            expect(runTmux([...prefix, 'new-session', '-d', '-s', smallSession]).status).toBe(0);
+            expect(runTmux([...prefix, 'set-option', '-g', 'default-size', '110x32']).status).toBe(0);
+            expect(runTmux([...prefix, 'set-option', '-gw', 'window-size', policy]).status).toBe(0);
+            if (localLatest) {
+                expect(runTmux([...prefix, 'set-hook', '-g', 'after-new-window', 'set-option -w window-size latest']).status).toBe(0);
+            }
+            expect(runTmux([...prefix, 'set-option', '-w', '-t', smallSession, 'window-size', 'latest']).status).toBe(0);
+            client = spawn('tmux', [...prefix, '-C', 'attach-session', '-t', smallSession], {
+                env: isolatedTmuxEnvironment(), stdio: ['pipe', 'pipe', 'pipe'],
+            });
+            let clientOutput = '';
+            client.stdout?.on('data', chunk => { clientOutput += String(chunk); });
+            client.stderr?.on('data', chunk => { clientOutput += String(chunk); });
+            await waitForCondition(() => clientOutput.includes('%session-changed'), {
+                timeoutMs: 5_000, label: 'isolated control client attachment', debug: () => clientOutput,
+            });
+            client.stdin?.write('refresh-client -C 52,10\n');
+            const size = (target: string) => runTmux([...prefix, 'display-message', '-p', '-t', target, '#{window_width}x#{window_height}']).stdout.trim();
+            await waitForCondition(() => size(smallSession) === '52x10', {
+                timeoutMs: 5_000, label: 'small isolated client geometry', debug: () => clientOutput,
+            });
+
+            const result = await utils.spawnInTmux([process.execPath, '-e', 'setInterval(()=>{},1000)'], {
+                sessionName: 'detached-agent', requireNewSession,
+            });
+            expect(result.success).toBe(true);
+            if (!result.success) throw new Error(result.error ?? 'expected detached tmux launch');
+            expect(size(result.windowId ?? 'detached-agent')).toBe('110x32');
+            expect(runTmux([...prefix, 'show-options', '-wAv', '-t', result.windowId ?? 'detached-agent', 'window-size']).stdout.trim()).toBe(localLatest ? 'latest' : policy);
+            expect(size(smallSession)).toBe('52x10');
+            expect(runTmux([...prefix, 'show-options', '-w', '-t', result.windowId ?? 'detached-agent', 'window-size']).stdout.trim()).toBe(localLatest ? 'window-size latest' : '');
+            // Shared creation also creates the session's initial placeholder through ensureSessionExists.
+            if (!requireNewSession) {
+                expect(runTmux([...prefix, 'list-windows', '-t', 'detached-agent', '-F', '#{window_width}x#{window_height}']).stdout.trim().split('\n')).toEqual(['110x32', '110x32']);
+            }
+            client.stdin?.write(`switch-client -t detached-agent\nselect-window -t ${result.windowId}\nrefresh-client -C 52,10\n`);
+            await waitForCondition(() => size(result.windowId ?? 'detached-agent') === '52x10', {
+                timeoutMs: 5_000, label: 'attached client resizing after detached creation', debug: () => clientOutput,
+            });
+            expect(runTmux([...prefix, 'show-options', '-w', '-t', result.windowId ?? 'detached-agent', 'window-size']).stdout.trim()).toBe(localLatest ? 'window-size latest' : '');
+        } finally {
+            client?.stdin?.end();
+            client?.kill();
+            killIsolatedTmuxServer(socketPath);
+            await removeTmuxTempDir(dir);
+        }
+    });
+
     it('spawnInTmux can start many windows concurrently without index-conflict failures', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');
@@ -351,6 +408,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-owned-it-'));
         const socketPath = join(dir, 'tmux.sock');
         const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const { createTmuxTerminalHostAdapter } = await import('./adapter.js');
         const adapter = createTmuxTerminalHostAdapter({ tmux: utils });
 
         try {
@@ -582,13 +640,15 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
 
             expect(result).toMatchObject({
                 success: true,
-                sessionId: `${sessionName}:${windowName}`,
+                sessionName,
+                windowName,
             });
             if (!result.success) throw new Error(result.error ?? 'expected recovered tmux launch');
+            expect(result.sessionId).toBe(`${sessionName}:${result.windowId}`);
             await waitForFile(targetMarker, 2_000);
-            const panes = runTmux(['-S', socketPath, 'list-panes', '-t', `${sessionName}:${windowName}`, '-F', '#{pane_pid}']);
+            const panes = runTmux(['-S', socketPath, 'list-panes', '-t', `${sessionName}:${windowName}`, '-F', '#{window_id}\t#{pane_pid}']);
             expect(panes.status).toBe(0);
-            expect(panes.stdout.trim()).toBe(String(result.pid));
+            expect(panes.stdout.trim()).toBe(`${result.windowId}	${result.pid}`);
         } finally {
             if (originalTimeout === undefined) delete process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
             else process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS = originalTimeout;

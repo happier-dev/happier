@@ -3,13 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import { build } from 'esbuild';
 
-import {
-    PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2,
-    PLUGIN_UI_HOST_API_VERSION_V1,
-    PluginUiArtifactsManifestV2Schema,
-    computePluginUiArtifactFileSetSha256DigestV1,
-    computePluginUiArtifactSha256DigestV1,
-} from '@happier-dev/protocol/plugins/ui';
+import { PLUGIN_UI_ARTIFACT_GRAMMAR_VERSION_V2, PLUGIN_UI_HOST_API_VERSION_V1, PluginUiArtifactsManifestV2Schema, computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiArtifactsManifestV2 } from '../hostedWebRuntime.js';
 
@@ -177,11 +171,12 @@ async function collectHostedStaticFiles(
 
 export async function buildUniversalPluginUiArtifacts(
     projectRootInput: string,
+    manifestPath?: string,
 ): Promise<BuildUniversalPluginUiArtifactsResult> {
     const projectRoot = resolve(projectRootInput);
     const [declarations, hostedStaticDeclarations] = await Promise.all([
-        discoverExecutablePluginUiArtifacts(projectRoot),
-        discoverHostedStaticPluginUiArtifacts(projectRoot),
+        discoverExecutablePluginUiArtifacts(projectRoot, manifestPath),
+        discoverHostedStaticPluginUiArtifacts(projectRoot, manifestPath),
     ]);
     const compiled = [];
     for (const declaration of declarations) {

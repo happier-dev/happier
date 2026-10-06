@@ -1,5 +1,5 @@
 import { parsePermissionIntentAlias, type PermissionIntent } from './permissions/index.js';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2/aliases';
 
 type AgentAcpTimeouts = Partial<Readonly<{
   initMs: number;

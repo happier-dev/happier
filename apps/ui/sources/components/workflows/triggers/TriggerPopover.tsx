@@ -48,11 +48,12 @@ import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTr
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
+import type { WorkflowReferenceOption } from '../presentation/workflowReferenceOptions';
 
 /** A choice the popover lists but cannot offer here, with the reason it says instead. */
 export type TriggerKindAvailability = Readonly<Partial<Record<SessionTriggerWhenKind, string>>>;
 
-export type TriggerWorkflowOption = Readonly<{ ref: string; title: string; definition?: WorkflowDefinitionV1 }>;
+export type TriggerWorkflowOption = WorkflowReferenceOption;
 
 type TriggerPopoverBaseProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
@@ -119,9 +120,12 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
         onSubmit: (value: TriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>) => Promise<void> }>
 );
 
+/** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
+const TRIGGER_POPOVER_WIDTH = 380;
+
 const styles = StyleSheet.create((theme) => ({
     surface: {
-        width: 380,
+        width: TRIGGER_POPOVER_WIDTH,
         maxWidth: '100%',
     },
     foot: {
@@ -212,7 +216,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const [failure, setFailure] = React.useState<string | null>(null);
     const [rawInputText, setRawInputText] = React.useState<Readonly<Record<string, string>>>({});
     const [examplesOpen, setExamplesOpen] = React.useState(false);
-    const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null, props.workflowOptions,
+    const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false);
     const inlineDefinition = then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
     const inputFields = React.useMemo(() => projectWorkflowRunInputFields({
@@ -285,11 +289,13 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             open
             anchorRef={props.anchorRef}
             placement="auto"
-            maxWidthCap={420}
+            maxWidthCap={TRIGGER_POPOVER_WIDTH}
             maxHeightCap={640}
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
-            portal={{ web: true, native: true, matchAnchorWidth: false }}
+            // Beside its row, the popover starts level with it and only moves up as far as the
+            // window needs (lab T1); centring a tall form on a short row pinned it to the window top.
+            portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlignVertical: 'start' }}
         >
             {({ maxHeight }) => (
                 <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
@@ -299,7 +305,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         {/* The popover is a configuration page (07 §3 Sections): its title is the
                             summary, its description the next occurrence, and Done is its one primary,
                             beside the title (lab T1). */}
+                        {/* The popover is the surface: its rows sit on it directly, with no card inside it (lab T1). */}
                         <ItemGroup
+                            surface="none"
                             title={title}
                             {...(unavailableWhen !== undefined ? { description: unavailableWhen }
                                 : props.subtitle === undefined ? {} : { description: props.subtitle })}
@@ -620,9 +628,13 @@ function ThenRows(props: Readonly<{
                     <FieldSelect
                         testID={`${props.testID}-workflow`}
                         title={t('workflows.triggers.then.workflow')}
-                        items={props.workflowOptions.map((option) => ({ id: option.ref, title: option.title }))}
+                        items={props.workflowOptions.map((option) => ({ id: option.ref, title: option.title,
+                            ...(option.unavailableReason === undefined ? {} : { disabled: true, subtitle: option.unavailableReason }) }))}
                         selectedId={then.ref}
-                        onSelect={(ref) => props.onChange({ kind: 'runWorkflow', ref, inputs: {} })}
+                        onSelect={(ref) => {
+                            if (!props.workflowOptions.some(option => option.ref === ref && option.unavailableReason === undefined)) return;
+                            props.onChange({ kind: 'runWorkflow', ref, inputs: {} });
+                        }}
                     />
                     <WorkflowRunInputs fields={props.workflowFields} values={then.inputs} rawTextValues={props.rawInputText}
                         optionsConsumer={then.ref === null ? undefined : { kind: 'workflow', workflow: then.ref }}

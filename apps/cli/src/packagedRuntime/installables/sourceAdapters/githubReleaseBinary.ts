@@ -3,7 +3,7 @@ import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
-import { GH_INSTALLABLE_DESCRIPTOR, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol';
+import { GH_INSTALLABLE_DESCRIPTOR, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol/installables/definitions/gh';
 import {
   createManagedToolScratchDir,
   downloadGitHubReleaseAsset,

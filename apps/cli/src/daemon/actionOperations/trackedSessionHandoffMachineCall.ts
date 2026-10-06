@@ -1,4 +1,4 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const SESSION_HANDOFF_TARGET_RESUME_RPC_TIMEOUT_MS = 5 * 60_000;
 

@@ -4,7 +4,8 @@ import { dirname, join, sep } from 'node:path';
 
 import { readDaemonState } from '@/persistence';
 import { listDaemonLogFiles } from '@/ui/logger';
-import { redactBugReportSensitiveText, type BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
 import { buildDoctorSnapshot, type DoctorSnapshot } from '@/ui/doctorSnapshot';
 
 type CollectMachineDiagnosticsOptions = {

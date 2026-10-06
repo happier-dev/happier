@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol';
+import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
 import {
   listAutomationDefinitions,

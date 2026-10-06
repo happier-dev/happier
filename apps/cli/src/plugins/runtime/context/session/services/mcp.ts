@@ -5,7 +5,7 @@ import type {
     SessionMcpElicitResultV1,
 } from '@happier-dev/agents';
 import type { InteractionsService } from '@happier-dev/plugin-sdk/interactions';
-import { StrictJsonValueSchema } from '@happier-dev/protocol';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';

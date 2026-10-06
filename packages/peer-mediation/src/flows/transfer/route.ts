@@ -1,4 +1,5 @@
-import { readServerEnabledBit, type FeaturesResponse } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse } from '@happier-dev/protocol';
 
 import { resolvePeerRouteDecision } from '../../route/decision.js';
 import type { PeerRouteKind } from '../../route/types.js';

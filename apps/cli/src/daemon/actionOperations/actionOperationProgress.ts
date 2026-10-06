@@ -1,4 +1,5 @@
-import { ActionOperationProgressV1Schema, type ActionOperationProgressV1 } from '@happier-dev/protocol/actions';
+import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions';
 
 import type { ActionOperationProgressUpdate } from './actionOperationTypes';
 

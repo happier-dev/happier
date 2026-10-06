@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { WidgetAddSection } from '../add/widgetAddModel';
 
 /**
@@ -13,6 +14,7 @@ import type { WidgetAddSection } from '../add/widgetAddModel';
  */
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { BoardWidgetAddPopover } = await import('../add/BoardWidgetAddPopover');
 
@@ -20,11 +22,22 @@ const ACCOUNT_ID = 'account-a';
 
 async function addDefinitionHome(): Promise<string> {
     const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://definitions-home.example', accountId: ACCOUNT_ID });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ profileScope: { serverId, accountId: ACCOUNT_ID }, settingsScope: { serverId, accountId: ACCOUNT_ID } });
     harness.answer(serverId, '/v1/auth/ping', { body: { success: true } });
     harness.answer(serverId, '/v1/account/encryption/currentness', {
         body: { mode: 'plain', version: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 },
     });
     return serverId;
+}
+
+async function applyDefinitionHomeConnection() {
+    const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = await TokenStorage.getCredentialsForServerUrl('https://definitions-home.example');
+    if (!credentials) throw new Error('The test Home must be signed in');
+    await restoreConnectionToActiveServer(credentials);
+    return disconnectActiveServerConnection;
 }
 
 const DRAFT = {
@@ -48,6 +61,99 @@ describe('widget definition flows', () => {
         const listed = await executor.execute('widgets.definition.list', { account }, { serverId, surface: 'ui', authority: 'present_user' });
         expect(listed).toMatchObject({ ok: true, result: { definitions: [{ artifactId: 'checks-definition', name: DRAFT.name,
             inputs: DRAFT.inputs, inputSchema: DRAFT.inputSchema, bodyKind: 'declarative' }] } });
+    });
+
+    it('discovers a saved definition in the mounted Companion gallery and keeps a personal reference through its real preference owner', async () => {
+        const serverId = await addDefinitionHome();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { CompanionWidgetAddPopover } = await import('../add/CompanionWidgetAddPopover');
+        const { WidgetAddPopover } = await import('../add/WidgetAddPopover');
+        const { useSessionCompanionController } = await import('@/components/sessions/companion/state/useSessionCompanionController');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { flushHookEffects } = await import('@/dev/testkit/hooks/flushHookEffects');
+        const React = await import('react');
+        const { act } = await import('react-test-renderer');
+        const account = { serverId, accountId: ACCOUNT_ID };
+        const previousScopes = { profileScope: storage.getState().profileScope, settingsScope: storage.getState().settingsScope };
+        storage.setState({ profileScope: account, settingsScope: account });
+        try {
+            expect(await createDefaultActionExecutor().execute('widgets.definition.create', { account, artifactId: 'companion-checks', definition: DRAFT },
+                { serverId, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
+            const observed: { current: ReturnType<typeof useSessionCompanionController> | null } = { current: null };
+            function Gallery() {
+                const controller = useSessionCompanionController({ serverId, sessionId: 'personal', openFullSurface: () => {} });
+                observed.current = controller;
+                return React.createElement(CompanionWidgetAddPopover, { open: true, anchorRef: React.createRef<import('react-native').View>(),
+                    onRequestClose: () => {}, testID: 'companionAdd', source: { refs: controller.preference.items, snapshot: null, pluginProjection: null,
+                        context: { session: { ref: { serverId, sessionId: 'personal' }, label: 'Personal Session' } },
+                        addItem: item => { if (!controller.addItem(item)) throw new Error('companion_unavailable'); } } });
+            }
+            const screen = await renderScreen(React.createElement(Gallery));
+            try {
+                const sections = (): readonly WidgetAddSection[] => screen.tree.root.findByType(WidgetAddPopover).props.sections;
+                await vi.waitFor(() => { expect(sections().find(section => section.id === 'yours')?.entries[0]?.title).toBe(DRAFT.name); });
+                const setup = sections().find(section => section.id === 'yours')!.entries[0]!.setup!();
+                await act(async () => { expect(await setup.submit({ bindings: { repo: { kind: 'value', value: 'main' } } })).toEqual({ ok: true }); });
+                await flushHookEffects({ cycles: 2 });
+                expect(observed.current?.preference.items).toMatchObject([{ kind: 'instance', instance: {
+                    definition: { kind: 'artifact', artifactId: 'companion-checks' }, bindings: { repo: { kind: 'value', value: 'main' } },
+                } }]);
+            } finally { await screen.unmount(); }
+        } finally { storage.setState(previousScopes); }
+    });
+
+    it('admits App gallery previews through the configured surface and leaves unresolved inputs unmounted', async () => {
+        const serverId = await addDefinitionHome();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { widgetProjectionOf, widgetInstalledPackage } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+        const { selectWidgetCandidates } = await import('../widgetCatalog');
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { ConfiguredInstalledWidgetSurface } = await import('../InstalledWidgetSurface');
+        const { WidgetAddPopover } = await import('../add/WidgetAddPopover');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { useSessionBoardController } = await import('@/components/sessions/board/useSessionBoardController');
+        const { createSessionBoardActionsPort } = await import('@/sync/domains/session/board/sessionBoardActionsPort');
+        const { projectSessionBoard } = await import('@/sync/domains/session/board');
+        const React = await import('react');
+        const account = { serverId, accountId: ACCOUNT_ID };
+        const previousScopes = { profileScope: storage.getState().profileScope, settingsScope: storage.getState().settingsScope };
+        storage.setState({ profileScope: account, settingsScope: account });
+        const session = createSessionFixture({ id: 'physical-A', serverId, encryptionMode: 'plain' });
+        const projection = widgetProjectionOf([
+            { pluginId: 'acme.preview', localId: 'app', target: 'app' },
+            { pluginId: 'acme.preview', localId: 'missing', target: 'app', inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'text', required: true }] } },
+        ], { 'acme.preview': widgetInstalledPackage('acme.preview', 'Preview') });
+        const snapshot = projectSessionBoard({ layout: undefined, items: new Map(), capabilities: { readTranscript: true, editSessionRecords: true },
+            freshness: 'fresh', reachability: 'reachable', loading: 'idle', incomplete: false });
+        const actions = createSessionBoardActionsPort({ serverId, sessionId: session.id });
+        const candidates = selectWidgetCandidates(projection);
+        function Gallery() {
+            const controller = useSessionBoardController({ serverId, sessionId: session.id, actions, binding: { status: 'ready', snapshot },
+                installedWidgetsAvailable: true });
+            return React.createElement(BoardWidgetAddPopover, { open: true, anchorRef: React.createRef<import('react-native').View>(),
+                onRequestClose: () => {}, controller, sessionId: session.id, session, candidates, testID: 'previewBoard' });
+        }
+        try {
+            const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+                pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',
+                serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+            }, children: React.createElement(Gallery) }));
+            try {
+                const sections: readonly WidgetAddSection[] = screen.tree.root.findByType(WidgetAddPopover).props.sections;
+                const missing = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/missing');
+                expect(missing).toBeDefined();
+                expect(missing?.renderPreview).toBeUndefined();
+                const preview = sections.flatMap(section => section.entries).find(entry => entry.id === 'plugin-acme.preview/app')!.renderPreview!();
+                const body = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+                    pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',
+                    serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+                }, children: preview }));
+                try { expect(body.tree.root.findByType(ConfiguredInstalledWidgetSurface).props.resolution).toMatchObject({ status: 'ready', target: { kind: 'app' }, input: {} }); }
+                finally { await body.unmount(); }
+            } finally { await screen.unmount(); }
+        } finally { storage.setState(previousScopes); }
     });
 
     it('offers saved widgets on a shared Board and submits an admitted inline copy to real approval custody', async () => {
@@ -324,6 +430,8 @@ describe('widget definition flows', () => {
 
     it('describes placements in already opened WorkBoards without opening unrelated Board records', async () => {
         const serverId = await addDefinitionHome();
+        // Configuration admission consumes the real applied Account lifetime, not merely a saved credential.
+        const disconnect = await applyDefinitionHomeConnection();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { storage } = await import('@/sync/domains/state/storage');
         const account = { serverId, accountId: ACCOUNT_ID };
@@ -335,13 +443,13 @@ describe('widget definition flows', () => {
             expect(await executor.execute('widgets.definition.create', { account, artifactId: 'checks-definition', definition: DRAFT }, context)).toMatchObject({ ok: true });
             expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'board-a', name: 'Checks board' } } }, context)).toMatchObject({ ok: true });
             const ref = { surface: { ...account, owner: { kind: 'workBoard', boardId: 'board-a' } }, instanceId: 'copy-a' } as const;
-            const instance = { v: 1, id: 'copy-a', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {} } as const;
-            expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'board-a', ref, instance } }, context)).toMatchObject({ ok: true });
+            const instance = { v: 1, id: 'copy-a', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: { repo: { kind: 'value', value: 'main' } } } as const;
+            expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'board-a', ref, instance } }, context)).toEqual(expect.objectContaining({ ok: true }));
             const before = harness.requests.length;
             const opened = await executor.execute('widgets.definition.get', { account, artifactId: 'checks-definition' }, context);
             expect(opened).toMatchObject({ ok: true, result: { placementSummary: { placements: expect.arrayContaining([ref]), unavailableScopes: expect.arrayContaining(['workBoard']) } } });
             expect(harness.requests.slice(before).some(request => request.path.includes('/v1/artifacts/board-a'))).toBe(false);
-        } finally { storage.setState(previousScopes); }
+        } finally { await disconnect(); storage.setState(previousScopes); }
     });
 
     it.each(['home', 'companion'] as const)('opens About from %s through the real definition read, edits this copy only, and duplicates into an independent definition', async (placement) => {
@@ -424,5 +532,144 @@ describe('widget definition flows', () => {
         } finally {
             await act(async () => { screen.tree.unmount(); });
         }
+    });
+
+    it.each(['builtin', 'installed', 'inline'] as const)('opens About for a %s definition without reading a private Artifact', async (kind) => {
+        const serverId = await addDefinitionHome();
+        const React = await import('react');
+        const { View, Pressable } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { useWidgetDefinitionFlows } = await import('./useWidgetDefinitionFlows');
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { widgetProjectionOf, widgetInstalledPackage } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+        const projection = widgetProjectionOf([{ pluginId: 'acme.checks', localId: 'checks', title: 'Installed checks' }], {
+            'acme.checks': widgetInstalledPackage('acme.checks', 'Checks plugin'),
+        });
+        const definition: import('@happier-dev/protocol/widgets').WidgetDefinitionRefV1 = kind === 'builtin'
+            ? { kind, id: 'changes' }
+            : kind === 'installed' ? { kind, surface: { pluginId: 'acme.checks', localId: 'checks' } }
+                : { kind, definition: { v: 1, id: 'shared-copy', ...DRAFT,
+                    provenance: { source: { kind: 'session', serverId, sessionId: 'shared', itemId: 'shared-copy' } } } };
+        function Card() {
+            const flows = useWidgetDefinitionFlows({ instance: { v: 1, id: 'copy', definition, bindings: {} },
+                scope: { serverId, accountId: ACCOUNT_ID, owner: { kind: 'home' } }, anchorRef: React.useRef(null), testID: 'aboutCopy' });
+            return React.createElement(View, {}, flows.about ? React.createElement(Pressable, { testID: 'open', onPress: flows.about }) : null, flows.panel);
+        }
+        const before = harness.requests.length;
+        const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+            pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: 'machine-a', serverId, platform: 'web', clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+        }, children: React.createElement(Card) }));
+        try {
+            expect(screen.findByTestId('open')).not.toBeNull();
+            await act(async () => { await screen.pressByTestIdAsync('open'); });
+            expect(screen.findByTestId('aboutCopy.about')).not.toBeNull();
+            expect(screen.findByTestId('aboutCopy.about.duplicate')).toBeNull();
+            if (kind === 'installed') expect(screen.getTextContent()).toContain('Checks plugin');
+            if (kind === 'inline') expect(screen.getTextContent()).toContain(DRAFT.name);
+            expect(harness.requests.slice(before).some(request => /^\/v1\/artifacts\//.test(request.path))).toBe(false);
+        } finally { await act(async () => { screen.tree.unmount(); }); }
+    });
+
+    it('dismisses About on a phone while loading, after an unavailable read, and for a resolved widget', async () => {
+        const serverId = await addDefinitionHome();
+        const React = await import('react');
+        const native = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { useWidgetDefinitionFlows } = await import('./useWidgetDefinitionFlows');
+        const dimensions = vi.spyOn(native, 'useWindowDimensions').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        let respond = () => {};
+        const pending = new Promise<void>(resolve => { respond = resolve; });
+        harness.answer(serverId, '/v1/artifacts/missing-widget', { status: 404, body: { error: 'not_found' }, respondAfter: pending });
+        function Card({ builtin = false }: { builtin?: boolean }) {
+            const flows = useWidgetDefinitionFlows({ instance: { v: 1, id: 'copy', definition: builtin
+                ? { kind: 'builtin', id: 'changes' } : { kind: 'artifact', artifactId: 'missing-widget' }, bindings: {} },
+                scope: { serverId, accountId: ACCOUNT_ID, owner: { kind: 'home' } }, anchorRef: React.useRef(null), testID: 'phoneAbout' });
+            return React.createElement(native.View, {}, React.createElement(native.Pressable, { testID: 'openAbout', onPress: flows.about }), flows.panel);
+        }
+        const screen = await renderScreen(React.createElement(Card));
+        try {
+            await screen.pressByTestIdAsync('openAbout');
+            await vi.waitFor(() => expect(screen.findByTestId('phoneAbout.about.loading')).not.toBeNull());
+            await screen.pressByTestIdAsync('phoneAbout.about.close');
+            expect(screen.findByTestId('phoneAbout.about')).toBeNull();
+            await act(async () => { respond(); });
+            await screen.pressByTestIdAsync('openAbout');
+            await vi.waitFor(() => expect(screen.findByTestId('phoneAbout.about.loading')).toBeNull());
+            await screen.pressByTestIdAsync('phoneAbout.about.close');
+            expect(screen.findByTestId('phoneAbout.about')).toBeNull();
+            await screen.update(React.createElement(Card, { builtin: true }));
+            await screen.pressByTestIdAsync('openAbout');
+            await screen.pressByTestIdAsync('phoneAbout.about.close');
+            expect(screen.findByTestId('phoneAbout.about')).toBeNull();
+        } finally { respond(); dimensions.mockRestore(); await screen.unmount(); }
+    });
+
+    it('opens Save as your widget from the Session card with its real preview and discloses a converted pinned Session read', async () => {
+        const serverId = await addDefinitionHome();
+        const disconnect = await applyDefinitionHomeConnection();
+        const React = await import('react');
+        const { act } = await import('react-test-renderer');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { SessionWidgetHost } = await import('@/components/sessions/board/SessionWidgetHost');
+        const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
+        const { SaveAsWidgetPanel } = await import('./SaveAsWidgetPanel');
+        const { SessionSurfaceItemV1Schema } = await import('@happier-dev/protocol/sessions/board');
+        const { WidgetSurface } = await import('../surface/WidgetSurface');
+        const account = { serverId, accountId: ACCOUNT_ID };
+        const previous = { profileScope: storage.getState().profileScope, settingsScope: storage.getState().settingsScope };
+        storage.setState({ profileScope: account, settingsScope: account });
+        const session = createSessionFixture({ id: 'shared', serverId, encryptionMode: 'plain' });
+        storage.getState().applySessions([session]);
+        const item = SessionSurfaceItemV1Schema.parse({ v: 1, title: 'Session checks', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'widget', instance: { v: 1, id: 'shared-copy', definition: { kind: 'inline', definition: { v: 1, id: 'shared-definition',
+                ...DRAFT, name: 'Session checks', inputs: { fields: [{ path: 'session', title: 'Read Session', widget: 'json' }] },
+                inputSchema: { type: 'object', properties: { session: { type: 'object' } }, additionalProperties: false }, sessionInputPath: 'session',
+                provenance: { source: { kind: 'session', serverId, sessionId: 'shared', itemId: 'shared-copy' } } } },
+                bindings: { session: { kind: 'value', value: { serverId, sessionId: 'shared' } } } } } });
+        const screen = await renderScreen(React.createElement(SessionWidgetHost, { serverId, sessionId: 'shared', session,
+            item: { itemId: 'shared-copy', revision: 'r1', state: { kind: 'ready', item } }, host: 'details', primaryHost: 'details', density: 'full',
+            canEdit: true, executableCurrentness: 'current', heightBounds: { min: 96, max: 520 }, testID: 'sessionCopy' }));
+        try {
+            const save = screen.tree.root.findAllByType(ItemRowActions).flatMap(menu => menu.props.actions)
+                .find((action: { id: string }) => action.id === 'saveAsYours');
+            expect(save).toBeDefined();
+            await act(async () => { save.onPress(); });
+            const panel = screen.tree.root.findByType(SaveAsWidgetPanel);
+            expect(panel.props.converted).toEqual([{ path: 'session', title: 'Read Session', becomes: 'context' }]);
+            const preview = screen.findByTestId('sessionCopy.save.preview');
+            expect(preview).not.toBeNull();
+            expect(preview!.findByType(WidgetSurface).props.instance).toEqual(item.source.kind === 'widget' ? item.source.instance : null);
+            await vi.waitFor(() => { expect(preview!.findAll(node => node.props.children === 'Checks').length).toBeGreaterThan(0); });
+            expect(harness.requests.some(request => request.path === '/v1/artifacts' && request.input)).toBe(false);
+        } finally { await act(async () => { screen.tree.unmount(); }); await disconnect(); storage.setState(previous); }
+    });
+
+    it('describes an installed read from the admitted target projection and removes execution facts when admission is denied', async () => {
+        const { readWidgetAboutSources } = await import('./WidgetAboutPanel');
+        const { readWidgetDescriptor } = await import('../widgetCatalog');
+        const { widgetProjectionOf, widgetInstalledPackage } = await import('@/dev/testkit/fixtures/pluginWidgetProjectionFixtures');
+        const source = { pluginId: 'acme.checks', localId: 'checks' };
+        const ambientResource = { pluginId: source.pluginId, localId: 'ambient-count' };
+        const boundResource = { pluginId: source.pluginId, localId: 'bound-count' };
+        const ambient = widgetProjectionOf([{ ...source, target: 'app', resources: [ambientResource] }], {
+            [source.pluginId]: widgetInstalledPackage(source.pluginId, 'Ambient source A'),
+        });
+        const bound = widgetProjectionOf([{ ...source, target: 'app', resources: [boundResource] }], {
+            [source.pluginId]: widgetInstalledPackage(source.pluginId, 'Admitted source B'),
+        });
+        const descriptor = readWidgetDescriptor(ambient, { kind: 'installed', surface: source });
+        const runtime = { pluginUiProjection: bound, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true,
+            machineId: 'machine-b', serverId: 'home', platform: 'web' as const, clientExecutableActivation: { status: 'ready' as const },
+            reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} };
+        expect(readWidgetAboutSources({ definition: null, descriptor, resolution: { status: 'ready', runtime, target: { kind: 'app' }, input: {} } }))
+            .toEqual([{ key: 'acme.checks/bound-count', plugin: 'Admitted source B', machine: null, usesViewerConnection: false, read: 'bound-count' }]);
+        expect(readWidgetAboutSources({ definition: null, descriptor, resolution: { status: 'denied', reasonCode: 'widget_session_access_denied' } })
+            .every(source => source.machine === null && !source.usesViewerConnection)).toBe(true);
     });
 });

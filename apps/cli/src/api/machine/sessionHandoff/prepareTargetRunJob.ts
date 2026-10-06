@@ -1,12 +1,5 @@
-import {
-  ExternalSessionsSourceSchema,
-  type RuntimeDescriptorV1,
-  type SessionHandoffPrepareTargetFailure,
-  type SessionHandoffPrepareTargetRequest,
-  type SessionHandoffPrepareTargetResultGetSuccessResponse,
-  type SessionHandoffResumePlan,
-  type SessionHandoffStatus,
-} from '@happier-dev/protocol';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
 import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';

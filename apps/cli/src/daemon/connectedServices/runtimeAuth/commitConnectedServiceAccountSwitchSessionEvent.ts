@@ -1,9 +1,6 @@
-import {
-  buildAgentEventLocalId,
-  normalizeConnectedServiceUxDiagnosticV1,
-  type ConnectedServiceId,
-  type ConnectedServiceUxDiagnosticV1,
-} from '@happier-dev/protocol';
+import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { normalizeConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { ConnectedServiceId, ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
 import {
   loadConnectedServiceNotificationProfilesById,

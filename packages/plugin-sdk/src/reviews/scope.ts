@@ -1,24 +1,13 @@
 /** @moduleRealm daemon */
-import {
-  produceScmPullRequestReviewScope as canonicalProduceScmPullRequestReviewScope,
-} from '@happier-dev/protocol';
+import { produceScmPullRequestReviewScope as canonicalProduceScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
 import type {
   ScmPullRequestReviewScopeProductionV1 as ProtocolScmPullRequestReviewScopeProductionV1,
   ScmPullRequestReviewScopeV1 as ProtocolScmPullRequestReviewScopeV1,
 } from '@happier-dev/protocol';
 
-export {
-  REVIEW_SCM_SCOPE_INPUT_KEY,
-  ScmPullRequestReviewScopeV1Schema,
-  ReviewScmScopeBaseRefSourceV1Schema,
-  ReviewScmScopeBaseRefV1Schema,
-  ReviewScmScopeDiagnosticCodeV1Schema,
-  ReviewScmScopeDiagnosticV1Schema,
-  ReviewScmScopeDiffV1Schema,
-  ReviewScmScopePathDiffV1Schema,
-  ReviewScmScopePathV1Schema,
-  ReviewScmScopeV1Schema,
-} from '@happier-dev/protocol';
+export { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/reviewStart';
+export { ScmPullRequestReviewScopeV1Schema } from '@happier-dev/protocol/reviews/scmPullRequestScope';
+export { ReviewScmScopeBaseRefSourceV1Schema, ReviewScmScopeBaseRefV1Schema, ReviewScmScopeDiagnosticCodeV1Schema, ReviewScmScopeDiagnosticV1Schema, ReviewScmScopeDiffV1Schema, ReviewScmScopePathDiffV1Schema, ReviewScmScopePathV1Schema, ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
 
 export type {
   ReviewScmScopeBaseRefSourceV1,

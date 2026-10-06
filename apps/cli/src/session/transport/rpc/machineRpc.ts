@@ -7,9 +7,9 @@ import {
 } from '@/api/machine/machineDataEncryptionKey';
 import type { StoredCredentials } from '@/persistence';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
-import { resolveCanonicalMachineId } from '@happier-dev/protocol';
+import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';

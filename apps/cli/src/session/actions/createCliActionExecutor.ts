@@ -18,9 +18,10 @@ import {
   type StoredCredentials,
 } from '@/persistence';
 import { createDaemonPluginActionExecutor } from './createDaemonPluginActionExecutor';
-import { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
-import { clientActionUnavailable, type ActionExecutorContext, type ActionExecutorDeps, type RuntimeActionExecute } from '@happier-dev/protocol';
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
+import type { ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -133,7 +134,8 @@ export function createCliActionExecutor(
         ? { isApprovalExecutionOriginCurrent: params.isApprovalExecutionOriginCurrent }
         : {}),
       ...(params.listContributedActionDefinitions
-        ? { listContributedActionDefinitions: params.listContributedActionDefinitions }
+        ? { listContributedActionDefinitions: params.listContributedActionDefinitions,
+            readContributedActionSchemas: createCommittedContributedActionSchemaReader(params.listContributedActionDefinitions) }
         : {}),
       ...(params.inputTypeDeps ?? (params.pluginActionExecutionOwner === 'current_process' ? createCommittedInputTypeDeps() : {})),
       ...(params.hostExternalSessionAction

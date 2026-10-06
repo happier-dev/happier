@@ -1,10 +1,7 @@
 import type { PermissionMode } from '@/api/types';
-import {
-  resolveEffectivePermissionMode,
-  type EffectivePermissionModeFailureReason,
-  SessionInputCausalPermissionAuthorityV1Schema,
-  type SessionInputCausalPermissionAuthorityV1,
-} from '@happier-dev/protocol';
+import { resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
+import type { EffectivePermissionModeFailureReason, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 
 export type CausalPermissionModeResolution =

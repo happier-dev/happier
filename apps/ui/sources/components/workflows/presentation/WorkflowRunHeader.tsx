@@ -1,3 +1,4 @@
+import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -75,7 +76,6 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
                 <MeterBar
                     tone={meterTone}
                     fillFraction={fraction}
-                    height={4}
                     caption={
                         <ToolFindText messageId={props.messageId} blockId="tool-workflow-summary" text={resolveSummary(props) ?? ''} style={styles.summary} numberOfLines={1} />
                     }
@@ -90,30 +90,29 @@ WorkflowRunHeader.displayName = 'WorkflowRunHeader';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        gap: 6,
+        gap: theme.margins.xs,
     },
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        gap: theme.margins.xs,
     },
     title: {
         flex: 1,
-        fontSize: 14,
-        fontWeight: '600',
+        ...Typography.rowTitle(),
         color: theme.colors.text.primary,
     },
     statusBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: theme.margins.xs,
     },
     statusLabel: {
-        fontSize: 12,
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
     },
     summary: {
-        fontSize: 12,
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
     },
 }));

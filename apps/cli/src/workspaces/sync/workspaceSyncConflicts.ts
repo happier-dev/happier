@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readlink, readdir, rm, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol';
+import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { withConfinedWorkspaceSyncParent } from './workspaceSyncConfinedFileSystem';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
 import {

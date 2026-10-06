@@ -9,25 +9,9 @@ import {
   clearSessionStateFieldFromMetadata,
   type SessionStateMetadataUpdateV1,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionSharedMetadataV1Schema,
-  projectSessionOwnerCompatibilityViewV1,
-  buildLinkedExternalSessionMetadataV1,
-  resolveExternalHistoryImportV1FromMetadata,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  resolveLinkedExternalSessionMetadataV1,
-  normalizeLinkedExternalSessionMetadataV1,
-  type ExternalSessionsAgentId,
-  type ExternalSessionsSource,
-  type LinkedExternalSessionV1,
-  type LinkedExternalSessionQualifiedIdentityV1,
-  type PluginAgentExternalSessionLinkData,
-  type RuntimeDescriptorV1,
-  type SessionOwnerMetadataV1,
-  type SessionSharedMetadataV1,
-  type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { buildLinkedExternalSessionMetadataV1, resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1, normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionsAgentId, ExternalSessionsSource, LinkedExternalSessionV1, LinkedExternalSessionQualifiedIdentityV1, PluginAgentExternalSessionLinkData, RuntimeDescriptorV1, SessionOwnerMetadataV1, SessionSharedMetadataV1, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 
 import type { StoredCredentials } from '@/persistence';

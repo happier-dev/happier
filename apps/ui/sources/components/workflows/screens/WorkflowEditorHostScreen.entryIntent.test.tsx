@@ -11,8 +11,6 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { WorkflowEditorHostScreen } from './WorkflowEditorHostScreen';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { WorkflowRunComposer } from '../run/WorkflowRunComposer';
-import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
-import type { SelectionListStep } from '@/components/ui/selectionList';
 import type { IModal } from '@/modal';
 import type { WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol';
 import type { WorkflowRunNowRequest } from '../run/useWorkflowRunNowController';
@@ -96,7 +94,7 @@ vi.mock('@/sync/ops/actions/executionRunDetachedSupport', () => ({
 }));
 const runNowSpy = vi.hoisted(() => vi.fn<(request: WorkflowRunNowRequest) => Promise<null>>(async () => null));
 vi.mock('../run/useWorkflowRunNowController', () => ({
-    useWorkflowRunNowController: () => ({ runNow: runNowSpy, stateFor: () => 'idle' }),
+    useWorkflowRunNowController: () => ({ runNow: runNowSpy, stateFor: () => 'idle', isPending: () => false }),
 }));
 // Native rich input is a rendering boundary; the page's commands and settings
 // remain real so a Schedule entry cannot be mistaken for Automation navigation.
@@ -167,14 +165,7 @@ afterEach(async () => {
 describe('WorkflowEditorHostScreen saved-entry intents', () => {
     it('inserts an example into the current draft as one undoable change without saving or running', async () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />, { wrapper: EditorPaneWrapper });
-        await screen.pressByTestIdAsync('workflow-editor-add-root');
-        const menu = screen.findAllByType(AgentInputSelectionListPopover)
-            .find((candidate) => candidate.props.testID === 'workflow-editor-add-root-menu')!;
-        const step = menu.props.rootStep as SelectionListStep;
-        const option = step.sections.flatMap((section) => section.kind === 'static' ? section.options : [])
-            .find((entry) => entry.id === 'workflow-editor-add-root-example');
-        expect(option).toBeDefined();
-        await act(async () => { option?.onSelect?.(); });
+        await screen.pressByTestIdAsync('workflow-editor-add-root-examples');
         await screen.pressByTestIdAsync('workflow-examples:morning-digest:use');
         expect(screen.findByTestId('workflow-editor-name')?.props.value).toBe('workflows.examples.morningDigest.title');
         expect(screen.findByTestId('workflow-editor-step-digest')).not.toBeNull();

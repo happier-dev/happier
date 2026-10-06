@@ -34,6 +34,8 @@ export const EntityDragItemV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('session-workspace'), scope, workspaceId: Id }).strict(),
     z.object({ kind: z.literal('workspace-tab'), scope, tabId: Id }).strict(),
     z.object({ kind: z.literal('destination'), scope, href: Id.refine(href => href.startsWith('/') && !href.startsWith('//')) }).strict(),
+    // A local navigation preference is carried only within its own customization list.
+    z.object({ kind: z.literal('navigation-item'), scope, surfaceId: Id, itemId: Id }).strict(),
     z.object({ kind: z.literal('repository-file'), scope, machineId: Id, workspaceId: Id.optional(), path: Id }).strict(),
     z.object({ kind: z.literal('session-board-item'), scope, address, viewId: Id, itemId: Id }).strict(),
     z.object({ kind: z.literal('work-board-item'), scope, boardId: Id, item: BoardItemRefV1Schema }).strict(),
@@ -83,7 +85,12 @@ export function entityDragScopesEqualV1(left: EntityDragScopeV1, right: EntityDr
     return left.serverId === right.serverId && left.accountId === right.accountId;
 }
 
-export const EntityDropPreviewV1Schema = z.object({ verb: Id, target: Id, consequence: Id.optional() }).strict();
+/** Named outcome marks from the shared release-preview icon vocabulary; presentation only. */
+export const EntityDropGlyphV1Schema = z.enum([
+    'nest', 'above', 'below', 'folder', 'topLevel', 'open', 'tab', 'goTo', 'split', 'splitVertical',
+    'here', 'copy', 'attach', 'upload', 'add', 'move', 'board', 'refused',
+]);
+export const EntityDropPreviewV1Schema = z.object({ verb: Id, target: Id, consequence: Id.optional(), glyph: EntityDropGlyphV1Schema.optional() }).strict();
 export const EntityDropReasonV1Schema = z.object({ code: Id, message: Id }).strict();
 export type EntityDropPreviewV1 = Readonly<z.infer<typeof EntityDropPreviewV1Schema>>;
 export type EntityDropReasonV1 = Readonly<z.infer<typeof EntityDropReasonV1Schema>>;

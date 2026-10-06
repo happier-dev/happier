@@ -25,7 +25,7 @@ import {
   type ServerSelectionMutationMode,
 } from '../backgroundServiceFollowUp';
 
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 
 import { runRelayHostSubcommand } from './host';
 import { runRelayAccessSubcommand } from './access';

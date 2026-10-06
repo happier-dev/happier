@@ -1,13 +1,9 @@
-import {
-  MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
-  isActionEnabledByActionsSettings,
-  resolveEffectiveCodingPromptBehaviorV1,
-  zodSchemaToJsonSchemaObject,
-  type ActionId,
-  type ActionsSettingsV1,
-  type FeatureId,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS } from '@happier-dev/protocol/prompts/isMemoryRecallGuidanceSupported';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ActionId, ActionsSettingsV1, FeatureId } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionNativeToolDescriptor } from '@happier-dev/plugin-sdk/agents/runtime';
 import { z } from 'zod';
 

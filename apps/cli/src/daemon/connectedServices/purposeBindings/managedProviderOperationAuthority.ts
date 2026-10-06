@@ -1,16 +1,10 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import {
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  QualifiedConnectedAccountPurposeV1Schema,
-  QualifiedConnectedAccountRequestAuthUseV1Schema,
-  qualifiedPurposeKey,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountRequestAuthUseV1,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 import type {
   ManagedProviderRequestAuthCapabilityPathBinding,

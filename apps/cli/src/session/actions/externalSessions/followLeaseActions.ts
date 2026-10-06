@@ -1,11 +1,5 @@
-import {
-    ExternalSessionAttachRequestSchema,
-    ExternalSessionDetachRequestSchema,
-    ExternalSessionFollowPolicySetRequestSchema,
-    type ExternalSessionAttachResponse,
-    type ExternalSessionDetachResponse,
-    type ExternalSessionFollowPolicySetResponse,
-} from '@happier-dev/protocol';
+import { ExternalSessionAttachRequestSchema, ExternalSessionDetachRequestSchema, ExternalSessionFollowPolicySetRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ExternalSessionAttachResponse, ExternalSessionDetachResponse, ExternalSessionFollowPolicySetResponse } from '@happier-dev/protocol';
 
 import {
     emitExternalSessionTranscriptRefreshInvalidation,

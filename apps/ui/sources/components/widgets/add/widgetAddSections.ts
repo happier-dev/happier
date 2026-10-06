@@ -19,7 +19,7 @@ import {
     countWidgetInstances,
     isConfigurableWidgetCandidate,
     partitionWidgetCandidatesBySource,
-    runBoardWidgetSetupCommand,
+    runAcknowledgedWidgetSetupCommand,
     runWidgetSetupCommand,
     widgetDefinitionOfCandidate,
     widgetSetupFieldsForCandidate,
@@ -81,11 +81,14 @@ export function buildBoardWidgetAddContent(input: Readonly<{
         const copies = countWidgetInstances(instances, definition);
         const add = definition.kind === 'artifact'
             ? (publishSavedWidget ? (bindings: WidgetInputBindingsV1) => publishSavedWidget({ v: 1, id: randomUUID(), definition, bindings, displayName: candidate.title }) : null)
-            : (bindings: WidgetInputBindingsV1) => runBoardWidgetSetupCommand(() => run({ kind: 'item.addWidget', definition, title: candidate.title, bindings }), t('widgetAdd.addFailed'));
+            : (bindings: WidgetInputBindingsV1) => runAcknowledgedWidgetSetupCommand(() => run({ kind: 'item.addWidget', definition, title: candidate.title, bindings }), t('widgetAdd.addFailed'));
         if (!add) return [];
         // A widget with inputs is counted and can be added again, differently bound; one without
         // inputs stays Added, because a second identical copy would show the same thing (dbind G).
         const configurable = isConfigurableWidgetCandidate(candidate);
+        const proposed = buildWidgetCandidateSetup({ candidate, context, audience: 'shared',
+            mode: { kind: 'add', submitLabel: t('widgetAdd.addToBoard') }, submit: draft => add(draft.bindings), scope: input.scope ?? null });
+        const canPreview = proposed.resolve(proposed.initial).status === 'ready';
         return [{
             id: `plugin-${candidate.key}`,
             title: candidate.title,
@@ -94,7 +97,7 @@ export function buildBoardWidgetAddContent(input: Readonly<{
             ...(configurable
                 ? (copies > 0 ? { count: t('widgetAdd.countOnBoard', { count: copies }) } : {})
                 : { added: copies > 0 }),
-            ...(renderPluginPreview ? { renderPreview: () => renderPluginPreview(candidate) } : {}),
+            ...(renderPluginPreview && canPreview ? { renderPreview: () => renderPluginPreview(candidate) } : {}),
             ...(configurable || definition.kind === 'artifact' ? {
                 setup: () => buildWidgetCandidateSetup({
                     candidate,
@@ -189,7 +192,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
     /** Universal plugin widget candidates, from the current plugin runtime. */
     glanceCandidates: readonly WidgetCandidate[];
     pluginProjection: PluginUiProjectionModel | null | undefined;
-    addItem: (ref: SessionCompanionItemRefV1) => void;
+    addItem: (ref: SessionCompanionItemRefV1) => void | Promise<void>;
     /** What the Companion fills on its own: its Session ("This session"). */
     context?: WidgetSurfaceContext;
     /** The Set up step's live preview at the chosen inputs (Session B beside Session A, dbind X). */
@@ -207,6 +210,8 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
     const context = input.context ?? NO_CONTEXT;
     const personalInstances = refs.flatMap((ref) => (ref.kind === 'instance' ? [ref.instance] : []));
     const model = resolveSessionCompanionPickerSections({ refs, snapshot: input.snapshot, candidates: input.glanceCandidates });
+    const candidatesBySource = partitionWidgetCandidatesBySource(input.glanceCandidates);
+    const yourKeys = new Set(candidatesBySource.yours.map(candidate => `plugin-${candidate.key}`));
     const glances: WidgetAddEntry[] = [
         ...model.plugins.map((row): WidgetAddEntry => {
             const candidate = row.candidate;
@@ -224,8 +229,8 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
                 ...(native && renderGlancePreview ? { renderPreview: () => renderGlancePreview(native.definition.id) } : {}),
                 ...(configurable
                     ? (copies > 0 ? { count: t('widgetAdd.countInCompanion', { count: copies }) } : {})
-                    : { added: row.added }),
-                ...(configurable ? {
+                    : { added: copies > 0 || row.added }),
+                ...(configurable || definition.kind === 'artifact' ? {
                     setup: () => buildWidgetCandidateSetup({
                         candidate,
                         context,
@@ -236,7 +241,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
                         scope: input.scope ?? null,
                     }),
                 } : {}),
-                onPick: () => add(startingBindings(candidate, context, 'personal')),
+                onPick: () => { void runWidgetSetupCommand(() => add(startingBindings(candidate, context, 'personal')), t('widgetAdd.addFailed')); },
             };
         }),
     ];
@@ -252,7 +257,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
             icon: source.kind === 'declarative' ? 'note' : 'squares-four',
             added: row.added,
             ...notePreview,
-            onPick: () => addItem({ kind: 'widget', widgetId: row.widgetId }),
+            onPick: () => { void runWidgetSetupCommand(() => addItem({ kind: 'widget', widgetId: row.widgetId }), t('widgetAdd.addFailed')); },
         };
     });
     const panes: WidgetAddEntry[] = RIGHT_SIDEBAR_BUILTIN_TABS
@@ -262,10 +267,12 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
             title: t(tab.labelKey),
             icon: tab.icon,
             added: refs.some((ref) => ref.kind === 'pane' && ref.paneId === tab.id),
-            onPick: () => addItem({ kind: 'pane', paneId: tab.id }),
+            onPick: () => { void runWidgetSetupCommand(() => addItem({ kind: 'pane', paneId: tab.id }), t('widgetAdd.addFailed')); },
         }));
     return [
-        { id: 'glances', title: t('widgetAdd.glances'), hint: t('widgetAdd.glancesHint'), kind: 'preview', entries: glances },
+        { id: 'glances', title: t('widgetAdd.glances'), hint: t('widgetAdd.glancesHint'), kind: 'preview', entries: glances.filter(entry => !yourKeys.has(entry.id)) },
+        ...(candidatesBySource.yours.length ? [{ id: 'yours', title: t('widgetDefinition.yourWidgets'), hint: t('widgetDefinition.yourWidgetsHint'),
+            kind: 'preview' as const, entries: glances.filter(entry => yourKeys.has(entry.id)) }] : []),
         { id: 'board', title: t('widgetAdd.onBoard'), hint: t('widgetAdd.onBoardHint'), kind: 'preview', entries: board },
         { id: 'panes', title: t('widgetAdd.panes'), hint: t('widgetAdd.panesHint'), kind: 'chips', entries: panes },
     ];

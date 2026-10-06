@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 
 // Genuine third-party render boundary; none of these list tests renders Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -174,6 +175,31 @@ describe('SessionListVirtualizedContent virtualization', () => {
         await renderVirtualizedContent({ nodes: [active, ...sessions.slice(0, 20), inactive, ...sessions.slice(20)] });
 
         expect(virtualizationState.flatListProps.initialNumToRender).toBe(21);
+    });
+
+    it('classifies qualified headers by their domain kind even when their keys contain delimiters', async () => {
+        virtualizationState.platformOS = 'ios';
+        const nodes = (['active', 'project', 'inactive'] as const).map((headerKind) => ({
+            id: buildSessionListIndexNodeId({ type: 'header', headerKind, title: headerKind, groupKey: 'https://home.test:8443/project' }),
+            kind: 'header' as const,
+            headerKind,
+        }));
+        await renderVirtualizedContent({ nodes });
+        expect(nodes.map((node, index) => virtualizationState.legendListProps.getItemType(node, index)))
+            .toEqual(['header:active', 'header:project', 'header:inactive']);
+    });
+
+    it('fills the web priority prefix before the inactive section with qualified header keys', async () => {
+        const header = (headerKind: 'active' | 'inactive') => ({
+            id: buildSessionListIndexNodeId({ type: 'header', headerKind, title: headerKind, groupKey: `https://home.test:8443/${headerKind}` }),
+            kind: 'header' as const,
+            headerKind,
+        });
+        const priorityRows = buildNodes(17).slice(1);
+        await renderVirtualizedContent({
+            nodes: [header('active'), ...priorityRows, header('inactive'), ...buildNodes(97).slice(17)],
+        });
+        expect(virtualizationState.flatListProps.initialNumToRender).toBe(1 + priorityRows.length);
     });
 
     it('keeps small web lists on non-virtualized React Native Web FlatList', async () => {

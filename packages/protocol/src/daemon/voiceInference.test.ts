@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import {
     DaemonVoiceInferenceErrorSchema,
+    DaemonVoiceInferenceAudioOutputSchema,
     DaemonVoiceInferenceModelRuntimeStateSchema,
     DaemonVoiceInferenceModelLicenseAcceptRequestSchema,
     DaemonVoiceInferenceModelStatusSchema,
@@ -46,6 +50,52 @@ import {
 } from './voiceInference.js';
 
 describe('daemonVoiceInference schemas', () => {
+    it('preserves classic JSON Schema projection, defaults and fluent request composition', () => {
+        const audio = z.object({ codec: z.literal('wav'), mimeType: z.literal('audio/wav') }).strict();
+        const cancel = z.object({
+            streamId: z.string().min(1).max(256),
+            generation: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+            reason: z.enum(['client_abort', 'barge_in', 'stale_generation', 'client_dispose']).default('client_abort'),
+        }).strict();
+        for (const target of ['draft-2020-12', 'draft-7'] as const) {
+            expect(zodSchemaToJsonSchemaObject(z.object({
+                output: DaemonVoiceInferenceAudioOutputSchema,
+                cancel: DaemonVoiceInferenceTtsStreamCancelRequestSchema.optional(),
+            }).strict(), { target })).toEqual(zodSchemaToJsonSchemaObject(z.object({
+                output: audio, cancel: cancel.optional(),
+            }).strict(), { target }));
+        }
+        expect(DaemonVoiceInferenceTtsStreamCancelRequestSchema.extend({ confirmed: z.boolean().default(true) })
+            .parse({ streamId: 'stream-1', generation: 0 }))
+            .toEqual({ streamId: 'stream-1', generation: 0, reason: 'client_abort', confirmed: true });
+        expect(DaemonVoiceInferenceAudioOutputSchema.shape.codec.parse('wav')).toBe('wav');
+    });
+
+    it('preserves classic errors and issue paths through structural and model refinements', () => {
+        const structural = DaemonVoiceInferenceTtsStreamCancelRequestSchema.safeParse({
+            streamId: 'stream-1', generation: -1, extra: true,
+        });
+        expect(structural.success).toBe(false);
+        if (!structural.success) {
+            expect(structural.error).toBeInstanceOf(z.ZodError);
+            expect(structural.error.issues).toMatchObject([
+                { code: 'too_small', path: ['generation'] },
+                { code: 'unrecognized_keys', path: [], keys: ['extra'] },
+            ]);
+        }
+        expect(() => DaemonVoiceInferenceTtsStreamCancelRequestSchema.parse({ streamId: 'stream-1', generation: -1 }))
+            .toThrow(z.ZodError);
+        const refined = DaemonVoiceInferenceModelStatusSchema.safeParse({
+            packId: 'kokoro-tts-en-v1', kind: 'tts_sherpa', model: 'kokoro', executionSupport: ['daemon'],
+            installState: 'installed', updatedAtMs: 1, defaultVoiceId: 'unknown',
+        });
+        expect(refined.success).toBe(false);
+        if (!refined.success) {
+            expect(refined.error).toBeInstanceOf(z.ZodError);
+            expect(refined.error.issues).toMatchObject([{ code: 'custom', path: ['defaultVoiceId'] }]);
+        }
+    });
+
     it('round-trips a strict Voice artifact binding and rejects retired digest aliases', () => {
         const review = {
             pluginId: 'acme.speech',

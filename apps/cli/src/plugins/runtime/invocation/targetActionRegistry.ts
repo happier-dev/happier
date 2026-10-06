@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-    ActionOperationProgressV1Schema,
-    createPluginActionInvocation,
-    pluginActionRequiresPresentUserIntent,
-    PluginHostAccessRequestV2Schema,
-    type PluginActionPresentUserGatePolicy,
-    type PluginActionInputParser,
-} from '@happier-dev/protocol';
+import { ActionOperationProgressV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { createPluginActionInvocation, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginActionPresentUserGatePolicy, PluginActionInputParser } from '@happier-dev/protocol';
 import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui';
 import type {
     ActionOperationDeclarationV1,

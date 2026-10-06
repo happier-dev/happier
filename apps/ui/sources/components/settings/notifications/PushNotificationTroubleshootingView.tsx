@@ -8,7 +8,7 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
 import { deletePushToken, fetchPushTokens, type PushToken } from '@/sync/api/session/apiPush';
@@ -38,7 +38,11 @@ import { NOTIFICATIONS_PUSH_SETTINGS } from '@/components/settings/notifications
 export const PushNotificationTroubleshootingView = React.memo(function PushNotificationTroubleshootingView() {
     const { theme } = useUnistyles();
     const auth = useAuth();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        attentionDeliveryPolicyV1: settings.attentionDeliveryPolicyV1,
+        notificationsSettingsV1: settings.notificationsSettingsV1,
+        notificationChannelsV1: settings.notificationChannelsV1,
+    }));
 
     const activeServer = useActiveServerSnapshot();
 

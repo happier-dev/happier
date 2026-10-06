@@ -1,18 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  readPendingLocalId,
-  hasRawComposerAttachmentSelectionV1,
-  sanitizeSessionUserMessageSendMeta,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionUsageLimitRecoveryV1Schema,
-  SessionUserMessageSendRequestSchema,
-  isModelRefGrantedV1,
-  isPermissionModeGrantedV1,
-  readSessionMessageModelSelectionV1,
-} from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { hasRawComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { sanitizeSessionUserMessageSendMeta, SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';

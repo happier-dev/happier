@@ -16,7 +16,7 @@ import type { ClaudeExternalSessionSource } from './source.js';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { searchClaudeExternalTranscript } from './transcript.js';
 import { readClaudeJsonlFileSize } from './files.js';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 
 export type ClaudeExternalSessionCandidate = Readonly<{
     remoteSessionId: string;
@@ -312,6 +312,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     searchTarget?: 'metadata' | 'content';
     ripgrep?: AgentExternalSessionsInvocation['ripgrep'];
     signal?: AbortSignal;
+    deadlineAtMs?: number;
     resultBudget?: ClaudeCandidateResultBudget;
     readCandidateIndexState?: (candidate: Readonly<{
         remoteSessionId: string;
@@ -462,24 +463,9 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
         limit: scanLimit,
         signal: params.signal,
     });
-    let prefilteredPaths: ReadonlySet<string> | null = null;
     let contentPartial = false;
     if (search.searchTarget === 'content') {
         if (!params.ripgrep) return { candidates: [], nextCursor: null, contentCoverage: 'unsupported' };
-        // JavaScript's decoded case folding differs from rg for Unicode queries.
-        // Only ASCII queries can use this exclusion prefilter; the codec owns matches.
-        if (searchTerm && !/[^\x00-\x7F]/.test(searchTerm) && traversed.entries.length > 0) {
-            // JSON escaping can hide Unicode, quotes and newlines from a literal
-            // prefilter. Any file containing an escape is decoded-scanned too.
-            const result = await params.ripgrep.run({
-                args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', searchTerm, '-e', '\\'],
-                paths: traversed.entries.map((entry) => entry.filePath),
-                signal: params.signal,
-            });
-            throwIfAborted(params.signal);
-            if (!result.stdoutTruncated && result.exitCode !== 0 && result.exitCode !== 1) throw new Error('Claude conversation prefilter failed.');
-            prefilteredPaths = result.stdoutTruncated ? null : new Set(result.stdout.split('\0').filter(Boolean));
-        }
     }
     if (
         decodedCursor?.kind === 'claudeCandidateIndexScan'
@@ -505,6 +491,8 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     const page: ClaudeExternalSessionCandidate[] = [];
     let previousScanPosition = scanPosition;
     let previousSourceGeneration = traversed.sourceGeneration;
+    let fileStartedAtMs: number | undefined;
+    let longestFileDurationMs = 0;
 
     for (let traversalIndex = 0; traversalIndex < traversed.entries.length; traversalIndex += 1) {
         const session = traversed.entries[traversalIndex];
@@ -520,12 +508,41 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
                 search,
             })
             : undefined;
+        if (search.searchTarget === 'content' && params.deadlineAtMs !== undefined) {
+            const nowMs = Date.now();
+            if (fileStartedAtMs !== undefined) {
+                longestFileDurationMs = Math.max(longestFileDurationMs, nowMs - fileStartedAtMs);
+            }
+            // Reuse the host deadline. The completed file's measured cost tells
+            // us whether another unit fits; there is no subordinate timeout.
+            if (cursorBefore && params.deadlineAtMs - nowMs <= longestFileDurationMs) {
+                if (params.resultBudget && !params.resultBudget.fits(page, cursorBefore, searchIncomplete, preparation)) {
+                    throw new ClaudeCandidateResultBudgetTooSmallError('Claude candidate result byte budget cannot fit the continuation envelope.');
+                }
+                return {
+                    candidates: page, nextCursor: cursorBefore, contentCoverage: 'partial',
+                    ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
+                };
+            }
+            fileStartedAtMs = nowMs;
+        }
         previousScanPosition = session.scanPosition;
         previousSourceGeneration = session.sourceGeneration;
         let candidate: ClaudeExternalSessionCandidate;
         let needsSelectedRowTitle = false;
         if (search.searchTarget === 'content') {
-            if (!searchTerm || (prefilteredPaths && !prefilteredPaths.has(session.filePath))) continue;
+            if (!searchTerm) continue;
+            // Prefilter one file at a time so a large corpus can yield at a
+            // completed file boundary. The native codec remains authoritative.
+            if (!/[^\x00-\x7F]/.test(searchTerm)) {
+                const result = await params.ripgrep!.run({
+                    args: ['--no-config', '--files-with-matches', '--null', '--ignore-case', '--multiline', '--fixed-strings', '-e', searchTerm, '-e', '\\'],
+                    paths: [session.filePath], signal: params.signal,
+                });
+                throwIfAborted(params.signal);
+                if (!result.stdoutTruncated && result.exitCode !== 0 && result.exitCode !== 1) throw new Error('Claude conversation prefilter failed.');
+                if (!result.stdoutTruncated && !result.stdout.split('\0').includes(session.filePath)) continue;
+            }
             const projection = await searchClaudeExternalTranscript({
                 filePath: session.filePath,
                 fileRelPath: `${session.projectId}/${session.remoteSessionId}.jsonl`,

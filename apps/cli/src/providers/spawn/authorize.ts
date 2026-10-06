@@ -1,19 +1,10 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ConnectedServiceBindingsV2Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  assessProviderEndpoint,
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  createProviderErrorV1,
-  pluginSourceCustodyV1Equal,
-  ProviderErrorV1Schema,
-  type AgentProviderBindingMaterializationV1,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServiceId,
-  type ProviderErrorV1,
-  type PluginExecutionScopeV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import { ConnectedServiceBindingsV2Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { AgentProviderBindingMaterializationV1, ConnectedServiceBindingsV2, ConnectedServiceId, ProviderErrorV1, PluginExecutionScopeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingCredential,
   AgentProviderBindingResolvedFacts,

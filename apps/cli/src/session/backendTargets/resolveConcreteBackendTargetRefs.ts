@@ -1,11 +1,5 @@
-import {
-  BackendTargetRefV2Schema,
-  convertBackendTargetRefV2ToV1,
-  readBackendTargetRefV2,
-  type BackendTargetRefV1,
-  type BackendTargetRefV2,
-  type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { BackendTargetRefV2Schema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol';
 import { isConcreteLegacyConfiguredBackendId } from './compat/legacyConfiguredBackend';
 
 export type ResolvedConcreteBackendTargetRefs = Readonly<{

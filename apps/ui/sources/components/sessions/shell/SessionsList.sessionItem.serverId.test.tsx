@@ -366,7 +366,7 @@ describe('SessionItem navigation', () => {
         await screen.unmount();
     });
 
-    it('opens the session in a split from its row menu', async () => {
+    it('keeps desktop row navigation without a separate split handle and opens splits from its menu', async () => {
         splitFixture = await prepareSplitCanvas('sess_drag');
 
         const screen = await renderSessionItem({
@@ -383,6 +383,12 @@ describe('SessionItem navigation', () => {
         });
 
         await triggerAllHoverTargets(screen);
+
+        expect(screen.findByTestId('session-item-split-drag-handle-sess_drag')).toBeNull();
+        navigateSpy.mockClear();
+        await screen.pressByTestIdAsync('session-list-item-sess_drag');
+        expect(navigateSpy).toHaveBeenCalledWith('sess_drag', { serverId: splitFixture.serverId });
+        expect(splitFixture.openSessionIds()).toEqual(['anchor']);
 
         const menu = screen.findAllByType('DropdownMenu').find((dropdown) => dropdown.props.search !== true);
         expect(menu?.props.items).toEqual(expect.arrayContaining([

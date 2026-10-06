@@ -1,9 +1,6 @@
 import { lookup } from 'node:dns/promises';
 
-import {
-    assessEndpointHostLocality,
-    normalizeProviderEndpointUrlSyntax,
-} from '@happier-dev/protocol/providers';
+import { assessEndpointHostLocality, normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
 
 /** DNS is a genuine system boundary; every caller may substitute it. */
 export type PluginNetworkAddressResolver = (hostname: string) => Promise<readonly string[]>;

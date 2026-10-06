@@ -1,32 +1,23 @@
 import { z } from "zod";
 import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
-import {
-    AgentModelOptionOverrideRuleReadSchema,
-    SessionOwnerModeCatalogV2Schema,
-    createAgentRuntimeFacetsV1Schema,
-    createAcpConfigOptionOverridesV1Schema,
-    createAcpSessionModeOverrideV1Schema,
-    createModelOverrideV1Schema,
-    createSessionPermissionModeSchema,
-    createSessionRollbackRangesV1Schema,
-    createSessionTerminalMetadataSchema,
-    createSessionSystemSessionV1Schema,
-    normalizeCodexBackendMode,
-    readNonBlankOpaqueIdentifier,
-    readRuntimeDescriptorV1,
-    readRuntimeDescriptorV1FromMetadata,
-    RuntimeDescriptorV1Schema,
-    SessionActiveModelSelectionV1Schema,
-    SessionAppliedModelV1Schema,
-    SessionModelSelectionIntentV1Schema,
-    SessionMcpSelectionV1Schema,
-    MachinePoolSelectionOriginV1Schema,
-    SessionMcpSelectionRestartRequiredV1Schema,
-    SessionDiscussionSelectionSourceV1Schema,
-    SessionWorkspaceLocationV1Schema,
-    SessionDirectoryV1Schema,
-    SessionForkFilesNotCopiedV1Schema,
-} from "@happier-dev/protocol";
+import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
+import { SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionWorkspaceLocationV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { createAgentRuntimeFacetsV1Schema } from '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1';
+import { createAcpConfigOptionOverridesV1Schema, createAcpSessionModeOverrideV1Schema, createModelOverrideV1Schema, normalizeCodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { createSessionRollbackRangesV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1';
+import { createSessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { createSessionSystemSessionV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1, RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { SessionActiveModelSelectionV1Schema, SessionAppliedModelV1Schema, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionMcpSelectionV1Schema, SessionMcpSelectionRestartRequiredV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { SessionDiscussionSelectionSourceV1Schema } from '@happier-dev/protocol/sessions/discussions/content';
+import { SessionDirectoryV1Schema } from '@happier-dev/protocol/sessions/metadata/directory';
 
 /**
  * Persisted session option catalogs. The model and config catalogs are published under four

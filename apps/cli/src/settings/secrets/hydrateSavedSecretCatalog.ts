@@ -1,16 +1,11 @@
 import axios from 'axios';
 
-import {
-  listSecretReferenceOverlayV1BindingNames,
-  openEncryptedDataKeyEnvelopeV1,
-  parseSavedSecretRefV1,
-  readServerEnabledBit,
-  readSecretReferenceOverlayV1Reference,
-  SavedSecretResourceMaterialsResponseV1Schema,
-  type FeaturesResponse,
-  type SavedSecretResourceMaterialV1,
-  type SecretReferenceOverlayV1,
-} from '@happier-dev/protocol';
+import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { FeaturesResponse, SavedSecretResourceMaterialV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import { decodeBase64 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

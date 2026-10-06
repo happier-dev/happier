@@ -25,12 +25,11 @@ import { existsSync } from 'node:fs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getRuntimeDir } from './utils/paths/runtime.mjs';
 import { assertServerComponentDirMatches } from './utils/server/validate.mjs';
-import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
+import { resolveServerUrls } from './utils/server/urls.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
 import {
   getStackRuntimeStatePath,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
 } from './utils/stack/runtime_state.mjs';
 import { readJsonIfExists } from './utils/fs/json.mjs';
 import { readPackageJsonVersion } from './utils/fs/package_json.mjs';
@@ -38,7 +37,7 @@ import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
-import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { inspectStackRuntimeSelection } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 import { isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
 import { readExecutionHostProfile } from './utils/execution_host/config.mjs';
@@ -127,7 +126,7 @@ async function main() {
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName(process.env);
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
   const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env });
-  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
+  const runtimeInspection = await inspectStackRuntimeSelection({ stackBaseDir });
   const runtimeSnapshot = runtimeMode.mode === 'source' ? null : runtimeInspection.snapshot;
   const runtimeSnapshotRequired = runtimeMode.mode === 'require' && !runtimeInspection.valid;
   const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
@@ -144,13 +143,8 @@ async function main() {
 
   const runtimeStatePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH?.trim() || getStackRuntimeStatePath(stackName);
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
-  const runtimeServerPort = await resolveTrustedStackRuntimeServerPort(runtimeState, {
-    stackName,
-    envPath: process.env.HAPPIER_STACK_ENV_FILE,
-    cliHomeDir: process.env.HAPPIER_STACK_CLI_HOME_DIR,
-  }).catch(() => null);
-  const serverPort = runtimeServerPort ?? resolveServerPortFromEnv({ defaultPort: 3005 });
-  const resolvedUrls = await resolveServerUrls({ serverPort, allowEnable: false });
+  const resolvedUrls = await resolveServerUrls({ allowEnable: false });
+  const serverPort = resolvedUrls.serverPort;
   const internalServerUrl = resolvedUrls.internalServerUrl;
   const publicServerUrl = resolvedUrls.publicServerUrl;
 

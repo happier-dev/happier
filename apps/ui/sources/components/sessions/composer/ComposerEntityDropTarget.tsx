@@ -1,3 +1,4 @@
+import { useUnistyles } from 'react-native-unistyles';
 import * as React from 'react';
 import type { ComposerRefV1, ActionId } from '@happier-dev/protocol';
 import type { EntityDragKindV1, EntityDragScopeV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -39,6 +40,7 @@ export function ComposerEntityDropTarget(props: Readonly<{
     kinds: readonly import('@/components/autocomplete/composerSuggestionKinds').ComposerSuggestionKindId[];
 }>): React.ReactElement | null {
     const runtime = useEntityDragDropRuntime();
+    const { theme } = useUnistyles();
     const navigation = useOptionalWorkspaceNavigation();
     const executor = React.useMemo(() => createDefaultActionExecutor(), []);
     const platform = resolvePluginUiClientExecutablePlatform();
@@ -94,7 +96,8 @@ export function ComposerEntityDropTarget(props: Readonly<{
                     return workspace ? { kind: 'repository-file', scope: props.scope, machineId: workspace.machineId,
                         path: resolveMachineAbsolutePath({ rootPath: workspace.rootPath, requestPath: file.path }) } : null;
                 },
-                preview: { verb: t('entityDragDrop.composer.addContext'), target: t('entityDragDrop.composer.target') },
+                // Lab ST2: say what releasing does to the message: it travels with it, nothing sends yet.
+                preview: { glyph: 'add', verb: t('entityDragDrop.composer.addContext'), target: t('entityDragDrop.composer.target'), consequence: t('entityDragDrop.composer.consequence') },
                 reason: describeComposerEntityDropReason,
             });
         },
@@ -112,6 +115,7 @@ export function ComposerEntityDropTarget(props: Readonly<{
     });
     const snapshot = useEntityDropTargetState(runtime, props.id);
     return snapshot?.phase === 'carrying' && snapshot.admission?.status === 'allowed'
-        ? <TreeDropOutline visual={{ kind: 'outline', targetId: props.id }} testID="composer-entity-drop-outline"
+        // The outline takes the composer's own corner, so it lies exactly on the panel.
+        ? <TreeDropOutline visual={{ kind: 'outline', targetId: props.id }} testID="composer-entity-drop-outline" radius={theme.parts.composer.radius}
             style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, pointerEvents: 'none' }} /> : null;
 }

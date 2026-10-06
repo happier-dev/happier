@@ -1,10 +1,6 @@
-import {
-  areWorkspaceSyncRelationshipDefinitionsEqual,
-  resolveWorkspaceSyncTransferRoute,
-  type WorkspaceRefV1,
-  type WorkspaceSyncPrepareBetweenResultV1,
-  type WorkspaceSyncRelationshipV1,
-} from '@happier-dev/protocol';
+import { areWorkspaceSyncRelationshipDefinitionsEqual } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { resolveWorkspaceSyncTransferRoute } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import type { WorkspaceRefV1, WorkspaceSyncPrepareBetweenResultV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 
 export function isWorkspaceSyncStatusClean(status: WorkspaceSyncStatusV1): boolean {

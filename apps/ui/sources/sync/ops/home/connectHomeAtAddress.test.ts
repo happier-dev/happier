@@ -89,6 +89,7 @@ describe('connectHomeAtAddress', () => {
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         locks.restore();
         storage.restore();
         vi.unstubAllGlobals();
@@ -218,6 +219,26 @@ describe('connectHomeAtAddress', () => {
         expect(profileFacts()).toEqual(before);
     });
 
+    it('waits for valid public features beyond the foreground fallback budget before adopting the Home', async () => {
+        const { operation, before, profileFacts } = await owner();
+        const { FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const immediateFetch = boundary.fetch.getMockImplementation()!;
+        vi.useFakeTimers();
+        boundary.fetch.mockImplementation(async (url: RequestInfo | URL) => {
+            if (String(url).endsWith('/v1/features')) {
+                await new Promise<void>((resolve) => setTimeout(resolve, FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS * 2));
+            }
+            return immediateFetch(url);
+        });
+
+        const connection = operation.connectHomeAtAddress(input());
+        await vi.advanceTimersByTimeAsync(FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS);
+        expect(profileFacts()).toEqual(before);
+        await vi.advanceTimersByTimeAsync(FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS);
+        expect((await connection).kind).toBe('connected');
+        expect(profileFacts().length).toBe(before.length + 1);
+    });
+
     it('reuses the exact saved descriptor unchanged when canonical adoption is declined', async () => {
         const { operation, profiles, profileFacts } = await owner();
         const existing = await profiles.adoptHomeProfile({
@@ -235,6 +256,124 @@ describe('connectHomeAtAddress', () => {
         expect(await operation.connectHomeAtAddress(input({ confirmCanonicalUrl: async () => false })))
             .toEqual({ kind: 'connected', profile: existing });
         expect(profileFacts()).toEqual(before);
+    });
+
+    it.each([
+        { oldUrl: 'https://old-home.example.test', newUrl: canonicalUrl },
+        { oldUrl: 'http://qa-home.localhost:3010', newUrl: 'http://qa-home.localhost:3012' },
+    ])('reconnects the signed-in Home after its address changes from $oldUrl', async ({ oldUrl, newUrl }) => {
+        if (newUrl.startsWith('http:')) vi.stubGlobal('location', { protocol: 'http:' });
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            server: { canonicalServerUrl: newUrl }, serverIdentity: { serverIdentityId: homeIdentity },
+        } });
+        advertisedFeatures = features;
+        const { operation, profiles } = await owner();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const existing = await profiles.adoptHomeProfile({
+            descriptor: { v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: oldUrl,
+                revision: 7, endpoints: [{ kind: 'https', url: oldUrl }] },
+            source: 'qr', suggestedName: 'My saved Home',
+        });
+        await profiles.setActiveServerId(existing.id);
+        const activeBefore = profiles.getActiveServerId();
+        const credentials = { token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJhY2NvdW50X2EifQ.sig' };
+        await TokenStorage.setCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }, credentials);
+        const descriptor = { v: 1 as const, homeServerIdentityId: homeIdentity, canonicalServerUrl: newUrl,
+            revision: 8, endpoints: [{ kind: 'https' as const, url: newUrl }] };
+        const immediateFetch = boundary.fetch.getMockImplementation()!;
+        boundary.fetch.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith('/v1/features/authenticated')) {
+                expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
+                return response(200, { ...features, homeConnectionDescriptor: descriptor });
+            }
+            return immediateFetch(url, init);
+        });
+        const countBefore = profiles.listServerProfiles().length;
+        const result = await operation.connectHomeAtAddress(input({ serverUrl: newUrl }));
+        expect(result).toMatchObject({ kind: 'connected', profile: {
+            id: existing.id, name: 'My saved Home', serverIdentityId: homeIdentity,
+            canonicalServerUrl: newUrl, homeConnectionDescriptor: descriptor,
+        } });
+        expect(profiles.listServerProfiles()).toHaveLength(countBefore);
+        expect(profiles.getActiveServerId()).toBe(activeBefore);
+        expect(await TokenStorage.getCredentialsForServerUrl(newUrl, { serverId: homeIdentity })).toEqual(credentials);
+    });
+
+    it('retains URL-only predecessor Home admission without requiring an exact-descriptor endpoint', async () => {
+        const { operation, profiles } = await owner();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const oldUrl = 'https://legacy-home.example.test';
+        const existing = await profiles.upsertServerProfile({ serverUrl: oldUrl, name: 'Legacy Home', source: 'manual' });
+        await profiles.setServerProfileIdentityForUrl(oldUrl, homeIdentity);
+        const credentials = { token: 'legacy-account-token' };
+        await TokenStorage.setCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }, credentials);
+        expect(await operation.connectHomeAtAddress(input({ serverUrl: canonicalUrl })))
+            .toMatchObject({ kind: 'connected', profile: {
+                id: existing.id, name: 'Legacy Home', serverIdentityId: homeIdentity, canonicalServerUrl: canonicalUrl,
+            } });
+        expect(await TokenStorage.getCredentialsForServerUrl(canonicalUrl, { serverId: homeIdentity })).toEqual(credentials);
+    });
+
+    it('does not forward a saved credential to a changed address until that move is confirmed', async () => {
+        const { operation, profiles } = await owner();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const oldUrl = 'https://old-home.example.test';
+        const existing = await profiles.adoptHomeProfile({
+            descriptor: { v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: oldUrl,
+                revision: 7, endpoints: [{ kind: 'https', url: oldUrl }] }, source: 'qr',
+        });
+        const credentials = { token: 'saved-account-token' };
+        await TokenStorage.setCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }, credentials);
+        const confirmCanonicalUrl = vi.fn(async () => false);
+        expect(await operation.connectHomeAtAddress(input({ serverUrl: canonicalUrl, confirmCanonicalUrl })))
+            .toEqual({ kind: 'declined' });
+        expect(confirmCanonicalUrl).toHaveBeenCalledWith({ previousUrl: oldUrl, nextUrl: canonicalUrl });
+        expect(boundary.fetch.mock.calls.some(([, init]) => new Headers(init?.headers).has('Authorization'))).toBe(false);
+        expect(profiles.getServerProfileById(existing.id)).toEqual(existing);
+        expect(await TokenStorage.getCredentialsForServerUrl(oldUrl, { serverId: homeIdentity })).toEqual(credentials);
+    });
+
+    it.each(['identity_mismatch', 'missing_descriptor', 'cancelled'] as const)('preserves the saved Home and credential when the fresh observation is %s', async (failure) => {
+        const { operation, profiles } = await owner();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const oldUrl = 'https://old-home.example.test';
+        const existing = await profiles.adoptHomeProfile({
+            descriptor: { v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: oldUrl,
+                revision: 7, endpoints: [{ kind: 'https', url: oldUrl }] }, source: 'qr',
+        });
+        const credentials = { token: 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJhY2NvdW50X2EifQ.sig' };
+        await TokenStorage.setCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }, credentials);
+        const controller = new AbortController();
+        const immediateFetch = boundary.fetch.getMockImplementation()!;
+        boundary.fetch.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith('/v1/features/authenticated')) {
+                if (failure === 'cancelled') controller.abort();
+                const identity = failure === 'identity_mismatch' ? 'srv_other_home' : homeIdentity;
+                return response(200, createRootLayoutFeaturesResponse({
+                    capabilities: { server: { canonicalServerUrl: canonicalUrl }, serverIdentity: { serverIdentityId: identity } },
+                    ...(failure !== 'missing_descriptor' ? { homeConnectionDescriptor: {
+                        v: 1, homeServerIdentityId: identity, canonicalServerUrl: canonicalUrl,
+                        revision: 8, endpoints: [{ kind: 'https', url: canonicalUrl }],
+                    } } : {}),
+                }));
+            }
+            return immediateFetch(url, init);
+        });
+        if (failure === 'cancelled') {
+            await expect(operation.connectHomeAtAddress(input({ signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
+        } else {
+            expect(await operation.connectHomeAtAddress(input())).toMatchObject({
+                kind: failure === 'identity_mismatch' ? 'identity_mismatch' : 'unreachable',
+            });
+            if (failure === 'identity_mismatch') {
+                const { createMachineConnectionActionDeps } = await import('@/sync/ops/actions/machineConnectionActionDeps');
+                expect(await createMachineConnectionActionDeps().homeConnect?.({
+                    address: enteredUrl, acceptCanonicalUrl: true, acceptInsecureHttp: true,
+                }, { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'home_identity_mismatch' });
+            }
+        }
+        expect(profiles.getServerProfileById(existing.id)).toEqual(existing);
+        expect(await TokenStorage.getCredentialsForServerUrl(oldUrl, { serverId: homeIdentity })).toEqual(credentials);
     });
 
     it('connects a Home advertising released 0.2.1 features without an update requirement', async () => {

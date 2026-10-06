@@ -45,7 +45,9 @@ module.exports = function (api) {
     : workletsPlugin;
 
   return {
-    presets: ['babel-preset-expo'],
+    // Metro emits web scripts, not ES modules. Complete development graphs
+    // include optional packages (such as zip.js) that use import.meta.
+    presets: [['babel-preset-expo', { web: { unstable_transformImportMeta: true } }]],
     env: {
       production: {
         plugins: ["transform-remove-console"],

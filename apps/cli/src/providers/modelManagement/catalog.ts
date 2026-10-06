@@ -1,14 +1,7 @@
-import {
-  ProviderConnectionIdSchema,
-  ProviderCatalogFingerprintV1Schema,
-  ProviderMachineIdSchema,
-  ProviderModelIdSchema,
-  ProviderObservationAuthorizationFingerprintV1Schema,
-  createProviderErrorV1,
-  type ProviderErrorV1,
-  type ProviderCatalogRuntimeStateRecordV1,
-  type ProviderRuntimeStateFileV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderCatalogFingerprintV1Schema, ProviderObservationAuthorizationFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1, ProviderCatalogRuntimeStateRecordV1, ProviderRuntimeStateFileV1 } from '@happier-dev/protocol';
 
 import {
   createProviderCatalogRefreshFingerprint,

@@ -1,11 +1,7 @@
-import {
-  ExternalSessionsAgentIdSchema,
-  ExternalSessionTakeoverTargetDirectoryV1Schema,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  type ExternalSessionsSource,
-  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
-  type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { ExternalSessionTakeoverTargetDirectoryV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionsSource, PluginAgentExternalLinkedTakeoverWriterSafetyV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import { fetchAccountProfile } from '@/api/accountProfile';

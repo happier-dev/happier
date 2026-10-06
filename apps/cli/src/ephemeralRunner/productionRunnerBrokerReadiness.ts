@@ -1,17 +1,14 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  buildBackendTargetKeyV2,
-  buildQualifiedPluginContributionKey,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { RunnerActivationBindingV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
 import type { RunnerClaimV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';
 import type { RunnerLaunchManifestV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
-import { signRunnerReadinessV1, type RunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
-import {
-  signRunnerBrokerReadinessRequestV1,
-  type RunnerBrokerReadinessProjectionV1,
-} from '@happier-dev/protocol/teams';
+import { signRunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
+import type { RunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
+import { signRunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
+import type { RunnerBrokerReadinessProjectionV1 } from '@happier-dev/protocol/teams';
 
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 

@@ -3,12 +3,12 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { View } from 'react-native';
 import {
-    applyWorkBoardIntentV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, createWorkBoardV1, WorkBoardActionInputSchemasV1,
-    WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardV1, type WorkBoardWidgetPlacementV1,
+    buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, createWorkBoardV1, WorkBoardActionInputSchemasV1,
+    WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardWidgetPlacementV1,
 } from '@happier-dev/protocol';
 import { widgetCandidateDefinitionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { buildAccountWidgetAddSections } from '@/components/widgets/add/accountWidgetAddSections';
@@ -26,7 +26,7 @@ import { projectBoardMembership } from './model/boardMembership';
 import { createWorkBoardAccountStore } from './model/workBoardAccountStore';
 import { createWorkBoardUiActionPort } from './model/workBoardEntityDrop';
 import type { WorkBoardEntityBinding } from './model/workBoardEntityBinding';
-import { buildBoardWidgetUndoIntents, resolveBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
+import { useAcknowledgedBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 
 vi.mock('react-native', async () => {
     const native = await import('@/dev/testkit/mocks/reactNative');
@@ -195,7 +195,7 @@ describe('WorkBoard widgets', () => {
         expect(b.board().widgets?.[1]?.width).toBe(2);
     });
 
-    it('places a widget with the Canvas keyboard controls, saving its qualified key and keeping the work card', async () => {
+    it('places a widget with the shared grip keyboard and accessibility controls, saving its qualified key and keeping the work card', async () => {
         const placed = placement(copy('c1'));
         const board = boardWith([placed], { [keyOf(placed)]: { x: 48, y: 24 } });
         const b = boardStore(board);
@@ -211,6 +211,14 @@ describe('WorkBoard widgets', () => {
         await press('Enter');
         const step = BOARD_CANVAS_METRICS.gridStepPx;
         expect(commits).toEqual([{ [keyOf(placed)]: { x: 48 + step, y: 24 + step } }]);
+        expect(grip?.props.accessibilityActions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'moveLeft' }), expect.objectContaining({ name: 'moveDown' }),
+        ]));
+        await act(async () => { grip?.props.onAccessibilityAction?.({ nativeEvent: { actionName: 'moveLeft' } }); });
+        expect(commits).toEqual([
+            { [keyOf(placed)]: { x: 48 + step, y: 24 + step } },
+            { [keyOf(placed)]: { x: 48, y: 24 + step } },
+        ]);
         expect(b.board().source.picked).toEqual([work]);
         expect(b.board().widgets?.map(widget => widget.instance.id)).toEqual(['c1']);
     });
@@ -227,9 +235,11 @@ describe('WorkBoard widgets', () => {
         const actions = (testID: string) => (screen.tree.findAll(node =>
             (node.props as { overflowTriggerTestID?: string }).overflowTriggerTestID === `${testID}.menu`
             && Array.isArray((node.props as { actions?: unknown }).actions)).at(-1)?.props as { actions: ReadonlyArray<{ id: string; selected?: boolean; disabled?: boolean; onPress: () => void }> }).actions;
-        expect(actions('board-widget:c1').map(action => action.id)).toEqual(expect.arrayContaining(['rename', 'width-1', 'width-2', 'moveEarlier', 'moveLater', 'remove']));
+        expect(actions('board-widget:c1').map(action => action.id)).toEqual(expect.arrayContaining(['rename', 'width-1', 'width-2', 'moveDown', 'remove']));
         expect(actions('board-widget:c1').find(action => action.id === 'width-1')?.selected).toBe(true);
-        expect(actions('board-widget:c1').find(action => action.id === 'moveEarlier')?.disabled).toBe(true);
+        // The first card has no "earlier" entry to show disabled: a step that does nothing is absent.
+        expect(actions('board-widget:c1').find(action => action.id === 'moveUp')).toBeUndefined();
+        expect(actions('board-widget:c1').at(-1)?.id).toBe('remove');
 
         await act(async () => { actions('board-widget:c1').find(action => action.id === 'width-2')!.onPress(); });
         await vi.waitFor(() => expect(b.board().widgets?.map(widget => [widget.instance.id, widget.width])).toEqual([['c1', 2], ['c2', 1]]));
@@ -286,27 +296,53 @@ describe('WorkBoard widgets', () => {
         expect(unique).toEqual(['board-by-status:column:widgets', 'stub:c2', 'stub:c1', 'board-by-status:column:working']);
     });
 
-    it('an arrival is someone else’s copy, and its Undo removes only that copy while it is still the one that arrived', () => {
+    it.each(['rename', 'inputs', 'width', 'frame', 'order', 'position'] as const)(
+        'mounted arrival Undo preserves an acknowledged %s edit and removes the untouched arrivals', async (edit) => {
         const mine = placement(copy('mine', CHECKS, 'main'));
         const agentA = placement(copy('agent-a', CHECKS, 'main'));
         const agentB = placement(copy('agent-b', NOTES));
+        const agentC = placement(copy('agent-c', NOTES));
         const old = placement(copy('old', NOTES));
-        const arrived = resolveBoardWidgetArrivals({ placements: [old, mine, agentA, agentB],
-            seen: new Set(['mine', 'agent-a', 'agent-b']), ownAdds: new Set(['mine']), dismissed: new Set() });
-        expect(arrived.map(widget => widget.instance.id)).toEqual(['agent-a', 'agent-b']);
-        expect(resolveBoardWidgetArrivals({ placements: [old, mine, agentA, agentB], seen: new Set(['agent-a']),
-            ownAdds: new Set(), dismissed: new Set(['agent-a']) })).toEqual([]);
-
-        const boards = WorkBoardsV1Schema.parse({ v: 1, boards: [boardWith([old, mine, agentA, agentB])] });
-        const [undoA, undoB] = buildBoardWidgetUndoIntents('b1', arrived);
-        // Agent B's copy was edited after it arrived: Undo keeps that edit and still removes A.
-        const edited = applyWorkBoardIntentV1(boards, { kind: 'widget_rename', boardId: 'b1', ref: agentB.ref, displayName: 'Mine now' });
-        if (edited.status !== 'applied') throw new Error('rename refused');
-        const afterA = applyWorkBoardIntentV1(edited.boards, undoA!);
-        if (afterA.status !== 'applied') throw new Error('undo refused');
-        expect(afterA.boards.boards[0]!.widgets?.map(widget => widget.instance.id)).toEqual(['old', 'mine', 'agent-b']);
-        expect(() => applyWorkBoardIntentV1(afterA.boards, undoB!)).toThrow('widget_instance_changed');
-        expect(afterA.boards.boards[0]!.source.picked).toEqual([work]);
+        const b = boardStore(boardWith([old]));
+        await b.store.refresh();
+        const ownAdds = new Set(['mine']);
+        const hook = await renderHook(() => {
+            const acknowledged = React.useSyncExternalStore(b.store.subscribe, b.store.getBoards, b.store.getBoards);
+            return useAcknowledgedBoardWidgetArrivals('b1', acknowledged.boards[0] ?? null, ownAdds, b.store.queue.dispatch);
+        });
+        expect(hook.getCurrent().pending).toEqual([]);
+        // Another device's Artifact write becomes arrival news only once this Board acknowledges it.
+        const external = createWorkBoardAccountStore(b.persistence.transport, () => true);
+        await external.refresh();
+        for (const placed of [mine, agentA, agentB, agentC]) {
+            await external.queue.dispatch({ kind: 'widget_add', boardId: 'b1', ref: placed.ref, instance: placed.instance });
+        }
+        expect(hook.getCurrent().pending).toEqual([]);
+        await act(async () => { await b.store.refresh(); });
+        expect(hook.getCurrent().pending.map(widget => widget.instance.id)).toEqual(['agent-a', 'agent-b', 'agent-c']);
+        expect([...hook.getCurrent().arrived]).toEqual(['agent-a', 'agent-b', 'agent-c']);
+        const target = { boardId: 'b1', ref: agentA.ref };
+        const edits: Record<typeof edit, WorkBoardIntentV1> = {
+            rename: { ...target, kind: 'widget_rename', displayName: 'Mine now' },
+            inputs: { ...target, kind: 'widget_inputs', bindings: { branch: { kind: 'value', value: 'changed' } } },
+            width: { ...target, kind: 'widget_width', width: 2 },
+            frame: { ...target, kind: 'widget_frame', frameStyle: 'plain' },
+            order: { ...target, kind: 'widget_move', nativeIndex: 0 },
+            position: { kind: 'set_positions', boardId: 'b1', positionsByItemRef: { [keyOf(agentA)]: { x: 48, y: 24 } } },
+        };
+        await act(async () => {
+            expect((await b.store.queue.dispatch(edits[edit])).status).toBe('applied');
+        });
+        const edited = b.board().widgets?.find(widget => widget.instance.id === 'agent-a');
+        const position = b.board().positionsByItemRef[keyOf(agentA)];
+        const fresh = hook.getCurrent().arrived;
+        await act(async () => { await hook.getCurrent().undo(); });
+        expect(b.board().widgets?.map(widget => widget.instance.id)).toEqual(['old', 'mine', 'agent-a']);
+        expect(b.board().widgets?.find(widget => widget.instance.id === 'agent-a')).toEqual(edited);
+        expect(b.board().positionsByItemRef[keyOf(agentA)]).toEqual(position);
+        expect(b.board().source.picked).toEqual([work]);
+        expect(hook.getCurrent().pending).toEqual([]);
+        expect(hook.getCurrent().arrived).toBe(fresh);
     });
 });
 

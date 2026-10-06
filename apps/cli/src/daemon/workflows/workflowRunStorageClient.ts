@@ -1,6 +1,6 @@
 import axios from 'axios';
-import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol';
-import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

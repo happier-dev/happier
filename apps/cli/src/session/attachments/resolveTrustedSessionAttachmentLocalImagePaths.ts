@@ -2,15 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import {
-    readAttachmentEnvelopeLocalImagePaths,
-    readSessionAttachmentEnvelopeRecordsV1,
-    type BrowserScreenshotMediaReferenceV1,
-    type SessionImageMediaReferenceV1,
-    hasPluginSessionAccess,
-    type PluginSessionAccessScope,
-} from '@happier-dev/protocol';
-import { normalizeSessionAttachmentUploadPath } from '@happier-dev/protocol/runtime';
+import { readAttachmentEnvelopeLocalImagePaths } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { readSessionAttachmentEnvelopeRecordsV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import type { BrowserScreenshotMediaReferenceV1, SessionImageMediaReferenceV1, PluginSessionAccessScope } from '@happier-dev/protocol';
+import { hasPluginSessionAccess } from '@happier-dev/protocol/sessions/pluginAccess';
+import { normalizeSessionAttachmentUploadPath } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { configuration } from '@/configuration';
 
 import {

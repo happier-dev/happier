@@ -1,5 +1,5 @@
 import type { MachineOwnerConflictMetadata } from '@happier-dev/protocol';
-import { readMachineOwnerConflictSocketPayload } from '@happier-dev/protocol';
+import { readMachineOwnerConflictSocketPayload } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 
 export type MachineOwnerConflictDetails = MachineOwnerConflictMetadata;
 

@@ -1,5 +1,7 @@
-import { parseAgentPermissionIntentV1Alias, type ActionExecutorContext } from '@happier-dev/protocol';
-import { SessionActionRpcOriginV1Schema, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 
 export function resolveSessionRoleRpcOrigin(context: ActionExecutorContext): SessionActionRpcOriginV1 {
   const source = context.sessionInputSource;

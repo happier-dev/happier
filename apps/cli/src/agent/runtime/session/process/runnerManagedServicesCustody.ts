@@ -1,22 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import {
-    ConnectedAccountMaterializationRequestSchema,
-    ConnectedAccountPurposeIdSchema,
-    ManagedExecutableRefSchema,
-    ManagedServiceLocalIdSchema,
-    PluginDiagnosticDataV1Schema,
-    PluginIdSchema,
-    PluginSourceCustodyV1Schema,
-    normalizePluginSourceCustodyV1,
-    pluginSourceCustodyV1Equal,
-    PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
-    ProviderRuntimeBindingBasisV1Schema,
-    type AgentProviderBindingMaterializationV1,
-    type ProviderRuntimeBindingBasisV1,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { ConnectedAccountPurposeIdSchema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { ManagedExecutableRefSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
+import { ManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginSourceCustodyV1Schema, normalizePluginSourceCustodyV1, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { AgentProviderBindingMaterializationV1, ProviderRuntimeBindingBasisV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import type {
     ManagedDependenciesService,
     ManagedServiceErrorCode,

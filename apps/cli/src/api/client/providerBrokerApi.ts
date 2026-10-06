@@ -1,11 +1,6 @@
 import axios from 'axios';
-import {
-  PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
-  ProviderBrokerOpenRequestV1Schema,
-  ProviderBrokerOpenResponseV1Schema,
-  type ProviderBrokerOpenRequestV1,
-  type ProviderBrokerOpenResponseV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, ProviderBrokerOpenRequestV1Schema, ProviderBrokerOpenResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 

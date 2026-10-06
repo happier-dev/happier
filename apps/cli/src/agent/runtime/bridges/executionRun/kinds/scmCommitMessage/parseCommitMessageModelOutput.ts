@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol';
+import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol/scm';
 
 const ModelOutputSchema = z.object({
   title: z.string().min(1).max(200),

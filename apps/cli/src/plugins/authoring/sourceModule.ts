@@ -1,12 +1,8 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 
-import {
-  formatPluginManifestIngestionDiagnostics,
-  ingestPluginManifestV2,
-  validatePublicPluginManifestPolicy,
-  type ParsedPluginManifestV2,
-} from '@happier-dev/protocol';
+import { formatPluginManifestIngestionDiagnostics, ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 import {
   type PluginAccountCollectionMigrationRuntimeProjection,
   type PluginDaemonDatabaseRuntimeProjection,

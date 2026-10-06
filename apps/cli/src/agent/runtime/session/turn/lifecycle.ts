@@ -1,11 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-    AgentSessionRuntimeEventSchema,
-    type AgentSessionRuntimeEvent,
-    type SessionRuntimeIssueV1,
-    type SessionTurnFactsV1,
-} from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1, SessionTurnFactsV1 } from '@happier-dev/protocol';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
@@ -126,8 +122,10 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
         if (!params.onAcceptedTurnLifecycle) {
             try {
-                void Promise.resolve(enqueue(mutation))
-                    .catch(() => undefined);
+                const persistence = Promise.resolve(enqueue(mutation))
+                    .then(() => undefined, () => undefined);
+                acceptedLifecycleTail = Promise.all([acceptedLifecycleTail, persistence])
+                    .then(() => undefined);
             } catch {
                 // Mutation persistence is best-effort; runtime lifecycle observation must keep progressing.
             }

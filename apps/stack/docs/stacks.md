@@ -284,6 +284,8 @@ hstack env set OPENAI_API_KEY=sk-...
 
 In source development, the TUI keeps the server and Expo available while daemon credentials are missing, so its `a` login action can complete. The daemon waits for authentication before starting; the development runner checks again after credentials are created.
 
+In 0.3 development, daemon readiness checkpoints continue while the start wrapper or daemon remains live, including before it writes its state file. Shutdown cancels and joins the owned start wrapper. A failed `hstack stack daemon <stack> start` or `restart` exits nonzero; a returned startup failure produces `ok: false` with its reason in JSON mode. The long-running TUI can remain available after the attempt fails.
+
 On a **fresh machine** (or any new stack), the daemon may need to authenticate before it can register a “machine”.
 If the UI shows “no machine” (or the daemon shows `auth_required`), it usually means the stack-specific CLI home
 doesn’t have credentials yet:

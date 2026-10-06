@@ -12,7 +12,7 @@ export type SettingsDeclarationsActionInputById = {
     };
     readonly "settings.set": {
         anchor: string;
-        value: string | number | boolean | null;
+        value: unknown;
     };
     readonly "settings.invoke": {
         anchor: string;
@@ -63,14 +63,18 @@ export type SettingsDeclarationsActionResultById = {
     };
     readonly "settings.get": {
         anchor: string;
-        value: string | number | boolean | null;
+        value: string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null;
     } | {
         anchor: string;
         unset: true;
     };
     readonly "settings.set": {
         anchor: string;
-        value: string | number | boolean | null;
+        value: string | number | boolean | readonly JsonValue[] | {
+            readonly [key: string]: JsonValue;
+        } | null;
     };
     readonly "settings.invoke": {
         anchor: string;

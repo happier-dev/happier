@@ -7,7 +7,8 @@ import {
 } from '@happier-dev/protocol';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { PluginContextualResourceState, PluginContextualResourceStoreProvider, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
-import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceBinding } from '@/components/plugins/surfaces/declarativeDataSource';
+import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceBinding,
+    type DeclarativeDataSourceProjection } from '@/components/plugins/surfaces/declarativeDataSource';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { readDeclarativeText, renderDeclarativeNode, type DeclarativeNodeRenderContext } from '@/components/plugins/shared/declarativeNodes';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -76,11 +77,10 @@ function createDataFreshnessStore() {
 type DataFreshnessStore = ReturnType<typeof createDataFreshnessStore>;
 const DataFreshnessContext = React.createContext<DataFreshnessStore | null>(null);
 
-function freshnessOf(snapshot: PluginUiResourceSnapshot | null): DataNodeFreshness['state'] {
-    if (!snapshot) return 'fresh';
-    if (snapshot.pending === 'refresh') return 'refreshing';
-    if (snapshot.error) return 'failed';
-    return snapshot.freshness === 'stale' || snapshot.subscription === 'reconnecting' ? 'stale' : 'fresh';
+function freshnessOf(projected: DeclarativeDataSourceProjection): DataNodeFreshness['state'] {
+    if (projected.pending === 'refresh') return 'refreshing';
+    if (projected.errorCode) return 'failed';
+    return projected.freshness === 'stale' ? 'stale' : 'fresh';
 }
 
 /**
@@ -91,17 +91,17 @@ function freshnessOf(snapshot: PluginUiResourceSnapshot | null): DataNodeFreshne
 function RetainedDataNode(props: Readonly<{
     reportKey: string;
     node: PluginDeclarativeDataNodeV1;
-    snapshot: PluginUiResourceSnapshot | null;
+    projected: DeclarativeDataSourceProjection;
     refresh: () => Promise<void>;
     context: DeclarativeNodeRenderContext;
 }>): React.ReactElement | null {
     const store = React.useContext(DataFreshnessContext);
     const seen = React.useRef<Readonly<{ digest: string | undefined; at: number }> | null>(null);
-    const state = freshnessOf(props.snapshot);
-    const digest = props.snapshot?.digest;
-    if (props.snapshot?.value && state === 'fresh' && seen.current?.digest !== digest) seen.current = { digest, at: Date.now() };
+    const state = freshnessOf(props.projected);
+    const digest = props.projected.digest;
+    if (state === 'fresh' && seen.current?.digest !== digest) seen.current = { digest, at: Date.now() };
     const asOf = seen.current?.digest === digest ? seen.current?.at : undefined;
-    const reasonCode = props.snapshot?.error?.code;
+    const reasonCode = props.projected.errorCode;
     const refresh = props.refresh;
     const shown = props.node;
     React.useEffect(() => {
@@ -110,6 +110,29 @@ function RetainedDataNode(props: Readonly<{
     }, [store, props.reportKey, state, shown, digest, reasonCode, asOf, refresh]);
     React.useEffect(() => () => store?.report(props.reportKey, null), [store, props.reportKey]);
     return <>{renderDeclarativeNode(props.node, { ...props.context, renderDataNode: undefined }, props.reportKey)}</>;
+}
+
+/** Retain a validated presentation only while the exact read still discloses bytes. */
+function ProjectedResourceDataNode(props: Readonly<{
+    node: PluginDeclarativeDataNodeV1;
+    snapshot: PluginUiResourceSnapshot | null;
+    isCurrent: boolean;
+    refresh: () => Promise<void>;
+    context: DeclarativeNodeRenderContext;
+    reportKey: string;
+    testID: string;
+}>): React.ReactElement {
+    const lastGood = React.useRef<DeclarativeDataSourceProjection | null>(null);
+    const projected = projectDeclarativeDataResourceSnapshot(props.node, props.snapshot, props.isCurrent, lastGood.current);
+    // No bytes means the Resource owner withdrew them (or has not admitted a
+    // first read). Keeping a typed model then would bypass its authority.
+    lastGood.current = projected.node ? projected : null;
+    if (projected.node) return <RetainedDataNode reportKey={props.reportKey} node={projected.node} projected={projected}
+        refresh={props.refresh} context={props.context} />;
+    if (projected.pending === 'initial' && !projected.errorCode) return <ItemLoadStateRows testID={`${props.testID}-data-loading`}
+        state={{ kind: 'loading' }} rows={3} lines={2} shape="list" />;
+    return <UnavailableInstalledWidget testID={`${props.testID}-data`} unresolved={{ state: 'unavailable',
+        reasonCode: projected.errorCode ?? 'widget_data_source_unavailable' }} />;
 }
 
 function ResourceDataNode(props: DeclarativeWidgetDocumentProps & Readonly<{
@@ -124,18 +147,15 @@ function ResourceDataNode(props: DeclarativeWidgetDocumentProps & Readonly<{
     const origin = readPluginUiContributionOrigin(declaration);
     const readEnabled = origin ? origin.phase === 'current' && origin.interactionEnabled
         : props.runtime.phase === 'current' && props.runtime.interactionEnabled;
+    // Bind validated LKG to the same Account, occurrence, realm, exact target,
+    // inputs and authored projection. A different read starts without its data.
+    const dataIdentity = JSON.stringify([binding.accountLifetime.scope, binding.pluginId, binding.machineId,
+        binding.serverId, binding.expectedCallerOccurrenceId, binding.context, props.node]);
     return <PluginContextualResourceState binding={binding} resource={props.node.data.resource} isCurrent={props.isCurrent}
         active={props.enabled !== false && readEnabled}>
-        {(snapshot, controls) => {
-            const projected = projectDeclarativeDataResourceSnapshot(props.node, snapshot, props.accountLifetime.isCurrent() && props.isCurrent());
-            if (projected.node) return <RetainedDataNode reportKey={props.reportKey} node={projected.node} snapshot={snapshot}
-                refresh={controls.refresh} context={props.context} />;
-            // First read only: the body keeps its room with quiet rows in the content's shape.
-            if (projected.pending === 'initial' && !projected.errorCode) return <ItemLoadStateRows testID={`${props.testID}-data-loading`}
-                state={{ kind: 'loading' }} rows={3} lines={2} shape="list" />;
-            return <UnavailableInstalledWidget testID={`${props.testID}-data`} unresolved={{ state: 'unavailable',
-                reasonCode: projected.errorCode ?? 'widget_data_source_unavailable' }} />;
-        }}
+        {(snapshot, controls) => <ProjectedResourceDataNode key={dataIdentity} node={props.node} snapshot={snapshot}
+            isCurrent={props.accountLifetime.isCurrent() && props.isCurrent()} refresh={controls.refresh}
+            context={props.context} reportKey={props.reportKey} testID={props.testID} />}
     </PluginContextualResourceState>;
 }
 
@@ -172,11 +192,15 @@ export function DeclarativeWidgetDocument(props: DeclarativeWidgetDocumentProps)
     // Post a snapshot reads exactly what this document shows, only when the person asks for it.
     const snapshotSlot = React.useContext(WidgetSnapshotCaptureContext);
     const document = parsed.success ? parsed.data : null;
-    React.useEffect(() => (snapshotSlot && document ? snapshotSlot.register(() => {
-        const reports = [...freshness.getSnapshot()];
-        return { document, frozenByPath: new Map(reports.map(([path, report]) => [path, report.shown])),
-            digests: reports.flatMap(([, report]) => (report.digest ? [report.digest] : [])),
-            current: reports.every(([, report]) => report.state === 'fresh') };
+    React.useEffect(() => (snapshotSlot && document ? snapshotSlot.register({
+        read: () => {
+            const reports = [...freshness.getSnapshot()];
+            return { document, frozenByPath: new Map(reports.map(([path, report]) => [path, report.shown])),
+                digests: reports.flatMap(([, report]) => (report.digest ? [report.digest] : [])),
+                current: reports.every(([, report]) => report.state === 'fresh'),
+                refresh: () => Promise.all(reports.map(([, report]) => report.refresh())) };
+        },
+        subscribe: freshness.subscribe,
     }) : undefined), [document, freshness, snapshotSlot]);
     const renderDataNode = (value: Readonly<Record<string, unknown>>, path: string): React.ReactNode => {
         const { path: _path, order: _order, ...authored } = value;

@@ -1,4 +1,5 @@
-import { renderWorkerUpdatePromptBlockV1, type WorkerUpdateV1 } from '@happier-dev/protocol';
+import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { WorkerUpdateV1 } from '@happier-dev/protocol';
 import type { SessionFollowPreparedContext } from '../follow/sessionFollowContextReconciler';
 import { measureSessionFollowUtf8Bytes } from '../follow/sessionFollowContextBudget';
 

@@ -83,6 +83,40 @@ The **Files** tab is the in-session file manager for the current workspace.
 
 Opening a file uses the same details surface whether you start from the file tree, a changed-file row, a review diff, a transcript file link, a review-comment jump, or a linked-file chip in the composer.
 
+### Video preview and Android downloads
+
+In the current development build (unreleased), supported MP4, M4V, MOV, and
+WebM files open in the file view with playback controls, seeking, and fullscreen.
+Playback depends on the codecs available on your device. The video downloads
+before playback starts, using the normal file transfer limits; a video can be
+larger than the text preview limit without being treated as oversized text.
+Web playback also uses the browser's memory budget for buffering files. A
+file-backed download may still succeed when a preview is too large.
+If loading or playback fails, use **Retry** or download the file to open it in
+another app.
+
+On Android, the file view's download menu offers **Save as…**, **Open with…**,
+and **Share…**. **Save as…** opens the Android document picker so you can choose
+Downloads or another available location. Canceling the picker leaves no saved
+file. **Open with…** lets you choose an installed app, and **Share…** sends the
+file to another app. Downloads from the file tree use the same save picker.
+Opening or sharing a file uses a temporary cached copy; use **Save as…** when
+you want to keep a file in a location you can find later.
+
+The transfer cancel control is available while the file downloads. Once the
+system opens a save picker, app chooser, or share sheet, use that dialog's
+controls instead.
+
+Opened or shared copies stay in Happier's private app cache so the receiving app
+can finish reading them. [Android may reclaim cache files when storage is low](https://developer.android.com/training/data-storage/app-specific),
+and you can clear Happier's cache in Android's app settings. These copies have no
+guaranteed retention period, and Happier does not currently purge them
+automatically after an **Open with…** or **Share…** action.
+
+If a save fails after you choose a destination, Happier tries to remove the
+incomplete document. If the document provider refuses deletion, the error
+identifies the remaining document so you can remove it yourself.
+
 <Callout type="info">
   In the current development build (unreleased), **Project** view hides Git-ignored
   files and repository metadata while keeping tracked files, changed files, and
@@ -201,7 +235,8 @@ Uploads and downloads run as managed transfers instead of fire-and-forget action
 Platform notes:
 
 - **Web**: downloads use the browser download flow.
-- **iOS / Android**: downloads are written to a temporary local file and then passed to the system share/open flow.
+- **iOS**: downloads are written to a temporary local file and then passed to the system share flow.
+- **Android**: in the current development build (unreleased), downloads from the file tree open **Save as…**. The file view also offers **Open with…** and **Share…** using a temporary cached copy.
 
 ### Rename, delete, and download
 

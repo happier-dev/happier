@@ -40,13 +40,9 @@ import {
   createPersonalHomeRelocationDestinationOwner,
   type PersonalHomeRelocationDestinationOwner,
 } from './relocationDestination.js';
-import {
-  HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1,
-  HomeConnectionDescriptorV1Schema,
-  HomeOwnerClaimCommandOutputV1Schema,
-  type HomeConnectionDescriptorV1,
-  type HomeOwnerClaimCommandOutputV1,
-} from '@happier-dev/protocol';
+import { HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1, HomeOwnerClaimCommandOutputV1Schema } from '@happier-dev/protocol/home/governance/claim';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeConnectionDescriptorV1, HomeOwnerClaimCommandOutputV1 } from '@happier-dev/protocol';
 import { execFileWithDeadline } from '../../process/index.js';
 import {
   parsePersonalHomeAuthenticatedReadiness,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import { encodeBase64 } from '../crypto/base64.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/installationIdentity.js';
@@ -44,6 +45,20 @@ import {
 } from './encryptionMigrate.js';
 
 describe('account/encryptionMigrate', () => {
+  it('retains classic proof projection and key-binding refinement identity', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(AccountEncryptionMigrateKeyProofSchema, { target })).toMatchObject({
+        type: 'object', additionalProperties: false, required: ['v', 'publicKey', 'signature'],
+        properties: { contentPublicKey: { type: 'string', minLength: 1, maxLength: 4096 } },
+      });
+    }
+    const invalid = AccountEncryptionMigrateKeyProofSchema.safeParse({ v: 1, publicKey: 'public', signature: 'sig', contentPublicKey: 'content' });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error).toBeInstanceOf(z.ZodError);
+      expect(invalid.error.issues).toContainEqual(expect.objectContaining({ code: 'custom' }));
+    }
+  });
   it('binds the exact binary inventory and refuses target-mode mismatches or duplicate blob identities', () => {
     const blob = { blobId: '11111111-1111-4111-8111-111111111111', expectedContentSha256: 'a'.repeat(64),
       content: { t: 'plain' as const, uploadId: '11111111-1111-4111-8111-111111111112', contentSha256: 'b'.repeat(64) } };

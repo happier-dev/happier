@@ -165,6 +165,21 @@ describe('usePluginMachineExecutionOriginSelection', () => {
         standardCleanup();
     });
 
+    it('projects a sole live candidate without persisting inferred preference on mount or rerender', async () => {
+        fixture.selections = { v: 1, pluginExecutionOriginsByPluginId: {} };
+        const { usePluginMachineExecutionOriginSelection } = await import('./usePluginExecutionOriginSelection');
+        const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({
+            pluginId: 'acme.plugin',
+            classifyRelease: () => ({ releaseContent: 'matched', validation: { kind: 'admitted' } }),
+        }));
+        expect(fixture.mutateAccountSettingsOnce).not.toHaveBeenCalled();
+        expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', selectionSource: 'soleCandidate' });
+        expect(hook.getCurrent().selectedOrigin).toBeNull();
+        expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
+        await hook.rerender();
+        expect(fixture.mutateAccountSettingsOnce).not.toHaveBeenCalled();
+    });
+
     it('replays one exact origin mutation against the canonical Account Settings winner', async () => {
         const { usePluginMachineExecutionOriginSelection } = await import('./usePluginExecutionOriginSelection');
         const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({

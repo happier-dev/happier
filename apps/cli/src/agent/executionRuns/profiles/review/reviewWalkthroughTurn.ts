@@ -1,7 +1,5 @@
-import {
-  ScmComparisonSchema,
-  type ScmDiffSummaryReviewProvenance,
-} from '@happier-dev/protocol';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryReviewProvenance } from '@happier-dev/protocol';
 import type { ExecutionRunProfileStartParams } from '../ExecutionRunIntentProfile';
 import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { buildDiffSummaryPrompt } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';

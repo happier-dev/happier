@@ -1,11 +1,65 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { linkDaemonSupportPayload } from '../../build/build_daemon_artifact.mjs';
 import { readReusableArtifactManifest } from '../../runtime/shared/artifact_manifest.mjs';
 import { importRuntimeArtifactClosure } from './runtime_artifact_transfer.mjs';
+import { symlink } from 'node:fs/promises';
+
+test('controlled import entry releases its uploaded archive after a rejected import', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'controlled-import-cleanup-'));
+  try {
+    const archivePath = join(root, 'snapshot.tar');
+    await writeFile(archivePath, 'incomplete archive');
+    const entry = fileURLToPath(new URL('./runtime_artifact_transfer.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [entry, `--archive=${archivePath}`, `--stack-base-dir=${join(root, 'consumer')}`, '--snapshot-id=broken'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /runtime archive operation failed/);
+    await assert.rejects(stat(archivePath), { code: 'ENOENT' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('controlled transfer admits the complete snapshot closure at the consumer target and retains relocatable support', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'controlled-transfer-'));
+  const producer = join(root, 'producer');
+  const consumer = join(root, 'consumer');
+  const target = { platform: process.platform, arch: process.arch };
+  const snapshotId = 'qa-snapshot';
+  const snapshotDir = join(producer, 'runtime/builds', snapshotId);
+  const components = {};
+  const artifacts = {};
+  try {
+    for (const [component, directory, entrypoint] of [['web', 'ui', 'index.html'], ['server', 'server', 'happier-server'], ['daemon', 'cli', 'happier']]) {
+      const artifactDir = join(producer, 'artifacts', component, component + '-code');
+      await mkdir(join(artifactDir, 'payload/dist'), { recursive: true });
+      await writeFile(join(artifactDir, 'payload', entrypoint), component);
+      if (component === 'daemon') {
+        await writeFile(join(artifactDir, 'payload/dist/index.mjs'), 'export {};');
+        await writeFile(join(artifactDir, 'payload/dist/.build-manifest.json'), JSON.stringify({ fingerprint: '1234567890abcdef' }));
+      }
+      const manifest = { version: 1, component, artifactFingerprint: component + '-code', sourceFingerprint: 'source', payloadDir: 'payload', entrypoint, target };
+      await writeFile(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+      artifacts[component] = { manifest };
+      await mkdir(snapshotDir, { recursive: true });
+      await symlink(`../../../artifacts/${component}/${component}-code/payload`, join(snapshotDir, directory));
+      components[component] = { artifactFingerprint: component + '-code', entrypoint: directory + '/' + entrypoint };
+    }
+    await writeFile(join(snapshotDir, 'manifest.json'), JSON.stringify({ version: 1, snapshotId, sourceFingerprint: 'source', components, target }));
+    await assert.rejects(importRuntimeArtifactClosure({ sourceStackBaseDir: producer, stackBaseDir: consumer, artifacts, snapshotId, target: { ...target, arch: 'foreign' } }), /target/);
+    await importRuntimeArtifactClosure({ sourceStackBaseDir: producer, stackBaseDir: consumer, artifacts, snapshotId, target });
+    await rm(producer, { recursive: true });
+    assert.equal(await readFile(join(consumer, 'runtime/builds', snapshotId, 'cli/happier'), 'utf8'), 'daemon');
+    const pointer = JSON.parse(await readFile(join(consumer, 'runtime/current.json'), 'utf8'));
+    assert.equal(pointer.snapshotId, snapshotId);
+    assert.equal(pointer.snapshotPath, join(consumer, 'runtime/builds', snapshotId));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('artifact transfer preserves support closure after the worker store disappears and rejects damaged or foreign-target bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'runtime-transfer-'));

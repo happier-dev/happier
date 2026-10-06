@@ -510,9 +510,9 @@ export const PluginActionContributionV2Schema = z.object({
       message: 'UI plugin actions must declare an explicit placement decision.',
     });
   }
-  if (value.dangerLevel === 'safe' && value.confirmation) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmation'], message: 'Safe actions cannot request confirmation.' });
-  } else if (pluginActionRequiresConfirmationPresentation(value.surfaces, value.dangerLevel) && !value.confirmation) {
+  // Confirmation also protects sensitive reads; dangerLevel describes effects,
+  // not whether disclosure needs a present-user decision.
+  if (pluginActionRequiresConfirmationPresentation(value.surfaces, value.dangerLevel) && !value.confirmation) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['confirmation'],

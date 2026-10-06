@@ -1,17 +1,7 @@
-import {
-  browserViewContextId,
-  BrowserAnnotationStrokeV1Schema,
-  BrowserAnnotationStyleIntentV1Schema,
-  BrowserContextItemV1Schema,
-  getActionSpec,
-  type BrowserAnnotationStrokeV1,
-  type BrowserAnnotationStyleIntentV1,
-  type BrowserContextAttachmentV1,
-  type BrowserContextAnnotationActionResultV1,
-  type BrowserContextItemV1,
-  type BrowserContextSnapshotV1,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
+import { BrowserAnnotationStrokeV1Schema, BrowserAnnotationStyleIntentV1Schema, BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { BrowserAnnotationStrokeV1, BrowserAnnotationStyleIntentV1, BrowserContextAttachmentV1, BrowserContextAnnotationActionResultV1, BrowserContextItemV1, BrowserContextSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import {
   createBrowserContextCaptureService,

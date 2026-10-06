@@ -90,7 +90,8 @@ describe('Board Actions through captured Home Artifacts', () => {
         expect(board.positionsByItemRef[first]).toEqual({ x: 48, y: 96 });
         const surface = { serverId: target.id, accountId: 'board-owner', owner: { kind: 'workBoard', boardId: 'mine' } } as const;
         const instance = { v: 1, id: 'configured', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
-        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'mine', ref: { surface, instanceId: instance.id }, instance } }, context)).toMatchObject({ ok: true });
+        const widgetResult = await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'mine', ref: { surface, instanceId: instance.id }, instance } }, context);
+        expect(widgetResult, JSON.stringify(widgetResult)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance, width: 'half' }] } });
         expect(await executor.execute('widgets.instance.width.set', { ref: { surface, instanceId: instance.id }, width: 'full' }, context)).toMatchObject({ ok: true });
         expect(board.widgets?.[0]?.width).toBe(2);

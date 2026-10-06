@@ -8,10 +8,8 @@ import type {
     PluginConnectedAccountAuthenticationModeV2,
 } from '@happier-dev/protocol';
 
-import {
-    compilePluginJsonSchema,
-    isValidPluginJsonSchemaValue,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
 import type { ConnectedAccountAttemptConfigurationAdmission } from './authenticationAttemptOwner';
 import { normalizeConnectedAccountConfiguredOrigin } from './configuredOrigins';

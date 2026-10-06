@@ -37,6 +37,14 @@ const definition = {
 } as const;
 
 describe('Automation trigger-definition stored content', () => {
+  it('opens unknown stored binding fields without giving them routing authority', () => {
+    const envelope = { t: 'plain', extra: true, v: { v: 1, extra: true,
+      binding: { ...binding, extra: true, eventRef: { ...binding.eventRef, extra: true } }, definition } };
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, envelope }))
+      .toEqual({ kind: 'available', definition });
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: { ...binding, triggerRevision: 4 }, envelope }))
+      .toEqual({ kind: 'bindingMismatch' });
+  });
   it.each(['prComment', 'ciFailed'] as const)('binds private %s selections in plain and E2EE Accounts', (triggerKind) => {
     const prBinding = AutomationTriggerDefinitionBindingV1Schema.parse({
       v: 1, automationId: binding.automationId, triggerId: binding.triggerId,

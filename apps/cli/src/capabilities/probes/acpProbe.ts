@@ -11,7 +11,7 @@ import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
 import { createAcpFilteredStdoutReadable } from '@/agent/acp/createAcpFilteredStdoutReadable';
 import { createAcpNdJsonStream } from '@/agent/acp/createAcpNdJsonStream';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
-import { AsyncTtlCache } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
     createAcpClientConnection,

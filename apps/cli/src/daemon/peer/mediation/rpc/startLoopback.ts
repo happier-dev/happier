@@ -1,12 +1,9 @@
 import { randomBytes } from 'node:crypto';
 
-import {
-  DIRECT_ROUTE_GRANT_TTL_MS,
-  readServerEnabledBit,
-  resolvePeerRouteFeatureId,
-  type FeaturesResponse,
-  type PeerLoopbackEndpointCandidateV1,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
+import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
 
 import type { DaemonPeerMediationObservabilityEmitter } from '../observability/events';
 import {

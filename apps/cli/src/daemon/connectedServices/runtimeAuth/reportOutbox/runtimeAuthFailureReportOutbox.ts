@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { SessionUsageLimitRecoveryResumePromptModeV1Schema, type SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
+import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';

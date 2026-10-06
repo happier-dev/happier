@@ -1,11 +1,5 @@
-import {
-  pluginPermissionSubjectsEqualV1,
-  type PluginPermissionCapabilityV1,
-  type PluginPermissionGrantAuthoritySourceV1,
-  type PluginPermissionGrantTargetScopeV1,
-  type PluginPermissionGrantV1,
-  type PluginPermissionSubjectV1,
-} from '@happier-dev/protocol';
+import { pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import type { PluginPermissionCapabilityV1, PluginPermissionGrantAuthoritySourceV1, PluginPermissionGrantTargetScopeV1, PluginPermissionGrantV1, PluginPermissionSubjectV1 } from '@happier-dev/protocol';
 
 function targetScopeMatches(
   left: PluginPermissionGrantTargetScopeV1,

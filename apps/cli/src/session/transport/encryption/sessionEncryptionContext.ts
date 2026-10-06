@@ -1,18 +1,10 @@
-import {
-  deriveSessionMutationEqualityTagV1,
-  ENCRYPTED_DATA_KEY_V1_BYTES,
-  openSessionOwnerMetadataEnvelopeV1,
-  projectSessionOwnerCompatibilityViewV1,
-  SESSION_INPUT_EQUALITY_HKDF_LABEL_V1,
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  serializeSessionInputRequestEqualityIntentV1,
-  SessionSharedMetadataV1Schema,
-  readSessionAccessProjectionRoleV1,
-  type PendingRequestedActionV1,
-  type AccountRecipientEnvelopeReadiness,
-  type SessionContentAvailabilityInputV1,
-  type SessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+import { deriveSessionMutationEqualityTagV1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
+import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { serializeSessionInputRequestEqualityIntentV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { PendingRequestedActionV1, AccountRecipientEnvelopeReadiness, SessionContentAvailabilityInputV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import type { Credentials, StoredCredentials } from '../../../persistence';
 import type { SessionMessageContent } from '../../../api/types';
 import {

@@ -1,4 +1,4 @@
-import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol';
+import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 
 import type {
   ProviderConnectionCatalog,

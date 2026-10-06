@@ -10,6 +10,10 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { WIDGET_ROLE } from '@/sync/domains/plugins/ui/widgetContract';
+import { AccountProfileSchema } from '@happier-dev/protocol';
+import { resolveWidgetViewerPurposeValuesV1, type WidgetInstanceV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
+import { resolveConfiguredWidgetTarget, withWidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 /**
  * The installed arm every widget host shares (Board and Home).
@@ -28,7 +32,10 @@ import { WIDGET_ROLE } from '@/sync/domains/plugins/ui/widgetContract';
 const state = vi.hoisted(() => ({
     mounts: [] as Record<string, unknown>[],
     legacyIdOnlySession: null as ReturnType<typeof createSessionFixture> | null,
+    push: vi.fn(),
 }));
+
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: state.push } }).module);
 
 vi.mock('@/components/plugins/surfaces', () => ({
     PluginInlineSurfaceHost: (props: Record<string, unknown>) => {
@@ -113,6 +120,94 @@ const source = {
 };
 
 describe('InstalledWidgetSurface', () => {
+    it('offers current-viewer Connect on a readable shared widget without an inputs writer', async () => {
+        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
+        const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
+        const instance: WidgetInstanceV1 = { v: 1, id: 'shared-copy', definition: { kind: 'installed', surface: source.surface },
+            bindings: { connection: { kind: 'viewer', purpose: 'read' } } };
+        const descriptor: WidgetInputDescriptorV1 & { resources: typeof consumer[] } = {
+            resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }],
+            inputs: { fields: [{ path: 'connection', title: 'Cloud account', widget: 'select', connectedAccountOptions: true }] },
+            inputSchema: { type: 'object', properties: { connection: { type: 'object', properties: {
+                service: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } }, required: ['pluginId', 'localId'], additionalProperties: false },
+                accountId: { type: 'string' } }, required: ['service', 'accountId'], additionalProperties: false } }, additionalProperties: false },
+        };
+        const resources = [{ id: consumer.localId, pluginId: consumer.pluginId,
+            resourceKind: 'config' as const, scope: 'global' as const, connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [{ pluginId: consumer.pluginId, localId: 'cloud' }] }] }];
+        const scope = { serverId: 'home-a', accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'shared' } };
+        const selection = resolveWidgetViewerPurposeValuesV1({ instance, descriptor, profile: AccountProfileSchema.parse({ id: 'viewer' }),
+            purposeBindings: { v: 1, bindings: [] }, resources, now: 1 });
+        expect(selection.fields).toMatchObject([{ reasonCode: 'widget_viewer_connection_missing' }]);
+        const resolution = resolveConfiguredWidgetTarget({ scope: { serverId: 'home-a', accountId: 'viewer', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
+            resolvedInput: { status: 'selection_required', fields: selection.fields }, targetKind: 'app', appRuntime: runtime(),
+            repairContext: { instance, descriptor, connection: { scope, machineId: 'machine-a', resources } }, readSession: () => { throw new Error('missing connection must not execute'); } });
+        if (resolution.status === 'ready') throw new Error('the viewer has no connection');
+        const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={resolution} testID="shared-widget" />);
+        await screen.pressByTestIdAsync('shared-widget-connect');
+        expect(state.push).toHaveBeenCalledWith({ pathname: '/(app)/settings/connected-services/connect', params: {
+            purposeConsumerPlugin: consumer.pluginId, purposeConsumerId: consumer.localId, purpose: 'read',
+            purposeServerId: scope.serverId, purposeAccountId: scope.accountId, purposeMachineId: 'machine-a',
+        } });
+        expect(screen.findByTestId('shared-widget-inputs-repair')).toBeNull();
+        expect(instance.bindings).toEqual({ connection: { kind: 'viewer', purpose: 'read' } });
+        expect(state.mounts).toHaveLength(0);
+        const sharedInputsWriter = vi.fn();
+        await act(async () => { screen.tree.update(<ConfiguredWidgetRefusal resolution={resolution} testID="shared-widget" onRepairInputs={sharedInputsWriter} />); });
+        await screen.pressByTestIdAsync('shared-widget-connect');
+        expect(sharedInputsWriter).not.toHaveBeenCalled();
+        const withoutCurrentPurpose = resolveConfiguredWidgetTarget({ scope, resolvedInput: { status: 'selection_required', fields: selection.fields },
+            targetKind: 'app', appRuntime: runtime(), repairContext: { instance, descriptor },
+            readSession: () => { throw new Error('missing connection must not execute'); } });
+        if (withoutCurrentPurpose.status === 'ready') throw new Error('the viewer has no connection');
+        await act(async () => { screen.tree.update(<ConfiguredWidgetRefusal resolution={withoutCurrentPurpose} testID="shared-widget" onRepairInputs={sharedInputsWriter} />); });
+        expect(screen.findByTestId('shared-widget-inputs-repair')).toBeNull();
+        expect(screen.findByTestId('shared-widget-connect')).toBeNull();
+    });
+
+    it('keeps Session access loss and removed input types distinct from editable invalid inputs', async () => {
+        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
+        const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition: { kind: 'installed', surface: source.surface },
+            bindings: { source: { kind: 'value', value: 'old' } } };
+        const descriptor = { inputs: { fields: [{ path: 'source', title: 'Repository', widget: 'select' as const,
+            options: [{ value: 'old', label: 'Old repository' }] }] } };
+        const repair = vi.fn();
+        const manage = vi.fn();
+        for (const [reasonCode, status] of [['widget_session_access_denied', 'denied'], ['widget_session_unavailable', 'unavailable'], ['input_type_unavailable', 'unavailable']] as const) {
+            const resolution = withWidgetInputRepairOutcome({ status, reasonCode, fields: [{ path: 'source', status, reasonCode }] }, { instance, descriptor });
+            const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={resolution} testID={reasonCode} onRepairInputs={repair} onManagePlugin={manage} />);
+            expect(screen.tree.findByType(SurfaceStateCard).props.diagnosticCode).toBe(reasonCode);
+            expect(screen.tree.findByType(SurfaceStateCard).props.title).toContain(reasonCode === 'input_type_unavailable' ? 'Repository' : 'Old repository');
+            if (reasonCode === 'input_type_unavailable') {
+                expect(screen.findByTestId(`${reasonCode}-inputs-repair`)).toBeNull();
+                await screen.pressByTestIdAsync(`${reasonCode}-manage-plugin`);
+                expect(manage).toHaveBeenCalled();
+            } else {
+                await screen.pressByTestIdAsync(`${reasonCode}-inputs-repair`);
+                expect(repair).toHaveBeenLastCalledWith(resolution.repair);
+            }
+            expect(screen.findByTestId(`${reasonCode}-connect`)).toBeNull();
+        }
+        expect(state.mounts).toHaveLength(0);
+    });
+    it('repairs a lost pinned value in place: names the value, says why, and offers that field’s own choice', async () => {
+        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
+        const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition: { kind: 'installed', surface: source.surface },
+            bindings: { repo: { kind: 'value', value: 'happier-dev/relay' } } };
+        const descriptor = { inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'select' as const, optionsSourceId: 'repositories' }] } };
+        const resolution = withWidgetInputRepairOutcome({ status: 'invalid', reasonCode: 'widget_input_value_invalid',
+            fields: [{ path: 'repo', status: 'invalid', reasonCode: 'widget_input_value_invalid' }] }, { instance, descriptor });
+        const repair = vi.fn();
+        const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={resolution} testID="lost" onRepairInputs={repair} />);
+        const card = screen.tree.findByType(SurfaceStateCard).props;
+        const { t } = await import('@/text');
+        expect(card.title).toBe(t('widgetAdd.valueNotFound', { value: 'happier-dev/relay' }));
+        expect(card.reason).toBe(t('widgetAdd.invalidReason'));
+        expect(card.action?.label).toBe(t('widgetAdd.chooseAnother', { field: 'Repository' }));
+        await screen.pressByTestIdAsync('lost-inputs-repair');
+        expect(repair).toHaveBeenCalledWith(expect.objectContaining({ kind: 'input', field: expect.objectContaining({ path: 'repo' }) }));
+        expect(state.mounts).toHaveLength(0);
+    });
+
     it('retires the mounted lifetime when an exact Session target changes under the same instance revision', async () => {
         const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const current = runtime();

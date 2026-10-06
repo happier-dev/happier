@@ -1,5 +1,6 @@
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export function buildAgentProbeCacheKey(params: Readonly<{
   agentId: CatalogAgentLookupId;

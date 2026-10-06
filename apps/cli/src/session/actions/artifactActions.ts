@@ -1,4 +1,7 @@
-import { ArtifactActionInputSchemasV1, isArtifactHtmlHeaderV1, type ActionExecutorContext, type ArtifactActionIdV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
+import { ArtifactActionInputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import type { ActionExecutorContext, ArtifactActionIdV1, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { publishArtifactFromWorkspaceFile, readArtifactWorkspaceFile } from './publishArtifactFromWorkspaceFile';
 
@@ -19,6 +22,7 @@ export function createCliArtifactActions(params: Readonly<{
   };
   return async (args: Readonly<{ actionId: ArtifactActionIdV1; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>): Promise<unknown> => {
     const signal = args.signal ?? args.context.signal;
+    const savedBy = artifactSavedByFromActionContextV1(args.context);
     signal?.throwIfAborted();
     try {
       switch (args.actionId) {
@@ -31,9 +35,9 @@ export function createCliArtifactActions(params: Readonly<{
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           if ('uploadPath' in input) {
             return await params.store.create({ artifactId: input.artifactId, header: input.header,
-              ...await readUpload(args.context, input, signal), ...(signal ? { signal } : {}) });
+              ...await readUpload(args.context, input, signal), savedBy, ...(signal ? { signal } : {}) });
           }
-          return await params.store.create({ ...input, ...(signal ? { signal } : {}) });
+          return await params.store.create({ ...input, savedBy, ...(signal ? { signal } : {}) });
         }
         case 'artifact.get': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
@@ -49,7 +53,7 @@ export function createCliArtifactActions(params: Readonly<{
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const content = 'uploadPath' in input ? await readUpload(args.context, input, signal) : { body: input.body };
           const result = await params.store.update({ artifactId: input.artifactId, header: input.header,
-            expectedRevision: input.expectedRevision, ...content, ...(signal ? { signal } : {}) });
+            expectedRevision: input.expectedRevision, ...content, savedBy, ...(signal ? { signal } : {}) });
           return result.ok ? { artifactId: input.artifactId, revision: result.revision,
             ...(result.previewUrl ? { previewUrl: result.previewUrl } : {}),
             ...(result.previewError ? { previewError: result.previewError } : {}) } : result;
@@ -63,14 +67,14 @@ export function createCliArtifactActions(params: Readonly<{
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const caller = await params.resolvePublishCaller(args.context);
           if (!caller) return { ok: false, errorCode: 'artifact_source_unavailable', error: 'artifact_source_unavailable' };
-          return await publishArtifactFromWorkspaceFile({ store: params.store, caller, input, ...(signal ? { signal } : {}) });
+          return await publishArtifactFromWorkspaceFile({ store: params.store, caller, input, savedBy, ...(signal ? { signal } : {}) });
         }
         case 'artifact.revisions.list': {
           return await params.store.revisions.list(ArtifactActionInputSchemasV1[args.actionId].parse(args.input), signal);
         }
         case 'artifact.revisions.restore': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          const result = await params.store.revisions.restore(input, signal);
+          const result = await params.store.revisions.restore({ ...input, savedBy }, signal);
           return result.ok ? { artifactId: input.artifactId, revision: result.revision } : result;
         }
         case 'artifact.storage.usage': {

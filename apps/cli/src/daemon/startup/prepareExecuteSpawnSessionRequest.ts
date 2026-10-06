@@ -1,4 +1,4 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { findCatalogEntry } from '@/agent/catalog/registry';
 import { getVendorResumeSupport } from '@/session/runtime/catalogHooks';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

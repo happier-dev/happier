@@ -1,8 +1,5 @@
-import {
-  ConnectedServiceMaterializationIdentityV1Schema,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
 import {

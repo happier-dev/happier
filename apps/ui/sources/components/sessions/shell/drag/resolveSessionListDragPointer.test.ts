@@ -12,6 +12,7 @@ import { buildSessionListDragSnapshot } from './sessionListDragSnapshot';
 import { resolveSessionListDragPointer } from './resolveSessionListDragPointer';
 import { treeRowId } from '../drop-resolution/treeRowId';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { isWorkspaceRootTreeRowId } from '../drop-resolution/treeRowId';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -79,7 +80,7 @@ function contentRows(): TreeContentRow[] {
         parentId: null,
         containerId: treeRowId.workspaceRoot('project-a'),
         depth: 0,
-        kind: index === 0 ? 'container' : 'leaf',
+        kind: isWorkspaceRootTreeRowId(id) ? 'container' : 'leaf',
         bounds: { x: 0, y: index * ROW_HEIGHT, width: 320, height: ROW_HEIGHT },
     }));
 }

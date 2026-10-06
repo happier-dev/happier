@@ -24,12 +24,7 @@ import {
     resolveEngineRuntimeContribution,
     toEngineSelectedSource,
 } from './contributions';
-import {
-    resolveBackendRuntimeCore,
-    shouldNormalizeManifestOnlyAcpBackend,
-} from './runtimeCore';
 import { resolveLeasedAgentRuntime } from './agentRuntimeLease';
-import { createNativeAgentFeatureService } from './nativeAgentSessionHostServiceOwners';
 import { createAgentExternalSessionsExecutionSurface } from '../agentExternalSessionsExecutionSurface';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type {
@@ -225,6 +220,10 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
         };
     }
 
+    const {
+        resolveBackendRuntimeCore,
+        shouldNormalizeManifestOnlyAcpBackend,
+    } = await import('./runtimeCore');
     const engineEntry = runtimeRegistry
         ? readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend)
         : undefined;
@@ -268,7 +267,8 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
             diagnostics,
             createAgentRuntimeSurfaceInvocationContext:
                 engineEntry!.createAgentRuntimeSurfaceInvocationContext,
-            terminalPresentationFeatures: createNativeAgentFeatureService(runtimeRegistry),
+            terminalPresentationFeatures: (await import('./nativeAgentSessionHostServiceOwners'))
+                .createNativeAgentFeatureService(runtimeRegistry),
         })
         : createEmptyBackendExecutionSurfaces();
     const registeredAgentSurfaces = resolveRegisteredAgentAuxiliarySurfaces(

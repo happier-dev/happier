@@ -1,4 +1,5 @@
 import { ARTIFACT_HTML_BUNDLE_MIME_V1 } from './artifactHtmlV1.js';
+import { ArtifactWorkspaceSourceV1Schema } from './artifactBinaryV1.js';
 
 /** File classification and provenance shared by the keyholding publication hosts. */
 export function prepareArtifactWorkspaceFileV1(params: Readonly<{
@@ -22,8 +23,8 @@ export function prepareArtifactWorkspaceFileV1(params: Readonly<{
     } catch { /* Non-UTF8 content uses the binary body path. */ }
   }
   const mime = input.mime ?? (kind === 'html' ? 'text/html' : body === undefined ? 'application/octet-stream' : 'text/plain');
-  const header = { title: input.title ?? file.name, kind, mime, sizeBytes: file.bytes.length,
-    source: { sessionId: caller.sessionId, ...(caller.runId ? { runId: caller.runId } : {}),
-      machineId: caller.machineId, path: file.path, sha: file.sha } };
-  return body === undefined ? { header, binary: { bytes: file.bytes, mime } } : { header, body };
+  const header = { title: input.title ?? file.name, kind, mime, sizeBytes: file.bytes.length };
+  const source = ArtifactWorkspaceSourceV1Schema.parse({ sessionId: caller.sessionId, ...(caller.runId ? { runId: caller.runId } : {}),
+    machineId: caller.machineId, path: file.path, sha: file.sha });
+  return body === undefined ? { header, source, binary: { bytes: file.bytes, mime } } : { header, source, body };
 }

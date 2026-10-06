@@ -5,11 +5,8 @@ import type {
   SessionPermissionRemoteSettlementRecordV1,
   SessionSystemRecordContent,
 } from '@happier-dev/protocol';
-import {
-  SessionPermissionMediationRecordStoredSchema,
-  SessionPermissionRemoteGrantRecordV1Schema,
-  SessionPermissionRemoteSettlementRecordV1Schema,
-} from '@happier-dev/protocol';
+import { SessionPermissionMediationRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { SessionPermissionRemoteGrantRecordV1Schema, SessionPermissionRemoteSettlementRecordV1Schema } from '@happier-dev/protocol/sessions/permissions/mediationRecordsV1';
 
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import {

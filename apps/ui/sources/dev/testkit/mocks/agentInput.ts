@@ -61,6 +61,8 @@ export function createAgentInputModuleMock(options: Readonly<{
                 sessionId: props.sessionId,
                 autocompleteKinds: props.autocompleteKinds,
                 autocompleteSuggestions: props.autocompleteSuggestions,
+                agentLabel: props.agentLabel,
+                engineLabel: props.engineLabel,
             }, chips);
         },
     };

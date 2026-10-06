@@ -1,23 +1,11 @@
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    TargetedActionRpcRequestV1Schema,
-    readExecutionRunStartRunCreation,
-    withExecutionRunStartFailureDetails,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-    type ActionId,
-} from '@happier-dev/protocol/actions';
-import {
-    ACTION_SPECS,
-    type ActionSpecSurfaceBindings,
-    type ActionSurfaceBindingContext,
-} from '@happier-dev/protocol/actions/actionSpecs';
-import {
-    SessionSpawnNewResultV1Schema,
-    SessionFollowSourceKeyPreparationResultV1Schema,
-    SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1,
-    projectSessionFollowSourceKeyPreparationAfterSetV1,
-} from '@happier-dev/protocol';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
+import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionFollowSourceKeyPreparationResultV1Schema, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_WAITING_ACTION_ERROR_V1, projectSessionFollowSourceKeyPreparationAfterSetV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 
 import {
     dispatchActionFromRpc,

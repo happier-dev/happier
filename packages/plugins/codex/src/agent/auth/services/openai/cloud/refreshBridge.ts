@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import type { CodexConnectedServiceRuntimeFailureClassification } from '../../runtime/auth/failure.js';
 import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
+import { readCodexConnectedServiceRefreshSelection } from '../../runtime/auth/generationRequest.js';
 
 const connectedServiceProfileIdSchema = z.string()
   .min(1)
@@ -154,29 +155,13 @@ export function resolveCodexChatGptRefreshSelectionFromMetadata(
 }
 
 function readCodexChatGptRefreshChildSelection(selection: unknown): CodexChatGptRefreshChildSelection | null {
-  if (!isRecord(selection) || selection.serviceId !== OPENAI_CODEX_SERVICE_LOCAL_ID) return null;
-  if (selection.kind === 'profile' && typeof selection.profileId === 'string') {
+  const parsed = readCodexConnectedServiceRefreshSelection(selection);
+  if (parsed?.kind === 'profile') return parsed;
+  if (parsed?.kind === 'group' && parsed.fallbackProfileId) {
     return {
-      kind: 'profile',
-      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
-      profileId: selection.profileId,
-    };
-  }
-  if (
-    selection.kind === 'group'
-    && typeof selection.groupId === 'string'
-    && typeof selection.activeProfileId === 'string'
-    && typeof selection.fallbackProfileId === 'string'
-    && typeof selection.generation === 'number'
-    && Number.isFinite(selection.generation)
-  ) {
-    return {
-      kind: 'group',
-      serviceId: OPENAI_CODEX_SERVICE_LOCAL_ID,
-      groupId: selection.groupId,
-      activeProfileId: selection.activeProfileId,
-      fallbackProfileId: selection.fallbackProfileId,
-      generation: Math.max(0, Math.trunc(selection.generation)),
+      ...parsed,
+      fallbackProfileId: parsed.fallbackProfileId,
+      generation: Math.max(0, parsed.generation),
     };
   }
   return null;

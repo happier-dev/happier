@@ -4,7 +4,7 @@ import {
 } from '../../homeTarget/homeTarget.js';
 import type { HappierJsonExecutor } from '../executors/happierJsonExecutor.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
-import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 export type RemoteHomeEnrollmentPairingRequest = Readonly<{
   publicKey: string;

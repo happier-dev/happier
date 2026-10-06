@@ -268,6 +268,25 @@ function normalizeDaemonPlacement(raw, { targetNames }) {
   return { mode: 'local-and-targets', targets };
 }
 
+function normalizeBuildPlacement(raw, { targetNames, label = 'runtimePlacement.build' }) {
+  if (raw?.mode === 'local') return { ...LOCAL_PLACEMENT };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.mode !== 'prefer-target') {
+    throw new Error(`[dev-targets] ${label} mode must be "local" or "prefer-target"`);
+  }
+  const names = raw.targets ?? (raw.target == null ? [] : [raw.target]);
+  if (!Array.isArray(names) || names.length === 0) {
+    throw new Error(`[dev-targets] ${label} targets must be a non-empty array`);
+  }
+  const targets = [];
+  for (const name of names) {
+    const target = requireNonEmptyString(name, `${label} target`).toLowerCase();
+    if (!targetNames.has(target)) throw new Error(`[dev-targets] ${label} references unknown target: ${target}`);
+    if (!targets.includes(target)) targets.push(target);
+  }
+  if (raw.fallback != null && raw.fallback !== 'local') throw new Error(`[dev-targets] ${label} fallback must be "local"`);
+  return { mode: 'prefer-target', targets, fallback: 'local' };
+}
+
 function normalizeDurationMs(raw, fallback, label) {
   if (raw == null || String(raw).trim() === '') return fallback;
   const value = Number(raw);
@@ -351,9 +370,12 @@ function normalizePlacedConfig(raw, targets) {
     throw new Error('[dev-targets] runtimePlacement must be an object');
   }
   const runtimePlacement = {
-    ...(runtimePlacementRaw?.build ? { build: normalizePlacement(runtimePlacementRaw.build, {
-      label: 'runtimePlacement.build', targetNames,
-    }) } : {}),
+    ...(runtimePlacementRaw?.build ? { build: normalizeBuildPlacement(runtimePlacementRaw.build, { targetNames }) } : {}),
+    ...(runtimePlacementRaw?.qa ? {
+      qa: runtimePlacementRaw.qa.mode === 'auto'
+        ? normalizeCommandExecution({ ...runtimePlacementRaw.qa, includeLocal: false }, { targets, targetNames })
+        : normalizeBuildPlacement(runtimePlacementRaw.qa, { targetNames, label: 'runtimePlacement.qa' }),
+    } : {}),
     server: normalizePlacement(runtimePlacementRaw?.server, {
       label: 'runtimePlacement.server',
       targetNames,
@@ -452,6 +474,7 @@ export function resolveDevTargetExecutionPolicy(
   } else {
     policy = {
       ...(config.runtimePlacement.build ? { build: { ...config.runtimePlacement.build } } : {}),
+      ...(config.runtimePlacement.qa ? { qa: { ...config.runtimePlacement.qa } } : {}),
       server: { ...config.runtimePlacement.server },
       expo: { ...config.runtimePlacement.expo },
       daemons: { ...config.runtimePlacement.daemon },
@@ -478,10 +501,17 @@ export function resolveDevTargetsConfigPath({ stackName, env = process.env }) {
   return join(resolveStackEnvPath(resolvedStack, env).baseDir, 'dev-targets.json');
 }
 
-export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true }) {
+export async function loadDevTargetsConfig({ stackName, path: configPath, env = process.env, allowMissing = true,
+  buildPlacementOwnerPath, logger = console }) {
   const path = configPath ?? resolveDevTargetsConfigPath({ stackName, env });
   try {
     const raw = JSON.parse(await readFile(path, 'utf8'));
+    if (buildPlacementOwnerPath && raw?.runtimePlacement?.build != null) {
+      // Consumer runtime projections have no build authority. Drop even stale
+      // target references before validating against the consumer's registry.
+      delete raw.runtimePlacement.build;
+      logger.warn?.(`[dev-targets] runtimePlacement.build in ${path} ignored; configure the producer's runtimePlacement.build in ${buildPlacementOwnerPath}`);
+    }
     return { path, config: parseDevTargetsConfig(raw) };
   } catch (error) {
     if (allowMissing && error?.code === 'ENOENT') {

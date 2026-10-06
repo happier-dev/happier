@@ -17,7 +17,7 @@ import type {
 } from '@/sync/domains/session/organization';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
-import { SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey, deriveSessionCreationTagV1, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { evaluatePluginUiPolicy } from '@/sync/domains/plugins/ui/policy';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -26,7 +26,20 @@ import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol';
+import { MMKV } from 'react-native-mmkv';
+
+installDisconnectedServerSocketBoundary();
+
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -90,37 +103,16 @@ const sessionSetManualReadStateSpy = vi.hoisted(() => vi.fn(async () => ({ succe
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
 const modalPromptSpy = vi.fn(async () => 'urgent, review');
-const openMoveSheetSpy = vi.hoisted(() => vi.fn(async () => null as any));
-const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => undefined));
-const setSessionPinSpy = vi.hoisted(() => vi.fn(async () => undefined));
-const setSessionTagLabelsSpy = vi.hoisted(() => vi.fn(async () => undefined));
-type OrganizationMutationScopeResult =
-    | Readonly<{
-        ok: true;
-        scope: {
-            credentials: { token: string };
-            serverId: string;
-            serverIdAliases: readonly string[];
-            serverUrl: string;
-        };
-    }>
-    | Readonly<{
-        ok: false;
-        reason: 'serverIdRequired' | 'serverProfileUnavailable' | 'credentialsUnavailable';
-        requestedServerId: string;
-        serverId?: string;
-    }>;
-const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(
-    async (serverId = 'server-1'): Promise<OrganizationMutationScopeResult> => ({
-        ok: true,
-        scope: {
-            credentials: { token: 'token' },
-            serverId,
-            serverIdAliases: [],
-            serverUrl: 'https://server.example.test',
-        },
-    }),
-));
+const modalShowSpy = vi.hoisted(() => vi.fn<typeof import('@/modal').Modal.show>());
+const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionFolderAssignment>());
+const setSessionPinSpy = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionPin>());
+const setSessionTagAssignmentsSpy = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionTagAssignments>());
+vi.mock('@/sync/api/session/sessionOrganizationApi', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/api/session/sessionOrganizationApi')>(),
+    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
+    setSessionPin: setSessionPinSpy,
+    setSessionTagAssignments: setSessionTagAssignmentsSpy,
+}));
 let hideInactiveSessions = false;
 let organizationPinnedSessionKeys: unknown = null;
 let organizationTagsBySessionKey: unknown = null;
@@ -332,6 +324,7 @@ installSessionRouteCommonModuleMocks({
                 alert: modalAlertSpy,
                 confirm: modalConfirmSpy,
                 prompt: modalPromptSpy,
+                show: modalShowSpy,
             },
         }).module;
     },
@@ -399,59 +392,6 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
         sessionId,
     }),
 }));
-vi.mock('@/components/sessions/shell/sessionViewStableSession', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/sessions/shell/sessionViewStableSession')>();
-    return {
-        ...actual,
-        useSessionViewShellSession: (sessionId: string, expectedServerId?: string | null) => {
-            const normalizedMockSessionId = normalizeSessionId(mockSessionId);
-            const serverScopedMockSession = mockSession && mockServerId && !mockSession.serverId
-                ? { ...mockSession, serverId: mockServerId }
-                : mockSession;
-            const scopedMockSession = serverScopedMockSession && !serverScopedMockSession.access
-                ? {
-                    ...serverScopedMockSession,
-                    access: createSessionAccessFixture(serverScopedMockSession.accessLevel ?? 'owner'),
-                }
-                : serverScopedMockSession;
-            const selected = actual.selectSessionViewShellSessionForRouteState({
-                sessions: scopedMockSession ? { [normalizedMockSessionId]: scopedMockSession } : {},
-                sessionListIndexByServerId: {},
-                sessionListRowsByServerId: {},
-            }, sessionId, expectedServerId);
-            return actual.useStableSessionViewShellSession(selected);
-        },
-    };
-});
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/scope/useServerCredentialAccountScopes')>();
-    let bindingByServerId: Map<string, ServerCredentialAccountScopeBinding>;
-    const createBinding = (serverId: string): ServerCredentialAccountScopeBinding => {
-        const existing = bindingByServerId.get(serverId);
-        if (existing) return existing;
-        const scope = Object.freeze({ serverId, accountId: 'viewer-account' });
-        const binding = Object.freeze({
-            serverId,
-            accountId: 'viewer-account',
-            scope,
-            revision: 1,
-            isCurrent: () => true,
-            onRetire: () => Object.freeze({ dispose: () => undefined }),
-        });
-        bindingByServerId.set(serverId, binding);
-        return binding;
-    };
-    bindingByServerId = new Map<string, ServerCredentialAccountScopeBinding>();
-    return {
-        ...actual,
-        useServerCredentialAccountScopeBindings: (serverIds: readonly (string | null | undefined)[]) => new Map(
-            serverIds.flatMap((serverId) => {
-                const normalized = String(serverId ?? '').trim();
-                return normalized ? [[normalized, createBinding(normalized)] as const] : [];
-            }),
-        ),
-    };
-});
 vi.mock('@/utils/navigation/safeRouterBack', () => ({
     safeRouterBack: (...args: any[]) => safeRouterBackSpy(...args),
 }));
@@ -563,11 +503,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
         return false;
     },
 }));
-vi.mock('@/components/sessions/shell/move-sheet/useSessionListMoveSheet', () => ({
-    useSessionListMoveSheet: () => ({
-        openMoveSheet: openMoveSheetSpy,
-    }),
-}));
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
     return createTokenStorageModuleMock({
@@ -577,28 +512,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         },
     });
 });
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    return {
-        ...actual,
-        getServerProfileById: () => ({
-            id: 'server-1',
-            serverUrl: 'https://server.example.test',
-        }),
-    };
-});
-vi.mock('@/sync/ops/sessionOrganization', () => ({
-    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
-    requireSessionOrganizationMutationScope: async (serverId: string) => {
-        const result = await resolveSessionOrganizationMutationScopeSpy(serverId);
-        if (result.ok) return result.scope;
-        const { HappyError } = await import('@/utils/errors/errors');
-        throw new HappyError(`homeGovernance.unavailableTitle: ${result.requestedServerId || serverId}`, true);
-    },
-    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
-    writeSessionOrganizationPin: setSessionPinSpy,
-    writeSessionOrganizationTagLabels: setSessionTagLabelsSpy,
-}));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
     useSessionExecutionRunsSupported: (sessionId: string, sessionServerId?: string | null) =>
         useSessionExecutionRunsSupportedSpy(sessionId, sessionServerId),
@@ -653,9 +566,6 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
         },
     };
 });
-vi.mock('@/constants/Typography', () => ({
-    Typography: new Proxy({}, { get: () => () => ({}) }),
-}));
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: mockGetSessionName,
     resolveLockedSessionTitle: (title: string) => title === 'session.untitled' ? 'session.access.lockedTitleFallback' : title,
@@ -682,8 +592,8 @@ vi.mock('@/components/ui/layout/layout', async (importOriginal) => ({
 }));
 
 describe('/session/[id]/info', () => {
-    beforeEach(() => {
-        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token: 'token' });
+    beforeEach(async () => {
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: 'token' });
         mockSessionId = 'session-1';
         mockServerId = undefined;
         mockSession = null;
@@ -707,21 +617,14 @@ describe('/session/[id]/info', () => {
         modalConfirmSpy.mockClear();
         modalPromptSpy.mockClear();
         modalPromptSpy.mockResolvedValue('urgent, review');
-        openMoveSheetSpy.mockClear();
-        openMoveSheetSpy.mockResolvedValue(null);
+        modalShowSpy.mockReset();
+        modalShowSpy.mockReturnValue('modal-id');
         setSessionFolderAssignmentSpy.mockClear();
+        setSessionFolderAssignmentSpy.mockImplementation(async ({ sessionId, request }) => ({ sessionId, folderId: request.folderId }));
         setSessionPinSpy.mockClear();
-        setSessionTagLabelsSpy.mockClear();
-        resolveSessionOrganizationMutationScopeSpy.mockReset();
-        resolveSessionOrganizationMutationScopeSpy.mockImplementation(async (serverId = 'server-1') => ({
-            ok: true,
-            scope: {
-                credentials: { token: 'token' },
-                serverId,
-                serverIdAliases: [],
-                serverUrl: 'https://server.example.test',
-            },
-        }));
+        setSessionPinSpy.mockImplementation(async ({ sessionId, request }) => ({ sessionId, pin: request.pinned ? { sessionId, sortKey: null, pinnedAt: 1 } : null }));
+        setSessionTagAssignmentsSpy.mockClear();
+        setSessionTagAssignmentsSpy.mockImplementation(async ({ sessionId, request }) => ({ sessionId, tagIds: request.tagIds }));
         resolveSessionTargetServerIdSpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockClear();
         machineRpcWithServerScopeSpy.mockClear();
@@ -787,17 +690,50 @@ describe('/session/[id]/info', () => {
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
         clearTempData();
+        // Seed device persistence at the existing MMKV boundary; profile resolution stays real.
+        new MMKV().set('server-state-v1', JSON.stringify({
+            activeServerId: 'server-1',
+            servers: Object.fromEntries([
+                ['server-1', 'https://server.example.test'],
+                ['server-b', 'https://server-b.example.test'],
+                ['server-session-info', 'https://session-info.example.test'],
+            ].map(([id, serverUrl]) => [id, {
+                id, serverUrl, name: id, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+            }])),
+        }));
+        const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        await setActiveServerId('server-1');
     });
 
-    afterEach(() => {
-        clearTempData();
-        standardCleanup();
-        resetRuntimeFetch();
-        resetServerFeaturesClientForTests();
-        vi.unstubAllGlobals();
+    afterEach(async () => {
+        // Retire pending custom-modal choices even when an assertion fails.
+        // This settles the handler's async act before the next renderer mounts.
+        try {
+            await act(async () => {
+                for (const [config] of modalShowSpy.mock.calls) config.onRequestClose?.();
+            });
+        } finally {
+            clearTempData();
+            standardCleanup();
+            resetRuntimeFetch();
+            resetServerFeaturesClientForTests();
+            vi.unstubAllGlobals();
+        }
     });
+
+    async function applyInfoSessionFixture() {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const sessionFixture = mockSession ? { encryptionMode: 'plain', ...mockSession } : null;
+        const serverScopedSession = sessionFixture && mockServerId && !sessionFixture.serverId
+            ? { ...sessionFixture, serverId: mockServerId } : sessionFixture;
+        const session = serverScopedSession && !serverScopedSession.access
+            ? { ...serverScopedSession, access: createSessionAccessFixture(serverScopedSession.accessLevel ?? 'owner') }
+            : serverScopedSession;
+        getStorage().setState({ sessions: session ? { [normalizeSessionId(mockSessionId)]: session } : {} });
+    }
 
     async function renderInfoScreen() {
+        await applyInfoSessionFixture();
         const Screen = (await import('@/app/(app)/session/[id]/info')).default;
         return renderScreen(<Screen />);
     }
@@ -853,7 +789,7 @@ describe('/session/[id]/info', () => {
             serverId: 'server-1',
             active: false,
             accessLevel: 'view',
-            access: { role: 'recipient' },
+            access: createSessionAccessFixture('view'),
             encryptionMode: 'e2ee',
             encryptedContentAvailability: 'encrypted_access_pending',
             createdAt: Date.now(),
@@ -868,7 +804,8 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
 
-        expect(screen.findByTestId('session-info-header')?.props.title).toBe('session.access.lockedTitleFallback');
+        expect(screen.findHostByTestId('session-info-header')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('session.access.lockedTitleFallback');
         expect(screen.findByTestId('session-info-menu')).toBeNull();
         expect(screen.getTextContent()).not.toContain('private machine');
         expect(screen.getTextContent()).not.toContain('/private/workspace');
@@ -1157,6 +1094,12 @@ describe('/session/[id]/info', () => {
     });
 
     it('uses daemon merged projection titles when resolving the default session action backend label', async () => {
+        mockServerId = 'server-session-info';
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({ token: createAccountTokenForTests('viewer-account') });
+        // V2 projects Agent titles, not the retired backend registry. An installed
+        // Agent exercises the daemon title without replacing a bundled Agent's brand.
+        const agentIdentity = { pluginId: 'acme.review', localId: 'claude' };
+        const agentId = buildQualifiedPluginContributionKey(agentIdentity);
         mockSession = {
             id: 'session-merged-projection',
             serverId: 'server-session-info',
@@ -1167,7 +1110,27 @@ describe('/session/[id]/info', () => {
             seq: 1,
             metadata: {
                 machineId: 'machine-projection-1',
-                flavor: 'claude',
+                runtimeDescriptorV1: { v: 1, agentId, provider: {} },
+                sessionCreationCorrespondenceV1: SessionCreationCorrespondenceV1Schema.parse({
+                    v: 1,
+                    sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'info-test', creationKey: 'projected-agent' }),
+                    recipe: {
+                        execution: { machineId: 'machine-projection-1', directory: { kind: 'path', path: '/tmp/session' } },
+                        organization: { folderId: null, tagIds: [] },
+                        agentTarget: { kind: 'agent', identity: agentIdentity },
+                        modelSelection: null,
+                        profileId: null,
+                        requestedPermissionMode: null,
+                        agentModeId: null,
+                        configuration: null,
+                        connectedServices: null,
+                        mcpSelection: null,
+                        transcriptStorage: null,
+                        terminal: null,
+                        agentSessionStartupInstructionsMarkerV1: null,
+                        checkout: null,
+                    },
+                }),
                 host: 'host-a',
                 path: '/tmp/session',
                 homeDir: '/home/me',
@@ -1176,32 +1139,26 @@ describe('/session/[id]/info', () => {
 
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: {
-                v: 1,
+            projection: PluginProjectionV2Schema.parse({
+                v: 2,
+                generation: 1,
                 agentsById: {
-                    claude: {
-                        id: 'claude',
-                        title: 'Claude Agent',
-                        subtitle: null,
-                        channel: 'stable',
-                        isBuiltIn: true,
-                    },
-                },
-                backendsById: {
-                    claude: {
-                        id: 'claude',
-                        agentId: 'claude',
+                    [agentId]: {
+                        id: agentId,
+                        identity: agentIdentity,
                         title: 'Claude (daemon)',
-                        subtitle: null,
+                        channel: 'plugin',
+                        isBuiltIn: false,
                         catalogAgentId: 'claude',
                         iconAgentId: 'claude',
                     },
                 },
-            },
+            }),
         });
 
         const screen = await renderInfoScreen();
         await flushHookEffects({ cycles: 10 });
+        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledWith('machine-projection-1', expect.objectContaining({ serverId: 'server-session-info' }));
 
         const aiProviderItems = screen
             .findAllByType('Item' as any)
@@ -1378,6 +1335,7 @@ describe('/session/[id]/info', () => {
             },
         };
         const Screen = (await import('@/app/(app)/session/[id]/info')).default;
+        await act(async () => { await applyInfoSessionFixture(); });
         await screen.update(<Screen />);
 
         const refreshedCode = String(screen.findAllByType('CodeView' as any)[0]?.props.code ?? '');
@@ -1622,12 +1580,10 @@ describe('/session/[id]/info', () => {
 
         await screen.pressByTestIdAsync('session-info-session-pin');
         expect(setSessionPinSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server-b',
-                serverUrl: 'https://server.example.test',
-            }),
+            credentials: { token: 'token' },
+            serverUrl: 'https://server-b.example.test',
             sessionId: 'session-1',
-            pinned: true,
+            request: expect.objectContaining({ pinned: true }),
         }));
 
         await screen.pressByTestIdAsync('session-info-session-tags-edit');
@@ -1635,13 +1591,11 @@ describe('/session/[id]/info', () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
         await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
-        expect(setSessionTagLabelsSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server-b',
-                serverUrl: 'https://server.example.test',
-            }),
+        expect(setSessionTagAssignmentsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            credentials: { token: 'token' },
+            serverUrl: 'https://server-b.example.test',
             sessionId: 'session-1',
-            tags: [],
+            request: { tagIds: [] },
         }));
         });
     });
@@ -1661,78 +1615,114 @@ describe('/session/[id]/info', () => {
             archivedAt: null,
             metadata: {},
         };
-        resolveSessionOrganizationMutationScopeSpy.mockResolvedValueOnce({
-            ok: false,
-            reason: 'credentialsUnavailable',
-            requestedServerId: 'server-1',
-            serverId: 'server-1',
-        });
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue(null);
 
         const screen = await renderInfoScreen();
 
         await expect(
             screen.pressByTestIdAsync('session-info-session-pin'),
-        ).rejects.toThrow('server-1');
+        ).rejects.toThrow('server-b');
         expect(setSessionPinSpy).not.toHaveBeenCalled();
     });
 
-    it('surfaces move-to-folder from the session view when folder targets match the session workspace', async () => {
-        mockServerId = 'server-1';
-        sessionFoldersFeatureEnabled = true;
-        organizationFolders = {
-            v: 1,
-            folders: [{
-                id: 'folder-1',
-                workspace: {
-                    t: 'workspaceScope',
-                    serverId: 'server-1',
-                    machineId: 'machine-1',
-                    rootPath: '/repo',
-                },
-                parentId: null,
-                name: 'Planning',
-                createdAt: 1,
-                updatedAt: 1,
-            }],
-        };
-        mockSession = {
-            id: 'session-1',
-            active: false,
-            accessLevel: null,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            seq: 2,
-            lastViewedSessionSeq: 1,
-            latestTurnStatus: 'completed',
-            archivedAt: null,
-            metadata: {
-                machineId: 'machine-1',
-                path: '/repo',
+    it.each(['select', 'cancel'] as const)('surfaces move-to-folder from the session view when folder targets match the session workspace (%s)', async (choice) => {
+        await loadSyncSingletonForTests();
+        const credentials = { token: createAccountTokenForTests('viewer-account') };
+        const account = await restoreServerAccountForTest({
+            serverUrl: 'https://server.example.test',
+            credentials,
+            request: async (url) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'viewer-account' });
+                if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json({ rows: [] });
+                if (path === '/v1/artifacts') return Response.json([]);
+                return Response.json({});
             },
-        };
-        openMoveSheetSpy.mockResolvedValue({
-            id: 'session-info-move-folder:folder-1',
-            kind: 'folder',
-            label: 'Planning',
-            disabled: false,
-            result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } },
         });
+        try {
+            mockServerId = 'server-1';
+            sessionFoldersFeatureEnabled = true;
+            organizationFolders = {
+                v: 1,
+                folders: [{
+                    id: 'folder-1',
+                    workspace: {
+                        t: 'workspaceScope',
+                        serverId: 'server-1',
+                        machineId: 'machine-1',
+                        rootPath: '/repo',
+                    },
+                    parentId: null,
+                    name: 'Planning',
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+            };
+            mockSession = {
+                id: 'session-1',
+                active: false,
+                accessLevel: null,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                seq: 2,
+                lastViewedSessionSeq: 1,
+                latestTurnStatus: 'completed',
+                archivedAt: null,
+                metadata: {
+                    machineId: 'machine-1',
+                    path: '/repo',
+                },
+            };
+            modalShowSpy.mockImplementation((config) => {
+                const props = config.props as Readonly<{
+                    sourceLabel: string;
+                    targets: readonly import('@/sync/domains/session/folders').SessionFolderMoveTarget[];
+                    onSelect: (target: import('@/sync/domains/session/folders').SessionFolderMoveTarget) => void;
+                }>;
+                expect(props.sourceLabel).toBe('name');
+                const target = props.targets.find((candidate) => candidate.folderId === 'folder-1');
+                expect(target).toMatchObject({ id: 'session-info-move-folder:folder-1', title: 'Planning', disabled: false });
+                if (!target) throw new Error('Matching folder target is missing');
+                queueMicrotask(() => {
+                    if (choice === 'select') props.onSelect(target);
+                    else config.onRequestClose?.();
+                });
+                return 'modal-id';
+            });
 
-        const screen = await renderInfoScreen();
-        expect(folderFeatureScopes).toContainEqual({ scopeKind: 'spawn', serverId: 'server-1' });
-        await screen.pressByTestIdAsync('session-info-session-move-to-folder');
+            const { getStorage } = await import('@/sync/domains/state/storageStore');
+            getStorage().getState().applySessionFolderAssignments('server-1', [{ sessionId: 'session-1', folderId: 'folder-existing' }]);
+            const screen = await renderInfoScreen();
+            try {
+                expect(folderFeatureScopes).toContainEqual({ scopeKind: 'spawn', serverId: 'server-1' });
+                await screen.pressByTestIdAsync('session-info-session-move-to-folder');
 
-        expect(openMoveSheetSpy).toHaveBeenCalledWith(expect.objectContaining({
-            sourceLabel: 'name',
-            targets: expect.arrayContaining([
-                expect.objectContaining({ id: 'session-info-move-folder:folder-1', label: 'Planning' }),
-            ]),
-        }));
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({ serverId: 'server-1' }),
-            sessionId: 'session-1',
-            folderId: 'folder-1',
-        }));
+                const assignment = getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+                    sessionAddressKey({ serverId: 'server-1', sessionId: 'session-1' })
+                ];
+                if (choice === 'select') {
+                    expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith(expect.objectContaining({
+                        credentials,
+                        serverUrl: 'https://server.example.test',
+                        sessionId: 'session-1',
+                        request: { folderId: 'folder-1' },
+                    }));
+                    expect(assignment).toEqual({ sessionId: 'session-1', folderId: 'folder-1' });
+                    expect(TokenStorage.getCredentialsForServerUrl).toHaveBeenCalledWith('https://server.example.test', { serverId: 'server-1' });
+                } else {
+                    expect(setSessionFolderAssignmentSpy).not.toHaveBeenCalled();
+                    expect(assignment).toEqual({ sessionId: 'session-1', folderId: 'folder-existing' });
+                }
+                expect(getStorage().getState().sessionOrganizationOptimisticRecords).toEqual({});
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            await account.dispose();
+        }
     });
 
     it('shows the handoff quick action when server-routed transfer is the only transport the selected server advertises', async () => {

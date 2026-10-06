@@ -5,9 +5,91 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
+import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
+
+test('server handoff persists an inherited target registry only after the real directory transfer', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-inherited-server-move-'));
+  try {
+    const stackName = 'qa-retained';
+    const sourceDir = join(root, stackName, 'server-light');
+    await mkdir(sourceDir, { recursive: true });
+    const database = new DatabaseSync(join(sourceDir, 'happier-server-light.sqlite'));
+    database.exec('CREATE TABLE Account(id TEXT); INSERT INTO Account VALUES (\'retained\')');
+    database.close();
+    await writeFile(join(sourceDir, 'handy-master-secret.txt'), 'fixture-signing-secret', { mode: 0o600 });
+    await run(['add', 'linux', '--stack=producer', '--platform=posix', '--ssh=fixture-worker', `--repo-dir=${process.cwd()}`, `--cli-home-dir=${join(root, 'remote-state')}`], root);
+    const producerPath = join(root, 'producer', 'dev-targets.json');
+    const producerBefore = await readFile(producerPath);
+    const producer = JSON.parse(producerBefore);
+    const paths = resolveRemoteStackStatePaths(producer.targets[0], { stackName, runtimeMode: 'controlled' });
+    await writeFile(join(root, stackName, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [], runtimePlacement: { expo: { mode: 'local' } }, commandExecution: { mode: 'local' } }));
+    const { binDir } = writeFakeBin({ root, name: 'mutagen', content: '#!/bin/sh\nif [ "$1 $2" = "sync list" ]; then case "$*" in *json*) printf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":4,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\\n\' ;; *) printf "happier-linux|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|4|ok|0|0\\n" ;; esac; fi\n' });
+    writeFakeBin({ root, name: 'ssh', content: '#!/usr/bin/env node\nconst {spawnSync}=require("node:child_process"); const result=spawnSync("/bin/sh",["-c",process.argv.at(-1)],{stdio:"inherit",env:process.env}); process.exit(result.status ?? 1);\n' });
+    writeFakeBin({ root, name: 'scp', content: '#!/usr/bin/env node\nconst {copyFileSync,readFileSync,writeFileSync}=require("node:fs"); const args=process.argv.slice(-2); const destination=args[1].slice(args[1].indexOf(":")+1).replace(/^\'|\'$/g, ""); copyFileSync(args[0],destination); const path=process.env.RETARGET_DURING_UPLOAD_CONFIG; if(path){const config=JSON.parse(readFileSync(path)); config.targets[0].cliHomeDir += "-changed"; writeFileSync(path,JSON.stringify(config));}\n' });
+    const result = await run(['move-server', 'linux', `--stack=${stackName}`], root, { PATH: `${binDir}:${process.env.PATH}`, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer' });
+    assert.equal(result.moved, true);
+    const persisted = JSON.parse(await readFile(join(root, stackName, 'dev-targets.json')));
+    assert.equal(persisted.targets[0].name, 'linux');
+    assert.equal(persisted.runtimePlacement.server.target, 'linux');
+    assert.equal(persisted.runtimePlacement.daemon.target, 'linux');
+    assert.deepEqual(persisted.runtimePlacement.qa.targets, ['linux']);
+    assert.equal(persisted.runtimePlacement.expo.mode, 'local');
+    assert.deepEqual(persisted.commandExecution, { mode: 'local' });
+    assert.equal(await readFile(join(paths.serverLightDataDir, 'handy-master-secret.txt'), 'utf8'), 'fixture-signing-secret');
+    assert.equal(await readFile(join(sourceDir, 'handy-master-secret.txt'), 'utf8'), 'fixture-signing-secret');
+    assert.deepEqual(await readFile(producerPath), producerBefore);
+    const consumerConfigPath = join(root, stackName, 'dev-targets.json');
+    await writeFile(consumerConfigPath, JSON.stringify({ version: 3, targets: producer.targets, runtimePlacement: { server: { mode: 'local' }, expo: { mode: 'local' } }, commandExecution: { mode: 'local' } }));
+    const changedTarget = await runRaw(['move-server', 'linux', `--stack=${stackName}`, '--json'], root, {
+      PATH: `${binDir}:${process.env.PATH}`, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', RETARGET_DURING_UPLOAD_CONFIG: consumerConfigPath,
+    });
+    assert.equal(changedTarget.code, 1);
+    assert.match(changedTarget.stderr, /target.*changed during handoff/);
+    assert.equal(JSON.parse(await readFile(consumerConfigPath)).runtimePlacement.server.mode, 'local');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 const execFileAsync = promisify(execFile);
 const script = join(import.meta.dirname, 'dev_targets.mjs');
+
+test('QA placement setter keeps build placement independent and supports auto, ordered, and local', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-qa-placement-'));
+  try {
+    for (const name of ['builder', 'qa1', 'qa2']) await run(['add', name, '--stack=qa-settings', '--platform=posix', `--ssh=${name}`, `--repo-dir=/repo/${name}`, `--cli-home-dir=/state/${name}`], root);
+    await run(['placement', 'set', 'build', 'ordered', '--targets=builder', '--stack=qa-settings'], root);
+    await run(['placement', 'set', 'qa', 'auto', '--targets=qa2,qa1', '--fallback=local', '--stack=qa-settings'], root);
+    const automatic = JSON.parse(await readFile(join(root, 'qa-settings', 'dev-targets.json'), 'utf8'));
+    assert.deepEqual(automatic.runtimePlacement.build.targets, ['builder']);
+    assert.deepEqual(automatic.runtimePlacement.qa.targets, ['qa2', 'qa1']);
+    assert.equal(automatic.runtimePlacement.qa.mode, 'auto');
+    await run(['placement', 'set', 'qa', 'ordered', '--targets=qa1,qa2', '--stack=qa-settings'], root);
+    const ordered = JSON.parse(await readFile(join(root, 'qa-settings', 'dev-targets.json'), 'utf8'));
+    assert.deepEqual(ordered.runtimePlacement.qa.targets, ['qa1', 'qa2']);
+    await run(['placement', 'set', 'qa', 'local', '--stack=qa-settings'], root);
+    const local = JSON.parse(await readFile(join(root, 'qa-settings', 'dev-targets.json'), 'utf8'));
+    assert.deepEqual(local.runtimePlacement.qa, { mode: 'local' });
+    assert.deepEqual(local.runtimePlacement.build.targets, ['builder']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('explicit server handoff leaves an already remote stack on its authoritative target', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-retained-move-'));
+  try {
+    await run(['add', 'linux', '--stack=qa-retained', '--platform=posix', '--ssh=linux', '--repo-dir=/repo', '--cli-home-dir=/home/worker'], root);
+    await run(['placement', 'set', 'server', 'linux', '--stack=qa-retained'], root);
+    const before = await readFile(join(root, 'qa-retained', 'dev-targets.json'));
+    const result = await run(['move-server', 'linux', '--stack=qa-retained'], root);
+    assert.equal(result.moved, false);
+    assert.equal(result.reason, 'already_remote');
+    assert.deepEqual(await readFile(join(root, 'qa-retained', 'dev-targets.json')), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 async function run(args, storageDir, extraEnv = {}) {
   const result = await execFileAsync(process.execPath, [script, ...args, '--json'], {
@@ -190,6 +272,16 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
       mode: 'local-and-targets',
       targets: ['mac', 'linux'],
     });
+
+    const orderedBuild = await run([
+      'placement', 'set', 'build', 'ordered', '--stack=repo-test',
+      '--targets=linux,mac', '--fallback=local',
+    ], root);
+    assert.deepEqual(orderedBuild.config.runtimePlacement.build, {
+      mode: 'prefer-target', targets: ['linux', 'mac'], fallback: 'local',
+    });
+    assert.deepEqual(orderedBuild.config.runtimePlacement.expo, shown.config.runtimePlacement.expo);
+    await run(['placement', 'set', 'build', 'local', '--stack=repo-test'], root);
 
     const blockedRemoval = await runRaw(['remove', 'mac', '--stack=repo-test'], root);
     assert.equal(blockedRemoval.code, 1);

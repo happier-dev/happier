@@ -1581,6 +1581,82 @@ describe('voice tool handlers', () => {
     expect(tools.startReview).toEqual(expect.any(Function));
   });
 
+  it.each([
+    { serverId: undefined, expected: { ok: false, errorCode: 'approval_origin_unavailable' } },
+    { serverId: 'server-a', expected: { ok: true, kind: 'approval_request_created', actionId: 'ui.voice_global.reset' } },
+  ])('keeps global agent memory intact until Voice reset approval (Home: $serverId)', async ({ serverId, expected }) => {
+    const current = state.settings.voice.providers.local_conversation;
+    state.settings.voice.providers.local_conversation = {
+      ...current,
+      config: {
+        ...current.config,
+        agent: {
+          ...current.config.agent,
+          transcript: { persistenceMode: 'persistent', epoch: 2 },
+        },
+      },
+    };
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => null });
+
+    const result = JSON.parse(await tools.resetGlobalVoiceAgent({}, {
+      ...(serverId ? { serverId } : {}),
+      effectId: 'effect-reset-approval',
+    }));
+
+    expect(result).toMatchObject(expected);
+    expect(voiceSessionStop).not.toHaveBeenCalled();
+    expect(applySettingsLocal).not.toHaveBeenCalled();
+    expect(state.settings.voice.providers.local_conversation.config.agent.transcript.epoch).toBe(2);
+    if (serverId) {
+      expect(result.artifactId).toEqual(expect.any(String));
+      expect(artifactCreateRequests).toHaveBeenCalled();
+    } else {
+      expect(artifactCreateRequests).not.toHaveBeenCalled();
+    }
+  });
+
+  it('increments agent transcript epoch for a direct UI reset when persistence is enabled', async () => {
+    const current = state.settings.voice.providers.local_conversation;
+    state.settings.voice.providers.local_conversation = {
+      ...current,
+      config: {
+        ...current.config,
+        agent: {
+          ...current.config.agent,
+          transcript: { persistenceMode: 'persistent', epoch: 2 },
+        },
+      },
+    };
+
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+
+    const result = await createDefaultActionExecutor().execute('ui.voice_global.reset', {}, {
+      surface: 'ui', serverId: 'server-a',
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(applySettingsLocal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voice: expect.objectContaining({
+          providers: expect.objectContaining({
+            local_conversation: expect.objectContaining({
+              config: expect.objectContaining({
+                agent: expect.objectContaining({
+                  transcript: expect.objectContaining({ epoch: 3 }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        source: 'ui',
+        expectedSettingsScope: {
+          serverId: 'server-a',
+          accountId: 'voice-tools-account',
+        },
+      }),
+    );
+  });
   it('teleports the voice agent to the resolved session root', async () => {
     teleportVoiceAgentToSessionRoot.mockResolvedValue({ ok: true });
 

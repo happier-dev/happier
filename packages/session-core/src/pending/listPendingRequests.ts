@@ -2,7 +2,11 @@ import type { Message } from "../messages/messageTypes.js";
 import type { AgentState } from "../state/agentState.js";
 import { isRequestInterruptedPlaceholder } from "./requestInterruptedPlaceholder.js";
 import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
-import { SessionPublicCompletedRequestV1Schema, isSessionActionConfirmationRequest, resolveAgentRequestKind, resolvePendingRequestAttentionReasonV1, type AgentRequestKind, type SessionActionConfirmationsV1 } from '@happier-dev/protocol';
+import { SessionPublicCompletedRequestV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { isSessionActionConfirmationRequest } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
+import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import type { AgentRequestKind, SessionActionConfirmationsV1 } from '@happier-dev/protocol';
 
 export type PendingRequestFacts = Readonly<{
     sessionId: string;

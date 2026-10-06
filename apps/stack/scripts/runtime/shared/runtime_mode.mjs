@@ -5,12 +5,19 @@ function normalizeRuntimeMode(raw) {
   return 'source';
 }
 
+function stackRuntimeModeArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  const separator = args.indexOf('--');
+  return separator === -1 ? args : args.slice(0, separator);
+}
+
 export function hasExplicitStackRuntimeModeArg(args = []) {
-  return Array.isArray(args) && (args.includes('--runtime') || args.includes('--source'));
+  const modeArgs = stackRuntimeModeArgs(args);
+  return modeArgs.includes('--runtime') || modeArgs.includes('--source');
 }
 
 export function resolveStackRuntimeMode({ argv = [], env = process.env, activeRuntimeState = null } = {}) {
-  const args = Array.isArray(argv) ? argv : [];
+  const args = stackRuntimeModeArgs(argv);
   const wantsRuntime = args.includes('--runtime');
   const wantsSource = args.includes('--source');
 

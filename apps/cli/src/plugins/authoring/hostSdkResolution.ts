@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { builtinModules, createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
-import ts from 'typescript';
+import type ts from 'typescript';
 
 import {
   resolveAuthoritativePackagedRuntimeProjectRoot,
@@ -214,6 +214,7 @@ export async function preparePluginSingleFileDevelopmentLoad(
   options: Readonly<{ runtimeModuleUrl?: string }> = {},
 ): Promise<Readonly<Record<string, string>>> {
   const sourceText = await readFile(resolve(entryPath), 'utf8');
+  const { default: ts } = await import('typescript');
   const source = ts.createSourceFile(
     resolve(entryPath),
     sourceText,

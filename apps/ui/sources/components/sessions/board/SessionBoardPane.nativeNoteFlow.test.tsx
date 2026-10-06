@@ -53,6 +53,11 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit');
+    return createExpoRouterMock().module;
+});
+
 const EMPTY_SNAPSHOT = projectSessionBoard({
     layout: undefined,
     items: new Map(),
@@ -270,7 +275,7 @@ describe('SessionBoardPane native Note flow', () => {
                             binding,
                             actions,
                             callerHostedHtmlAvailable: runtime !== null,
-                            resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(PLUGIN_RUNTIME, {
+                            resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver({
                                 hostedHtmlRendererAvailable: runtime !== null,
                             }),
                         }}

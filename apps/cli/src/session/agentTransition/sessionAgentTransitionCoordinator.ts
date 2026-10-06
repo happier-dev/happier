@@ -1,19 +1,9 @@
-import {
-  buildTrustedHostSessionInputAdmissionV1,
-  beginSessionAgentTransitionEffects,
-  buildSessionAgentTransitionDividerLocalId,
-  isSessionStopConfirmed,
-  matchesSessionAgentTransitionDividerAgentsV1,
-  readSessionAgentTransitionDividerFromStoredRecordV1,
-  resolveLinkedExternalSessionAuthorityV1,
-  type SessionAgentTransitionCurrentViewCommitted,
-  type SessionAgentTransitionRejectedCodeV1,
-  type SessionAgentTransitionRequestV1,
-  type SessionAgentTransitionResultV1,
-  type SessionAgentTransitionSelectionV1,
-  type SessionAgentTransitionSourceUntouched,
-  type AgentNativeResumeIdentityV1,
-} from '@happier-dev/protocol';
+import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { beginSessionAgentTransitionEffects } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
+import { buildSessionAgentTransitionDividerLocalId, matchesSessionAgentTransitionDividerAgentsV1, readSessionAgentTransitionDividerFromStoredRecordV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
+import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { SessionAgentTransitionCurrentViewCommitted, SessionAgentTransitionRejectedCodeV1, SessionAgentTransitionRequestV1, SessionAgentTransitionResultV1, SessionAgentTransitionSelectionV1, SessionAgentTransitionSourceUntouched, AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
 import {
   resolveAgentIdFromSessionMetadata,
   projectCurrentAgentSessionView,

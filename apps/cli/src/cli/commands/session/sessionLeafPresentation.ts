@@ -1,10 +1,6 @@
 import chalk from 'chalk';
 import { ok } from '@happier-dev/cli-common/output';
-import {
-  SessionStatusResultSchema,
-  SessionStopResultSchema,
-  SessionWaitResultSchema,
-} from '@happier-dev/protocol';
+import { SessionStatusResultSchema, SessionStopResultSchema, SessionWaitResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 import type { ActionCliPresentation } from '@/cli/actions/commandPresentation';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';

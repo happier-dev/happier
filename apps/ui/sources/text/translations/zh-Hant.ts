@@ -117,6 +117,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -838,6 +839,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     connectedServicesSetup: connectedServicesSetupTranslations['zh-Hant'],
     homeWidgets: homeWidgetTranslations['zh-Hant'],
     widgetFrame: widgetFrameTranslations['zh-Hant'],
+    navigationPlacement: navigationPlacementTranslations['zh-Hant'],
     inputPicker: inputPickerTranslations['zh-Hant'],
     widgetAdd: widgetAddTranslations['zh-Hant'],
     widgetDefinition: widgetDefinitionTranslations['zh-Hant'],
@@ -1967,6 +1969,19 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             invalidGroup: '此帳號群組無效。請檢查設定後再試。',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: '連線服務動作失敗。請重新整理後再試。',
+            accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+            accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+            accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+            accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+            accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+            accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+            accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+            accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+            accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+            accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+            accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+            accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
         },
         diagnostics: {
             title: {
@@ -7343,6 +7358,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 copyPath: '複製路徑',
                 download: '下載',
                 downloadAsZip: '以 ZIP 下載',
+                openWith: '開啟方式',
+                share: '分享',
             },
             dropToUpload: '拖放檔案以上傳',
             rename: {
@@ -7568,6 +7585,9 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         stagedChanges: ({ count }: { count: number }) => `已暫存的更改 (${count})`,
         unstagedChanges: ({ count }: { count: number }) => `未暫存的更改 (${count})`,
         fileReadFailed: '讀取檔案失敗',
+        androidFileActionsUnavailable: "此應用版本不支援 Android 檔案操作。請更新 Happier 後重試。",
+        fileSharingUnavailable: "此裝置不支援檔案分享。",
+        fileCleanupFailed: "無法刪除暫存檔案",
         fileTooLargeToPreview: '檔案過大，無法預覽',
         fileWriteFailed: '寫入檔案失敗',
         fileEditor: {
@@ -7695,6 +7715,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         },
         loadingFile: ({ fileName }: { fileName: string }) => `正在載入 ${fileName}...`,
         binaryFile: '二進位檔案',
+        videoPreview: '影片預覽',
         imagePreviewTooLarge: '圖片預覽太大，無法顯示',
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `開啟生成的圖片 ${name}`,
@@ -9053,6 +9074,8 @@ settingsSession: {
 	              attentionPromotionModeGlobalSubtitle: '在其他工作階段上方顯示一個注意事項分組',
 	              attentionPromotionModeWithinGroupsTitle: '移到目前分組頂部',
 	              attentionPromotionModeWithinGroupsSubtitle: '將工作階段保留在其資料夾或工作區內',
+	              reminderAutoClearOnOpenTitle: "開啟時清除提醒",
+	              reminderAutoClearOnOpenSubtitle: "關閉後需手動移除已到期的提醒。未來的提醒仍按計畫保留。",
 	              attentionStandingDefaultTitle: '將工作階段保留在需要注意',
 	              attentionStandingDefaultEnabledSubtitle: '每個工作階段都會一直保留，直到你移除它',
 	              attentionStandingDefaultDisabledSubtitle: '逐個保留工作階段',
@@ -9193,21 +9216,21 @@ settingsSession: {
           },
         providerUsageGauge: {
             title: '提供者使用量',
-            footer: '當有可靠的提供者使用量資料時，控制輸入框旁顯示的配額儀表。在已連接的帳號上釘選一個用量窗口，即可將其顯示為額外的儀表。',
+            footer: "為所有帳戶選擇輸入框上方的用量儀表。儀表遵循每個池所選的用量限制。收藏的限額會為目前帳戶新增額外儀表。",
             visibilityTitle: '顯示提供者使用量儀表',
             labelsTitle: '顯示標籤',
             labelsSubtitle: '為輸入框旁的上下文和用量儀表加上名稱。',
             visibilityEnabledSubtitle: '可用時在輸入框旁顯示提供者剩餘配額。',
             visibilityHiddenSubtitle: '在輸入框旁隱藏提供者配額。',
-            windowTitle: '儀表視窗',
+            windowTitle: "儀表時間視窗",
             windowMostConstrainedTitle: '最受限制',
             windowMostConstrainedSubtitle: '顯示可靠配額視窗中剩餘最少的視窗。',
             windowDailyTitle: '每日',
             windowDailySubtitle: '優先使用每日配額視窗。',
             windowWeeklyTitle: '每週',
             windowWeeklySubtitle: '優先使用每週配額視窗。',
-            windowSessionTitle: '工作階段',
-            windowSessionSubtitle: '優先使用目前工作階段配額視窗。',
+            windowSessionTitle: "短期視窗",
+            windowSessionSubtitle: "顯示短期配額視窗，例如五小時限額。",
             windowPrimaryTitle: '主要',
             windowPrimarySubtitle: '優先使用提供者主要配額視窗。',
             windowSecondaryTitle: '次要',
@@ -9702,7 +9725,7 @@ settingsSession: {
             byo: "我的 ElevenLabs 帳戶",
             byoSubtitle: '使用您自己的 ElevenLabs API 金鑰與代理',
             openaiRealtime: 'OpenAI Realtime',
-            openaiRealtimeSubtitle: '使用已儲存的 API 金鑰或明確選取的 OpenAI 帳戶',
+            openaiRealtimeSubtitle: '使用你的 OpenAI 帳戶或 API 金鑰',
             grokRealtime: "Grok Voice",
             grokRealtimeSubtitle: "使用你的 xAI API 金鑰",
         },

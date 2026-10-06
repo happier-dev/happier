@@ -2,13 +2,8 @@ import { access, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
 
-import {
-  GH_BINARY_NAME,
-  GH_DEP_ID,
-  GH_GITHUB_REPO,
-  GH_RUNTIME_INSTALLABLE_POLICY,
-  INSTALLABLE_KEYS,
-} from '@happier-dev/protocol/installables';
+import { GH_BINARY_NAME, GH_DEP_ID, GH_GITHUB_REPO, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol/installables/definitions/gh';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';

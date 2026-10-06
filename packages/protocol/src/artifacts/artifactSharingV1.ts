@@ -1,7 +1,7 @@
 import type { ArtifactCallerAccessV1 } from './artifactAccessV1.js';
 import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
 import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
-import { WorkflowDefinitionArtifactHeaderV1Schema } from '../workflows/workflowDefinitionV1.js';
+import { WorkflowDefinitionArtifactHeaderV1ReadSchema } from '../workflows/workflowDefinitionV1.js';
 import { roleArtifactSharingAdapterV1 } from '../prompts/roles/roleArtifactSharingV1.js';
 import { launchProfileArtifactSharingAdapterV1 } from '../launchProfiles/launchProfileArtifactV1.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
@@ -37,7 +37,7 @@ export type ArtifactUseTargetV1 = Readonly<{
 export const workflowDefinitionArtifactSharingAdapterV1 = {
   kind: 'workflow-definition.v1',
   canShare: (resource: ArtifactSharingResourceV1) => {
-    const parsed = WorkflowDefinitionArtifactHeaderV1Schema.safeParse(resource.header);
+    const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(resource.header);
     if (!parsed.success || parsed.data.definitionId !== resource.artifactId) return false;
     const revision = resource.revision;
     const headerVersion = revision?.headerVersion ?? resource.headerVersion;

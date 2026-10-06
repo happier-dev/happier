@@ -1,8 +1,5 @@
-import {
-  DaemonPetDiscoverRequestV1Schema,
-  type DaemonPetDiscoverResponseV1,
-  type PetDiscoveryDiagnosticV1,
-} from '@happier-dev/protocol';
+import { DaemonPetDiscoverRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
+import type { DaemonPetDiscoverResponseV1, PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
 
 import { discoverCodexPets } from '../discovery/discoverCodexPets';
 import { createPetSourceKey } from '../discovery/createPetSourceKey';

@@ -1,7 +1,6 @@
-import {
-  ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryMetadataSchema,
-  type ScmDiffSummaryGenerateOutput, type ScmDiffSummaryOutputKind, type ScmDiffSummaryResultResponse,
-} from '@happier-dev/protocol';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryResultResponse } from '@happier-dev/protocol';
 import type {
   ExecutionRunProfileStartParams, ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult,
 } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';

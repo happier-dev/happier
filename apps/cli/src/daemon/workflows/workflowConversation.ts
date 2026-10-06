@@ -3,7 +3,7 @@ import type {
   WorkflowProgressEnvelopeV1,
   WorkflowStepExecutionSelection,
 } from '@happier-dev/protocol/workflows';
-export { workflowBodyOwnsConversation } from '@happier-dev/protocol/workflows';
+export { workflowBodyOwnsConversation } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 
 export type WorkflowConversationTargetClass = 'session' | 'detached_run';
 

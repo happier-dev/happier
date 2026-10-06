@@ -1,14 +1,10 @@
-import {
-  type BackendTargetRefV1,
-  type ExecutionRunRetentionPolicy,
-  ReviewAssumptionSchema,
-  ReviewFindingSchema,
-  ReviewQuestionSchema,
-  ReviewCommentProposalsV1Schema,
-  ReviewFindingsV2Schema,
-  ScmComparisonSchema,
-  type ReviewFinding,
-} from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunRetentionPolicy, ReviewFinding } from '@happier-dev/protocol';
+import { ReviewAssumptionSchema } from '@happier-dev/protocol/reviews/ReviewAssumption';
+import { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
+import { ReviewQuestionSchema } from '@happier-dev/protocol/reviews/ReviewQuestion';
+import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 
 import type {
   ExecutionRunProfileBoundedCompleteResult,

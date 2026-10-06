@@ -1,5 +1,5 @@
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
-import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/manifest';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type {
     BackendRuntime,

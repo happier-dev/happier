@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
@@ -11,6 +11,11 @@ import { registerWorkflowRunStorageRoutes } from "@/app/api/routes/automations/r
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
+import { inTx } from "@/storage/inTx";
+import { resolveWorkflowRunAdmissionVisibilityInTx } from "./workflowRunAccess";
+import { readTeamSummaryForActorInTx } from "@/app/teams/lifecycle";
+import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
+import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 
 describe("Workflow Run live Team access (real SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -35,7 +40,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: "plain",
             binding: { v: 1, purpose: "accepted_snapshot", accountId: owner.id, runId },
             acceptedSnapshot: await materializeWorkflowAcceptedSnapshotFixture({ definition, context: {
-                source: { kind: "inline" }, inputs: {}, machineId: machine.id, executionTarget: { kind: "session" },
+                source: { kind: "inline", sourceArtifactId: artifact.id }, inputs: {}, machineId: machine.id, executionTarget: { kind: "session" },
                 workspaceTarget: { project: { machineId: machine.id, directory: "/repo", checkoutRootPath: "/repo" } },
                 origin: { kind: "direct" }, authorization: { principal: { kind: "host" } } } }),
         }));
@@ -101,18 +106,24 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         expect((await getWorkflowRun({ accountId: f.owner.id, runId: f.runId })).run.ownerAccountId).toBe(f.owner.id);
     });
 
-    it("admission auto-selects one granted Team, requires a choice among several, and refuses a private opt-out", async () => {
+    it("reviewed inline admission auto-selects one granted Team, requires a choice among several, and refuses ungranted or private audiences", async () => {
         const f = await fixture();
+        await db.teamMembership.create({ data: { teamId: f.team.id, accountId: f.owner.id, role: "member" } });
         await db.automationRun.delete({ where: { id: f.runId } });
         const input = { accountId: f.owner.id, runId: f.runId, origin: { kind: "direct" as const }, machineId: f.machine.id,
             sourceArtifactId: f.artifact.id, acceptedEnvelope: f.acceptedEnvelope,
             accountCurrentness: { mode: "plain" as const, version: f.owner.seq, contentKeyFingerprint: null } };
         const privateInput = { ...input, visibleTeamId: null };
         await expect(admitWorkflowRun(privateInput)).rejects.toMatchObject({ code: "visible_team_not_granted" });
+        const ungrantedTeam = await db.team.create({ data: { name: "No workflow grant" } });
+        await expect(admitWorkflowRun({ ...input, visibleTeamId: ungrantedTeam.id }))
+            .rejects.toMatchObject({ code: "visible_team_not_granted" });
+        expect(await db.automationRun.findUnique({ where: { id: f.runId } })).toBeNull();
         const admitted = await admitWorkflowRun(input);
         expect(admitted.run).toMatchObject({ visibleTeamId: f.team.id });
         await db.automationRun.delete({ where: { id: f.runId } });
         const secondTeam = await db.team.create({ data: { name: "Second workflow audience" } });
+        await db.teamMembership.create({ data: { teamId: secondTeam.id, accountId: f.owner.id, role: "member" } });
         await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: secondTeam.id,
             accessLevel: "view", createdByAccountId: f.owner.id } });
         input.accountCurrentness.version = (await db.account.findUniqueOrThrow({ where: { id: f.owner.id }, select: { seq: true } })).seq;
@@ -125,8 +136,61 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         expect(await db.workflowRunDataKeyEnvelope.count({ where: { runId: f.runId } })).toBe(0);
     });
 
+    it("admission refuses a forged non-member Team despite a direct Artifact grant", async () => {
+        const f = await fixture();
+        const outsider = await db.account.create({ data: { encryptionMode: "plain" } });
+        await db.artifactAccountGrant.create({ data: { artifactId: f.artifact.id, accountId: outsider.id,
+            accessLevel: "view", createdByAccountId: f.owner.id } });
+        await expect(inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+            actorAccountId: outsider.id, sourceArtifactId: f.artifact.id, visibleTeamId: f.team.id,
+        }))).rejects.toMatchObject({ code: "visible_team_not_granted" });
+        expect(await inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+            actorAccountId: outsider.id, sourceArtifactId: f.artifact.id,
+        }))).toBeNull();
+        expect(await inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+            actorAccountId: f.viewer.id, sourceArtifactId: f.artifact.id,
+        }))).toBe(f.team.id);
+    });
+
+    it("admission preserves the qualified credential of a member of a restricted Team", async () => {
+        const f = await fixture();
+        await db.team.update({ where: { id: f.team.id }, data: {
+            authenticationPolicy: { v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "email_password" }] },
+        } });
+        await db.accountIdentity.create({ data: { accountId: f.viewer.id, provider: "email", providerUserId: "workflow-member@example.test", profile: {} } });
+        await db.accountPasswordCredential.create({ data: { accountId: f.viewer.id, credential: {
+            v: 1, kind: "plain_password_hash", hash: await hashPasswordMaterial(new TextEncoder().encode("workflow test password factor")),
+        } } });
+        const authentication = { env: {
+            HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: "1", HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+        }, authenticationAuthority: "present_user", authenticationEvidence: [{ kind: "home_method", methodId: "email_password" }] } satisfies TeamOperationAuthenticationContext;
+        expect(await inTx(tx => readTeamSummaryForActorInTx(tx, { teamId: f.team.id, actorAccountId: f.viewer.id, authentication }))).toMatchObject({ ok: true });
+        const input = { actorAccountId: f.viewer.id, sourceArtifactId: f.artifact.id, authentication };
+        expect(await inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, input))).toBe(f.team.id);
+        await expect(inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, { ...input,
+            authentication: { ...authentication, authenticationEvidence: [] },
+        }))).rejects.toMatchObject({ code: "run_access_denied" });
+        // The HTTP authentication boundary stamps these verified facts; no body field supplies them.
+        for (const [name, value] of Object.entries(authentication.env)) vi.stubEnv(name, value);
+        try {
+            await withAuthenticatedTestApp(app => registerWorkflowRunStorageRoutes(app), async app => {
+                const payload = { operation: "run-key.census", runId: crypto.randomUUID(), sourceArtifactId: f.artifact.id, visibleTeamId: f.team.id };
+                const qualified = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", payload,
+                    headers: { "x-test-user-id": f.viewer.id, "x-test-authentication-evidence": JSON.stringify(authentication.authenticationEvidence) } });
+                expect(qualified.statusCode).toBe(200);
+                expect(qualified.json()).toMatchObject({ visibleTeamId: f.team.id, ownerAccountId: f.viewer.id });
+                const unqualified = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage", payload,
+                    headers: { "x-test-user-id": f.viewer.id } });
+                expect(unqualified.statusCode).toBe(403);
+                expect(unqualified.json()).toEqual({ error: "run_access_denied" });
+            });
+        } finally { vi.unstubAllEnvs(); }
+    });
+
     it("Automation snapshot rejoin preserves omitted or matching frozen Team choice and refuses another explicit Team", async () => {
         const f = await fixture();
+        await db.teamMembership.create({ data: { teamId: f.team.id, accountId: f.owner.id, role: "member" } });
         await db.automationRun.delete({ where: { id: f.runId } });
         const otherTeam = await db.team.create({ data: { name: "Another trigger audience" } });
         await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: otherTeam.id,

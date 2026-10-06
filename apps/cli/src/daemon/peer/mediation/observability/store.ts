@@ -1,10 +1,5 @@
-import {
-    createPeerMediationObservabilityFlowStore,
-    type PeerMediationObservabilityDeltaV1,
-    type PeerMediationObservabilityEventV1,
-    type PeerMediationObservabilityScopeV1,
-    type PeerMediationObservabilitySnapshotV1,
-} from '@happier-dev/protocol';
+import { createPeerMediationObservabilityFlowStore } from '@happier-dev/protocol/machines/peer/mediation/observability/flowStore';
+import type { PeerMediationObservabilityDeltaV1, PeerMediationObservabilityEventV1, PeerMediationObservabilityScopeV1, PeerMediationObservabilitySnapshotV1 } from '@happier-dev/protocol';
 
 /**
  * Daemon-side peer-mediation observability store. The engine itself lives in the single shared

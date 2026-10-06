@@ -35,12 +35,6 @@ vi.mock('@/config', () => ({
 
 installWorkspaceFileDetailsCommonModuleMocks();
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    getImageMimeTypeFromPath: () => 'image/png',
-    isBinaryContent: () => false,
-    isKnownBinaryPath: () => false,
-}));
-
 vi.mock('@/scm/diff/looksLikeUnifiedDiff', () => ({
     looksLikeUnifiedDiff: () => true,
 }));

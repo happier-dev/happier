@@ -1,4 +1,5 @@
-import { BrowserDiagnosticEventBatchV1Schema, type BrowserDiagnosticCollectorV1 } from '@happier-dev/protocol';
+import { BrowserDiagnosticEventBatchV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserDiagnosticCollectorV1 } from '@happier-dev/protocol';
 
 export const COOPERATIVE_COLLECTOR_QUERY = '__happierCollector';
 export const COOPERATIVE_COLLECTOR_STATE_QUERY = '__happierCollectorState';

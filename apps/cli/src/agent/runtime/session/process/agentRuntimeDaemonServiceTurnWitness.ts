@@ -1,10 +1,7 @@
 import { z } from 'zod';
-import {
-  SESSION_PERMISSION_MODES,
-  SessionInputCausalPermissionAuthorityV1Schema,
-  AgentStartSessionCallerV1Schema,
-  readAgentStartCallerWorkDepthV1,
-} from '@happier-dev/protocol';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { AgentStartSessionCallerV1Schema, readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 const OpaqueIdSchema = z.string().trim().min(1).max(512);

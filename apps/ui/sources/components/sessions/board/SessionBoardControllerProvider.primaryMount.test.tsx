@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -138,7 +138,6 @@ function Harness(props: Readonly<{ probe: Probe }>): React.ReactElement {
 }
 
 afterEach(() => { standardCleanup(); });
-beforeAll(async () => { await loadSyncSingletonForTests(); });
 
 const session = createSessionFixture({ id: ADDRESS.sessionId, serverId: ADDRESS.serverId });
 const available = () => ({ kind: 'available' as const });
@@ -212,6 +211,8 @@ function ViewportHarness(props: Readonly<{ probe: Probe; recovered: boolean; exp
 }
 
 describe('mounted Session Board primary placement', () => {
+    beforeEach(async () => { await loadSyncSingletonForTests(); });
+
     it.each([false, true])('hands the one live frame across body windows, retirement and re-entry (recovered=%s)', async (recovered) => {
         frames.active = 0;
         frames.maximum = 0;

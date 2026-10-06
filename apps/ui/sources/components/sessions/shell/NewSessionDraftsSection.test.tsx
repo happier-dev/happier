@@ -721,10 +721,9 @@ describe('NewSessionDraftsSection', () => {
     });
 
     it('projects installed Agent identities from the canonical authoring target', () => {
-        const projection = draft();
-        if (projection.document.target.kind !== 'newSession') {
-            throw new Error('expected a new-session draft');
-        }
+        const projection = temporaryComputerDraft({ serverId: 'server-a' });
+        const document = projection.document;
+        assertCataloguedNewSessionDocument(document);
         const installedProjection: NewSessionDraftProjection = {
             ...projection,
             document: {

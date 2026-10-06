@@ -14,20 +14,10 @@ import {
     isAgentStateRequestCoveredByCompletedRequests,
     resolveAgentStateRequestCoverageOptions,
 } from '@happier-dev/agents';
-import {
-    PluginIdSchema,
-    SessionPermissionApprovalReviewerClaimV1Schema,
-    SessionPermissionAccountUserDecisionActorV1Schema,
-    SessionPermissionExternalHumanDecisionActorV1Schema,
-    SessionPermissionIdempotencyKeyV1Schema,
-    SessionPermissionSourceRefV1Schema,
-    SessionPermissionSourceRevisionOrEpochV1Schema,
-    TurnIdSchema,
-    type AccountSettings,
-    type SessionPermissionApprovalReviewerClaimV1,
-    type SessionPermissionAccountUserDecisionActorV1,
-    type SessionPermissionExternalHumanDecisionActorV1,
-} from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
+import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import type { AccountSettings, SessionPermissionApprovalReviewerClaimV1, SessionPermissionAccountUserDecisionActorV1, SessionPermissionExternalHumanDecisionActorV1 } from '@happier-dev/protocol';
 import {
     getSessionNotificationAgentDisplayName,
     getSessionNotificationTitle,

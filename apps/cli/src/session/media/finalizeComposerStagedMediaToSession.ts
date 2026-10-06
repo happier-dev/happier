@@ -1,17 +1,9 @@
 import { dirname } from 'node:path';
 
-import {
-  ComposerAttachmentDraftV1Schema,
-  ComposerAttachmentInputV1Schema,
-  ComposerContentHandleV1Schema,
-  SessionMediaMessageMetaV1Schema,
-  type ComposerAttachmentDraftV1,
-  type ComposerAttachmentInputV1,
-  type ComposerContentHandleV1,
-  type ComposerRefV1,
-  type PluginContributionIdentityV1,
-  type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentDraftV1Schema, ComposerAttachmentInputV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1, ComposerContentHandleV1, ComposerRefV1, PluginContributionIdentityV1, SessionExecutionTargetV1 } from '@happier-dev/protocol';
 import {
   garbageCollectFailedSessionMediaCommit,
   persistSessionMediaForTranscript,

@@ -1,7 +1,5 @@
-import {
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServiceChildEnvironment';
 import {

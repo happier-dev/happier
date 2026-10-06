@@ -3,10 +3,8 @@ import { createReadStream } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  HomeConnectionDescriptorV1Schema,
-  type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import { replacePersonalHomeFileDurably } from './durableFile.js';
 import { withPersonalHomeOperationAdmission, type PersonalHomeOperationAdmissionTarget } from './operationAdmission.js';

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { DelegateOutputV1Schema, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type {
   ExecutionRunIntentProfile,

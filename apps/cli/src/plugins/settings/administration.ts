@@ -1,33 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  DaemonContributionRegistryProjectionDescribeRequestSchema,
-  DaemonContributionRegistryProjectionDescribeResponseSchema,
-  DaemonPluginSettingsGetRequestSchema,
-  DaemonPluginSettingsGetResponseSchema,
-  DaemonPluginSettingsSetRequestSchema,
-  DaemonPluginSettingsSetResponseSchema,
-  DaemonPluginSecretDeleteRequestSchema,
-  DaemonPluginSecretDeleteResponseSchema,
-  DaemonPluginSecretStatusRequestSchema,
-  DaemonPluginSecretStatusResponseSchema,
-  PluginSettingsAdministrationActionInputSchemasV1,
-  PluginSettingsAdministrationActionOutputV1Schema,
-  StrictJsonValueSchema,
-  type PluginProjectedSettingsFieldV2,
-  type PluginProjectedSettingsV2,
-  type PluginSettingsAdministrationActionIdV1,
-  type PluginSettingsAdministrationActionOutputV1,
-  type PluginSettingsAdministrationDaemonTargetV1,
-  type PluginSettingsAdministrationTargetV1,
-  type ActionExecutorContext,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  isRpcMethodNotAvailableError,
-  isRpcMethodNotFoundError,
-  readRpcErrorCode,
-} from '@happier-dev/protocol/rpcErrors';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PluginSettingsAdministrationActionInputSchemasV1, PluginSettingsAdministrationActionOutputV1Schema } from '@happier-dev/protocol/plugins/settingsAdministration';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginProjectedSettingsFieldV2, PluginProjectedSettingsV2, PluginSettingsAdministrationActionIdV1, PluginSettingsAdministrationActionOutputV1, PluginSettingsAdministrationDaemonTargetV1, PluginSettingsAdministrationTargetV1, ActionExecutorContext } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { isPluginError, PluginError, type JsonValue, type PluginSettingDescriptor } from '@happier-dev/plugin-sdk';
 import type { ScopedSettingsService, SettingsSnapshot } from '@happier-dev/plugin-sdk/settings';
 

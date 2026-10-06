@@ -1,4 +1,5 @@
-import { AgentModelOptionOverrideRuleSchema, type AgentModelOptionOverrideRule } from '@happier-dev/protocol';
+import { AgentModelOptionOverrideRuleSchema } from '@happier-dev/protocol/models/descriptor';
+import type { AgentModelOptionOverrideRule } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 /**

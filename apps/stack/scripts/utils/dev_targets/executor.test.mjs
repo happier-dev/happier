@@ -29,6 +29,31 @@ const target = {
   cliHomeDir: '/home/dev/.happier/linux',
 };
 
+test('try admission reports owner denial only when exit 75 and its stderr sentinel agree', async () => {
+  const sentinel = '[preferred-execution] heavyweight admission declined before dispatch';
+  for (const scenario of [
+    { code: 75, stream: 'stderr', line: sentinel, declined: true },
+    { code: 75, stream: 'stderr', line: 'worker failed', declined: false },
+    { code: 75, stream: 'stdout', line: sentinel, declined: false },
+    { code: 0, stream: 'stderr', line: sentinel, declined: false },
+  ]) {
+    const result = await runDevTargetCommand({
+      target, stackBaseDir: '/tmp/stack', syncAlreadyVerified: true,
+      commandArgs: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'],
+      admissionMode: 'try', provenance: 'skip',
+    }, {
+      createExecutionId: () => 'admission-test-id',
+      spawnProcess: ({ args, onLine }) => {
+        assert.ok(args.at(-1).includes('--no-wait'), args.at(-1));
+        onLine?.({ stream: scenario.stream, line: scenario.line });
+        return { completion: Promise.resolve({ code: scenario.code, signal: null }) };
+      },
+    });
+    assert.equal(result.admissionUnavailable === true, scenario.declined);
+    assert.equal(result.code, scenario.code);
+  }
+});
+
 function readyListResult(sessionName = 'happier-linux') {
   return {
     ok: true,
@@ -264,12 +289,17 @@ test('Windows source-test dispatch preserves its source preparation contract thr
   assert.doesNotMatch(requests.join('\n'), /--heavyweight-admission/);
 });
 
-test('direct POSIX validation execution enters the target machine admission owner', async () => {
+for (const { commandArgs, admissionClass } of [
+  { commandArgs: ['corepack', 'yarn', '-s', 'typecheck'], admissionClass: 'compilation' },
+  { commandArgs: ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build'], admissionClass: 'package-dist' },
+  { commandArgs: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], admissionClass: 'runtime-build' },
+]) {
+test(`direct POSIX ${admissionClass} execution enters the target machine admission owner`, async () => {
   let remoteCommand = '';
   await runDevTargetCommand({
     target,
     stackBaseDir: '/tmp/stack',
-    commandArgs: ['corepack', 'yarn', '-s', 'typecheck'],
+    commandArgs,
     env: {},
   }, {
     runCaptureResult: async () => readyListResult(),
@@ -283,9 +313,10 @@ test('direct POSIX validation execution enters the target machine admission owne
 
   assert.match(remoteCommand, /apps\/stack\/bin\/hstack-exec/);
   assert.match(remoteCommand, /--heavyweight-admission/);
-  assert.match(remoteCommand, /--class=compilation/);
+  assert.match(remoteCommand, new RegExp('--class=' + admissionClass));
   assert.match(remoteCommand, /--machine=linux/);
 });
+}
 
 test('remote exec flushes the live replica after health inspection and before SSH launch', async () => {
   const calls = [];

@@ -45,8 +45,9 @@ import {
 } from './Focus.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
-import { Stack } from './Layout.js';
+import { Row, Stack } from './Layout.js';
 import { Text } from './Text.js';
+import { DictationButton, type DictationButtonProps } from './Voice.js';
 import { Dropdown, type MenuItem } from './Overlay.js';
 import { OverlayFieldTriggerContext } from './overlayFieldTrigger.js';
 
@@ -101,6 +102,8 @@ export type TextFieldProps = Readonly<{
   disabled?: boolean;
   required?: boolean;
   secure?: boolean;
+  /** Independent host Dictation. Receives editable words; the author decides insertion, never submission. */
+  dictation?: Omit<DictationButtonProps, 'disabled'>;
   multiline?: boolean;
   keyboardType?: 'default' | 'url' | 'numeric';
   /**
@@ -152,7 +155,14 @@ export type TextFieldProps = Readonly<{
   testID?: string;
 }>;
 
-export function TextField(props: TextFieldProps): ReactElement {
+export function TextField({ dictation, ...props }: TextFieldProps): ReactElement {
+  return <Row gap="small" align="flex-start">
+    <View style={{ flex: 1, minWidth: 0 }}><TextFieldControl {...props} /></View>
+    {dictation === undefined ? null : <DictationButton {...dictation} disabled={props.disabled} />}
+  </Row>;
+}
+
+function TextFieldControl(props: Omit<TextFieldProps, 'dictation'>): ReactElement {
   const {
     onChange,
     focusTarget,
@@ -224,7 +234,7 @@ export function TextField(props: TextFieldProps): ReactElement {
 }
 
 /** A page field that keeps a local draft and saves it on leaving, through the shared draft owner. */
-function CommittingFieldTextField(props: Omit<TextFieldProps, 'labelKey' | 'placeholderKey' | 'focusTarget' | 'presentation'> & Readonly<{
+function CommittingFieldTextField(props: Omit<TextFieldProps, 'dictation' | 'labelKey' | 'placeholderKey' | 'focusTarget' | 'presentation'> & Readonly<{
   onCommit: (draft: string) => string | void;
   kind: HappierFieldValueKind;
   fieldColors: NonNullable<HappierTextFieldProps['fieldColors']>;

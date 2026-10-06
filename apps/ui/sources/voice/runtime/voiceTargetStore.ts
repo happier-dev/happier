@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 import {
   areSessionAddressesEqual,
@@ -29,6 +31,8 @@ export function resolveVoiceIdleTarget(input: Readonly<{
 }
 
 export type VoiceTargetState = Readonly<{
+  autoTargetMachineByScope: Readonly<Record<string, string | null>>;
+  rememberAutoTargetMachine: (scope: AccountSettingsScope, machineId: string | null) => void;
   scope: VoiceAssistantScope;
   primaryActionSessionAddress: SessionAddress | null;
   voiceLiveContextSessionAddresses: ReadonlyArray<SessionAddress>;
@@ -81,6 +85,14 @@ export const useVoiceTargetStore = create<VoiceTargetState>((set) => ({
   primaryActionSessionAddress: null,
   voiceLiveContextSessionAddresses: [],
   lastFocusedSessionAddress: null,
+  autoTargetMachineByScope: {},
+  rememberAutoTargetMachine: (scope, machineId) => set((state) => {
+    const key = accountSettingsScopeKeySuffix(scope);
+    const normalized = normalizeNonEmptyString(machineId);
+    return Object.hasOwn(state.autoTargetMachineByScope, key) && state.autoTargetMachineByScope[key] === normalized
+      ? state
+      : { autoTargetMachineByScope: { ...state.autoTargetMachineByScope, [key]: normalized } };
+  }),
   setScope: (scope) => set((state) => state.scope === scope ? state : { scope }),
   setPrimaryActionSessionAddress: (address) =>
     set((state) => {

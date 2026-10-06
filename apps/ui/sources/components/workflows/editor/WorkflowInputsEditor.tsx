@@ -1,6 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
@@ -89,6 +91,7 @@ function WorkflowInputRow(props: Readonly<{
     onRemove: () => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const { input } = props;
     const [defaultText, setDefaultText] = React.useState(() => formatDefault(input.default));
     // The draft is the source of truth; the typed text survives only while it
@@ -120,11 +123,11 @@ function WorkflowInputRow(props: Readonly<{
                     onChangeText={(name) => props.onChange({ ...input, name })}
                 />
                 {VALUE_TYPES.map((valueType) => (
-                    <Pressable
+                    <HappierPressable
                         key={valueType}
                         testID={`${rowId}-type-${valueType}`}
                         accessibilityRole="radio"
-                        accessibilityState={{ selected: input.valueType === valueType }}
+                        checked={input.valueType === valueType}
                         onPress={() => {
                             const nextDefault = parseDefault(valueType, defaultText);
                             props.onChange({
@@ -133,28 +136,28 @@ function WorkflowInputRow(props: Readonly<{
                                 ...(nextDefault === undefined ? { default: undefined } : { default: nextDefault }),
                             });
                         }}
-                        style={workflowEditorStyles.actionTarget}
+                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={input.valueType === valueType ? styles.optionSelected : styles.option}>
                             {describeWorkflowInputValueType(valueType)}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                 ))}
             </View>
             <View style={styles.line}>
-                <Pressable
+                <HappierPressable
                     testID={`${rowId}-required`}
                     accessibilityRole="checkbox"
-                    accessibilityState={{ checked: input.required }}
+                    checked={input.required}
                     onPress={() => props.onChange(input.required
                         ? { ...input, required: false }
                         : { ...input, required: true, default: undefined })}
-                    style={workflowEditorStyles.actionTarget}
+                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={input.required ? styles.optionSelected : styles.option}>
                         {input.required ? t('workflows.inputs.required') : t('workflows.inputs.optional')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
                 <TextInput
                     testID={`${rowId}-description`}
                     style={styles.description}
@@ -189,15 +192,15 @@ function WorkflowInputRow(props: Readonly<{
                         }}
                     />
                 )}
-                <Pressable
+                <HappierPressable
                     testID={`${rowId}-remove`}
                     accessibilityRole="button"
                     accessibilityLabel={t('workflows.editor.remove')}
                     onPress={props.onRemove}
-                    style={workflowEditorStyles.actionTarget}
+                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={styles.remove}>{t('workflows.editor.remove')}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
             {defaultInvalid ? (
                 <Text
@@ -220,11 +223,12 @@ export function WorkflowInputsEditor(props: Readonly<{
     onChange: (inputs: readonly WorkflowInputDefinition[]) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     return (
         <View testID={`${props.testIDPrefix}-inputs`} style={styles.root}>
             <View style={styles.heading}>
                 <Text style={styles.title}>{t('workflows.inputs.title')}</Text>
-                <Pressable
+                <HappierPressable
                     testID={`${props.testIDPrefix}-inputs-add`}
                     accessibilityRole="button"
                     accessibilityLabel={t('workflows.inputs.addInput')}
@@ -233,10 +237,10 @@ export function WorkflowInputsEditor(props: Readonly<{
                         valueType: 'string',
                         required: false,
                     }])}
-                    style={workflowEditorStyles.actionTarget}
+                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={styles.add}>{t('workflows.inputs.addInput')}</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
             {props.inputs.map((input, index) => (
                 <WorkflowInputRow

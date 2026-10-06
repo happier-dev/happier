@@ -1,11 +1,5 @@
-import {
-    SubagentRefInputV1Schema,
-    SubagentRefV1Schema,
-    type SubagentLifecycleDetailV1,
-    type SubagentRefInputV1,
-    type SubagentRefV1,
-    type SubagentStatusV1,
-} from '@happier-dev/protocol';
+import { SubagentRefInputV1Schema, SubagentRefV1Schema } from '@happier-dev/protocol/sessions/subagents/subagentRefV1';
+import type { SubagentLifecycleDetailV1, SubagentRefInputV1, SubagentRefV1, SubagentStatusV1 } from '@happier-dev/protocol';
 
 export type HostSubagentActor =
     | Readonly<{ kind: 'host' }>

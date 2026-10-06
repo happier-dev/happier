@@ -1,10 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 
-import {
-  PET_PACKAGE_LIMITS_V1,
-  type PetAssetMediaTypeV1,
-  type PetPackageSourceV1,
-} from '@happier-dev/protocol';
+import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { PetAssetMediaTypeV1, PetPackageSourceV1 } from '@happier-dev/protocol';
 
 import { createPetSourceKey } from '../discovery/createPetSourceKey';
 import { validatePetPackage } from '../validation/validatePetPackage';

@@ -1,5 +1,6 @@
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import { resolveQuotaTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
 
 /**
  * The usage summary grouped the way people read limits: per provider (Claude, Codex…), then each
@@ -94,7 +95,7 @@ export function groupUsageByProvider(accounts: readonly UsageAccountInput[]): Us
                             : clampPct(meter.remainingPct);
                         return {
                             meterId: meter.meterId,
-                            label: meter.label,
+                            label: resolveConnectedServiceQuotaMeterLabel(meter.meterId, meter.label),
                             usedPct: remainingPct === null ? null : Math.round(100 - remainingPct),
                             remainingPct: remainingPct === null ? null : Math.round(remainingPct),
                             resetsAt: meter.resetsAt,

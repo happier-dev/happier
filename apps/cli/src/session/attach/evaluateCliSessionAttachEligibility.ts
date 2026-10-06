@@ -3,10 +3,8 @@ import {
   resolveAgentIdFromSessionMetadata,
   type AttachSessionMetadataV1,
 } from '@happier-dev/agents';
-import {
-  compareMachineHosts,
-  createSessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+import { compareMachineHosts } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import type { StoredCredentials } from '@/persistence';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';

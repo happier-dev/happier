@@ -35,12 +35,6 @@ vi.mock('@/config', () => ({
 
 installWorkspaceFileDetailsCommonModuleMocks();
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    getImageMimeTypeFromPath: () => null,
-    isBinaryContent: () => false,
-    isKnownBinaryPath: () => false,
-}));
-
 describe('refreshWorkspaceFileDetails (fallback diff)', () => {
     afterEach(() => {
         vi.useRealTimers();

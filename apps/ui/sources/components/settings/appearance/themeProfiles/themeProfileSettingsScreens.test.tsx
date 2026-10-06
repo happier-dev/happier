@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import { flattenTestStyle, renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle, flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
 import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
@@ -26,7 +26,7 @@ const shared = vi.hoisted(() => ({
     routerPush: vi.fn(),
     routerBack: vi.fn(),
     clipboardSetStringAsync: vi.fn(),
-    fileSystemFiles: new Map<string, string>(),
+    nativeSharedJson: '',
     sharingShareAsync: vi.fn(),
     nativePickFiles: vi.fn(),
     updateTheme: vi.fn(),
@@ -69,45 +69,21 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: shared.setSystemBackgroundColorAsync }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: shared.clipboardSetStringAsync }));
-vi.mock('expo-file-system', () => {
-    const joinFileUri = (...segments: string[]): string => {
-        const [first = '', ...rest] = segments;
-        return rest.reduce((current, segment) => `${current.replace(/\/+$/, '')}/${segment.replace(/^\/+/, '')}`, first);
-    };
-    class ExpoFileMock {
-        readonly uri: string;
-        constructor(...segments: string[]) {
-            this.uri = joinFileUri(...segments);
-        }
-        get exists() {
-            return shared.fileSystemFiles.has(this.uri);
-        }
-        async text() {
-            const value = shared.fileSystemFiles.get(this.uri);
-            if (typeof value !== 'string') throw new Error(`missing file: ${this.uri}`);
-            return value;
-        }
-        write(payload: string) {
-            shared.fileSystemFiles.set(this.uri, payload);
-        }
-        delete() {
-            shared.fileSystemFiles.delete(this.uri);
-        }
-    }
-    return {
-        File: ExpoFileMock,
-        Paths: {
-            cache: 'file:///cache/',
-            document: 'file:///documents/',
-        },
-        readAsStringAsync: vi.fn(() => { throw new Error('legacy readAsStringAsync should not be used'); }),
-        writeAsStringAsync: vi.fn(() => { throw new Error('legacy writeAsStringAsync should not be used'); }),
-    };
+const fs = await vi.hoisted(async () => {
+    const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+    return createExpoFileSystemFileMock();
 });
+vi.mock('expo-file-system', () => fs.module);
 vi.mock('expo-file-system/legacy', () => {
     throw new Error('expo-file-system/legacy should not be imported');
 });
-vi.mock('expo-sharing', () => ({ shareAsync: shared.sharingShareAsync }));
+vi.mock('expo-sharing', () => ({
+    isAvailableAsync: async () => true,
+    shareAsync: async (uri: string, options?: { mimeType?: string; dialogTitle?: string }) => {
+        shared.nativeSharedJson = new TextDecoder().decode(new Uint8Array(fs.files.get(uri)!));
+        await shared.sharingShareAsync(uri, options);
+    },
+}));
 vi.mock('@/utils/files/nativePickFiles', () => ({ nativePickFiles: shared.nativePickFiles }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -233,7 +209,8 @@ afterEach(() => {
     shared.routerPush.mockClear();
     shared.routerBack.mockClear();
     shared.clipboardSetStringAsync.mockReset();
-    shared.fileSystemFiles.clear();
+    fs.files.clear();
+    shared.nativeSharedJson = '';
     shared.sharingShareAsync.mockReset();
     shared.nativePickFiles.mockReset();
     shared.nativePickFiles.mockResolvedValue([]);
@@ -728,7 +705,7 @@ describe('Theme profile import and export screens', () => {
 
     it('imports a native theme JSON file through Expo File', async () => {
         const json = exportThemeProfileToJson(baseProfile('shared', { light: { 'background.canvas': '#123456' }, dark: {} }));
-        shared.fileSystemFiles.set('file:///picked/theme.json', json);
+        fs.files.set('file:///picked/theme.json', [...new TextEncoder().encode(json)]);
         shared.nativePickFiles.mockResolvedValueOnce([{ kind: 'native', uri: 'file:///picked/theme.json', name: 'theme.json', mimeType: 'application/json' }]);
         const screen = await renderImportScreen();
 
@@ -794,10 +771,14 @@ describe('Theme profile import and export screens', () => {
         const screen = await renderExportScreen();
 
         await screen.pressByTestIdAsync('settings-theme-profile-export-download');
+        // RoundButton's synchronous onPress does not return the async export promise.
+        await vi.waitFor(() => expect(shared.sharingShareAsync).toHaveBeenCalledOnce());
+        await flushHookEffects();
 
-        const exportedUri = 'file:///cache/happier-theme-profile-ocean.json';
-        expect(shared.fileSystemFiles.get(exportedUri)).toContain('happier.themeProfile');
-        expect(shared.sharingShareAsync).toHaveBeenCalledWith(exportedUri, expect.any(Object));
+        const [exportedUri] = shared.sharingShareAsync.mock.calls.at(-1)!;
+        expect(exportedUri).toContain('/happier-downloads/');
+        expect(shared.nativeSharedJson).toContain('happier.themeProfile');
+        expect(fs.files.size).toBe(0);
     });
 
     it('does not export an arbitrary custom profile when no profile is selected for export', async () => {

@@ -1,13 +1,5 @@
-import type {
-  DaemonProviderConnectionMutationRequestV1,
-  DaemonProviderConnectionMutationResponseV1,
-  DaemonProviderConnectionsDescribeRequestV1,
-  DaemonProviderConnectionsDescribeResponseV1,
-} from '@happier-dev/protocol/rpc';
-import {
-  DaemonProviderConnectionMutationResponseV1Schema,
-  DaemonProviderConnectionsDescribeResponseV1Schema,
-} from '@happier-dev/protocol/rpc';
+import type { DaemonProviderConnectionMutationRequestV1, DaemonProviderConnectionMutationResponseV1, DaemonProviderConnectionsDescribeRequestV1, DaemonProviderConnectionsDescribeResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 
 import type { createProviderConnectionService } from './service';
 

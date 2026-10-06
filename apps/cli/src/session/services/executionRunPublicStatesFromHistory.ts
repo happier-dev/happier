@@ -1,10 +1,7 @@
 import { getBackendCatalogDefinition } from '@happier-dev/agents';
-import {
-    ExecutionRunPublicStateSchema,
-    ExecutionRunRequestedConfigurationSchema,
-    type ExecutionRunRequestedConfiguration,
-    type ExecutionRunPublicState,
-} from '@happier-dev/protocol';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunRequestedConfigurationSchema } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import type { ExecutionRunRequestedConfiguration, ExecutionRunPublicState } from '@happier-dev/protocol';
 import { normalizeExecutionRunPublicStateBackendTarget } from './executionRunPublicStateBackendTarget';
 import {
     isConcreteLegacyConfiguredBackendId,

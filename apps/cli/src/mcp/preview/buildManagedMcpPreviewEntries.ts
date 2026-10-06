@@ -1,8 +1,5 @@
-import {
-  inferMcpServerAuthModeV1,
-  type ManagedMcpPreviewEntryV1,
-  type ResolveManagedSessionMcpSelectionV1Result,
-} from '@happier-dev/protocol';
+import { inferMcpServerAuthModeV1 } from '@happier-dev/protocol/mcp/servers/authModeV1';
+import type { ManagedMcpPreviewEntryV1, ResolveManagedSessionMcpSelectionV1Result } from '@happier-dev/protocol';
 
 function resolveManagedScopeKind(item: ResolveManagedSessionMcpSelectionV1Result['itemsByName'][string]): ManagedMcpPreviewEntryV1['scopeKind'] {
   if (item.bindingTargetKind === 'allMachines' || item.bindingTargetKind === 'machine' || item.bindingTargetKind === 'workspace') {

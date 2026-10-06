@@ -35,6 +35,8 @@ describe('native email and recovery CLI commands', () => {
     'HAPPIER_HOME_DIR',
     'HAPPIER_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_WEBAPP_URL',
     'HAPPIER_TOKEN',
   ]);
@@ -46,6 +48,8 @@ describe('native email and recovery CLI commands', () => {
       HAPPIER_HOME_DIR: home,
       HAPPIER_SERVER_URL: 'http://account.test',
       HAPPIER_PUBLIC_SERVER_URL: 'http://account.test',
+      HAPPIER_LOCAL_SERVER_URL: undefined,
+      HAPPIER_ACTIVE_SERVER_ID: undefined,
       HAPPIER_WEBAPP_URL: 'http://account.test',
       HAPPIER_TOKEN: undefined,
     });
@@ -105,7 +109,14 @@ describe('native email and recovery CLI commands', () => {
     }
   });
 
-  it('binds recovery-key authentication to an existing Account in both request and signature', async () => {
+  it.each([
+    { canonicalUrl: 'http://account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: true },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_home', succeeds: true },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'http://account.test', identity: 'srv_home', succeeds: false },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://other.account.test', identity: 'srv_home', succeeds: false },
+    { canonicalUrl: 'https://public.account.test', audienceOrigin: 'https://public.account.test', identity: 'srv_other', succeeds: false },
+  ])('binds recovery login to canonical $canonicalUrl and audience $audienceOrigin / $identity', async ({ canonicalUrl, audienceOrigin, identity, succeeds }) => {
+    env.patch({ HAPPIER_PUBLIC_SERVER_URL: canonicalUrl, HAPPIER_LOCAL_SERVER_URL: 'http://account.test' });
     const app = fastify();
     const recoverySecret = new Uint8Array(32).fill(7);
     const recoveryKey = formatRecoveryKey(recoverySecret);
@@ -114,10 +125,12 @@ describe('native email and recovery CLI commands', () => {
       nonce: 'nonce-existing-account',
       issuedAt: '2026-09-10T10:00:00.000Z',
       expiresAt: '2026-09-10T18:00:00.000Z',
-      audience: { origin: 'http://account.test', serverIdentityId: 'srv_home' },
+      audience: { origin: audienceOrigin, serverIdentityId: identity },
     } as const;
+    let redeemed = false;
     app.post('/v1/auth/challenge', async () => challenge);
     app.post('/v1/auth', async (request) => {
+      redeemed = true;
       expect(request.body).toMatchObject({
         challengeId: 'challenge-existing-account',
         requireExistingAccount: true,
@@ -147,7 +160,14 @@ describe('native email and recovery CLI commands', () => {
       const { handleAuthCommand } = await import('./auth');
       await handleAuthCommand(['recovery-key', 'login', '--key', recoveryKey, '--json']);
       const envelope = output.json();
-      expect(envelope).toEqual(expect.objectContaining({ ok: true, data: expect.objectContaining({ accountId: 'account-1' }) }));
+      if (succeeds) {
+        expect(envelope).toEqual(expect.objectContaining({ ok: true, data: expect.objectContaining({ accountId: 'account-1' }) }));
+      } else {
+        expect(envelope).toMatchObject({ ok: false, error: { code: 'authentication_failed' } });
+        const { readStoredCredentials } = await import('@/persistence');
+        expect(await readStoredCredentials()).toBeNull();
+      }
+      expect(redeemed).toBe(succeeds);
       expect(output.logs.join('\n')).not.toContain(recoveryKey);
     } finally {
       output.restore();

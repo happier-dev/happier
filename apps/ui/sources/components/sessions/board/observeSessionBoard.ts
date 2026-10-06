@@ -1,4 +1,4 @@
-import { SessionBoardLayoutV1Schema, SessionSurfaceItemV1Schema, type SessionBoardLayoutV1, type SessionSurfaceItemV1, type SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol';
+import { SessionBoardLayoutV1StoredSchema, SessionSurfaceItemV1StoredSchema, type SessionBoardLayoutV1, type SessionSurfaceItemV1, type SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol';
 import { openSessionSystemRecord, type SessionSystemRecordPayloadResult } from '@/sync/domains/sessionSystemRecords/codec';
 import { projectSessionBoard, type SessionBoardOpenedRecord } from '@/sync/domains/session/board';
 import type {
@@ -203,10 +203,10 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
                 if (record.address.owner !== 'host') continue;
                 if (record.address.kind === 'layout.v1' && record.address.localId === 'layout') {
                     layout = { revision: record.revision, outcome: await openSessionSystemRecord({ record, address: record.address,
-                        context: authority.contentContext, decode: value => decode(SessionBoardLayoutV1Schema, value) }) };
+                        context: authority.contentContext, decode: value => decode(SessionBoardLayoutV1StoredSchema, value) }) };
                 } else if (record.address.kind === 'item.v1') {
                     items.set(record.address.localId, { revision: record.revision, outcome: await openSessionSystemRecord({ record,
-                        address: record.address, context: authority.contentContext, decode: value => decode(SessionSurfaceItemV1Schema, value) }) });
+                        address: record.address, context: authority.contentContext, decode: value => decode(SessionSurfaceItemV1StoredSchema, value) }) });
                 }
             }
             if (!isCurrent()) return;

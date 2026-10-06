@@ -5,7 +5,8 @@
  * Invalid payloads are treated as empty settings (fail-closed on config).
  */
 
-import { AcpCatalogSettingsV1Schema, type AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import { AcpCatalogSettingsV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 
 function emptySettings(): AcpCatalogSettingsV1 {
   return AcpCatalogSettingsV1Schema.parse({});

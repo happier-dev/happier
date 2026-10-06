@@ -5,7 +5,8 @@
  * Invalid payloads are treated as empty settings (fail-closed on config).
  */
 
-import { McpServersSettingsV1Schema, type McpServersSettingsV1 } from '@happier-dev/protocol';
+import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import type { McpServersSettingsV1 } from '@happier-dev/protocol';
 
 function emptySettings(): McpServersSettingsV1 {
   return { v: 1, strictMode: false, servers: [], bindings: [] };

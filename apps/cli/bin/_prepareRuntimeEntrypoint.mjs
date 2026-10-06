@@ -134,10 +134,19 @@ async function prepareLocalSharedDependencies(projectRoot, repoRoot, opts) {
     throw new Error(`Cannot build missing CLI shared dependencies under ${projectRoot}`);
   }
 
-  await withOptionalCliSharedDepsBuildLock(repoRoot, async () => {
-    const { main: buildSharedDeps } = await import(pathToFileURL(buildSharedDepsModulePath).href);
-    await buildSharedDeps({ skipLock: true });
-  }, opts);
+  const { main: buildSharedDeps } = await import(pathToFileURL(buildSharedDepsModulePath).href);
+  // This owner prepares generator children before taking its publication lock.
+  // Holding that lock here makes those children wait on their own parent.
+  await buildSharedDeps({
+    repoRoot,
+    env: opts.env ?? process.env,
+    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot, opts),
+    lockModulePath: opts.lockModulePath,
+    lockTimeoutMs: opts.lockTimeoutMs,
+    lockPollIntervalMs: opts.lockPollIntervalMs,
+    lockStaleAfterMs: opts.lockStaleAfterMs,
+    heldLockValue: opts.heldLockValue ?? opts.heldLockPath,
+  });
 }
 
 export async function maybeRefreshLocalBundledWorkspacePackages(projectRoot, opts = {}) {

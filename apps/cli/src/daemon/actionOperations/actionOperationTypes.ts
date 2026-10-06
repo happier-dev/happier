@@ -28,3 +28,15 @@ export type ActionOperationOwnerUpdate = Readonly<{
   progress?: ActionOperationProgressUpdate;
   domainRef?: ActionOperationDomainRefV1;
 }>;
+
+/** A projection of a lifecycle already owned by another domain. No runner or AbortController is created. */
+export interface ActionOperationDomainOwner {
+  readonly actionIds: readonly string[];
+  list(scope: ActionOperationQueryScope): Promise<readonly import('@happier-dev/protocol/actions').ActionOperationSnapshotV1[]>;
+  get(scope: ActionOperationQueryScope, operationId: string): Promise<import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null>;
+  cancel(scope: ActionOperationQueryScope, operationId: string): Promise<import('@happier-dev/protocol/actions').ActionOperationCancelV1Response | null>;
+  subscribe(input: Readonly<{
+    resolveScope(): Promise<ActionOperationQueryScope | null>;
+    publishSnapshot(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): void;
+  }>): () => void;
+}

@@ -1,9 +1,7 @@
 import { z } from 'zod';
 
-import {
-  isRegistryCustodiedPluginSourceKind,
-  type PluginSourceKindV1,
-} from '@happier-dev/protocol';
+import { isRegistryCustodiedPluginSourceKind } from '@happier-dev/protocol/plugins/source-spec';
+import type { PluginSourceKindV1 } from '@happier-dev/protocol';
 
 import type { PluginDistributionIdentity } from '@/plugins/store/install/trustIdentity';
 

@@ -1,17 +1,9 @@
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import {
-  PROVIDER_RUNTIME_STATE_LIMITS_V1,
-  ProviderMachineIdSchema,
-  ProviderRuntimeStateFileV1Schema,
-  createEmptyProviderRuntimeStateFileV1,
-  normalizeProviderRuntimeStateFileForStartupV1,
-  parseProviderRuntimeStateFileV1,
-  type ProviderRuntimeStateFileV1,
-  type ProviderRuntimeStateParseFailureReasonV1,
-  type ProviderEndpointRuntimeStateRecordV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_RUNTIME_STATE_LIMITS_V1, ProviderRuntimeStateFileV1Schema, createEmptyProviderRuntimeStateFileV1, normalizeProviderRuntimeStateFileForStartupV1, parseProviderRuntimeStateFileV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import { ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { ProviderRuntimeStateFileV1, ProviderRuntimeStateParseFailureReasonV1, ProviderEndpointRuntimeStateRecordV1 } from '@happier-dev/protocol';
 
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic as canonicalWriteJsonAtomic } from '@/utils/fs/writeJsonAtomic';

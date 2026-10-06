@@ -20,7 +20,7 @@ vi.mock('@/text', async () => {
 
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.resetModules(); });
 
 function binarySource(mime: string, bytes = new Uint8Array([0, 255, 128])) {
     const reference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62', mime,
@@ -50,40 +50,56 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
-    it('offers native PDF bytes to the OS viewer without an embedded PDF preview', async () => {
+    it.each([
+        ['android', 'success'], ['android', 'failure'], ['ios', 'success'], ['ios', 'failure'],
+    ] as const)('preserves PDF download custody through %s sharing %s', async (platform, outcome) => {
         const previous = Platform.OS;
-        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
         const source = binarySource('application/pdf');
-        const written: Uint8Array[] = [];
-        const shared: string[] = [];
-        class Directory {
-            readonly uri: string;
-            constructor(parent: { uri: string } | string, name = '') { this.uri = `${typeof parent === 'string' ? parent : parent.uri}/${name}`; }
-            create() {}
-        }
-        class File {
-            readonly uri: string;
-            constructor(parent: { uri: string } | string, name = '') { this.uri = `${typeof parent === 'string' ? parent : parent.uri}/${name}`; }
-            delete() {}
-            create() {}
-            open() { return { offset: 0, close() {}, writeBytes(bytes: Uint8Array) { written.push(bytes); } }; }
-        }
-        // Expo's filesystem and OS sharing SDKs are genuine native boundaries.
-        vi.doMock('expo-file-system', () => ({ Directory, File, Paths: { cache: 'file:///cache' } }));
+        const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+        const filesystem = createExpoFileSystemFileMock();
+        const files = filesystem.files;
+        const androidShares: string[] = [];
+        const iosShares: string[] = [];
+        // Only Expo filesystem/native SDK boundaries are substituted; artifact HTTP/schema,
+        // content validation, cache lifetime and the sharing adapters remain real.
+        vi.doMock('expo-file-system', () => filesystem.module);
         vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => true,
-            shareAsync: async (uri: string) => { shared.push(uri); } }));
+            shareAsync: async (uri: string) => {
+                iosShares.push(uri);
+                expect(files.get(uri)).toEqual([...source.bytes]);
+                if (outcome === 'failure') throw new Error('Share sheet failed');
+            } }));
+        vi.doMock('expo-modules-core', async importOriginal => ({
+            ...await importOriginal<typeof import('expo-modules-core')>(),
+            requireOptionalNativeModule: (name: string) => name === 'HappierFileActions' ? {
+                shareFile: async (uri: string, name: string, mimeType?: string) => {
+                    androidShares.push(uri);
+                    expect(name).toBe('Quarterly report');
+                    expect(mimeType).toBe('application/pdf');
+                    expect(files.get(uri)).toEqual([...source.bytes]);
+                    if (outcome === 'failure') throw new Error('Share chooser failed');
+                },
+            } : null,
+        }));
         try {
-            const screen = await renderScreen(<ArtifactBinaryBody artifactId="pdf" name="document.pdf" {...source} />);
+            const screen = await renderScreen(<ArtifactBinaryBody artifactId="pdf" name="Quarterly report" {...source} />);
             expect(source.request).not.toHaveBeenCalled();
             expect(screen.tree.root.findAllByType('iframe')).toHaveLength(0);
             await screen.pressByTestIdAsync('artifact:download');
-            await act(async () => { await vi.waitFor(() => expect(shared).toHaveLength(1)); });
-            expect(written).toEqual([source.bytes]);
+            await act(async () => { await vi.waitFor(() => expect(androidShares.length + iosShares.length).toBe(1)); });
+            const shared = platform === 'android' ? androidShares : iosShares;
+            if (platform === 'android' && outcome === 'success') expect([...files.values()]).toEqual([[...source.bytes]]);
             expect(shared).toHaveLength(1);
-            expect(shared[0]).toMatch(/^file:\/\/\/cache\/.*document\.pdf$/);
+            if (platform === 'android') expect(shared[0]).toMatch(/^file:\/\/\/cache\/happier-downloads\/.*Quarterly report$/);
+            if (platform === 'android') expect(iosShares).toEqual([]);
+            else expect(androidShares).toEqual([]);
+            if (platform === 'android' && outcome === 'success') expect(files.get(shared[0]!)).toEqual([...source.bytes]);
+            else expect(files.size).toBe(0);
+            expect(screen.findByTestId('artifact:downloadFailed') !== null).toBe(outcome === 'failure');
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
-            vi.doUnmock('expo-file-system'); vi.doUnmock('expo-sharing');
+            vi.doUnmock('expo-file-system'); vi.doUnmock('expo-sharing'); vi.doUnmock('expo-modules-core');
         }
     });
 

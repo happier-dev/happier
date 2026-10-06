@@ -1,15 +1,10 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1,
-  EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1,
-  EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3,
-  ExternalSessionOperationActionResponseV1Schema,
-  type ActionExecuteResult,
-  type ActionId,
-  type ExternalSessionTranscriptInvalidationV1,
-  type ExternalSessionSourceUnavailableOccurrenceV1,
-  PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID,
-} from '@happier-dev/protocol';
+import { createExternalSessionActionOperationOwner } from '@/session/actions/externalSessions/actionOperationOwner';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1, EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID } from '@happier-dev/protocol/sessions/external/hookManagementV1';
+import { ExternalSessionOperationActionResponseV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ActionExecuteResult, ActionId, ExternalSessionTranscriptInvalidationV1, ExternalSessionSourceUnavailableOccurrenceV1, ExternalSessionOperationActionResponseV1 } from '@happier-dev/protocol';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import { writeExternalSessionFollowStatus } from '@/api/session/external/backgroundFollow/externalSessionBackgroundFollowMetadata';
@@ -97,7 +92,8 @@ import {
   readExternalSessionOperationRecord,
   type ExternalSessionOperationAccountScope,
 } from '@/session/actions/externalSessions/operationRecordStore';
-import type { ExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
+import type { ExternalSessionMaterializeActionExecutor, ExternalSessionMaterializeContinuationContext } from '@/session/actions/externalSessions/materializeAction';
+import { acknowledgeExternalSessionOperationAdmission } from '@/session/actions/externalSessions/operationAdmission';
 import {
   createExternalSessionExternalLinkedTakeoverPhaseRunner,
   createExternalSessionPersistedTakeoverPhaseRunner,
@@ -177,6 +173,20 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
     ExternalSessionExternalLinkedTakeoverPhaseRunner | null;
   takeoverAdmission: ExternalSessionTakeoverAdmissionActionExecutor | null;
 }>): Promise<ActionExecuteResult> {
+  // Import continuations outlive their RPC, just like materialize Start. Only
+  // the executor's committed running revision acknowledges admission; early
+  // refusals and settled results still answer through the completion promise.
+  const continueImport = async (
+    execute: (context: ExternalSessionMaterializeContinuationContext) =>
+      Promise<ExternalSessionOperationActionResponseV1>,
+  ): Promise<ActionExecuteResult> => {
+    return {
+      ok: true,
+      result: await acknowledgeExternalSessionOperationAdmission(
+        (onAdmitted) => execute({ onAdmitted }), 'operation.continue',
+      ),
+    };
+  };
   if (input.record?.request.plan === 'takeover') {
     if (input.record.request.targetStorageMode === 'external-linked') {
       if (!input.externalLinkedTakeoverPhaseRunner) {
@@ -208,11 +218,10 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
       };
     }
     if (input.actionId === 'sessions.external.operation.resume') {
-      return input.takeoverPhaseRunner
-        ? {
-          ok: true,
-          result: await input.takeoverPhaseRunner.resume(input.raw),
-        }
+      const takeoverPhaseRunner = input.takeoverPhaseRunner;
+      return takeoverPhaseRunner
+        ? await continueImport((context) =>
+          takeoverPhaseRunner.resume(input.raw, context))
         : unsupportedExternalSessionAction(input.actionId);
     }
     return {
@@ -229,14 +238,14 @@ export async function executeExternalSessionOperationContinuation(input: Readonl
   if (!input.materialize) {
     return unsupportedExternalSessionAction(input.actionId);
   }
-  return {
-    ok: true,
-    result: input.actionId === 'sessions.external.operation.resume'
-      ? await input.materialize.resume(input.raw)
-      : input.actionId === 'sessions.external.operation.retry'
-        ? await input.materialize.retry(input.raw)
-        : await input.materialize.cancel(input.raw),
-  };
+  const materialize = input.materialize;
+  if (input.actionId === 'sessions.external.operation.cancel') {
+    return { ok: true, result: await materialize.cancel(input.raw) };
+  }
+  return await continueImport((context) =>
+    input.actionId === 'sessions.external.operation.resume'
+      ? materialize.resume(input.raw, context)
+      : materialize.retry(input.raw, context));
 }
 
 export function resolveExternalSessionOperationRequiredPublicationFenceVersion(
@@ -505,6 +514,7 @@ function createExternalSessionGenericRpcActionExecutor(
 }
 
 export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
+  actionOperations?: Pick<import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime, 'attachOwner'>;
   rpcHandlerManager: RpcHandlerManager;
   operationExclusion?: ExternalSessionOperationExclusionOwner;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
@@ -1111,6 +1121,11 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
     },
   };
 
+  const detachActionOperationOwner = params.actionOperations?.attachOwner(createExternalSessionActionOperationOwner({
+    activeServerDir: configuration.activeServerDir,
+    execute: publicationFenceAwareActionExecutor.execute,
+  }));
+
   const followHostOperation = params.machineId
       ? createExternalSessionFollowHostOperation({
           machineId: params.machineId,
@@ -1174,6 +1189,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
       },
     },
     async dispose() {
+      detachActionOperationOwner?.();
       const cleanupFailures: Error[] = [];
       const recordCleanupFailure = (phase: string, error: unknown): void => {
         logExternalSessionsInternalError(

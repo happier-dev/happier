@@ -3,7 +3,7 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 import { configuration } from '@/configuration';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createProductionDaemonWorkflowRuntime } from '@/daemon/workflows/daemonRuntime';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { APPROVAL_RPC_SCOPES } from './actionSpecRpcRegistration';

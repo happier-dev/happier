@@ -1,7 +1,5 @@
-import {
-  resolveTranscriptBodySessionMessageRole,
-  type SessionMessageRole,
-} from '@happier-dev/protocol';
+import { resolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { SessionMessageRole } from '@happier-dev/protocol';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 

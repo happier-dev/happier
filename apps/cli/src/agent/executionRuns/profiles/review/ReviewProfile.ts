@@ -1,4 +1,7 @@
-import { REVIEW_SCM_SCOPE_INPUT_KEY, ScmComparisonSchema, ReviewFindingsV2Schema, type ScmDiffSummaryReviewProvenance } from '@happier-dev/protocol';
+import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import type { ScmDiffSummaryReviewProvenance } from '@happier-dev/protocol';
 
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { buildReviewGuidanceBlock, buildStandardReviewPrompt } from '../../../reviews/prompt/buildStandardReviewPrompt';

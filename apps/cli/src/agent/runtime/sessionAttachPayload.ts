@@ -1,16 +1,9 @@
 import * as z from 'zod';
-import {
-  ExecutionRunIdSchema,
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionOwnerMetadataEnvelopeV1Schema,
-  SessionOwnerMetadataV1Schema,
-  SessionReportsToV1Schema,
-  SessionAwarenessOriginV1Schema,
-  type SessionReportsToV1,
-  type SessionAwarenessOriginV1,
-  type SessionOwnerMetadataEnvelopeV1,
-  type SessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+import { ExecutionRunIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { SessionAwarenessOriginV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { SessionReportsToV1, SessionAwarenessOriginV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 
 type AttachSnapshotPayload = Readonly<{
   reportsTo?: SessionReportsToV1;

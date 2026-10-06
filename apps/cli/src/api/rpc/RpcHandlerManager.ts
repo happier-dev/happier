@@ -14,33 +14,19 @@ import type {
     RpcHandlerActiveExecution,
 } from './types';
 import type { Socket } from 'socket.io-client';
-import {
-    SOCKET_RPC_EVENTS,
-    SocketRpcCancellationPayloadSchema,
-    SocketRpcRequestIdSchema,
-    SessionTransferRoutingV1Schema,
-    SessionActionRpcOriginV1Schema,
-    isSessionActionRpcMethodV1,
-    SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
-    type SocketRpcTransportAcknowledgementV1,
-} from '@happier-dev/protocol/socketRpc';
-import {
-    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
-    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
-    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-} from '@happier-dev/protocol';
-import {
-    isSocketRpcActionApiServerOriginAuthorizationContext,
-    isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext,
-    isSocketRpcSessionServerStartServerOriginAuthorizationContext,
-    RPC_ERROR_CODES,
-    RPC_ERROR_MESSAGES,
-    RPC_METHODS,
-    SESSION_RPC_METHODS,
-} from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema, SessionTransferRoutingV1Schema, SessionTransferRpcMethodV1Schema, SessionActionRpcOriginV1Schema, isSessionActionRpcMethodV1, SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1 } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcTransportAcknowledgementV1 } from '@happier-dev/protocol/socketRpc';
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { isSocketRpcActionApiServerOriginAuthorizationContext, isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext, isSocketRpcSessionServerStartServerOriginAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { ExternalActionExecutionAuthorizationV1Schema, computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions';
+import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
@@ -156,8 +142,27 @@ export class RpcHandlerManager {
 
         if (this.socket) {
             this.acknowledgedRegistrationMethods.delete(prefixedMethod);
-            this.socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+            this.publishHandlerRegistration(prefixedMethod);
         }
+    }
+
+    private publishHandlerRegistration(prefixedMethod: string): boolean {
+        const socket = this.socket;
+        if (!socket) return false;
+        const auth = socket.auth;
+        if (typeof auth === 'object' && auth.clientType === 'machine-scoped') {
+            const method = this.readUnprefixedMethod(prefixedMethod);
+            // Keep daemon Action handlers available in-process; only their socket
+            // publication is scoped. Spawn and bulk transfers are Machine-owned.
+            if (method !== RPC_METHODS.SESSION_SPAWN_NEW
+                && !SessionTransferRpcMethodV1Schema.safeParse(method).success
+                && (isSocketRpcSessionAuthorizationNamespace(method)
+                    || resolveSocketRpcSessionAuthorization(method)?.routeToSessionOwnerDaemon === true)) {
+                return false;
+            }
+        }
+        socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+        return true;
     }
 
     /**
@@ -496,7 +501,7 @@ export class RpcHandlerManager {
         }
         for (const [prefixedMethod] of this.handlers) {
             if (this.permanentlyRejectedRegistrationMethods.has(prefixedMethod)) continue;
-            socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+            this.publishHandlerRegistration(prefixedMethod);
         }
     }
 
@@ -571,8 +576,9 @@ export class RpcHandlerManager {
             ) {
                 continue;
             }
-            socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
-            replayedMethods.push(method);
+            if (this.publishHandlerRegistration(prefixedMethod)) {
+                replayedMethods.push(method);
+            }
         }
         return replayedMethods;
     }

@@ -1,18 +1,8 @@
-import {
-  compareSessionFollowFrontierProgressV1,
-  deriveSessionFollowWakeEventLocalIdV1,
-  isAuthoritativeHumanSessionFollowMessageV1,
-  isSessionFollowFrontierEqualV1,
-  isSessionFollowTurnEqualV1,
-  normalizeSessionFollowWakeObservationsV1,
-  renderSessionInputContextPromptV1,
-  type SessionFollowAcknowledgeResponseV1,
-  type SessionFollowPendingObservationV1,
-  type SessionFollowUpdateEnvelopeV1,
-  SESSION_FOLLOW_ZERO_FRONTIER_V1,
-  type WorkerUpdateV1,
-  renderWorkerUpdatePromptBlockV1,
-} from '@happier-dev/protocol';
+import { compareSessionFollowFrontierProgressV1, isSessionFollowFrontierEqualV1, isSessionFollowTurnEqualV1, SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import { deriveSessionFollowWakeEventLocalIdV1, normalizeSessionFollowWakeObservationsV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { isAuthoritativeHumanSessionFollowMessageV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1';
+import { renderSessionInputContextPromptV1, renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { SessionFollowAcknowledgeResponseV1, SessionFollowPendingObservationV1, SessionFollowUpdateEnvelopeV1, WorkerUpdateV1 } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { SocketAckError } from '@/session/transport/shared/socketAck';

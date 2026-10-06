@@ -1,17 +1,7 @@
-import {
-    browserViewKey,
-    BrowserEventV1Schema,
-    BrowserHttpUrlV1Schema,
-    BrowserTitleChangedEventV1Schema,
-    type BrowserEventV1,
-    type BrowserCommandDispatchResultV1,
-    type BrowserCommandErrorCodeV1,
-    type BrowserCommandV1,
-    type BrowserSidecarErrorCodeV1,
-    type BrowserProfileV1,
-    type BrowserViewTargetV1,
-    type BrowserPlatformV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserEventV1Schema, BrowserTitleChangedEventV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { BrowserHttpUrlV1Schema } from '@happier-dev/protocol/browser/url';
+import type { BrowserEventV1, BrowserCommandDispatchResultV1, BrowserCommandErrorCodeV1, BrowserCommandV1, BrowserSidecarErrorCodeV1, BrowserProfileV1, BrowserViewTargetV1, BrowserPlatformV1 } from '@happier-dev/protocol';
 
 import {
     browserCommandDispatchFailure,

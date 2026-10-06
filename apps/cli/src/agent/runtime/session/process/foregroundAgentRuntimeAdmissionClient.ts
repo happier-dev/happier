@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ProviderErrorV1Schema } from '@happier-dev/protocol';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 
 import { claimDaemonForegroundAgentRuntime } from '@/daemon/controlClient';
 import {

@@ -28,9 +28,7 @@ import type {
     DaemonDatabaseStorageScope,
     StorageScopeService,
 } from '@happier-dev/plugin-sdk/storage';
-import {
-    parseHostEventPayloadV1,
-} from '@happier-dev/protocol';
+import { parseHostEventPayloadV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import type { HostPluginServices } from '@/agent/runtime/state/currentSessionUiTypes';
 import {
     bindPluginSessionsSubagentObservation,
@@ -49,9 +47,7 @@ import type {
     ProviderProfileMigrationConflictConfirmRequest,
     ProviderProfileMigrationPreviewRequest,
 } from '@happier-dev/plugin-sdk/providers';
-import {
-    PLUGIN_ACTION_OUTPUT_SCHEMAS,
-} from '@happier-dev/protocol/actions';
+import { PLUGIN_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 
 import type {
     AgentInvocationTurnAdmissionWitness,

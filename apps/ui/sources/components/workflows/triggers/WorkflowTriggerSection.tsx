@@ -139,7 +139,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         <ItemGroup title={t('workflows.triggers.editor.title')} description={description}>
             {readState}
             {rows.length === 0 && props.status === 'ready' ? (
-                <Item testID={`${props.testIDPrefix}-triggers-manual`} title={t('workflows.triggers.summary.manual')} mode="info" />
+                <Item testID={`${props.testIDPrefix}-triggers-manual`} title={t('workflows.triggers.summary.manual')}
+                    icon={<Icon name="play" />} mode="info" />
             ) : rows.map((item) => (
                 <WorkflowTriggerRowView
                     key={item.key}

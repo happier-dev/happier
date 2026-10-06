@@ -8,6 +8,8 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
+import { ARTIFACT_UPLOAD_PATH_V1, decodeArtifactUploadMetadataV1 } from '@happier-dev/transfers';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createUiArtifactAction } from './artifactActionDeps';
 import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
@@ -126,6 +128,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 // Exact-id create may acknowledge an incumbent row after a same-id race.
                 committed = { ...write, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: 'plain',
                     header: encodePlainArtifactStoredContent({ title: 'Incumbent' }), body: encodePlainArtifactStoredContent({ body: 'incumbent body' }),
+                    provenance: null, provenanceDataEncryptionKey: null,
                     headerVersion: 3, bodyVersion: 4, seq: 4, createdAt: 1, updatedAt: 2 };
                 return json(committed);
             }
@@ -219,6 +222,17 @@ describe('scoped Account workflow Artifact operations', () => {
             } } });
             expect(target.origin).toBe(home.serverUrl);
             if (target.pathname === '/v1/account/encryption') return json({ mode, updatedAt: 0 });
+            if (target.pathname === ARTIFACT_UPLOAD_PATH_V1 && init?.method === 'POST') {
+                if (!(init.body instanceof ArrayBuffer)) throw new Error('Expected canonical binary upload');
+                const frame = new Uint8Array(init.body);
+                const metadata = decodeArtifactUploadMetadataV1(frame.subarray(0, frame.indexOf(10)));
+                if (metadata.kind !== 'create') throw new Error('Expected publication create');
+                stored = { id: metadata.artifactId, header: metadata.header, body: metadata.body, dataEncryptionKey: metadata.dataEncryptionKey,
+                    provenance: metadata.provenance, provenanceDataEncryptionKey: metadata.provenanceDataEncryptionKey,
+                    ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode,
+                    seq: 1, headerVersion: 1, bodyVersion: 1, createdAt: 1, updatedAt: 1 };
+                return json(stored);
+            }
             if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
                 const write = JSON.parse(String(init.body)) as ArtifactCreateRequest;
                 stored = { ...write, ownerAccountId: 'artifact-account', access: 'owner', encryptionMode: mode,
@@ -228,17 +242,18 @@ describe('scoped Account workflow Artifact operations', () => {
             if (target.pathname === '/v1/artifacts') return json(stored ? [stored] : []);
             if (stored && target.pathname.endsWith('/recipients')) return json({ artifactId: stored.id,
                 ownerAccountId: stored.ownerAccountId, access: stored.access, encryptionMode: mode, dataEncryptionKey: stored.dataEncryptionKey,
-                callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] });
+                callerDataEncryptionKey: stored.dataEncryptionKey, provenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
+                callerProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey, recipients: [] });
             if (stored && target.pathname === `/v1/artifacts/${stored.id}/html-preview`) return json({ url: `https://artifact-isolated.test/a/${stored.id}` });
             if (stored && init?.method === 'DELETE' && target.pathname === `/v1/artifacts/${stored.id}/revision/2/2`) {
                 stored = undefined; return new Response(null, { status: 204 });
             }
-            if (!stored || target.pathname !== `/v1/artifacts/${stored.id}`) return json({ error: 'not_found' }, 404);
+            if (!stored || (target.pathname !== `/v1/artifacts/${stored.id}` && target.pathname !== `/v1/artifacts/${stored.id}/content/binary`)) return json({ error: 'not_found' }, 404);
             if (init?.method === 'DELETE') { stored = undefined; return new Response(null, { status: 204 }); }
             if (init?.method !== 'POST') return json(stored);
             const write = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
             if (write.expectedHeaderVersion !== stored.headerVersion || write.expectedBodyVersion !== stored.bodyVersion) return json({ success: false, error: 'version-mismatch' });
-            stored = { ...stored, header: write.header!, body: write.body!, headerVersion: 2, bodyVersion: 2 };
+            stored = { ...stored, ...write, header: write.header!, body: write.body!, headerVersion: 2, bodyVersion: 2 };
             return json({ success: true, headerVersion: 2, bodyVersion: 2 });
         });
         const context = await captureLazyActionAccountContext(home.id);
@@ -255,13 +270,30 @@ describe('scoped Account workflow Artifact operations', () => {
                 const key = await encryption!.decryptEncryptionKey(row.dataEncryptionKey);
                 return new ArtifactEncryption(key!).decryptBody(row.body!);
             };
-            expect(await openedEnvelope()).toEqual({ body: 'initial', provenance: { savedBy: { kind: 'person', accountId: 'artifact-account' } } });
+            const openedProvenance = async () => {
+                const row = stored!;
+                const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+                const encryption = mode === 'e2ee' ? await createEncryptionFromAuthCredentials((await TokenStorage.getCredentialsForServerUrl(home.serverUrl))!) : null;
+                const dataKey = row.provenanceDataEncryptionKey ? await encryption!.decryptEncryptionKey(row.provenanceDataEncryptionKey) : null;
+                return openArtifactPrivateRevisionMetadata({ mode, artifactId: row.id, bodyVersion: row.bodyVersion!, provenance: row.provenance, dataKey });
+            };
+            const openedPublicHeader = async () => {
+                const row = stored!;
+                if (mode === 'plain') return decodePlainArtifactStoredContent(row.header);
+                const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+                const encryption = await createEncryptionFromAuthCredentials((await TokenStorage.getCredentialsForServerUrl(home.serverUrl))!);
+                const key = await encryption!.decryptEncryptionKey(row.dataEncryptionKey);
+                return new ArtifactEncryption(key!).decryptHeaderRaw(row.header);
+            };
+            expect(await openedEnvelope()).toEqual({ body: 'initial' });
+            expect(await openedProvenance()).toEqual({ savedBy: { kind: 'person', accountId: 'artifact-account' } });
             expect(stored?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
             expect(await execute('artifact.get', { artifactId }, caller)).toMatchObject({ ok: true, result: { artifact: { artifactId, body: 'initial', header: { title: 'First' } } } });
             expect(await execute('artifact.list', {}, caller)).toMatchObject({ ok: true, result: { items: [{ artifactId, header: { title: 'First' } }] } });
             expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: { title: 'Second' }, body: 'changed' }, caller))
                 .toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
-            expect(await openedEnvelope()).toEqual({ body: 'changed', provenance: { savedBy: { kind: 'person', accountId: 'artifact-account' } } });
+            expect(await openedEnvelope()).toEqual({ body: 'changed' });
+            expect(await openedProvenance()).toEqual({ savedBy: { kind: 'person', accountId: 'artifact-account' } });
             expect(await execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: {}, body: 'stale' }, caller))
                 .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
             expect(await execute('artifact.delete', { artifactId, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, caller))
@@ -301,11 +333,15 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(download).not.toHaveBeenCalled();
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
                 .toMatchObject({ ok: true, result: { revision: { headerVersion: 1, bodyVersion: 1 }, previewUrl: expect.stringContaining('#d=') } });
-            expect(await openedEnvelope()).toMatchObject({ provenance: { savedBy: { kind: 'agent', accountId: 'artifact-account', sessionId: 'publication-session' } } });
+            expect(await openedProvenance()).toEqual({ savedBy: { kind: 'agent', accountId: 'artifact-account', sessionId: 'publication-session' }, source: {
+                sessionId: 'publication-session', machineId: 'publication-machine', path: 'result.html', sha: expect.any(String),
+            } });
+            expect(await openedPublicHeader()).not.toHaveProperty('source');
+            expect(await openedEnvelope()).toEqual({ body: '<h1>Published</h1>' });
             expect(download).toHaveBeenCalledWith(expect.objectContaining({ serverId: home.id, machineId: 'publication-machine', rootPath: '/workspace', confinedToWorkingDirectory: true }));
             const published = stored;
             const publishedRead = await publication('artifact.get', { artifactId: published!.id }, caller);
-            expect(publishedRead).toMatchObject({ ok: true, result: { artifact: { body: '<h1>Published</h1>', header: { kind: 'html',
+            expect(publishedRead).toMatchObject({ ok: true, result: { artifact: { body: '<h1>Published</h1>', header: { kind: 'html' }, provenance: {
                 source: { sessionId: 'publication-session', machineId: 'publication-machine', path: 'result.html', sha: expect.any(String) } } }, previewUrl: expect.stringContaining('#d=') } });
             const calls = download.mock.calls.length;
             expect(await publication('artifact.publish_from_file', { path: '../private.txt' }, sessionCaller))
@@ -329,6 +365,23 @@ describe('scoped Account workflow Artifact operations', () => {
             expect(await publication('artifact.publish_from_file', { path: 'result.html' }, sessionCaller))
                 .toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
             expect(stored).toBe(published);
+            download.mockImplementationOnce(async request => {
+                await request.destination.writeBytes(new Uint8Array([0, 255, 128, 42]));
+                await request.destination.close();
+                return { ok: true, name: 'result.bin', sizeBytes: 4 };
+            });
+            expect(await publication('artifact.publish_from_file', { path: 'result.bin', mime: 'application/octet-stream' }, sessionCaller))
+                .toMatchObject({ ok: true });
+            expect(await openedPublicHeader()).not.toHaveProperty('source');
+            expect(await openedEnvelope()).toMatchObject({ body: { mime: 'application/octet-stream', sizeBytes: 4 } });
+            expect(await openedEnvelope()).not.toHaveProperty('provenance');
+            const binarySource = (await openedProvenance())!.source;
+            expect(binarySource).toMatchObject({ sessionId: 'publication-session', machineId: 'publication-machine', path: 'result.bin', sha: expect.any(String) });
+            expect(await publication('artifact.update', { artifactId: stored!.id, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+                header: { title: 'Rewritten', source: { sessionId: 'forged' } }, body: 'replacement' }, caller)).toMatchObject({ ok: true });
+            expect(await openedPublicHeader()).not.toHaveProperty('source');
+            expect(await openedEnvelope()).toEqual({ body: 'replacement' });
+            expect(await openedProvenance()).toEqual({ savedBy: { kind: 'person', accountId: 'artifact-account' }, source: binarySource });
         } finally { context.dispose(); }
     });
     it('publishes from raw exact-Home Settings through the existing Settings CAS and Artifact stores', async () => {
@@ -444,13 +497,17 @@ describe('scoped Account workflow Artifact operations', () => {
             if (target.pathname.endsWith('/locked')) return json({ ...stored, id: 'locked', encryptionMode: 'e2ee', header: 'broken', dataEncryptionKey: 'unopenable' });
             if (stored && target.pathname.endsWith('/recipients')) return json({ artifactId: stored.id,
                 ownerAccountId: stored.ownerAccountId, access: stored.access, encryptionMode: stored.encryptionMode,
-                dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey, recipients: [] });
+                dataEncryptionKey: stored.dataEncryptionKey, callerDataEncryptionKey: stored.dataEncryptionKey,
+                provenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
+                callerProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey, recipients: [] });
             if (!stored || target.pathname !== `/v1/artifacts/${stored.id}`) return json({ error: 'missing' }, 404);
             if (init?.method === 'DELETE') { stored = undefined; return new Response(null, { status: 204 }); }
             if (init?.method !== 'POST') return json(stored);
             const update = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
             if (update.expectedHeaderVersion !== stored.headerVersion || update.expectedBodyVersion !== stored.bodyVersion) return json({ success: false, error: 'version-mismatch' });
-            stored = { ...stored, header: update.header!, body: update.body!, headerVersion: 2, bodyVersion: 2 };
+            stored = { ...stored, header: update.header!, body: update.body!, provenance: update.provenance,
+                ...(update.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: update.provenanceDataEncryptionKey }),
+                headerVersion: 2, bodyVersion: 2 };
             return json({ success: true, headerVersion: 2, bodyVersion: 2 });
         });
         const context = await captureLazyActionAccountContext(home.id);
@@ -473,7 +530,8 @@ describe('scoped Account workflow Artifact operations', () => {
                 : await new ArtifactEncryption(key!).decryptHeaderRaw(stored!.header);
             const expectedHeader = withArtifactExcerptV1({ ...header, previewSteps: ['Review'] }, body);
             expect(storedHeader).toEqual(expectedHeader);
-            expect(await port.read(artifactId)).toEqual({ artifactId, ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, body, revision: { headerVersion: 1, bodyVersion: 1 } });
+            expect(await port.read(artifactId)).toEqual({ artifactId, ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, body,
+                provenance: { savedBy: { kind: 'person', accountId: 'artifact-account' } }, revision: { headerVersion: 1, bodyVersion: 1 } });
             const page = await port.list({ limit: 1, cursor: 'incoming-cursor' });
             expect(page.items[0]).toMatchObject({ artifactId, ownerAccountId: 'artifact-account', access: 'owner', header: expectedHeader, headerVersion: 1, updatedAt: 9 });
             expect(page.nextCursor).toBe(context.encodeArtifactListCursor(page.items[0]!));

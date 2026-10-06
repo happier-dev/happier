@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
@@ -40,3 +41,4 @@ export const AutomationStoredContentEnvelopeV1Schema = z.discriminatedUnion('t',
   );
 });
 export type AutomationStoredContentEnvelopeV1 = z.infer<typeof AutomationStoredContentEnvelopeV1Schema>;
+export const AutomationStoredContentEnvelopeV1ReadSchema = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema);

@@ -1,24 +1,25 @@
 import * as React from 'react';
 import { AccessibilityInfo, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { JsonValue } from '@happier-dev/protocol';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs';
 
 import { useInputFieldOptions, type InputFieldOptionsRequest } from '@/components/sessions/actions/useInputFieldOptions';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { WidgetPreviewWell, WidgetFlowPanel } from '@/components/widgets/flow/WidgetFlowPanel';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 
 import { WidgetSetupFieldRow, type WidgetSetupFieldChange } from './WidgetSetupFieldRow';
 import {
     describeWidgetSetupBlocker,
     describeWidgetSetupRow,
+    isLiteralWidgetSetupField,
     setWidgetSetupBinding,
     widgetSetupBlockingIssues,
     type WidgetSetup,
@@ -27,11 +28,10 @@ import {
     type WidgetSetupSubmitResult,
 } from './widgetSetupModel';
 
-/** The preview box keeps one height while inputs change, so the step never jumps under the pointer. */
+/** The preview well keeps one height while inputs change, so the step never jumps under the pointer. */
 const PREVIEW_MIN_HEIGHT_PX = 168;
-const PHONE_PREVIEW_HEIGHT_PX = 148;
-/** The phone's preview is the real widget a step smaller, so its first rows read below the inputs. */
-const PHONE_PREVIEW_SCALE = 0.86;
+/** A phone shows the card's header and first rows under the inputs; the rest is clipped, never scaled. */
+const PHONE_PREVIEW_HEIGHT_PX = 168;
 
 const NO_OPTIONS: readonly WidgetSetupValue[] = Object.freeze([]);
 
@@ -51,15 +51,18 @@ export function WidgetSetupStep(props: Readonly<{
     /** Back to the gallery (the add flow); absent for Edit inputs and in-card repair. */
     onBack?: () => void;
     onCancel: () => void;
+    /** Edit inputs on a phone: the header caret closes the sheet (lab Ep), as Cancel does on desktop. */
+    onClose?: () => void;
     /** After the Action acknowledged the write or retained it for approval. */
     onDone: (result: Extract<WidgetSetupSubmitResult, { ok: true }>) => void;
     /** Exact Home/session identity for option reads (never ambient). */
     serverId?: string | null;
     sessionId?: string | null;
+    /** Opened by a repair: that input's choices start open. */
+    focusPath?: string;
     testID: string;
 }>): React.ReactElement {
     const { setup } = props;
-    const { theme } = useUnistyles();
     const [draft, setDraft] = React.useState<WidgetSetupDraft>(setup.initial);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -69,23 +72,22 @@ export function WidgetSetupStep(props: Readonly<{
     const finishable = widgetSetupBlockingIssues(setup.fields, resolution).length === 0;
 
     // Choices come from the one options resolver, read only while this step is open.
-    const consumer = setup.optionsConsumer;
-    const requests = React.useMemo<InputFieldOptionsRequest[]>(() => setup.fields.map(({ field }) => ({
-        ...(consumer ? { consumer } : {}),
-        field: {
-            path: field.path,
-            ...(field.inputType ? { inputType: field.inputType } : {}),
-            ...(field.options ? { options: field.options } : {}),
-            ...(field.optionsSourceId
-                ? { optionsSourceId: field.optionsSourceId }
-                : {}),
-        },
-    })), [consumer, setup.fields]);
+    const discoveryContext = React.useMemo(() => setup.optionsContext?.(draft), [draft, setup]);
+    const consumer = discoveryContext?.consumer;
+    const selectedSession = consumer?.kind === 'widget' ? consumer.selectedSession : undefined;
+    const optionServerId = selectedSession?.serverId ?? props.serverId;
+    const requests = React.useMemo<InputFieldOptionsRequest[]>(() => setup.fields.map(({ field, viewer }) => ({
+        ...discoveryContext,
+        // Viewer discovery belongs to Connect. Literals without a declared source use the
+        // public parser/picker, not an unused choices read merely because they name a type.
+        field: viewer || (isLiteralWidgetSetupField(field) && field.optionsSourceId === undefined && field.connectedAccountOptions !== true)
+            ? { path: field.path, ...(field.options ? { options: field.options } : {}) } : field,
+    })), [discoveryContext, setup.fields]);
     const options = useInputFieldOptions({
         requests,
         enabled: true,
-        ...(props.serverId ? { serverId: props.serverId } : {}),
-        ...(props.sessionId ? { sessionId: props.sessionId } : {}),
+        ...(optionServerId ? { serverId: optionServerId } : {}),
+        ...(selectedSession ? { sessionId: selectedSession.sessionId } : {}),
     });
 
     const change = React.useCallback((path: string, next: WidgetSetupFieldChange) => {
@@ -112,6 +114,13 @@ export function WidgetSetupStep(props: Readonly<{
         }
     }, [busy, draft, finishable, props, setup]);
 
+    // The fields' own predicates over the current draft (shown, required, disabled), from the one
+    // neutral field owner: a hidden input leaves the step and a disabled one cannot be changed.
+    const draftInput = discoveryContext?.draftInput;
+    const effective = React.useMemo(() => new Map(resolveEffectiveInputFields(
+        { inputHints: { fields: setup.fields.map(({ field }) => field) } }, draftInput ?? {}, { includeHidden: true },
+    ).map((field) => [field.path, field])), [draftInput, setup.fields]);
+
     const inputs = (
         <InputTypePickerHostProvider enabled={setup.fields.some(({ field }) => field.inputType !== undefined)}
             {...options.resolveOptions.pickerContext}
@@ -119,6 +128,8 @@ export function WidgetSetupStep(props: Readonly<{
         <ListPresentationProvider value="page">
             <ItemGroup surface="none" density="compact">
                 {setup.fields.map((entry, index) => {
+                    const facts = effective.get(entry.field.path);
+                    if (facts && !facts.visible) return null;
                     const request = requests[index]!;
                     const state = options.state(request.field, request);
                     const values = state.options.length === 0 ? NO_OPTIONS : state.options.map((option): WidgetSetupValue => ({
@@ -129,17 +140,20 @@ export function WidgetSetupStep(props: Readonly<{
                     }));
                     const row = describeWidgetSetupRow({ entry, draft, resolution, options: values });
                     const binding = draft.bindings[entry.field.path];
+                    const field = facts ? { ...entry.field, required: facts.required } : entry.field;
                     return (
                         <WidgetSetupFieldRow
                             key={entry.field.path}
                             testID={`${props.testID}.field.${entry.field.path}`}
-                            entry={entry}
+                            entry={field === entry.field ? entry : { ...entry, field }}
                             row={row}
                             options={values}
                             optionsStatus={state.status}
+                            onRetryOptions={options.retry}
                             plainValue={binding?.kind === 'value' ? binding.value : undefined}
                             phone={props.phone}
-                            disabled={busy}
+                            autoOpen={props.focusPath === entry.field.path}
+                            disabled={busy || facts?.disabled === true}
                             onChange={(next) => change(entry.field.path, next)}
                         />
                     );
@@ -151,47 +165,54 @@ export function WidgetSetupStep(props: Readonly<{
 
     // The live widget mounts only while the step is open and its inputs resolve. A surface that can
     // only preview with its own authority returns nothing for another target, and a per-viewer input
-    // only resolves for each viewer once added; the box then says it will show once added rather
-    // than drawing someone else's data.
+    // only resolves for each viewer once added; the card then says what it waits for rather than
+    // drawing someone else's data. It is the real card at its own size (lab Ap): its first rows show
+    // and the well's room clips the rest.
     const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
     const preview = setup.renderPreview ? (
-        <View style={[styles.preview, props.phone ? styles.previewPhone : null]} testID={`${props.testID}.preview`}>
-            <Text style={styles.previewCaption}>{live ? t('widgetAdd.previewLive') : t('widgetAdd.preview')}</Text>
-            {live ? (
-                <View style={props.phone ? styles.previewScaled : styles.previewBody} pointerEvents="none">
-                    {live}
-                </View>
-            ) : (
-                <View style={styles.previewWaiting} testID={`${props.testID}.previewWaiting`}>
-                    <Icon name="squares-four" size={16} color={theme.colors.text.tertiary} />
-                    <Text style={styles.previewWaitingText}>{finishable ? t('widgetAdd.previewAfterAdd') : t('widgetAdd.previewWaiting')}</Text>
-                </View>
-            )}
-        </View>
+        <WidgetPreviewWell
+            testID={`${props.testID}.preview`}
+            caption={live ? t('widgetAdd.previewLive') : t('widgetAdd.preview')}
+            {...(props.phone ? { height: PHONE_PREVIEW_HEIGHT_PX } : { minHeight: PREVIEW_MIN_HEIGHT_PX })}
+        >
+            <WidgetFrame
+                testID={`${props.testID}.previewCard`}
+                frameStyle="card"
+                placement="companion"
+                mark={setup.widget?.mark ?? 'squares-four'}
+                title={setup.widget?.title ?? setup.title}
+                body={live ? { kind: 'content', children: live } : {
+                    kind: 'content',
+                    children: (
+                        <Text style={styles.waiting} testID={`${props.testID}.previewWaiting`}>
+                            {finishable ? t('widgetAdd.previewAfterAdd') : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' })}
+                        </Text>
+                    ),
+                }}
+            />
+        </WidgetPreviewWell>
     ) : null;
 
-    const why = error ?? (blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : null);
     return (
-        <View testID={props.testID} accessibilityLabel={setup.title} style={styles.root}>
-            <View style={styles.header}>
-                {props.onBack ? (
-                    <HappierPressable
-                        testID={`${props.testID}.back`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('widgetAdd.backToGallery')}
-                        onPress={props.onBack}
-                        style={(state) => [styles.back, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-                    >
-                        <Icon name="caret-left" size={16} color={theme.colors.text.secondary} />
-                    </HappierPressable>
-                ) : null}
-                <View style={styles.titleBlock}>
-                    <Text style={[styles.title, props.phone ? styles.titlePhone : null]} accessibilityRole="header" numberOfLines={1}>
-                        {setup.title}
-                    </Text>
-                    {setup.hint ? <Text style={styles.hint} numberOfLines={2}>{setup.hint}</Text> : null}
-                </View>
-            </View>
+        <WidgetFlowPanel
+            testID={props.testID}
+            phone={props.phone}
+            title={setup.title}
+            hint={setup.hint ?? null}
+            {...(props.onBack ? { onBack: props.onBack } : {})}
+            {...(props.onClose ? { onClose: props.onClose } : {})}
+            noteTestID={`${props.testID}.why`}
+            error={error}
+            note={blocker ? t('widgetAdd.stillNeeded', { field: blocker.title }) : null}
+            onCancel={props.onCancel}
+            primary={{
+                testID: `${props.testID}.submit`,
+                label: setup.submitLabel,
+                onPress: () => { void submit(); },
+                disabled: !finishable,
+                busy,
+            }}
+        >
             {props.phone ? (
                 <View style={styles.bodyPhone}>
                     {inputs}
@@ -203,98 +224,20 @@ export function WidgetSetupStep(props: Readonly<{
                     <View style={styles.previewColumn}>{preview}</View>
                 </View>
             ) : inputs}
-            <View style={[styles.footer, props.phone ? styles.footerPhone : null]}>
-                {props.phone ? null : (
-                    <Text
-                        style={[styles.why, error ? styles.whyError : null]}
-                        numberOfLines={2}
-                        testID={`${props.testID}.why`}
-                        accessibilityLiveRegion="polite"
-                    >
-                        {why ?? ''}
-                    </Text>
-                )}
-                {props.phone ? null : (
-                    <RoundButton
-                        testID={`${props.testID}.cancel`}
-                        size="small"
-                        display="secondary"
-                        title={t('common.cancel')}
-                        onPress={props.onCancel}
-                    />
-                )}
-                <View style={props.phone ? styles.submitPhone : null}>
-                    <RoundButton
-                        testID={`${props.testID}.submit`}
-                        size={props.phone ? 'normal' : 'small'}
-                        title={setup.submitLabel}
-                        disabled={!finishable || busy}
-                        loading={busy}
-                        {...(why ? { accessibilityHint: why } : {})}
-                        onPress={() => { void submit(); }}
-                    />
-                </View>
-            </View>
-            {props.phone && error ? <Text style={[styles.why, styles.whyError, styles.whyPhone]}>{error}</Text> : null}
-        </View>
+        </WidgetFlowPanel>
     );
 }
 
 const styles = StyleSheet.create((theme) => ({
-    root: { paddingHorizontal: 6, paddingTop: 6, paddingBottom: 8 },
-    header: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, paddingHorizontal: 4, paddingTop: 2, paddingBottom: 8 },
-    back: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: -2 },
-    titleBlock: { flex: 1, minWidth: 0, gap: 1, paddingTop: 1 },
-    title: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), color: theme.colors.text.primary },
-    titlePhone: { ...happierPageTextMetrics('rowTitle'), fontSize: 17, lineHeight: 22 },
-    hint: { ...Typography.default(), fontSize: 12, lineHeight: 16, color: theme.colors.text.tertiary },
     body: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
     bodyPhone: { gap: 6 },
     inputs: { flexGrow: 1.25, flexShrink: 1, flexBasis: 0, minWidth: 0 },
     previewColumn: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingTop: 2 },
-    preview: {
-        borderRadius: 12,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: 10,
-        paddingTop: 8,
-        paddingBottom: 10,
-        minHeight: PREVIEW_MIN_HEIGHT_PX,
-        gap: 6,
+    // The card's reserved rows while its inputs are still being chosen: what it waits for, quiet.
+    waiting: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('rowDescription'),
+        color: theme.colors.text.tertiary,
+        paddingBottom: 4,
     },
-    previewPhone: { minHeight: 0, height: PHONE_PREVIEW_HEIGHT_PX, overflow: 'hidden', marginHorizontal: 4 },
-    previewCaption: { ...Typography.default('semiBold'), fontSize: 11.5, lineHeight: 15, color: theme.colors.text.tertiary, paddingHorizontal: 2 },
-    previewBody: { flexShrink: 1 },
-    previewScaled: {
-        width: `${100 / PHONE_PREVIEW_SCALE}%` as const,
-        transform: [{ scale: PHONE_PREVIEW_SCALE }],
-        transformOrigin: 'top left',
-    },
-    previewWaiting: {
-        flex: 1,
-        minHeight: 96,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        borderRadius: 9,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderStyle: 'dashed',
-        borderColor: theme.colors.border.default,
-    },
-    previewWaitingText: { ...Typography.default(), fontSize: 12.5, lineHeight: 17, color: theme.colors.text.tertiary },
-    footer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        marginTop: 8,
-        paddingTop: 10,
-        paddingHorizontal: 4,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.default,
-    },
-    footerPhone: { paddingTop: 12 },
-    submitPhone: { flex: 1 },
-    why: { ...Typography.default(), flex: 1, fontSize: 12, lineHeight: 16, color: theme.colors.text.tertiary },
-    whyError: { color: theme.colors.state.danger.foreground },
-    whyPhone: { paddingHorizontal: 4, paddingTop: 6, textAlign: 'center' },
 }));

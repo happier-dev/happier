@@ -9,7 +9,7 @@ import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveMcpToolCallRequestTimeoutMs } from '@/mcp/mcpToolCallRequestOptions';
 import { configuration } from '@/configuration';
-import { isActionEnabledByActionsSettings } from '@happier-dev/protocol';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';

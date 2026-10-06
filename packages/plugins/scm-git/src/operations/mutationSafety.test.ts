@@ -32,9 +32,9 @@ function createWorkspace(initialCommit = true) {
     return { cwd, context };
 }
 
-// Loaded mac-host measured a real-Git case at 7.957s. Allow twice that, rounded
-// to 20s, at the runner boundary; individual Git command deadlines stay intact.
-describe('Git mutation safety', { timeout: 20_000 }, () => {
+// Loaded mac-host measured a completed real-Git case at 15.374s. Allow twice
+// that, rounded up to 40s, at the runner boundary; Git command deadlines stay intact.
+describe('Git mutation safety', { timeout: 40_000 }, () => {
     it.skipIf(process.platform === 'win32').each(['staged', 'scoped', 'amend'] as const)('matches native post-publication hook index reads and staging writes (%s)', async (kind) => {
         const owner = createWorkspace();
         const native = createWorkspace();

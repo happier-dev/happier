@@ -1,17 +1,9 @@
-import {
-  areWorkflowRetainedRuntimeSelectionsEqualV1,
-  assertNonEscalatingPermissionMode,
-  deriveWorkflowSessionInputLocalIdV2,
-  ExecutionRunStartResponseSchema,
-  HappierStructuredInputV1Schema,
-  projectWorkflowRetainedRuntimeSelectionV1,
-  readExecutionRunStartRunCreation,
-  type ExecutionRunResultContractV1,
-  type ExecutionRunResumeHandle,
-  type WorkflowAuthoredProducerRef,
-  type WorkflowProgressEnvelopeV1,
-  type WorkflowRetainedRuntimeSelectionV1,
-} from '@happier-dev/protocol';
+import { areWorkflowRetainedRuntimeSelectionsEqualV1, projectWorkflowRetainedRuntimeSelectionV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
+import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import type { ExecutionRunResultContractV1, ExecutionRunResumeHandle, WorkflowAuthoredProducerRef, WorkflowProgressEnvelopeV1, WorkflowRetainedRuntimeSelectionV1 } from '@happier-dev/protocol';
 
 type ExecutionRunResumeHandleProviderSessionV1 = Extract<
   ExecutionRunResumeHandle,

@@ -20,10 +20,8 @@ import {
   type ComposerMediaStageUploadTargetDeps,
 } from './resolveComposerMediaStageUploadTarget';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
-import {
-  SessionAttachmentUploadInitRequestV1Schema,
-  type SessionAttachmentUploadInitRequestV1,
-} from '@happier-dev/protocol';
+import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
+import type { SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TransferLifecycleDiagnosticContext } from '../rpc/transferLifecycleDiagnostics';

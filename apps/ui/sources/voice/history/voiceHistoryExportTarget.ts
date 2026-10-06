@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import { t } from '@/text';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 import type { VoiceHistoryExportArtifact } from './voiceHistoryConsumer';
 
@@ -61,20 +62,9 @@ export async function saveVoiceHistoryExportArtifactToWeb(
 export async function shareVoiceHistoryExportArtifactNative(
   artifact: VoiceHistoryExportArtifact,
 ): Promise<void> {
-  const FileSystem = await import('expo-file-system');
-  const Sharing = await import('expo-sharing');
-  const baseDirectory = FileSystem.Paths.cache ?? FileSystem.Paths.document;
-  if (!baseDirectory || typeof Sharing.shareAsync !== 'function') {
-    throw new Error('Voice History export is unavailable on this platform');
-  }
-  if (
-    typeof Sharing.isAvailableAsync === 'function'
-    && !await Sharing.isAvailableAsync()
-  ) {
-    throw new Error('Voice History export is unavailable on this platform');
-  }
-
-  const file = new FileSystem.File(baseDirectory, artifact.fileName);
+  const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: artifact.fileName });
+  if (!sink.ok) throw new Error(sink.error);
+  let retainCacheFile = false;
   try {
     // Keep the existing target as the streaming owner, but coalesce the
     // producer's small JSON fragments before crossing the native file boundary.
@@ -82,11 +72,9 @@ export async function shareVoiceHistoryExportArtifactNative(
     // native write is actually bounded without changing document order.
     let bufferedChunks: string[] = [];
     let bufferedBytes = 0;
-    let isFirstChunk = true;
-    const flush = (): void => {
+    const flush = async (): Promise<void> => {
       if (bufferedChunks.length === 0) return;
-      file.write(bufferedChunks.join(''), isFirstChunk ? undefined : { append: true });
-      isFirstChunk = false;
+      await sink.writeBytes(new TextEncoder().encode(bufferedChunks.join('')));
       bufferedChunks = [];
       bufferedBytes = 0;
     };
@@ -95,7 +83,7 @@ export async function shareVoiceHistoryExportArtifactNative(
       if (codePoint <= 0x7ff) return 2;
       return codePoint <= 0xffff ? 3 : 4;
     };
-    const appendChunk = (chunk: string): void => {
+    const appendChunk = async (chunk: string): Promise<void> => {
       let segmentStart = 0;
       let segmentBytes = 0;
       for (let index = 0; index < chunk.length;) {
@@ -108,7 +96,7 @@ export async function shareVoiceHistoryExportArtifactNative(
             bufferedChunks.push(chunk.slice(segmentStart, index));
             bufferedBytes += segmentBytes;
           }
-          flush();
+          await flush();
           segmentStart = index;
           segmentBytes = 0;
         }
@@ -117,7 +105,7 @@ export async function shareVoiceHistoryExportArtifactNative(
         if (bufferedBytes + segmentBytes >= NATIVE_EXPORT_WRITE_BUFFER_BYTES) {
           bufferedChunks.push(chunk.slice(segmentStart, index));
           bufferedBytes += segmentBytes;
-          flush();
+          await flush();
           segmentStart = index;
           segmentBytes = 0;
         }
@@ -128,19 +116,20 @@ export async function shareVoiceHistoryExportArtifactNative(
       }
     };
     for (const chunk of artifact.chunks()) {
-      appendChunk(chunk);
+      await appendChunk(chunk);
     }
-    flush();
-    await Sharing.shareAsync(file.uri, {
+    await flush();
+    await sink.close();
+    const result = await shareNativeCacheFile({
+      fileUri: sink.fileUri,
+      name: artifact.fileName,
       mimeType: artifact.mimeType,
       dialogTitle: t('settingsVoice.history.exportTitle'),
     });
+    if (result.status !== 'shared') throw new Error(t('files.fileSharingUnavailable'));
+    retainCacheFile = result.retainCacheFile;
   } finally {
-    try {
-      file.delete();
-    } catch {
-      // The share boundary may have moved or already removed the cache file.
-    }
+    if (!retainCacheFile) await sink.cleanup();
   }
 }
 

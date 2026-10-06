@@ -1,8 +1,6 @@
-import {
-  buildQualifiedPluginContributionKey,
-  ConnectedAccountUiProjectionEntryV1Schema,
-  createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { hasUnusablePluginDeclarationDiagnostic } from '@/plugins/validation/diagnostics/declarationUsability';

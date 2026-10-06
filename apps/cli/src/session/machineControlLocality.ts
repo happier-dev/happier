@@ -1,8 +1,6 @@
-import {
-  isSameMachineLocality,
-  resolveCanonicalMachineId,
-  resolveSessionWorkspaceRootForMachine,
-} from '@happier-dev/protocol';
+import { isSameMachineLocality } from '@happier-dev/protocol/machines/identity/machineLocality';
+import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
 

@@ -4,11 +4,8 @@ import { decodeBase64, decrypt } from '../encryption';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { isDeepStrictEqual } from 'node:util';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
-import {
-    SESSION_METADATA_LAYOUT_VERSION_V1,
-    type AccountEncryptionCurrentnessResponse,
-    type V2SessionByIdResponse,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { AccountEncryptionCurrentnessResponse, V2SessionByIdResponse } from '@happier-dev/protocol';
 import {
     readSessionMetadataLayoutVersion,
     tryReadApiSessionMetadataForLayout,
@@ -26,13 +23,9 @@ import {
     type LatestTurnStatusSnapshot,
 } from './sessionTurnStatusSnapshot';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import {
-    TranscriptOpenedAgentStateV1Schema,
-    TranscriptOpenedSharedMetadataV1Schema,
-    projectSessionSharedMetadataV1,
-    type TranscriptOpenedAgentStateV1,
-    type TranscriptOpenedSharedMetadataV1,
-} from '@happier-dev/protocol';
+import { TranscriptOpenedAgentStateV1Schema, TranscriptOpenedSharedMetadataV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { TranscriptOpenedAgentStateV1, TranscriptOpenedSharedMetadataV1 } from '@happier-dev/protocol';
 
 export type OpenedSessionStateVersions = Readonly<{ agentStateVersion: number; sharedMetadataVersion: number }>;
 export type OpenedSessionStateSnapshot = Readonly<{

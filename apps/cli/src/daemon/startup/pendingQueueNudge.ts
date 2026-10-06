@@ -3,11 +3,8 @@ import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { logger } from '@/ui/logger';
-import {
-  SessionPendingQueueWakeCapabilityResponseV1Schema,
-  SessionPendingQueueWakeResponseV1Schema,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionPendingQueueWakeCapabilityResponseV1Schema, SessionPendingQueueWakeResponseV1Schema } from '@happier-dev/protocol/sessions/pending/sessionPendingQueueWakeV1';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 
 type Cancellation = Readonly<{ abortSignal?: AbortSignal; isShuttingDown?: () => boolean }>;

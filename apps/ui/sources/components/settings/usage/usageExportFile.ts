@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { log } from '@/log';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 /**
  * The one place usage exports become a file.
@@ -27,76 +29,28 @@ export function buildUsageCsvDocument(rows: readonly (readonly string[])[]): str
     return `${rows.map((row) => row.map(escapeUsageCsvField).join(',')).join('\n')}\n`;
 }
 
-type ExpoFileSystemDirectory = Readonly<{
-    uri: string;
-}>;
-
-export type UsageExportCacheFile = Readonly<{
-    uri: string;
-    write: (content: string) => void;
-    delete: () => void;
-}>;
-
-type ExpoFileSystemModule = Readonly<{
-    File: new (parent: ExpoFileSystemDirectory | string, name: string) => UsageExportCacheFile;
-    Paths?: Readonly<{
-        cache?: ExpoFileSystemDirectory | string | null;
-        document?: ExpoFileSystemDirectory | string | null;
-    }>;
-}>;
-
-type ExpoSharingModule = Readonly<{
-    isAvailableAsync?: () => Promise<boolean>;
-    shareAsync?: (uri: string) => Promise<void>;
-}>;
-
-export async function writeUsageExportCacheFile(input: Readonly<{
-    content: string;
-    fileName: string;
-}>): Promise<UsageExportCacheFile | null> {
-    const FileSystem = await import('expo-file-system') as ExpoFileSystemModule;
-    const baseDirectory = FileSystem.Paths?.cache ?? FileSystem.Paths?.document ?? null;
-    if (!baseDirectory) {
-        return null;
-    }
-
-    const file = new FileSystem.File(baseDirectory, input.fileName);
-    file.write(input.content);
-    return file;
-}
-
-export function deleteUsageExportFileBestEffort(file: UsageExportCacheFile): void {
-    try {
-        file.delete();
-    } catch {
-        // best effort
-    }
-}
-
 /** Shares a written cache file, reporting whether the platform actually took it. */
 export async function shareUsageExportCacheFile(input: Readonly<{
     content: string;
     fileName: string;
+    mimeType?: string;
 }>): Promise<boolean> {
     try {
-        const Sharing = await import('expo-sharing') as ExpoSharingModule;
-        const file = await writeUsageExportCacheFile(input);
-        if (!file) {
-            return false;
-        }
+        const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: input.fileName });
+        if (!sink.ok) throw new Error(sink.error);
+        let retainCacheFile = false;
         try {
-            if (typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
-                const available = await Sharing.isAvailableAsync();
-                if (available) {
-                    await Sharing.shareAsync(file.uri);
-                    return true;
-                }
-            }
+            await sink.writeBytes(new TextEncoder().encode(input.content));
+            await sink.close();
+            const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: input.fileName, mimeType: input.mimeType });
+            if (result.status !== 'shared') return false;
+            retainCacheFile = result.retainCacheFile;
+            return true;
         } finally {
-            deleteUsageExportFileBestEffort(file);
+            if (!retainCacheFile) await sink.cleanup();
         }
-        return false;
-    } catch {
+    } catch (error) {
+        log.log(`Failed to export usage cache file: ${error instanceof Error ? error.message : String(error)}`);
         return false;
     }
 }
@@ -148,7 +102,7 @@ export async function exportUsageTextDocument(input: Readonly<{
     if (Platform.OS === 'web') {
         return downloadTextOnWeb(input.content, input.fileName, input.mimeType);
     }
-    return await shareUsageExportCacheFile({ content: input.content, fileName: input.fileName });
+    return await shareUsageExportCacheFile(input);
 }
 
 export async function exportUsageCsvDocument(input: Readonly<{

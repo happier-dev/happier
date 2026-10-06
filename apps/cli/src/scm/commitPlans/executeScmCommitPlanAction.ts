@@ -1,10 +1,6 @@
-import {
-  ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema,
-  ScmDiffSummaryResultResponseSchema,
-  isScmCommitPlanApplicationLocked,
-  type ScmActionId, type ScmCommitPlanApplication, type ScmDiffSummaryResult,
-  type ScmDiffSummaryResultResponse, type ScmDiffSummaryResultFailure, type ScmCommitCreateResponse,
-} from '@happier-dev/protocol';
+import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import { ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { ScmActionId, ScmCommitPlanApplication, ScmDiffSummaryResult, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmCommitCreateResponse } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore, type ScmDiffSummaryResultScope, type ScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { captureScmPendingTree, readCapturedScmComparison } from '../comparisons/captureScmComparison';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';

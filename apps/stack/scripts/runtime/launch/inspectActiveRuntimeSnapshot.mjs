@@ -15,6 +15,7 @@ import {
   isRetainedLegacyRuntimeSnapshotComponentReference,
   readRuntimeManifest,
   readRuntimePointer,
+  RUNTIME_SNAPSHOT_COMPONENTS,
   resolveRuntimeManifestEntrypoint,
   validateRuntimeTarget,
   validateRuntimeManifest,
@@ -30,7 +31,7 @@ import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
 
 async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
   const missing = [];
-  for (const component of ['web', 'server', 'daemon']) {
+  for (const component of Object.keys(manifest.components)) {
     const entrypoint = resolveRuntimeManifestEntrypoint({ snapshotPath, manifest, component });
     if (!entrypoint || !(await pathExists(entrypoint))) {
       missing.push(component);
@@ -100,7 +101,8 @@ async function collectSnapshotComponentReferenceErrors({
   return errors;
 }
 
-async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
+export async function collectSnapshotRuntimePayloadErrors({ snapshotPath, components = RUNTIME_SNAPSHOT_COMPONENTS }) {
+  if (!components.includes('daemon')) return [];
   const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
   if (!daemonComponent.nodeEntrypointRelativePath) {
     return [];
@@ -112,7 +114,7 @@ async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
     : [`[runtime] active runtime snapshot is incomplete: missing daemon node entrypoint (${daemonNodeEntrypoint}).`];
 }
 
-async function inspectDaemonDistClosure({ snapshotPath }) {
+export async function inspectDaemonDistClosure({ snapshotPath }) {
   const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
   if (!daemonComponent.nodeEntrypointRelativePath) {
     return { fingerprint: null, errors: ['[runtime] daemon runtime has no node entrypoint identity.'] };
@@ -130,7 +132,7 @@ async function inspectDaemonDistClosure({ snapshotPath }) {
   return { fingerprint, errors: [] };
 }
 
-export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process.env }) {
+export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process.env, target = { platform: process.platform, arch: process.arch }, requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS }) {
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const pointer = await readRuntimePointer({ currentPath: runtimePaths.currentPath });
   const snapshotIdValidation = validateRuntimeSnapshotId(pointer?.snapshotId, { allowEmpty: true });
@@ -208,7 +210,7 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
 
   const manifestPath = producerSnapshotPaths.manifestPath;
   const manifest = await readRuntimeManifest({ manifestPath });
-  const validation = validateRuntimeManifest(manifest);
+  const validation = validateRuntimeManifest(manifest, { requiredComponents });
   const errors = [];
 
   if (!producerStackNameValid) {
@@ -235,7 +237,9 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
     ) {
       errors.push('[runtime] active runtime pointer and manifest source fingerprint do not match.');
     }
-    const targetValidation = validateRuntimeTarget(validation.manifest);
+    // A null target observes publication health on its declared host; launch
+    // admission keeps the default current-host target or an explicit target.
+    const targetValidation = validateRuntimeTarget(validation.manifest, target ?? validation.manifest.target ?? undefined);
     if (!targetValidation.ok) {
       errors.push(`[runtime] active runtime snapshot target is incompatible: ${targetValidation.errors.join('; ')}`);
     }
@@ -251,11 +255,12 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
       })),
       ...(await collectSnapshotRuntimePayloadErrors({
         snapshotPath: normalizedExpectedSnapshotPath,
+        components: Object.keys(validation.manifest.components),
       })),
     );
   }
 
-  const daemonDistClosure = validation.ok
+  const daemonDistClosure = validation.ok && validation.manifest.components.daemon
     ? await inspectDaemonDistClosure({ snapshotPath: normalizedExpectedSnapshotPath })
     : { fingerprint: null, errors: [] };
   errors.push(...daemonDistClosure.errors);
@@ -290,4 +295,12 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
     producerStackName,
     producerStackBaseDir,
   };
+}
+
+/** Diagnostics inspect the selected deployment, not the controller's executable target. */
+export async function inspectStackRuntimeSelection({ stackBaseDir, env = process.env }) {
+  return await inspectActiveRuntimeSnapshot({
+    stackBaseDir, env,
+    ...(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? { requiredComponents: ['server'], target: null } : {}),
+  });
 }

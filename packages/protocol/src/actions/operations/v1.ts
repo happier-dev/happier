@@ -212,3 +212,12 @@ export const ActionOperationCancelV1ResponseSchema = z.discriminatedUnion('kind'
   ActionOperationNotFoundV1Schema,
 ]);
 export type ActionOperationCancelV1Response = z.infer<typeof ActionOperationCancelV1ResponseSchema>;
+
+/** Observation projections preserve a settled state while admitting newer owner receipt facts. */
+export function canAdvanceActionOperationSnapshotV1(current: ActionOperationSnapshotV1, incoming: ActionOperationSnapshotV1): boolean {
+  if (incoming.operationId !== current.operationId || incoming.actionId !== current.actionId
+    || incoming.scope.accountId !== current.scope.accountId || incoming.scope.machineId !== current.scope.machineId
+    || incoming.scope.sessionId !== current.scope.sessionId || incoming.revision <= current.revision) return false;
+  if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state) return false;
+  return !(current.state === 'running' && incoming.state === 'accepted');
+}

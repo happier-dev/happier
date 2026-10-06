@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { TriggerTargetV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
@@ -112,16 +114,13 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean }>) {
                 count={rows.length}
                 {...(props.first ? { first: true } : {})}
             />
-            {status === 'ready' ? null : rows.length > 0 ? (
-                <SurfaceFreshnessLine testID="account-triggers-read" busy={status === 'loading'}
-                    tone={status === 'failed' ? 'warning' : 'neutral'}
-                    reason={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
-                    {...(status === 'failed' ? { action: { label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
-            ) : (
+            {/* Nothing to say while the retained rows refresh: they stay put at full strength. With
+                nothing retained, the loading or failed line holds the rows' place. */}
+            {rows.length === 0 && status !== 'ready' ? (
                 <SurfaceStateCard testID="account-triggers-read" size="line" kind={status === 'failed' ? 'error' : 'loading'}
                     title={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
                     {...(status === 'failed' ? { action: { testID: 'account-triggers-read-retry', label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
-            )}
+            ) : null}
             {rows.map((row) => (
                 <AccountTriggerRowView
                     key={`${row.automationId}:${row.triggerId ?? 'manual'}`}
@@ -133,6 +132,15 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean }>) {
                     onToggle={(next) => { void toggle(row, next); }}
                 />
             ))}
+            {/* A failed refresh is stale content: said once, under the rows it concerns, so the rows
+                themselves never move when it arrives. */}
+            {rows.length > 0 && status === 'failed' ? (
+                <View style={styles.stale}>
+                    <SurfaceFreshnessLine testID="account-triggers-read" tone="warning"
+                        reason={t('workflows.triggers.section.loadFailed')}
+                        action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: refresh }} />
+                </View>
+            ) : null}
             {open === null ? null : (
                 <AccountTriggerPopover
                     key={`${open.set.automationId}:${open.triggerId ?? 'manual'}`}
@@ -183,8 +191,11 @@ const AccountTriggerRowView = React.memo(function AccountTriggerRowView(props: R
         <View ref={anchorRef} collapsable={false}>
             <TriggerRow
                 testID={`workflows-column:trigger:${row.automationId}${props.multiple ? `:${row.triggerId}` : ''}`}
-                title={row.legacy?.title ?? row.subtitle}
-                qualifier={row.legacy?.qualifier ?? row.title}
+                presentation="column"
+                glyph={row.glyph}
+                // "{when}" over "{then summary}" (04 §3.3); a 0.2 Automation keeps its own name.
+                title={row.legacy?.title ?? row.title}
+                qualifier={row.legacy?.qualifier ?? row.subtitle}
                 enabled={!row.off}
                 multiline={!!row.legacy}
                 toggleDisabled={props.pending}
@@ -302,3 +313,8 @@ export function NewAccountTriggerPopover(props: Readonly<{
         />
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    // The column's row inset, so the line's edges sit on the rows' edges.
+    stale: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingTop: theme.margins.xs },
+}));

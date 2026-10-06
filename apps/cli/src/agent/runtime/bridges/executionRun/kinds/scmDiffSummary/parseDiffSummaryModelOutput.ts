@@ -1,8 +1,5 @@
-import {
-  ScmDiffSummaryModelOutputSchema,
-  normalizeScmDiffSummaryModelOutput,
-  type ScmDiffSummaryModelOutput,
-} from '@happier-dev/protocol';
+import { ScmDiffSummaryModelOutputSchema, normalizeScmDiffSummaryModelOutput } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmDiffSummaryModelOutput } from '@happier-dev/protocol';
 
 export type DiffSummaryModelOutput = ScmDiffSummaryModelOutput;
 

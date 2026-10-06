@@ -3,8 +3,8 @@ import { processGenerationMatches } from '@happier-dev/cli-common/processInstanc
 import { logger } from '@/ui/logger';
 import { daemonProcessMatchesCurrentScope } from '../ownership/daemonProcessScopeIdentity';
 import type { StoredCredentials } from '@/persistence';
-import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { hasActiveTerminalControlServiceabilityDescriptor } from '@/daemon/startup/terminalControlServiceabilityProjection';
 import {
   resolveCatalogAgentId,

@@ -12,6 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 const BAR_HEIGHT = 4;
+const DOWNLOAD_CANCEL_BUTTON_SIZE = 28;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -139,16 +140,19 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
             <View style={styles.row}>
                 <Icon name="download" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
-                <IconButton
+                {props.state.cancelable !== false ? <IconButton
                     testID="repository-tree-download-cancel"
                     accessibilityLabel={t('common.cancel')}
                     iconName="x"
                     iconSize={16}
-                    size={28}
+                    size={DOWNLOAD_CANCEL_BUTTON_SIZE}
                     minimumInteractiveTargetSize={minimumInteractiveTargetSize}
                     interactiveTargetGapPx={20}
                     onPress={props.onCancel}
-                />
+                /> : <View style={{
+                    width: Math.max(DOWNLOAD_CANCEL_BUTTON_SIZE, minimumInteractiveTargetSize),
+                    height: Math.max(DOWNLOAD_CANCEL_BUTTON_SIZE, minimumInteractiveTargetSize),
+                }} />}
             </View>
             <TransferProgressBar progress={progress} />
         </View>

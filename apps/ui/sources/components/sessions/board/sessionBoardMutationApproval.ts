@@ -3,6 +3,7 @@ import * as React from 'react';
 import {
     SessionBoardActionFailureV1Schema,
     SessionSurfaceItemV1Schema,
+    SessionSurfaceItemV1StoredSchema,
 } from '@happier-dev/protocol/sessions/board';
 import type {
     SessionBoardActionFailureV1,
@@ -73,7 +74,7 @@ export function isSessionBoardUpsertIntentCommitted(input: Readonly<{
     if (input.revision === null || input.revision === input.intent.expectedItemRevision || input.item === null) {
         return false;
     }
-    const observed = SessionSurfaceItemV1Schema.safeParse(input.item);
+    const observed = SessionSurfaceItemV1StoredSchema.safeParse(input.item);
     const submitted = SessionSurfaceItemV1Schema.safeParse(input.intent.item);
     return observed.success
         && submitted.success

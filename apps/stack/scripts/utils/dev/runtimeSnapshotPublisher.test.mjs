@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 import {
   createBackgroundRuntimeSnapshotPublisher,
@@ -65,6 +66,8 @@ test(`repository publication preserves local authority and tracked results on ${
   assert.deepEqual(children, []);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].label, 'runtime-publisher');
+  assert.equal(resolveWorkspaceBuildMode({ env: calls[0].env }), 'qa-runtime');
+  assert.equal(resolveWorkspaceBuildMode({ env: { ...calls[0].env, npm_lifecycle_event: 'prepack' } }), 'strict');
   const workerArgs = platform === 'linux' ? calls[0].args.slice(3) : calls[0].args;
   assert.equal(calls[0].command, platform === 'linux'
     ? fileURLToPath(new URL('../../../bin/hstack-exec', import.meta.url))
@@ -111,6 +114,7 @@ test(`repository publication parses a real worker result on ${platform}`, {
     `process.stdout.write(${JSON.stringify(RUNTIME_PUBLICATION_RESULT_PREFIX)} + JSON.stringify({`,
     "  snapshotId: 'snapshot-real-child',",
     '  changed: true,',
+    `  buildMode: process.env.${WORKSPACE_BUILD_MODE_ENV},`,
     '  nice: getPriority(),',
     "  cgroup: process.platform === 'linux' ? readFileSync('/proc/self/cgroup', 'utf8') : null,",
     '}) + \'\\n\');',
@@ -129,6 +133,7 @@ test(`repository publication parses a real worker result on ${platform}`, {
 
   assert.equal(result.snapshotId, 'snapshot-real-child');
   assert.equal(result.changed, true);
+  assert.equal(result.buildMode, 'qa-runtime');
   if (platform === 'linux') {
     assert.equal(result.nice, 10);
     assert.match(result.cgroup, /\/happier-jobs\.slice\//);
@@ -202,7 +207,7 @@ test('the repository controller publishes the resolver’s actual changed subset
     producerStackName: 'repo-dev-a1cc5e0671',
     producerStackBaseDir: '/stacks/repo-dev-a1cc5e0671',
   };
-  const env = { HAPPIER_STACK_STORAGE_DIR: '/stacks' };
+  const env = { HAPPIER_STACK_STORAGE_DIR: '/stacks', [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
   const runtimeStatePath = '/stacks/repo-dev-a1cc5e0671/stack.runtime.json';
   const resolved = [];
   const published = [];
@@ -210,7 +215,7 @@ test('the repository controller publishes the resolver’s actual changed subset
   const controller = createRepositoryRuntimePublicationController({
     rootDir,
     authority,
-    env,
+    env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'strict' },
     runtimeStatePath,
     resolveRepositoryRuntimePublicationComponents: async (input) => {
       resolved.push(input);

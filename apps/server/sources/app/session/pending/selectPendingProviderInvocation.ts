@@ -18,7 +18,6 @@ type PendingInvocationCandidate = Readonly<{
 
 export type PendingProviderInvocationSelection =
     | Readonly<{ localId: string; providerAction: PendingProviderAction }>
-    | Readonly<{ blockedLocalId: string; blockedReason: 'steering_unavailable' }>
     | Readonly<{
         deferredReason:
             | 'no_pending'
@@ -50,9 +49,10 @@ function selectExactAction(
         };
     }
     if (action.kind === 'steer_now') {
-        return foregroundState === 'active_steerable'
-            ? { localId: row.localId, providerAction: 'steer' }
-            : { blockedLocalId: row.localId, blockedReason: 'steering_unavailable' };
+        return {
+            localId: row.localId,
+            providerAction: foregroundState === 'ready' ? 'send' : 'steer',
+        };
     }
     if (action.kind === 'steer_if_active' && foregroundState === 'active_steerable') {
         return { localId: row.localId, providerAction: 'steer' };

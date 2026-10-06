@@ -1067,8 +1067,24 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
         confirmSessionOrganizationOptimistic: (recordId, map, key, value) => {
             set((state) => {
                 const record = state.sessionOrganizationOptimisticRecords[recordId];
+                if (!record) return state;
                 const nextRecords = { ...state.sessionOrganizationOptimisticRecords };
                 delete nextRecords[recordId];
+                // A later pending write must roll back to this server-confirmed value,
+                // rather than resurrecting the optimistic value it replaced.
+                for (const [id, later] of Object.entries(nextRecords)) {
+                    if (readOptimisticRecordSequence(later) <= readOptimisticRecordSequence(record)) continue;
+                    const before = later.before[map];
+                    const after = later.after[map];
+                    if (!before || !shallowEqualValue(before[key], record.after[map]?.[key])) continue;
+                    nextRecords[id] = {
+                        ...later,
+                        before: { ...later.before, [map]: setRecordValue<unknown>(before, key, value ?? undefined) },
+                        after: after && shallowEqualValue(after[key], before[key])
+                            ? { ...later.after, [map]: setRecordValue<unknown>(after, key, value ?? undefined) }
+                            : later.after,
+                    };
+                }
                 // A response confirms the write it belongs to and nothing else. It is applied only
                 // while this record's own value is still the current one for that key: a newer
                 // mutation or an authoritative snapshot that already replaced it is never

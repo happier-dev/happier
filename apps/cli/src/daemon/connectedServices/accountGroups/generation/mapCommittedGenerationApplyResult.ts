@@ -1,4 +1,4 @@
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
   buildConnectedServiceAuthGroupCommittedGenerationFact,

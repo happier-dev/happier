@@ -136,6 +136,26 @@ credits remain visible. When the provider reports a window duration, the selecto
 shows that duration (for example, `5h + 7d`) instead of a generic count; a single
 window with no reported duration is left unlabeled rather than shown as “1 window”.
 
+
+### Composer gauges in development builds
+
+Choose **Gauge windows** under **Settings → Connected services → Provider usage**
+or **Settings → Session → Provider limits and usage → Provider usage**. Both
+locations edit the same preference for all accounts. The default is one
+**Most constrained** gauge; select several windows, such as **Daily** and
+**Weekly**, to display one gauge for each available window.
+
+For pooled sessions, gauges use only the allowances selected in that pool. A
+pool that tracks only Fable allowances shows Fable's selected windows, even if
+the account reports other allowances. Missing windows do not produce extra
+gauges. **Short window** includes allowances such as a five-hour window;
+**Daily** means a daily allowance.
+
+Account favorites select summary meters in account views and add extra composer
+gauges for the account currently used by the session, alongside the global windows.
+Favorites respect the pool’s selected limits and need a reliable percentage to produce a ring. **Show usage labels** and the
+provider-gauge visibility toggle are available in both locations too.
+
 ## Connection methods
 
 ### OpenAI Codex
@@ -255,6 +275,20 @@ In development builds, an unreadable or malformed explicit auth selection blocks
 session launch or resume instead of being treated as native auth. Review the
 session's connected-service selection before retrying; an invalid selection does
 not authorize using a different account or the machine's ambient credentials.
+
+## Instructions, plugins, and hook trust in development builds
+
+Linked and copied configuration include Claude's user-level `CLAUDE.md` and
+Codex's installed `plugins` directory. Existing managed homes receive these
+entries the next time Happier materializes them; isolated configuration does not
+import them. Credentials and session-history sharing remain separate.
+
+When copying home-level Codex hooks into a managed home, Happier translates the
+file-path keys for existing hook decisions and preserves their trust hashes and
+disabled choices. Decisions already made in that managed home take precedence.
+Codex still checks the hook contents: an edited hook is not automatically trusted.
+This applies to hooks in `hooks.json` and `config.toml`, without changing
+project-level trust.
 
 ## Connected services and browsing sessions (Codex)
 

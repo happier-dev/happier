@@ -1,9 +1,5 @@
-import {
-    BrowserSidecarLaunchResultV1Schema,
-    type BrowserProfileV1,
-    type BrowserSidecarErrorCodeV1,
-    type BrowserSidecarLaunchResultV1,
-} from '@happier-dev/protocol';
+import { BrowserSidecarLaunchResultV1Schema } from '@happier-dev/protocol/browser/sidecar/v1';
+import type { BrowserProfileV1, BrowserSidecarErrorCodeV1, BrowserSidecarLaunchResultV1 } from '@happier-dev/protocol';
 
 import type { SidecarBrowserBinaryResolution } from './binary';
 import { resolveSidecarProfileBinding } from './profiles';

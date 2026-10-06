@@ -1,17 +1,10 @@
-import {
-  MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
-  sameStrictJsonValue,
-  readWorkflowValuePathV1,
-  WorkflowSessionContextV1Schema,
-  type WorkflowSessionContextV1,
-  type WorkflowAuthoredProducerRef,
-  type WorkflowCondition,
-  type WorkflowDefinitionV1,
-  type WorkflowStepComposerDocument,
-  type WorkflowValueReference,
-} from '@happier-dev/protocol/workflows';
+import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readWorkflowValuePathV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/workflowSessionContextV1';
+import type { WorkflowSessionContextV1, WorkflowAuthoredProducerRef, WorkflowCondition, WorkflowDefinitionV1, WorkflowStepComposerDocument, WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
-import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol';
+import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 
 export type WorkflowJsonValue = Extract<WorkflowValueReference, { kind: 'literal' }>['value'];
 

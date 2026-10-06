@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol';
 
-const { axiosGet, axiosPost } = vi.hoisted(() => ({
+const { axiosGet, axiosPost, axiosLifecycleGet } = vi.hoisted(() => ({
   axiosGet: vi.fn(),
   axiosPost: vi.fn(),
+  axiosLifecycleGet: vi.fn(),
 }));
 
 vi.mock('axios', async (importOriginal) => ({
@@ -12,7 +13,7 @@ vi.mock('axios', async (importOriginal) => ({
     ...((await importOriginal<typeof import('axios')>()).default),
     // This HTTP owner serves both assignment and native Run-source inventories.
     get: (url: string, ...args: unknown[]) => url.endsWith('/worker/run-lifecycle')
-      ? Promise.resolve({ data: { sources: [] } }) : axiosGet(url, ...args),
+      ? axiosLifecycleGet(url, ...args) : axiosGet(url, ...args),
     post: axiosPost,
   },
 }));
@@ -80,6 +81,18 @@ describe('createAutomationClaimClient', () => {
   beforeEach(() => {
     axiosGet.mockReset();
     axiosPost.mockReset();
+    axiosLifecycleGet.mockReset().mockResolvedValue({ data: { sources: [] } });
+  });
+
+  it.each(['assignments', 'run-lifecycle'] as const)('propagates a %s transport timeout and recovers on the next refresh', async source => {
+    const timeout = Object.assign(new Error('private transport message'), { name: 'AxiosError', code: 'ECONNABORTED' });
+    axiosGet.mockResolvedValue({ data: { assignments: [{ machineId: 'machine-1', automationId: 'automation-1',
+      nextClaimAt: 1_723_247_201_000 }], settings: DEFAULT_WORKER_SETTINGS } });
+    (source === 'assignments' ? axiosGet : axiosLifecycleGet).mockRejectedValueOnce(timeout);
+    const client = createAutomationClaimClient({ token: 'token', createPublisherHeader: async () => null });
+    await expect(client.fetchAssignments('machine-1')).rejects.toBe(timeout);
+    await expect(client.fetchAssignments('machine-1')).resolves.toMatchObject({ assignments: [{ automationId: 'automation-1' }],
+      settings: DEFAULT_WORKER_SETTINGS, runLifecycleSources: [] });
   });
 
   it.each(['direct', 'automation'] as const)('retains consumed Resume intent from a %s V3 claim', async origin => {
@@ -92,6 +105,7 @@ describe('createAutomationClaimClient', () => {
       run: origin === 'direct'
         ? { ...common, automationId: null, origin: { kind: 'direct' }, workflowAcceptedSnapshotEnvelope: 'accepted' }
         : { ...common, automationId: 'automation-1', executionInputEnvelope: 'definition', automationEvidenceEnvelope: null,
+          workflowAcceptedSnapshotEnvelope: 'accepted',
           cause: { kind: 'manual', invokedAt: 1_723_247_201_000 } },
       automation: origin === 'direct' ? null : { id: 'automation-1', name: 'Resumed', enabled: true },
       accountCurrentness: CLAIM_CURRENTNESS,
@@ -99,7 +113,8 @@ describe('createAutomationClaimClient', () => {
     const client = createAutomationClaimClient({ token: 'token' });
     await client.fetchAssignments('machine-1');
     expect(await client.claimRun({ machineId: 'machine-1', leaseDurationMs: 30_000 }))
-      .toMatchObject({ run: { id: 'resumed-run', workflowResumeRequestedRevision: 2 } });
+      .toMatchObject({ run: { id: 'resumed-run', workflowResumeRequestedRevision: 2,
+        workflowAcceptedSnapshotEnvelope: 'accepted' } });
   });
 
   it('claims only session-scoped work and preserves its scope and previous review checkpoint', async () => {

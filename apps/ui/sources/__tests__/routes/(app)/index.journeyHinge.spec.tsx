@@ -20,6 +20,8 @@ import { beginOnboardingJourneySession, endOnboardingJourneySession } from '@/co
 import { discardMachineAddFlowDraft, updateMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
 import { createAwaitedMachineArrivalBaseline } from '@/components/onboarding/detection/useAwaitedMachineArrival';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type {
@@ -27,7 +29,6 @@ import type {
     OnboardingWizardSurfaceProps,
 } from '@/components/onboarding/surfaces/useOnboardingWizardController';
 import type { JourneyBeatId } from '@/components/onboarding/tour/state/journeyBeats';
-import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light' }));
 vi.mock('@/assets/images/logotype-dark.png', () => ({ default: 'logotype-dark' }));
@@ -302,7 +303,7 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
 const originalStorageState = storage.getState();
 const initialGlobalFetch = globalThis.fetch;
 let routeBaseFetchSpy: ReturnType<typeof vi.fn>;
-let webLocks: ReturnType<typeof installWebLockManagerMock>;
+let restoreWebLocks: (() => void) | undefined;
 
 // Seed a single non-revoked (offline) machine into the real store so the canonical
 // `useAllMachines()` selector reports the account already has a machine. Uses the global
@@ -334,7 +335,7 @@ function seedActiveServerMachine(machineId = 'm-existing'): void {
 
 describe('/ (welcome) journey hinge', () => {
     beforeEach(() => {
-        webLocks = installWebLockManagerMock();
+        restoreWebLocks = installWebLockManagerMock().restore;
         isAuthenticated = true;
         journeyRouteState.enabled = false;
         journeyRouteState.initialBeatId = 'S2';
@@ -373,7 +374,11 @@ describe('/ (welcome) journey hinge', () => {
         expoRouterSpies.push.mockReset();
         discardMachineAddFlowDraft();
         syncSingletonState.applySettings.mockReset();
-        routeBaseFetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+        routeBaseFetchSpy = vi.fn(async (url: RequestInfo | URL) => (
+            String(url).endsWith('/v1/features')
+                ? Response.json(createRootLayoutFeaturesResponse())
+                : new Response('{}', { status: 200 })
+        ));
         globalThis.fetch = routeBaseFetchSpy as unknown as typeof fetch;
         resetDemoModeDepthForTests();
         resetDemoFirewallForTests();
@@ -397,7 +402,8 @@ describe('/ (welcome) journey hinge', () => {
         endOnboardingJourneySession();
         storage.setState(originalStorageState, true);
         globalThis.fetch = initialGlobalFetch;
-        webLocks.restore();
+        restoreWebLocks?.();
+        restoreWebLocks = undefined;
         if (clearError) throw clearError;
     });
 

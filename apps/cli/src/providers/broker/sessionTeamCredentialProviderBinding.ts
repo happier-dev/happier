@@ -1,20 +1,15 @@
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  BackendTargetKeyV2Schema,
-  parseBackendTargetKeyV2,
-  type ProviderBrokerApplicationBindingV1,
-  type ProviderBrokerConsumerV1,
-  type ProviderBrokerOpenRequestV1,
-  type ProviderBrokerOpenResponseV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   SessionTeamCredentialBindingIntentV1,
   TeamCredentialProviderModelCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
-import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import {

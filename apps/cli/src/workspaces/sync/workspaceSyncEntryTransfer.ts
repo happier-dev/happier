@@ -3,12 +3,9 @@ import { constants } from 'node:fs';
 import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, readlink, rm, symlink } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
-import {
-  WorkspaceSyncEntryExpectationV1Schema,
-  WorkspaceManifestEntrySchema,
-  type WorkspaceManifestEntry,
-  type WorkspaceSyncEntryExpectationV1,
-} from '@happier-dev/protocol';
+import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceManifestEntrySchema } from '@happier-dev/protocol/workspaces/manifestSchema';
+import type { WorkspaceManifestEntry, WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import {
   createBufferTransferPayloadSource,

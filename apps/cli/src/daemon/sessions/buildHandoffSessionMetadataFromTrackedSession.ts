@@ -8,11 +8,9 @@ import {
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { TrackedSession } from '../types';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import {
-    ExternalSessionsSourceSchema,
-    readNonBlankOpaqueIdentifier,
-    readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {

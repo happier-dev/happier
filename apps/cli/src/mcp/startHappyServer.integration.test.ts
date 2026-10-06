@@ -18,13 +18,14 @@ import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
 import {
   registerHappierSessionAgentToolRpc,
-  startHappyServer,
+  startHappyServer as startHappyServerBase,
   type HappyMcpSessionClient,
 } from '@/mcp/startHappyServer';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 
 const env = process.env;
 
@@ -130,20 +131,26 @@ function createDefaultActiveTurnPermissionWitness(turnId: string) {
 }
 
 let pluginRuntimeHomeDir: string | null = null;
+let pluginRuntimeRegistryLease: PluginRuntimeRegistryLease | undefined;
+
+function startHappyServer(...[client, opts]: Parameters<typeof startHappyServerBase>) {
+  return startHappyServerBase(client, { ...opts, pluginRuntimeRegistryLease });
+}
 
 describe('startHappyServer (MCP integration)', () => {
   beforeAll(async () => {
     pluginRuntimeHomeDir = await mkdtemp(join(tmpdir(), 'happier-mcp-plugin-runtime-'));
-    const lease = await pluginReloadController.acquireRuntimeRegistry({
+    pluginRuntimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
         generation: 1,
         happyHomeDir: pluginRuntimeHomeDir!,
       }),
     });
-    await lease.release();
   });
 
   afterAll(async () => {
+    await pluginRuntimeRegistryLease?.release();
+    pluginRuntimeRegistryLease = undefined;
     await pluginReloadController.shutdown();
     if (pluginRuntimeHomeDir) {
       await rm(pluginRuntimeHomeDir, { recursive: true, force: true });
@@ -297,7 +304,7 @@ describe('startHappyServer (MCP integration)', () => {
       }),
     };
 
-    registerHappierSessionAgentToolRpc(fakeClient);
+    registerHappierSessionAgentToolRpc(fakeClient, { pluginRuntimeRegistryLease });
     await expect(rpcHandlerManager.invokeLocal(
       SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1,
       {

@@ -1,7 +1,5 @@
-import {
-    isSafeDirectTransferEndpointCandidate,
-    type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { isSafeDirectTransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
 import { isDirectPeerTransferProtocolError } from './directPeerTransport';
 

@@ -69,6 +69,12 @@ test('resolveStackRuntimeMode rejects conflicting launch flags', () => {
   );
 });
 
+test('resolveStackRuntimeMode ignores forwarded child source flags', () => {
+  const argv = ['--runtime', '--', 'tools', 'call', '--source', 'happier', '--tool', 'action_spec_search'];
+  assert.deepEqual(resolveStackRuntimeMode({ argv, env: {} }), { mode: 'require', source: 'flag' });
+  assert.equal(hasExplicitStackRuntimeModeArg(['--', 'tools', 'call', '--source', 'happier']), false);
+});
+
 test('hasExplicitStackRuntimeModeArg detects source/runtime flags', () => {
   assert.equal(hasExplicitStackRuntimeModeArg([]), false);
   assert.equal(hasExplicitStackRuntimeModeArg(['status', '--json']), false);

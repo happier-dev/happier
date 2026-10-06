@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import type { LocalServiceWorkspaceFact } from './provenance';
 

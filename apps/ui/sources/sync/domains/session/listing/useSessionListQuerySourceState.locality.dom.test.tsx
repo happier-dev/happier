@@ -227,7 +227,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
             };
             return ReactModule.useSyncExternalStore(rowsHarness.subscribe, getSnapshot, getSnapshot);
         },
-        useSettings: () => SETTINGS,
+        useSetting: (key: keyof typeof SETTINGS) => SETTINGS[key],
         useSocketStatus: () => 'connected',
     };
 });

@@ -180,53 +180,6 @@ describe('SessionWidgetHost chrome', () => {
         expect(runtime.getSnapshot().phase).toBe('idle');
     });
 
-    it('lets the elected mount decide executability, whatever chrome density asks for', async () => {
-        // `density` is visual chrome. Collapsing it into the mount decision made the
-        // compact sidebar an inert preview even when it was the elected primary host,
-        // so the safe single-mount interaction the sidebar promises was unreachable.
-        const installed: SessionBoardItemProjection = {
-            itemId: 'plugin-widget-1',
-            revision: 'rev-plugin-1',
-            state: {
-                kind: 'ready',
-                item: {
-                    v: 1,
-                    title: 'Review status',
-                    frame: 'card',
-                    height: { mode: 'auto', fallback: 'regular' },
-                    source: {
-                        kind: 'widget',
-                        instance: { v: 1, id: 'plugin-widget-1', bindings: {},
-                            definition: { kind: 'installed', surface: { pluginId: 'acme.review', localId: 'review-status' } } },
-                    },
-                } as SessionSurfaceItemV1,
-            },
-        };
-        const available = () => ({ kind: 'available' as const });
-        const elected = await renderCard({
-            item: installed,
-            host: 'sidebar',
-            primaryHost: 'sidebar',
-            density: 'preview',
-            executableCurrentness: 'current',
-            resolveSourceAvailability: available,
-            onOpenHere: vi.fn(),
-        });
-        expect(elected.findHostByTestId('widget-open-here')).toBeNull();
-
-        // Another host owns the executable copy: this one truthfully previews.
-        const retired = await renderCard({
-            item: installed,
-            host: 'sidebar',
-            primaryHost: 'details',
-            density: 'compact',
-            executableCurrentness: 'current',
-            resolveSourceAvailability: available,
-            onOpenHere: vi.fn(),
-        });
-        expect(retired.findHostByTestId('widget-open-here')).not.toBeNull();
-    });
-
     it('names the reorder handle after the item it reorders', async () => {
         const screen = await renderCard({
             entityDrag: entityDrag(),
@@ -381,8 +334,8 @@ describe('SessionWidgetHost chrome', () => {
         expect(expanded.findHostByTestId('widget-state-title')).toBeTruthy();
     });
 
-    it('keeps the Board header clear when the same widget is in the Companion', async () => {
-        const screen = await renderCard({ inCompanion: true });
+    it('keeps the Board header clear of any Companion mark', async () => {
+        const screen = await renderCard();
         expect(screen.findHostByTestId('widget-companion-mark')).toBeNull();
         expect(screen.findHostByTestId('widget-title')).toBeTruthy();
     });

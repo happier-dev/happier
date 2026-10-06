@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
@@ -60,6 +61,7 @@ export const WidgetDefinitionV1Schema = z.object({ v: z.literal(1), id, ...shape
     if (new Set(paths).size !== paths.length) context.addIssue({ code: 'custom', path: ['inputs'], message: 'Duplicate input path' });
 });
 export type WidgetDefinitionV1 = z.infer<typeof WidgetDefinitionV1Schema>;
+export const WidgetDefinitionV1StoredSchema = createStoredReadSchema(WidgetDefinitionV1Schema);
 
 /** Authored references describe consumers; current Resource admission still owns execution. */
 export function readWidgetDefinitionResourcesV1(definition: WidgetDefinitionV1): readonly PluginContributionIdentityV1[] {

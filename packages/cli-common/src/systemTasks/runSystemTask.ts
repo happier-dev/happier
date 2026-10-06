@@ -1,12 +1,5 @@
-import {
-  SYSTEM_TASK_PROTOCOL_VERSION,
-  SystemTaskEventSchema,
-  SystemTaskJsonValueSchema,
-  SystemTaskResultSchema,
-  SystemTaskSpecSchema,
-  type SystemTaskEvent,
-  type SystemTaskResult,
-} from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION, SystemTaskEventSchema, SystemTaskJsonValueSchema, SystemTaskResultSchema, SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskEvent, SystemTaskResult } from '@happier-dev/protocol';
 
 import { redactSensitiveSystemTaskJsonValue } from './interactiveTaskKinds.js';
 

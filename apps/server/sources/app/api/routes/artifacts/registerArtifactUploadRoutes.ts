@@ -117,10 +117,12 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                                         const blob = { blobId: destination.blobId, content };
                                         result = destination.kind === 'create'
                                             ? await createArtifactHttpMutation(request.userId, { id: destination.artifactId,
-                                                header: destination.header, body: destination.body, dataEncryptionKey: destination.dataEncryptionKey, blob })
+                                                header: destination.header, body: destination.body, dataEncryptionKey: destination.dataEncryptionKey, blob,
+                                                provenance: destination.provenance, provenanceDataEncryptionKey: destination.provenanceDataEncryptionKey })
                                             : await updateArtifactHttpMutation(request.userId, destination.artifactId, {
                                                 header: destination.header, expectedHeaderVersion: destination.expectedHeaderVersion,
-                                                body: destination.body, expectedBodyVersion: destination.expectedBodyVersion, blob });
+                                                body: destination.body, expectedBodyVersion: destination.expectedBodyVersion, blob,
+                                                provenance: destination.provenance, provenanceDataEncryptionKey: destination.provenanceDataEncryptionKey });
                                     }
                                     return { success: true, path: destination.artifactId, sizeBytes, result };
                                 } finally { await rm(tempPath, { force: true }); }

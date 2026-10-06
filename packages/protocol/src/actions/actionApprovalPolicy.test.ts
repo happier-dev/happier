@@ -31,6 +31,36 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it('returns durable CLI approvals while keeping Agent and MCP decision waiters blocking', () => {
+    for (const actionId of ['connectedServices.pools.create', 'artifact.update'] as const) {
+      const spec = getActionSpec(actionId);
+      for (const authority of ['present_user', 'account_automation'] as const) {
+        expect(resolveActionApprovalRouting({ actionId, spec, settings: EMPTY_SETTINGS,
+          context: { surface: 'cli', authority } })).toEqual({ required: true, flow: 'deferred', result: 'required' });
+      }
+      for (const surface of ['agent', 'mcp'] as const) {
+        expect(resolveActionApprovalRouting({ actionId, spec, settings: EMPTY_SETTINGS,
+          context: { surface, authority: 'account_automation' } })).toEqual({ required: true, flow: 'blocking', result: 'required' });
+      }
+    }
+  });
+
+  it('requires agent and MCP permission-answer approval by default and honors explicit waivers', () => {
+    const actionId = 'session.permission.respond';
+    for (const surface of ['agent', 'mcp'] as const) {
+      const context = { surface, authority: 'account_automation' as const };
+      expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), context }).required).toBe(true);
+      expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context)).toBe(true);
+      const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+      expect(isApprovalRequiredByActionsSettings(actionId, waived, context)).toBe(false);
+      const required = normalizeActionsSettingsV1({ ...waived,
+        actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+      });
+      expect(isApprovalRequiredByActionsSettings(actionId, required, context)).toBe(true);
+    }
+    expect(isAgentInitiatedApprovalRequiredByDefault(actionId)).toBe(true);
+    expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, { surface: 'ui', authority: 'present_user' })).toBe(false);
+  });
   it('keeps consequential widget and shared Board UI edits in the configurable policy without flooring personal Home or Companion edits', () => {
     const context = { surface: 'ui' as const, authority: 'present_user' as const };
     const shared = { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } } as const;

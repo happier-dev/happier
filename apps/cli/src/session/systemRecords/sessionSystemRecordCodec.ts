@@ -1,14 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import {
-  SessionSystemRecordSchema,
-  StrictJsonValueSchema,
-  getSessionSystemRecordPayloadSchema,
-  type SessionSystemRecord,
-  type SessionSystemRecordAddress,
-  type SessionSystemRecordContent,
-  type SessionSystemRecordStored,
-  type SessionSystemRecordUpsertRequest,
-} from '@happier-dev/protocol';
+import { SessionSystemRecordSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecord';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { getSessionSystemRecordPayloadSchema, getSessionSystemRecordStoredPayloadSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordCatalog';
+import type { SessionSystemRecord, SessionSystemRecordAddress, SessionSystemRecordContent, SessionSystemRecordStored, SessionSystemRecordUpsertRequest } from '@happier-dev/protocol';
 
 import {
   openSessionStoredContent,
@@ -42,7 +36,9 @@ export function validateSessionSystemRecordOpenedContent(
     );
   }
   if (address.owner === 'host') {
-    const payloadSchema = getSessionSystemRecordPayloadSchema(address.namespace, address.kind);
+    const payloadSchema = invalidCode === 'plugin_session_record_invalid_response'
+      ? getSessionSystemRecordStoredPayloadSchema(address.namespace, address.kind)
+      : getSessionSystemRecordPayloadSchema(address.namespace, address.kind);
     const registered = payloadSchema?.safeParse(parsed.data);
     if (!registered?.success) {
       throw pluginError(

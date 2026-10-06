@@ -1,4 +1,5 @@
-import { ReviewStartInputSchema, type ReviewStartInput } from '@happier-dev/protocol';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import type { ReviewStartInput } from '@happier-dev/protocol';
 
 import {
   ReviewFollowUpIntentInputSchema,

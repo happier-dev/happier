@@ -135,12 +135,12 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
     });
   });
 
-  it('rejects child selections that do not carry the provider-local service id', () => {
+  it('normalizes qualified child selections to the provider-local refresh wire', () => {
     expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
       kind: 'profile',
       serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'work',
-    })).toBeNull();
+    })).toEqual({ selection: { kind: 'profile', serviceId: 'openai-codex', profileId: 'work' }, recoveryGroupId: null });
     expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
       kind: 'group',
       serviceId: 'happier.agent.codex/openai-codex',
@@ -148,6 +148,12 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
       activeProfileId: 'primary',
       fallbackProfileId: 'backup',
       generation: 4,
+    })).toEqual({
+      selection: { kind: 'group', serviceId: 'openai-codex', groupId: 'main', activeProfileId: 'primary', fallbackProfileId: 'backup', generation: 4 },
+      recoveryGroupId: 'main',
+    });
+    expect(resolveCodexChatGptRefreshSelectionFromChildSelection({
+      kind: 'profile', serviceId: 'happier.agent.claude/claude-subscription', profileId: 'work',
     })).toBeNull();
   });
 

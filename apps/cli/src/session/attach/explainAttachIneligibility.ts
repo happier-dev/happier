@@ -1,4 +1,4 @@
-import { compareMachineHosts } from '@happier-dev/protocol';
+import { compareMachineHosts } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
 
 import type { CliSessionAttachEligibility } from './evaluateCliSessionAttachEligibility';
 

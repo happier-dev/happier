@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import { readPluginSurfaceMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import {
     buildPluginAppPageRoutePath,
     readPluginAppPageSubPath,
@@ -17,11 +18,12 @@ const ZETA_PLUGIN_ID = 'acme.zeta';
 function pageBinding(
     pluginId: string,
     localId: string,
+    rendererId = `${localId}-renderer`,
 ): PluginUiSurfacePlacementProjection['binding'] {
     const binding = normalizePluginUiDestinationBindingV1({
         pluginId,
         destinationId: localId,
-        rendererId: `${localId}-renderer`,
+        rendererId,
         container: 'appPage',
         target: { kind: 'app' },
     });
@@ -71,21 +73,36 @@ describe('plugin app page catalog (EU-5b)', () => {
 
     it("derives the page's own column as a placement of its column renderer, only while that renderer is available", () => {
         const columnRenderer = { kind: 'reactNative', contributionId: 'notes-column' };
+        const columnBinding = pageBinding(NOTES_PLUGIN_ID, 'notes', 'notes-column');
         const available = { state: 'available' as const, reason: 'available', diagnostics: [] };
         const [withColumn] = resolvePluginAppPages({
-            placements: [createPagePlacement({ column: { renderer: columnRenderer, availability: available } })],
+            placements: [createPagePlacement({ column: { binding: columnBinding, renderer: columnRenderer, availability: available } })],
         });
         expect(withColumn?.columnPlacement).toMatchObject({
             renderer: columnRenderer,
             availability: available,
-            binding: withColumn?.placement.binding,
+            binding: columnBinding,
         });
+        expect(withColumn?.columnPlacement?.binding).toBe(columnBinding);
+        if (!withColumn?.columnPlacement) throw new Error('available column must be mounted');
+        expect(readPluginSurfaceMountBinding({
+            descriptor: withColumn.placement, renderer: withColumn.placement.renderer,
+        })).not.toBeNull();
+        expect(readPluginSurfaceMountBinding({
+            descriptor: withColumn.columnPlacement, renderer: columnRenderer,
+        })).not.toBeNull();
+        expect(readPluginSurfaceMountBinding({
+            descriptor: withColumn.columnPlacement, renderer: withColumn.placement.renderer,
+        })).toBeNull();
+        expect(readPluginSurfaceMountBinding({
+            descriptor: { ...withColumn.columnPlacement, pluginId: JOURNAL_PLUGIN_ID }, renderer: columnRenderer,
+        })).toBeNull();
         // A second mount of the same page: it must not share the page mount's surface identity.
         expect(withColumn?.columnPlacement?.id).not.toBe(withColumn?.placement.id);
 
         const [unavailable] = resolvePluginAppPages({
             placements: [createPagePlacement({
-                column: { renderer: columnRenderer, availability: { state: 'disabled' as const, reason: 'artifact_missing', diagnostics: [] } },
+                column: { binding: columnBinding, renderer: columnRenderer, availability: { state: 'disabled' as const, reason: 'artifact_missing', diagnostics: [] } },
             })],
         });
         expect(unavailable?.columnPlacement).toBeUndefined();

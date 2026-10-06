@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -410,11 +411,11 @@ export function createSessionMediaMessageMetaV1Schema(zod: typeof z) {
     });
 }
 
-export const SessionMediaOriginV1Schema = createSessionMediaOriginV1Schema(z);
-export const SessionMediaFailureV1Schema = createSessionMediaFailureV1Schema(z);
-export const SessionMediaItemV1Schema = createSessionMediaItemV1Schema(z);
-export const SessionMediaMessagePayloadV1Schema = createSessionMediaMessagePayloadV1Schema(z);
-export const SessionMediaMessageMetaV1Schema = createSessionMediaMessageMetaV1Schema(z);
+export const SessionMediaOriginV1Schema = lazyZodSchema(() => createSessionMediaOriginV1Schema(z));
+export const SessionMediaFailureV1Schema = lazyZodSchema(() => createSessionMediaFailureV1Schema(z));
+export const SessionMediaItemV1Schema = lazyZodSchema(() => createSessionMediaItemV1Schema(z));
+export const SessionMediaMessagePayloadV1Schema = lazyZodSchema(() => createSessionMediaMessagePayloadV1Schema(z));
+export const SessionMediaMessageMetaV1Schema = lazyZodSchema(() => createSessionMediaMessageMetaV1Schema(z));
 
 export type SessionMediaOriginV1 = z.infer<typeof SessionMediaOriginV1Schema>;
 export type SessionMediaFailureV1 = z.infer<typeof SessionMediaFailureV1Schema>;

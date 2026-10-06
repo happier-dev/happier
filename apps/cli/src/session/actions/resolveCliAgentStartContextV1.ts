@@ -1,10 +1,11 @@
-import {
-  BUILT_IN_ROLE_IDS_V1, buildBackendTargetKeyV2, parseAgentPermissionIntentV1Alias,
-  readSessionRolesV1, resolveRoleSelectionV1, readSessionMcpSelectionV1FromMetadata,
-  type AccountSettings, type AgentStartContextV1, type BackendTargetRefV2,
-  type ResolvedRolesSnapshotV1, type RoleArtifactV1,
-  SessionSpawnNewInputV2Schema,
-} from '@happier-dev/protocol';
+import { BUILT_IN_ROLE_IDS_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import type { AccountSettings, AgentStartContextV1, BackendTargetRefV2, ResolvedRolesSnapshotV1, RoleArtifactV1 } from '@happier-dev/protocol';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import {
   resolveModelSelectionIntentFromSessionMetadata, readAcpSessionModeIntentFromMetadata,
   readAcpConfigOptionIntentFromMetadata,

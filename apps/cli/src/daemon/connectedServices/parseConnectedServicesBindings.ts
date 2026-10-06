@@ -6,13 +6,8 @@
  * daemon-side credential resolution.
  */
 
-import {
-  ConnectedAccountServiceKeySchema,
-  ConnectedServiceBindingsV2IngressSchema,
-  type ConnectedServiceBindingsV2 as ProtocolConnectedServicesBindingsV2,
-  type ConnectedAccountServiceKey,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceBindingsV2 as ProtocolConnectedServicesBindingsV2, ConnectedAccountServiceKey, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 export type ConnectedServiceBindingSelection =
   | Readonly<{

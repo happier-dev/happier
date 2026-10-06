@@ -1,6 +1,10 @@
 import {
     isPlainArtifactDataKeyMarker,
     isPlainArtifactStoredContent,
+    decodePlainArtifactStoredContent,
+    ArtifactPrivateRevisionMetadataV1Schema,
+    parseEncryptedDataKeyEnvelopeV1,
+    readSessionDataKeyBundleV0,
 } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 import { z } from "zod";
@@ -14,7 +18,24 @@ const ArtifactDbSealedContentV1Schema = z.object({
     c: z.string().min(1),
 }).strict();
 
-type ArtifactContentField = "header" | "body";
+type ArtifactContentField = "header" | "body" | "provenance";
+
+/** Private metadata follows Account mode and its independent key, never the public content key. */
+export function artifactProvenanceMatchesAccountMode(params: Readonly<{
+    mode: EffectiveAccountEncryptionMode; artifactId: string; bodyVersion: number;
+    provenance: Uint8Array | null | undefined; provenanceDataEncryptionKey: Uint8Array | null | undefined;
+}>): boolean {
+    if (params.mode === "plain") {
+        if (params.provenanceDataEncryptionKey != null) return false;
+        if (params.provenance == null) return true;
+        const parsed = ArtifactPrivateRevisionMetadataV1Schema.safeParse(
+            decodePlainArtifactStoredContent(privacyKit.encodeBase64(copyBytes(params.provenance))));
+        return parsed.success && parsed.data.artifactId === params.artifactId && parsed.data.bodyVersion === params.bodyVersion;
+    }
+    if (params.provenanceDataEncryptionKey != null && !parseEncryptedDataKeyEnvelopeV1(params.provenanceDataEncryptionKey)) return false;
+    return params.provenance == null || (params.provenanceDataEncryptionKey != null
+        && readSessionDataKeyBundleV0(params.provenance).status === "ready");
+}
 
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
     const copy = new Uint8Array(bytes.byteLength);
@@ -159,4 +180,13 @@ export function openArtifactStoredContentPair(params: Readonly<{
         content: params.body,
     });
     return body ? { header, body } : null;
+}
+
+/** Open server at-rest private metadata and validate its Account mode and revision binding. */
+export function openArtifactProvenanceBytes(params: Readonly<{
+    accountId: string; artifactId: string; mode: EffectiveAccountEncryptionMode; bodyVersion: number;
+    dataEncryptionKey: Uint8Array; provenanceDataEncryptionKey: Uint8Array | null; content: Uint8Array;
+}>): Uint8Array<ArrayBuffer> | null {
+    const opened = openArtifactStoredContentBytes({ ...params, field: 'provenance' });
+    return opened && artifactProvenanceMatchesAccountMode({ ...params, provenance: opened }) ? opened : null;
 }

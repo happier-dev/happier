@@ -15,6 +15,30 @@ function boundary() {
     return { ...b, transport };
 }
 describe('Account widget definition Artifact owner', () => {
+    it('drops stored body and summary extras, refuses missing required fields and writes canonical content', async () => {
+        const b = boundary();
+        const port = createWidgetDefinitionArtifactPortV1(b.transport, { accountId: 'owner' });
+        await port.create(original());
+        const row = b.rows.get('definition')!;
+        const field = { path: 'filter', title: 'Filter', widget: 'select', options: [{ value: 'all', label: 'All' }],
+            visibleWhen: { op: 'not', predicate: { op: 'eq', path: 'mode', value: 'minimal' } } };
+        const raw = { ...original(), extra: true, inputs: { fields: [{ ...field, extra: true,
+            options: field.options.map(option => ({ ...option, extra: true })),
+            visibleWhen: { ...field.visibleWhen, extra: true, predicate: { ...field.visibleWhen.predicate, extra: true } } }], extra: true },
+            provenance: { ...original().provenance, extra: true, source: { kind: 'authored', extra: true } },
+            body: { kind: 'declarative', extra: true, document: { version: 1, extra: true, root: { kind: 'text', text: 'Before', extra: true } } } };
+        b.rows.set('definition', { ...row, body: JSON.stringify(raw), header: { ...row.header,
+            summary: { ...(row.header.summary as Record<string, unknown>), extra: true } } });
+        const expected = { ...original(), inputs: { fields: [field] } };
+        expect(await port.get('definition')).toEqual(expected);
+        expect(await port.list()).toMatchObject([{ name: 'Checks' }]);
+        expect((await port.list())[0]).not.toHaveProperty('extra');
+        expect(WidgetDefinitionV1Schema.safeParse(raw).success).toBe(false);
+        await port.update('definition', { name: 'Updated' });
+        expect(JSON.parse(b.rows.get('definition')!.body!)).toEqual({ ...expected, name: 'Updated' });
+        b.rows.set('definition', { ...row, body: JSON.stringify({ ...raw, name: undefined }) });
+        await expect(port.get('definition')).rejects.toMatchObject({ code: 'invalid_widget_definition_record' });
+    });
     it('lists complete setup metadata from the header without opening each definition body', async () => {
         const b = boundary();
         const port = createWidgetDefinitionArtifactPortV1(b.transport, { accountId: 'owner' });

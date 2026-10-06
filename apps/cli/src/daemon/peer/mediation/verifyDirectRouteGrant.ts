@@ -1,12 +1,6 @@
-import {
-    SignedDirectRouteGrantV2Schema,
-    createDirectRouteGrantSigningInputV2,
-    verifyPeerRouteEphemeralProofV2,
-    type AuthorizedPeerEndpointRouteKindV1,
-    type IrohPeerRouteBindingV2,
-    type PeerFlowKindV1,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { SignedDirectRouteGrantV2Schema, createDirectRouteGrantSigningInputV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { verifyPeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import type { AuthorizedPeerEndpointRouteKindV1, IrohPeerRouteBindingV2, PeerFlowKindV1, SignedDirectRouteGrantV2 } from '@happier-dev/protocol';
 
 import { findRouteGrantTrustRoot as findTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 

@@ -31,6 +31,8 @@ export type WorkflowsActionInputById = {
                 roles?: unknown;
                 finalOutput?: unknown;
             };
+            sourceArtifactId?: string | undefined;
+            visibleTeamId?: string | undefined;
             replay?: {
                 runId: string;
                 agentOverride?: {
@@ -177,7 +179,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -219,7 +221,7 @@ export type WorkflowsActionInputById = {
                                 label: string;
                                 typeLabel: string;
                                 description?: string | undefined;
-                                icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                 tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                             };
                         }[] | undefined;
@@ -281,7 +283,7 @@ export type WorkflowsActionInputById = {
                             label: string;
                             typeLabel: string;
                             description?: string | undefined;
-                            icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                            icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                             tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                         };
                     }[] | undefined;
@@ -829,7 +831,7 @@ export type WorkflowsActionInputById = {
                     workspaceWrites?: 'allow' | 'deny' | undefined;
                     secondOpinion?: 'off' | 'encouraged' | undefined;
                 })[] | undefined;
-                blocks: readonly PluginActionWorkflowBlockV1[];
+                blocks: readonly PluginActionWorkflowBlockV1<true>[];
                 finalOutput?: {
                     kind: 'result';
                     producer: {
@@ -1109,7 +1111,7 @@ export type WorkflowsActionInputById = {
                         workspaceWrites?: 'allow' | 'deny' | undefined;
                         secondOpinion?: 'off' | 'encouraged' | undefined;
                     })[] | undefined;
-                    blocks: readonly PluginActionWorkflowBlockV1[];
+                    blocks: readonly PluginActionWorkflowBlockV1<true>[];
                     finalOutput?: {
                         kind: 'result';
                         producer: {
@@ -1744,7 +1746,7 @@ export type WorkflowsActionInputById = {
                     workspaceWrites?: 'allow' | 'deny' | undefined;
                     secondOpinion?: 'off' | 'encouraged' | undefined;
                 })[] | undefined;
-                blocks: readonly PluginActionWorkflowBlockV1[];
+                blocks: readonly PluginActionWorkflowBlockV1<true>[];
                 finalOutput?: {
                     kind: 'result';
                     producer: {
@@ -2052,7 +2054,7 @@ export type WorkflowsActionInputById = {
                         workspaceWrites?: 'allow' | 'deny' | undefined;
                         secondOpinion?: 'off' | 'encouraged' | undefined;
                     })[] | undefined;
-                    blocks: readonly PluginActionWorkflowBlockV1[];
+                    blocks: readonly PluginActionWorkflowBlockV1<true>[];
                     finalOutput?: {
                         kind: 'result';
                         producer: {
@@ -3942,6 +3944,7 @@ export type WorkflowsActionResultById = {
                 } | null | undefined;
             } | {
                 kind: 'inline';
+                sourceArtifactId?: string | undefined;
             } | {
                 kind: 'saved';
                 definitionId: string;
@@ -6689,7 +6692,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -7463,7 +7466,7 @@ export type WorkflowsActionResultById = {
                                         label: string;
                                         typeLabel: string;
                                         description?: string | undefined;
-                                        icon?: 'file' | 'error' | 'check' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                                        icon?: 'file' | 'error' | 'check' | 'external' | 'search' | 'terminal' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                                     };
                                 }[];
@@ -7731,6 +7734,10 @@ export type WorkflowsActionResultById = {
             nextRunAt: number | null;
             contentStatus: 'available';
             stepCount: number;
+            previewSteps?: string[] | undefined;
+            excerpt?: string | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
             savedBy?: {
                 kind: 'person';
                 accountId: string;
@@ -7739,21 +7746,9 @@ export type WorkflowsActionResultById = {
                 accountId: string;
                 sessionId?: string | undefined;
             } | undefined;
-            previewSteps?: string[] | undefined;
-            excerpt?: string | undefined;
-            ownerAccountId?: string | undefined;
-            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
         } | {
             kind: 'workflow-definition.v1';
             definitionId: string;
-            revision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-            metadata: {
-                title: string;
-                description?: string | undefined;
-            };
             triggers: ({
                 kind: 'schedule';
                 schedule: {
@@ -7787,6 +7782,19 @@ export type WorkflowsActionResultById = {
             nextRunAt: number | null;
             contentStatus: 'unavailable';
             stepCount: null;
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            } | null;
+            metadata: {
+                title: string;
+                description?: string | undefined;
+            } | null;
+            contentUnavailableReason: 'invalid_header' | 'revision_mismatch' | 'missing_body' | 'invalid_body' | 'not_found';
+            previewSteps?: string[] | undefined;
+            excerpt?: string | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
             savedBy?: {
                 kind: 'person';
                 accountId: string;
@@ -7795,10 +7803,6 @@ export type WorkflowsActionResultById = {
                 accountId: string;
                 sessionId?: string | undefined;
             } | undefined;
-            previewSteps?: string[] | undefined;
-            excerpt?: string | undefined;
-            ownerAccountId?: string | undefined;
-            access?: 'owner' | 'view' | 'edit' | 'admin' | undefined;
         })[];
         pluginWorkflows?: {
             workflow: string;

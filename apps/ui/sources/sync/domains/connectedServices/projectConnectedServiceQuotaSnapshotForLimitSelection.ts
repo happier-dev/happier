@@ -2,10 +2,9 @@ import {
     selectConnectedServiceQuotaMetersForLimitSelection,
     type ConnectedServiceQuotaLimitSelectionV1,
     type ConnectedServiceQuotaSnapshotV1,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
 } from '@happier-dev/protocol';
 
-type QuotaSnapshot = ConnectedServiceQuotaSnapshotV1 | QualifiedConnectedAccountQuotaSnapshotV4;
+type QuotaSnapshot = Pick<ConnectedServiceQuotaSnapshotV1, 'meters'>;
 
 /**
  * Projects quota meters through a Pool policy while preserving subscription,

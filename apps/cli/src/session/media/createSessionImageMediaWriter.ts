@@ -1,4 +1,5 @@
-import { SessionImageMediaReferenceV1Schema, type SessionImageMediaReferenceV1, type SessionImageFileReferenceV1 } from '@happier-dev/protocol';
+import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
+import type { SessionImageMediaReferenceV1, SessionImageFileReferenceV1 } from '@happier-dev/protocol';
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';

@@ -1,10 +1,6 @@
-import {
-  SshTunnelEnsureRequestSchema,
-  SshTunnelReleaseRequestSchema,
-  SshTunnelStopRequestSchema,
-  SystemTaskJsonValueSchema,
-  type SystemTaskJsonValue,
-} from '@happier-dev/protocol';
+import { SshTunnelEnsureRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
+import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskJsonValue } from '@happier-dev/protocol';
 import {
   SystemTaskExecutionError,
   type InteractiveSystemTaskKind,

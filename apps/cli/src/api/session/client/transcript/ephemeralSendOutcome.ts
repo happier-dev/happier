@@ -1,7 +1,4 @@
-import {
-    redactBugReportSensitiveText,
-    trimBugReportTextToMaxBytes,
-} from '@happier-dev/protocol';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 

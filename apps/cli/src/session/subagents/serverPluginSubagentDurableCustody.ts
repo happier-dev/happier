@@ -1,15 +1,8 @@
 import { createHash, createHmac } from 'node:crypto';
-import {
-  createSessionSubagentCustodyKeyV1,
-  createSessionSubagentCustodyPlainContentFingerprintV1,
-  serializeSessionSubagentCustodyEncryptedFingerprintInputV1,
-  SessionIndexedIdentifierMaxLengthV1,
-  SessionSubagentCustodyMutationRequestV1Schema,
-  type SessionSubagentCustodyContentFingerprintV1,
-  type SessionSubagentCustodyContentV1,
-  type SessionSubagentCustodyRecordV1,
-} from '@happier-dev/protocol';
-import { SessionSubagentCustodyContentV1Schema } from '@happier-dev/protocol/sessions/subagents';
+import { createSessionSubagentCustodyKeyV1, createSessionSubagentCustodyPlainContentFingerprintV1, serializeSessionSubagentCustodyEncryptedFingerprintInputV1, SessionSubagentCustodyMutationRequestV1Schema } from '@happier-dev/protocol/sessions/subagents/durableCustodyV1';
+import { SessionIndexedIdentifierMaxLengthV1 } from '@happier-dev/protocol/sessions/idsV1';
+import type { SessionSubagentCustodyContentFingerprintV1, SessionSubagentCustodyContentV1, SessionSubagentCustodyRecordV1 } from '@happier-dev/protocol';
+import { SessionSubagentCustodyContentV1Schema } from '@happier-dev/protocol/sessions/subagents/durableCustodyV1';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { StoredCredentials } from '@/persistence';

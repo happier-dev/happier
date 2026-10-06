@@ -30,13 +30,15 @@ describe('the shared definition edit owner', () => {
   it('atomically edits the opened definition and keeps its private metadata', async () => {
     const { owner, update, read, definitionId, definition, revision, metadata } = harness();
     const result = await owner.edit({ definitionId, expectedRevision: revision,
-      ops: [{ kind: 'set_step_prompt', blockId: 'step-1', text: 'After' }, { kind: 'rename', name: 'New' }] });
+      ops: [{ kind: 'set_step_prompt', blockId: 'step-1', text: 'After' }, { kind: 'rename', name: 'New' }] }, undefined,
+    { surface: 'agent', runtimeAccountId: 'editor', defaultSessionId: 'editing-session' });
     expect(result).toEqual({ definition: { ...definition, blocks: [{ ...definition.blocks[0],
       document: { text: 'After', references: [], attachments: [] } }] },
       revision: { headerVersion: 3, bodyVersion: 4 }, metadata: { ...metadata, title: 'New' }, changedBlockIds: ['step-1'] });
     expect(update).toHaveBeenCalledExactlyOnceWith({ artifactId: definitionId, expectedRevision: revision,
-      header: { kind: 'workflow-definition.v1', definitionId, revision: result.revision, metadata: { ...metadata, title: 'New' } },
-      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: result.definition }) });
+      header: { kind: 'workflow-definition.v1', definitionId, revision: result.revision, metadata: { ...metadata, title: 'New' }, previewSteps: ['After'] },
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: result.definition }),
+      savedBy: { kind: 'agent', accountId: 'editor', sessionId: 'editing-session' } });
     expect(read).toHaveBeenCalledOnce();
   });
 

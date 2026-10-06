@@ -1,5 +1,5 @@
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 export type SocketRpcContent =
   | Readonly<{ mode: 'plain' }>

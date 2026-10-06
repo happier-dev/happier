@@ -17,6 +17,7 @@ export * from './specs/homeHub.js';
 export * from '../connect/configurationActionsV1.js';
 export * from '../connect/executeConfigurationActionV1.js';
 export * from './settingsDeclarationActionFamily.js';
+export * from './accountSettingDeclarations.js';
 export * from './voiceConversationActionFamily.js';
 export * from './appShellActionFamily.js';
 export * from './notificationConfigurationActionFamily.js';
@@ -313,6 +314,7 @@ export {
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
   resolveActionApprovalFlow,
+  resolveActionExecutionPlacementForInput,
   resolveActionSdkMethodName,
   type ActionApproval,
   type ActionApprovalFlow,

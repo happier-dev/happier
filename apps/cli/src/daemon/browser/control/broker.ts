@@ -1,7 +1,5 @@
-import {
-  BrowserCommandDispatchResultV1Schema,
-  type BrowserCommandV1,
-} from '@happier-dev/protocol';
+import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
+import type { BrowserCommandV1 } from '@happier-dev/protocol';
 
 import {
   browserCommandDispatchFailure,

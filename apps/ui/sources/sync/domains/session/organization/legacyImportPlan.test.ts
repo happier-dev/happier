@@ -12,6 +12,32 @@ import {
 } from './legacyImportPlan';
 
 describe('buildLegacySessionOrganizationImportPlan', () => {
+    it('imports stored folders with extra fields and emits canonical requests and remaining settings', () => {
+        const workspace = { t: 'workspaceScope', serverId: 'srv_identity', machineId: 'machine-a', rootPath: '/repo' };
+        const folder = { id: 'folder-a', workspace, parentId: null, name: 'Planning', createdAt: 1, updatedAt: 2 };
+        const otherFolder = { ...folder, id: 'folder-other', workspace: { ...workspace, serverId: 'other-server' } };
+        const rawSettings = {
+            sessionFoldersV1: {
+                v: 1,
+                savedBy: 'old-client',
+                folders: [folder, otherFolder].map((entry) => ({
+                    ...entry,
+                    savedBy: 'old-client',
+                    workspace: { ...entry.workspace, displayPath: '/repo' },
+                })),
+            },
+        };
+        const plan = buildLegacySessionOrganizationImportPlan({ serverId: 'srv_identity', rawSettings });
+        expect(plan.request.folders).toEqual([{
+            folderId: 'folder-a', folderKey: 'folder-a', parentFolderId: null, parentFolderKey: null, sortKey: null,
+            display: { t: 'plain', v: { name: 'Planning', workspace } },
+        }]);
+        expect(stripImportedLegacySessionOrganizationSettingsForServer({ serverId: 'srv_identity', rawSettings }))
+            .toEqual({ sessionFoldersV1: { v: 1, folders: [otherFolder] } });
+        expect(buildLegacySessionOrganizationImportPlan({ serverId: 'srv_identity', rawSettings: {
+            sessionFoldersV1: { v: 1, folders: [{ ...folder, workspace: undefined }] },
+        } }).request.folders).toEqual([]);
+    });
     it('converts current-server legacy account settings into a session organization import request', () => {
         const plan = buildLegacySessionOrganizationImportPlan({
             serverId: 'srv_identity',

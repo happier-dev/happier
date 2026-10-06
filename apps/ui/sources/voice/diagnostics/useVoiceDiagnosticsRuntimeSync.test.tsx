@@ -162,8 +162,8 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
 
   it('reapplies consent on mount, selected-machine changes, and a fresh runtime mount', async () => {
     let tree!: renderer.ReactTestRenderer;
-    const first = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
-    const second = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null } };
+    const first = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
+    const second = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm2' } };
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: first })); });
     expect(configureCalls).toEqual([expect.objectContaining({ machineId: 'm1', settings: diagnostics })]);
     expect(readVoiceDiagnosticsRuntimeStatus()).toMatchObject({ machineId: 'm1', phase: 'active' });
@@ -183,7 +183,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
 
   it('reapplies consent when the same selected daemon restarts', async () => {
     let tree!: renderer.ReactTestRenderer;
-    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
     expect(configureCalls).toHaveLength(1);
 
@@ -208,7 +208,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -241,7 +241,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       revokeAttempt += 1;
       await (revokeAttempt === 1 ? oldRuntimeRevoke.promise : currentRuntimeRevoke.promise);
     });
-    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
 
@@ -294,7 +294,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       revokeCalls.push({ machineId, authorizationId });
       await oldRuntimeRevoke.promise;
     });
-    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
 
@@ -326,7 +326,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       revokeAttempt += 1;
       if (revokeAttempt === 1) throw new Error('daemon_unavailable');
     });
-    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
 
@@ -375,11 +375,11 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       }
       return { ok: true, settings };
     });
-    const enabledVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const enabledVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     const disabledDiagnostics = Object.freeze({ ...diagnostics, enabled: false, consentVersion: null });
     const disabledVoice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: enabledVoice })); });
@@ -415,11 +415,11 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       if (!(settings as typeof diagnostics).enabled) disabledConfigureStarted = true;
       return { ok: true, settings };
     });
-    const enabledVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const enabledVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     const disabledDiagnostics = Object.freeze({ ...diagnostics, enabled: false, consentVersion: null });
     const disabledVoice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: enabledVoice })); });
@@ -463,7 +463,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     const disabledDiagnostics = Object.freeze({ ...diagnostics, enabled: false, consentVersion: null });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -493,7 +493,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -547,7 +547,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     persistedRevocations.set('server-a:account-a', ['m1']);
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -593,7 +593,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     persistedRevocations.set('server-a:account-a', ['m1', 'm3']);
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -636,7 +636,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -674,7 +674,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -733,7 +733,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm2' },
     };
 
     let tree!: renderer.ReactTestRenderer;
@@ -779,7 +779,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     let tree!: renderer.ReactTestRenderer;
     const voice = {
       diagnostics: disabledDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
     expect(configureCalls).toHaveLength(1);
@@ -806,7 +806,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
 
   it('recovers desired consent when the selected daemon returns online', async () => {
     let tree!: renderer.ReactTestRenderer;
-    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
+    const voice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice })); });
     configureImpl.mockImplementation(async (machineId: string, settings: unknown, signal?: AbortSignal | null) => {
       configureCalls.push({ machineId, settings, signal });
@@ -834,7 +834,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
       tree = renderer.create(React.createElement(Harness, {
-        voice: { diagnostics, executionMachine: { mode: 'auto', machineId: null, autoMachineId: null } },
+        voice: { diagnostics, executionMachine: { mode: 'auto', machineId: null } },
       }));
     });
     expect(observedSignal?.aborted).toBe(false);
@@ -852,8 +852,8 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
 
     let tree!: renderer.ReactTestRenderer;
-    const firstVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null } };
-    const secondVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm2', autoMachineId: null } };
+    const firstVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } };
+    const secondVoice = { diagnostics, executionMachine: { mode: 'fixed', machineId: 'm2' } };
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: firstVoice })); });
     await vi.waitFor(() => expect(configureCalls).toHaveLength(1));
 
@@ -897,7 +897,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
 
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -940,7 +940,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -984,7 +984,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -1046,7 +1046,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -1101,7 +1101,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     });
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -1159,7 +1159,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     const disabledDiagnostics = Object.freeze({ ...diagnostics, enabled: false, consentVersion: null });
     const voiceWith = (nextDiagnostics: typeof diagnostics | typeof disabledDiagnostics) => ({
       diagnostics: nextDiagnostics,
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceWith(diagnostics) })); });
@@ -1213,7 +1213,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       nextDiagnostics: typeof diagnostics | typeof disabledDiagnostics = diagnostics,
     ) => ({
       diagnostics: nextDiagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => { tree = renderer.create(React.createElement(Harness, { voice: voiceFor('m1') })); });
@@ -1273,7 +1273,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       tree = renderer.create(React.createElement(Harness, {
         voice: {
           diagnostics,
-          executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'm1' },
         },
       }));
     });
@@ -1285,7 +1285,7 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
       tree.update(React.createElement(Harness, {
         voice: {
           diagnostics: disabledDiagnostics,
-          executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'm1' },
         },
       }));
     });

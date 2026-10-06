@@ -1,15 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import {
-  WorkspaceAnchorsResolveRequestV1Schema,
-  computeLineContentHashV1,
-  type LineContentHashV1,
-  type WorkspaceAnchorResolutionV1,
-  type WorkspaceAnchorV1,
-  type WorkspaceAnchorsResolveResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { WorkspaceAnchorsResolveRequestV1Schema, computeLineContentHashV1 } from '@happier-dev/protocol/workspace/anchors/v1';
+import type { LineContentHashV1, WorkspaceAnchorResolutionV1, WorkspaceAnchorV1, WorkspaceAnchorsResolveResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';

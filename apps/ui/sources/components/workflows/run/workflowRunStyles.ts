@@ -18,8 +18,8 @@ const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
  *
  * One owner so the outcome region, the invocation outline and the selected
  * invocation detail read as one object rather than three surfaces that happen
- * to sit on the same screen. Every value comes from existing theme tokens; this
- * module introduces no palette, font or spacing system of its own.
+ * to sit on the same screen. Colors, type and spacing use shared tokens; widths
+ * describe the outline/inspector layout rather than a separate design system.
  */
 export const workflowRunStyles = StyleSheet.create((theme) => ({
     scroll: {
@@ -87,9 +87,16 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         marginHorizontal: -theme.margins.md,
         marginVertical: -theme.margins.sm,
     },
+    /** The Run's state mark leads its sentence, centred on the first line. */
+    outcomeLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.margins.sm,
+    },
     outcomeSentence: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
+        flexShrink: 1,
     },
     provenance: {
         ...Typography.default('regular'),
@@ -104,6 +111,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     actionTarget: {
         minHeight: MINIMUM_TARGET_SIZE,
         justifyContent: 'center',
+    },
+    focusTarget: {
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     /**
      * Contact feedback for the controls this body owns directly.
@@ -121,6 +132,11 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     action: {
         ...Typography.default('semiBold'),
         color: theme.colors.button.secondary.tint,
+    },
+    /** A link to where finished or running work lives ("Open conversation"): present, never loud. */
+    quietAction: {
+        ...Typography.default('regular'),
+        color: theme.colors.text.secondary,
     },
     section: {
         gap: theme.margins.sm,
@@ -168,7 +184,7 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     attentionText: {
         flex: 1,
         minWidth: 0,
-        gap: 2,
+        gap: theme.margins.xs,
     },
     attentionLabel: {
         ...Typography.rowTitle(),

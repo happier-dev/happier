@@ -149,7 +149,7 @@ export type ReviewCommentsActionInputById = {
             engineId?: string | undefined;
         } | undefined;
         linkedRefs?: ({
-            kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+            kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
             id?: string | undefined;
             url?: string | undefined;
         } | {
@@ -938,7 +938,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1262,7 +1262,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1586,7 +1586,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1909,7 +1909,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2232,7 +2232,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2555,7 +2555,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2876,7 +2876,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3199,7 +3199,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3522,7 +3522,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3845,7 +3845,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -4169,7 +4169,7 @@ export type ReviewCommentsActionResultById = {
                 engineId?: string | undefined;
             } | undefined;
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'external' | 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {

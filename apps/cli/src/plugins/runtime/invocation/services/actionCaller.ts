@@ -1,10 +1,6 @@
-import {
-    AutomationRunCauseSchema,
-    PluginMachineMaterializationRefV1Schema,
-} from '@happier-dev/protocol';
-import {
-    PluginSourceCustodyV1Schema,
-} from '@happier-dev/protocol';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import type { ActionCaller, ActionPluginCaller } from '@happier-dev/protocol/actions';
 import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';

@@ -1,42 +1,16 @@
-import {
-  ActionApprovalRequestCreatedResultSchema,
-  type ActionApprovalRequestCreatedResult,
-  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2,
-  ExternalActionHttpErrorSchema,
-  ExternalActionHttpErrorV1Schema,
-  ExternalActionRequestIdV1Schema,
-  ExternalActionTargetV1Schema,
-  parseExternalActionResponseEnvelopeV1,
-  parseSessionListQueryActionResultV1,
-  PUBLIC_ACTION_OUTPUT_SCHEMAS,
-  SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE,
-  parseQualifiedPluginActionId,
-  sealExternalActionRequestV2,
-  openExternalActionResponseV2,
-} from '@happier-dev/protocol/actions';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES_V2, ExternalActionHttpErrorSchema, ExternalActionHttpErrorV1Schema, ExternalActionRequestIdV1Schema, ExternalActionTargetV1Schema, parseExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { parseSessionListQueryActionResultV1, SESSION_LIST_QUERY_UPDATE_REQUIRED_ERROR_CODE } from '@happier-dev/protocol/sessions/awareness/action';
+import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { SessionListActionInputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
-import {
-  ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1,
-  ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1,
-  ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1,
-  ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1,
-  AccountApiTokenChildCreateRequestV1Schema,
-  AccountApiTokenChildRevokeRequestV1Schema,
-  AccountApiTokenSelfV1Schema,
-  AccountApiTokensCreateActionOutputV1Schema,
-  AccountApiTokensRevokeActionOutputV1Schema,
-  AccountApiTokensServerErrorV1Schema,
-  type AccountApiTokenChildCreateRequestV1,
-  type AccountApiTokenSelfV1,
-  type AccountApiTokensCreateActionOutputV1,
-  type AccountApiTokensRevokeActionOutputV1,
-} from '@happier-dev/protocol/auth/accountApiTokens';
+import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenChildCreateRequestV1Schema, AccountApiTokenChildRevokeRequestV1Schema, AccountApiTokenSelfV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensServerErrorV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { AccountApiTokenChildCreateRequestV1, AccountApiTokenSelfV1, AccountApiTokensCreateActionOutputV1, AccountApiTokensRevokeActionOutputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import {
-  buildAccountStoredContentCompatibilityHttpHeadersV1,
-  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-} from '@happier-dev/protocol';
+import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { createHttpExchange } from '#http';
 import type { HttpExchange, HttpResponse, HttpResponseBody } from './http/httpExchange.js';

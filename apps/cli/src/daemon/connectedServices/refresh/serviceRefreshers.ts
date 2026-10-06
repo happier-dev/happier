@@ -1,17 +1,9 @@
 import { URLSearchParams } from 'node:url';
 
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import {
-  CLAUDE_OAUTH_TOKEN_URL,
-  CLAUDE_OAUTH_CLIENT_ID,
-  CLAUDE_OAUTH_PROFILE_HEADERS,
-  CLAUDE_OAUTH_PROFILE_URL,
-  OPENAI_CODEX_CLIENT_ID,
-  OPENAI_CODEX_TOKEN_URL,
-  projectConnectedAccountOauthProfileMetadata,
-  type ConnectedServiceId,
-  type ConnectedServiceOauthCredentialRawMetadata,
-} from '@happier-dev/protocol';
+import { CLAUDE_OAUTH_TOKEN_URL, CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_PROFILE_HEADERS, CLAUDE_OAUTH_PROFILE_URL, projectConnectedAccountOauthProfileMetadata } from '@happier-dev/protocol/providers/claude/oauth-profile';
+import { OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_TOKEN_URL } from '@happier-dev/protocol/providers/codex/oauth';
+import type { ConnectedServiceId, ConnectedServiceOauthCredentialRawMetadata } from '@happier-dev/protocol';
 
 import {
   isBuiltInLegacyConnectedAccountPeerOperationSupported,

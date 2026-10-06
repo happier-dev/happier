@@ -1,12 +1,5 @@
-import {
-  computeTeamCredentialSourceMemberKeyV1,
-  materializeTeamCredentialDirectMaterialV1,
-  type TeamCredentialDirectMaterialExpected,
-  type TeamCredentialDirectMaterialPayloadV1,
-  type TeamCredentialDirectMaterialStoredV1,
-  type TeamCredentialDirectMaterialOpenRequestV1,
-  type TeamCredentialErrorCodeV1,
-} from '@happier-dev/protocol/teams';
+import { computeTeamCredentialSourceMemberKeyV1, materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import type { TeamCredentialDirectMaterialExpected, TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialStoredV1, TeamCredentialDirectMaterialOpenRequestV1, TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams';
 import {
   fetchTeamCredentialDirectMaterial,
   TeamCredentialDirectMaterialHttpContractError,

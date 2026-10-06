@@ -1,10 +1,6 @@
-import {
-  normalizeSessionHandoffWorkspaceRootPath,
-  resolveWorkspaceSyncTransferRoute,
-  type HandoffWorkspaceActionV1,
-  type WorkspaceRefV1,
-  type WorkspaceSyncRelationshipV1,
-} from '@happier-dev/protocol';
+import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import { resolveWorkspaceSyncTransferRoute } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import type { HandoffWorkspaceActionV1, WorkspaceRefV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 
 import { resolveWorkspaceRefForMachineRoot } from '@/settings/accountSettings/workspaceRefsV1';
 import { validateWorkspaceSyncRelationship } from '@/workspaces/sync/workspaceSyncSettings';

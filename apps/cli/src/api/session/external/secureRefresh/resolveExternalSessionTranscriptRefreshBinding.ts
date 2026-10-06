@@ -1,7 +1,5 @@
-import {
-    ExternalSessionTranscriptRefreshBindingV1Schema,
-    type ExternalSessionTranscriptRefreshBindingV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionTranscriptRefreshBindingV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import type { ExternalSessionTranscriptRefreshBindingV1 } from '@happier-dev/protocol';
 
 import { resolveExternalSessionObservationLinkInput } from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';

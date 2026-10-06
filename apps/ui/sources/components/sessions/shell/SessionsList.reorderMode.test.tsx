@@ -12,6 +12,8 @@ import {
     buildSessionListIndexFromViewData,
 } from '@/sync/domains/sessionList/sessionListIndex';
 import { applySessionOrganizationLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionFolderGroupKey } from '@/sync/domains/session/folders';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,6 +48,11 @@ const sessionStoreFixture = vi.hoisted(() => {
             },
         },
     };
+});
+
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
 });
 
 vi.mock('react-native-gesture-handler', async () => {
@@ -319,10 +326,11 @@ const mockVisibleSessionListViewData: any[] = [
     { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'server_a', serverName: 'Server A' },
     { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
-const mockVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData);
-if (mockVisibleSessionListIndex?.[1]?.type === 'session') {
-    (mockVisibleSessionListIndex[1] as any).workspace = workspaceA;
+const defaultVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData) ?? [];
+if (defaultVisibleSessionListIndex?.[1]?.type === 'session') {
+    (defaultVisibleSessionListIndex[1] as any).workspace = workspaceA;
 }
+let mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
 
 const requestReviewSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/system/requestReview', () => ({
@@ -344,7 +352,7 @@ const paneState = {
     showEmptyState: false,
 } satisfies import('@/hooks/session/useVisibleSessionListPaneState').VisibleSessionListPaneState;
 function SessionsList(props: React.ComponentProps<typeof SessionsListView>) {
-    return <SessionsListView {...props} paneState={paneState} />;
+    return <SessionsListView {...props} paneState={{ ...paneState, visibleSessionListIndex: mockVisibleSessionListIndex }} />;
 }
 async function renderSessionsList() {
     await applySessionOrganizationLegacyTestSettings({
@@ -369,6 +377,7 @@ describe('SessionsList (inline reorder)', () => {
         primeServerFeaturesSnapshot({ serverId: 'server_a', snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
             features: { sessions: { enabled: true, folders: { enabled: true } } },
         }) } });
+        mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
         sessionListOrderingModeV1 = 'custom';
         sessionListFolderSortModeV1 = 'foldersFirst';
         sessionListSectionModeV1 = 'activity';
@@ -586,6 +595,18 @@ describe('SessionsList (inline reorder)', () => {
             }],
         };
 
+        // The pane projection mounts empty folder destinations as well as the source row.
+        mockVisibleSessionListIndex = [
+            { type: 'header', title: 'Project', headerKind: 'project', groupKey,
+                workspace: workspaceA, workspaceKey: groupKey, serverId: 'server_a' },
+            ...sessionFoldersV1.folders.map((folder): SessionListIndexItem => ({
+                type: 'header', title: folder.name, headerKind: 'folder', folderId: folder.id,
+                folderDepth: folder.parentId ? 1 : 0, workspace: workspaceA, serverId: 'server_a',
+                groupKey: buildSessionFolderGroupKey({ serverId: 'server_a', workspace: workspaceA, folderId: folder.id }),
+            })),
+            ...defaultVisibleSessionListIndex.filter((item) => item.type === 'session'),
+        ];
+
         const screen = await renderSessionsList();
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
@@ -605,6 +626,7 @@ describe('SessionsList (inline reorder)', () => {
         expect(storage.getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toEqual({
             sessionId: 'sess_a', folderId: 'folder-a',
         });
+        await screen.unmount();
     });
 
     it('renders one View options trigger in search chrome and keeps stopPropagation bound', async () => {

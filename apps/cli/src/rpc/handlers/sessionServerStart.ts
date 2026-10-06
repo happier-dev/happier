@@ -1,15 +1,7 @@
-import {
-    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-    openAutomationSessionStartRequestEnvelopeV1,
-    sameAutomationAccountCurrentnessWitnessV1,
-    SessionServerStartDispatchRequestV1Schema,
-    SessionServerStartDispatchResultV1Schema,
-    type AutomationRunCause,
-    type AccountEncryptionCurrentnessResponse,
-    type AccountScopedCryptoMaterialSnapshotV1,
-    type SessionServerStartDispatchResultV1,
-    type SessionSpawnNewInputV2,
-} from '@happier-dev/protocol';
+import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1, SessionServerStartDispatchRequestV1Schema, SessionServerStartDispatchResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { openAutomationSessionStartRequestEnvelopeV1 } from '@happier-dev/protocol/automations/automationSessionStartRequestEnvelopeV1';
+import { sameAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { AutomationRunCause, AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, SessionServerStartDispatchResultV1, SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import {

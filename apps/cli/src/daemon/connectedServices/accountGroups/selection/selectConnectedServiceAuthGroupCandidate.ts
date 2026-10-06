@@ -1,12 +1,6 @@
-import {
-  ConnectedServiceAuthGroupPolicyV1Schema,
-  isConnectedServiceQuotaObservationFresh,
-  isConnectedServiceCredentialHealthStatusUsable,
-  type ConnectedServiceAuthGroupPolicyV1,
-  type ConnectedServiceCredentialHealthStatusV1,
-  type ConnectedServiceLimitCategoryV1,
-  type ProviderAccountSubscriptionV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupPolicyV1Schema, isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import type { ConnectedServiceAuthGroupPolicyV1, ConnectedServiceCredentialHealthStatusV1, ConnectedServiceLimitCategoryV1, ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 
 import {
   reconcileMemberRuntimeStateWithFreshQuotaEvidence,
@@ -74,6 +68,16 @@ export type ConnectedServiceAuthGroupCandidate = ConnectedServiceAuthGroupMember
   leastLimitedScore: number | null;
   preferenceDeadlineMs?: number | null;
 }>;
+
+export function resolveConnectedServiceAuthGroupModelEligibilityBlocker(input: Readonly<{
+  state: ConnectedServiceAuthGroupMemberRuntimeState | null | undefined;
+  modelId: string | null | undefined;
+  nowMs: number;
+}>): Readonly<{ reason: 'plan_unavailable'; retryAtMs: number }> | null {
+  const modelId = input.modelId?.trim();
+  const untilMs = modelId ? numberOrNull(input.state?.modelUnavailableUntilMsByModelId?.[modelId]) : null;
+  return untilMs !== null && untilMs > input.nowMs ? { reason: 'plan_unavailable', retryAtMs: untilMs } : null;
+}
 
 export type ConnectedServiceAuthGroupCandidateSelection = Readonly<{
   selected: ConnectedServiceAuthGroupCandidate | null;
@@ -333,6 +337,7 @@ function projectQuotaSnapshotForPolicy(
   const effective = meters
     .filter((meter) => (
       (isQuotaMeter(meter) || isRateLimitMeter(meter))
+      && meter.reliable !== false
       && numberOrNull(meter.remainingPct) !== null
     ))
     .slice()
@@ -767,12 +772,11 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
       exclude('credential_unavailable');
       continue;
     }
-    const providerLimitId = params.providerLimitId?.trim();
-    const modelUnavailableUntilMs = providerLimitId
-      ? numberOrNull(effectiveState?.modelUnavailableUntilMsByModelId?.[providerLimitId])
-      : null;
-    if (modelUnavailableUntilMs !== null && modelUnavailableUntilMs > params.nowMs) {
-      exclude('plan_unavailable', modelUnavailableUntilMs);
+    const modelBlocker = resolveConnectedServiceAuthGroupModelEligibilityBlocker({
+      state: effectiveState, modelId: params.providerLimitId, nowMs: params.nowMs,
+    });
+    if (modelBlocker) {
+      exclude(modelBlocker.reason, modelBlocker.retryAtMs);
       continue;
     }
     const stateBlocker = resolveStateBlocker(effectiveState, params.nowMs);

@@ -1,9 +1,6 @@
-import {
-  ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
-  ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
-  type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { notifyDaemonConnectedServiceQuotaRecoveryCreditConsume } from '@/daemon/controlClient';
 import type { RpcHandlerRegistrar } from '../rpc/types';

@@ -301,7 +301,7 @@ describe('light sqlite migrations (unit)', () => {
     '20260905220000_add_team_home_governance',
     '20260905235000_add_account_session_read_state',
     '20260906160100_contract_session_data_key_envelopes',
-  ])('refuses %s before opening SQLite without updater handoff', async (boundaryMigration) => {
+  ])('refuses %s on an existing database before migration writes without updater handoff', async (boundaryMigration) => {
     vi.stubGlobal('Bun', {});
     const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-v4-admission-'));
     const migrationDir = join(dir, boundaryMigration);
@@ -313,6 +313,9 @@ describe('light sqlite migrations (unit)', () => {
       await readFile(join(process.cwd(), 'prisma', 'migrations', boundaryMigration, 'migration.sql')),
     );
     const dbPath = join(dir, 'happier.sqlite');
+    const state = getSqliteState(dbPath);
+    state.tables.add('_prisma_migrations');
+    state.applied.set('20260101000000_existing', 'existing-checksum');
 
     await expect(applySqliteMigrationsFromEnvironment({
       env: {
@@ -321,7 +324,72 @@ describe('light sqlite migrations (unit)', () => {
       },
       dataDir: dir,
     })).rejects.toThrow(/forward-recovery-capable updater/u);
-    expect(sqliteStore.has(dbPath)).toBe(false);
+    expect(state.applied).toEqual(new Map([['20260101000000_existing', 'existing-checksum']]));
+    expect(state.execStatements.every((sql) => sql.startsWith('PRAGMA '))).toBe(true);
+  });
+
+  it.each([false, true])('bootstraps an irreversible migration without updater handoff with an empty ledger (present=%s)', async (ledgerPresent) => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-fresh-admission-'));
+    const boundary = '20260905220000_add_team_home_governance';
+    await mkdir(join(dir, boundary), { recursive: true });
+    await writeFile(join(dir, boundary, 'migration.sql'), 'CREATE TABLE Account(id INTEGER);\n');
+    const dbPath = join(dir, 'happier.sqlite');
+    const state = getSqliteState(dbPath);
+    if (ledgerPresent) state.tables.add('_prisma_migrations');
+
+    await expect(applySqliteMigrationsFromEnvironment({
+      env: { DATABASE_URL: `file:${dbPath}`, HAPPIER_SQLITE_MIGRATIONS_DIR: dir },
+      dataDir: dir,
+    })).resolves.toEqual({ applied: [boundary] });
+    expect(state.tables.has('Account')).toBe(true);
+    expect(state.applied.has(boundary)).toBe(true);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it('keeps a legacy database without a ledger protected and skips shared-DB auto-migration', async () => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-legacy-admission-'));
+    const boundary = '20260905220000_add_team_home_governance';
+    await mkdir(join(dir, boundary), { recursive: true });
+    await writeFile(join(dir, boundary, 'migration.sql'), 'CREATE TABLE Widget(id INTEGER);\n');
+    const dbPath = join(dir, 'happier.sqlite');
+    const state = getSqliteState(dbPath);
+    state.tables.add('Account');
+    const env = {
+      DATABASE_URL: `file:${dbPath}`,
+      HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
+      HAPPIER_SQLITE_AUTO_MIGRATE: '0',
+    };
+
+    await expect(applySqliteMigrationsIfNeeded({ env, dataDir: dir })).resolves.toEqual({ applied: [] });
+    expect(state.execStatements).toEqual([]);
+    await expect(applySqliteMigrationsFromEnvironment({ env, dataDir: dir })).rejects.toThrow(/forward-recovery-capable updater/u);
+    expect(state.tables).toEqual(new Set(['Account']));
+    expect(state.applied.size).toBe(0);
+  });
+
+  it('admits an existing database with the genuine updater capability', async () => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-capable-admission-'));
+    const boundary = '20260905220000_add_team_home_governance';
+    await mkdir(join(dir, boundary), { recursive: true });
+    await writeFile(join(dir, boundary, 'migration.sql'), 'CREATE TABLE Widget(id INTEGER);\n');
+    const dbPath = join(dir, 'happier.sqlite');
+    const state = getSqliteState(dbPath);
+    state.tables.add('_prisma_migrations');
+    state.applied.set('20260101000000_existing', 'existing-checksum');
+
+    await expect(applySqliteMigrationsFromEnvironment({
+      env: {
+        DATABASE_URL: `file:${dbPath}`,
+        HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
+        HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY: 'personal-home-update-record-v1',
+      },
+      dataDir: dir,
+    })).resolves.toEqual({ applied: [boundary] });
+    expect(state.tables.has('Widget')).toBe(true);
+    expect(state.applied.get('20260101000000_existing')).toBe('existing-checksum');
   });
 
   it('applySqliteMigrationsIfNeeded rejects checksum drift for already-applied migrations', async () => {

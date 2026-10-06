@@ -12,11 +12,13 @@ import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/
 import { WidgetAddPopover, WidgetSetupPopover } from '@/components/widgets/add/WidgetAddPopover';
 import { resolveWidgetAddPick, type WidgetAddEntry } from '@/components/widgets/add/widgetAddModel';
 import type { WidgetSetup } from '@/components/widgets/add/widgetSetupModel';
+import type { WidgetSetupCommandResult } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import { formatWorkflowDefinitionLibraryTitle, formatWorkflowDefinitionContentUnavailableReason } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { Typography } from '@/constants/Typography';
@@ -51,7 +53,7 @@ const BOARD_WIDGET_LABELS: AccountWidgetSurfaceLabels = {
 export type AddToBoardWidgets = Readonly<{
     scope: WidgetSurfaceRefV1 | null;
     instances: readonly WidgetInstanceV1[];
-    addInstance: (instance: WidgetInstanceV1, options: Readonly<{ place: boolean }>) => Promise<unknown>;
+    addInstance: (instance: WidgetInstanceV1, options: Readonly<{ place: boolean }>) => Promise<WidgetSetupCommandResult>;
 }>;
 
 export const AddToBoardButton = React.memo(function AddToBoardButton(props: Readonly<{
@@ -159,7 +161,7 @@ export const AddToBoardButton = React.memo(function AddToBoardButton(props: Read
 /** The shared Gallery | List popover for this Board, mounted only while open. */
 function BoardWidgetGallery(props: Readonly<{
     widgets: AddToBoardWidgets;
-    addWidget: (instance: WidgetInstanceV1) => Promise<unknown>;
+    addWidget: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
 }>): React.ReactElement {
@@ -185,7 +187,7 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
     homes: BoardHomes;
     onBoardKeys: ReadonlySet<string>;
     widgets: AddToBoardWidgets;
-    addWidget: (instance: WidgetInstanceV1) => Promise<unknown>;
+    addWidget: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
     onPickWidget: (entry: WidgetAddEntry, options: Readonly<{ place: boolean }>) => void;
     onOpenGallery: () => void;
     maxHeight: number;
@@ -265,8 +267,10 @@ const AddToBoardList = React.memo(function AddToBoardList(props: Readonly<{
         }
         const workflows = activeServerId ? library.definitions.map((definition) => option(
             { kind: 'workflow', qualifiedId: { serverId: activeServerId, id: definition.definitionId } },
-            definition.metadata.title,
-            definition.metadata.description,
+            formatWorkflowDefinitionLibraryTitle(definition),
+            definition.contentStatus === 'unavailable'
+                ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason)
+                : definition.metadata.description,
             glyph('clock'),
         )) : [];
         const workflowRuns = activeServerId ? runs.rows.flatMap((row) => (row.summary ? [option(

@@ -5,7 +5,10 @@ import { useSessionListA11yAnnouncements } from './useSessionListA11yAnnouncemen
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
+    return createReactNativeWebMock({
+        AccessibilityInfo: { announceForAccessibility: vi.fn() },
+        Platform: { OS: 'ios' },
+    });
 });
 
 vi.mock('@/text', async () => {

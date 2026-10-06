@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "deep-link:default",
     "http:default",
     "notification:default",
     "core:window:allow-set-badge-count",

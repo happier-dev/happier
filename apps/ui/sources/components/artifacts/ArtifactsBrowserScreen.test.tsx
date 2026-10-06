@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -11,6 +12,10 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { getStorage } from '@/sync/domains/state/storage';
 import { useArtifactStorageUsage } from './artifactActionsClient';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { Modal } from '@/modal';
+import { router } from 'expo-router';
+import { ActionsSettingsV1Schema, ApprovalRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import type { ReactTestInstance } from 'react-test-renderer';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit');
@@ -51,6 +56,105 @@ function RecoveryBrowser({ loadFailed, onRetry, artifacts = [] }: Readonly<{
 }>) {
     return <AppPaneProvider><ArtifactsBrowser artifacts={artifacts} loaded loadFailed={loadFailed} onRetry={onRetry} usage={null} /></AppPaneProvider>;
 }
+
+function artifactFixture(id: string, extra: Partial<Extract<DecryptedArtifact, { isDecrypted: true }>> = {}): DecryptedArtifact {
+    return { id, title: 'Notes', isDecrypted: true, header: { title: 'Notes' }, headerVersion: 1,
+        bodyVersion: 2, seq: 1, body: 'Notes', createdAt: 1, updatedAt: 1,
+        access: 'owner', storageMode: 'plain', ...extra };
+}
+
+async function renderRows(artifacts: readonly DecryptedArtifact[]) {
+    const screen = await renderScreen(<RecoveryBrowser artifacts={artifacts} loadFailed={false} onRetry={() => {}} />);
+    await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:collection:stage'), 'onLayout', {
+        nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
+    }); });
+    return screen;
+}
+
+function rowMenu(screen: Awaited<ReturnType<typeof renderRows>>, id: string): ReactTestInstance {
+    // Drive the real Collection row-action contract; its menu presentation is shared across surfaces.
+    const row = screen.findAll(node => node.props.testID === `artifacts:row:${id}`
+        && Array.isArray(node.props.secondaryActions)).at(-1);
+    expect(row).toBeDefined();
+    return row!;
+}
+
+describe('Artifacts browser row operations', () => {
+    it('opens the shared Share and History owners and confirms revision-qualified deletion', async () => {
+        const artifact = artifactFixture('document');
+        const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://artifact-row.test', accountId: 'owner' }],
+            route: request => request.path === '/v1/artifacts/document/revision/1/2' && request.method === 'DELETE'
+                ? Response.json({ success: true }) : undefined });
+        disposeHome = served.dispose;
+        getStorage().getState().addArtifact(artifact);
+        getStorage().setState(state => ({ localSettings: { ...state.localSettings, uiMultiPanePanelsEnabled: false } }));
+        const screen = await renderRows([artifact]);
+        const menu = rowMenu(screen, artifact.id);
+        expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toEqual(['open', 'share', 'history', 'delete']);
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'open'); });
+        expect(router.push).toHaveBeenLastCalledWith('/artifacts/document');
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'share'); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({ artifactId: artifact.id }),
+            chrome: expect.objectContaining({ testID: 'document-share-modal' }) }));
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'history'); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { artifactId: artifact.id, canRestore: true },
+            chrome: expect.objectContaining({ testID: 'artifact-history-modal' }) }));
+        await act(async () => { await menu.props.onSecondaryAction('delete'); });
+        expect(served.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+        expect(getStorage().getState().artifacts[artifact.id]).toBeDefined();
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await act(async () => { await menu.props.onSecondaryAction('delete'); });
+        await flushHookEffects();
+        expect(served.requests.find(request => request.method === 'DELETE')?.path)
+            .toBe('/v1/artifacts/document/revision/1/2');
+        expect(getStorage().getState().artifacts[artifact.id]).toBeUndefined();
+    });
+
+    it('opens a shared Workflow in its destination and keeps mutation operations unavailable', async () => {
+        const artifact = artifactFixture('workflow-1', { access: 'view', header: { kind: 'workflow-definition.v1', title: 'Review' } });
+        const screen = await renderRows([artifact]);
+        const menu = rowMenu(screen, artifact.id);
+        expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toEqual(['open', 'history']);
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'open'); });
+        expect(router.push).toHaveBeenLastCalledWith('/workflows/workflow-1');
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'history'); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { artifactId: artifact.id, canRestore: false } }));
+    });
+
+    it('allows a shared editor to restore history without managing shares or deleting', async () => {
+        const artifact = artifactFixture('editable', { access: 'edit' });
+        const screen = await renderRows([artifact]);
+        const menu = rowMenu(screen, artifact.id);
+        expect(menu.props.secondaryActions.map((item: { id: string }) => item.id)).toEqual(['open', 'history']);
+        await act(async () => { invokeTestInstanceHandler(menu, 'onSecondaryAction', 'history'); });
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({ props: { artifactId: artifact.id, canRestore: true } }));
+    });
+
+    it('opens a policy-required delete approval without claiming or executing deletion', async () => {
+        const artifact = artifactFixture('approval-document');
+        const persisted = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://artifact-row-approval.test', accountId: 'owner' }],
+            route: request => request.path === `/v1/artifacts/${artifact.id}` && request.method === 'GET'
+                ? Response.json({ ...artifact, ownerAccountId: 'owner', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                    header: encodePlainArtifactStoredContent(artifact.header), body: encodePlainArtifactStoredContent({ body: artifact.body }) })
+                : persisted.handle(request.path, { method: request.method, body: JSON.stringify(request.body) }) ?? undefined });
+        disposeHome = served.dispose;
+        getStorage().getState().addArtifact(artifact);
+        getStorage().setState(state => ({ settings: { ...state.settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'artifact.delete': { approvalRequiredSurfaces: ['ui'] } } }) } }));
+        const screen = await renderRows([artifact]);
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await act(async () => { await rowMenu(screen, artifact.id).props.onSecondaryAction('delete'); });
+        const approval = persisted.list().find(row => row.id !== artifact.id);
+        expect(approval).toBeDefined();
+        expect(ApprovalRequestSchema.parse(JSON.parse(persisted.readPlainBody(approval!.id)!)))
+            .toMatchObject({ actionId: 'artifact.delete', status: 'open' });
+        expect(served.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+        expect(getStorage().getState().artifacts[artifact.id]).toBeDefined();
+        expect(router.push).toHaveBeenLastCalledWith(`/inbox/approvals/${encodeURIComponent(approval!.id)}?serverId=${encodeURIComponent(served.homes.owner!.id)}`);
+    });
+
+});
 
 describe('Artifacts browser recovery', () => {
     it('replaces an already-loaded empty welcome with failure and a working Retry', async () => {

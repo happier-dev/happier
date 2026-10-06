@@ -1,9 +1,5 @@
-import {
-  WorkspaceSyncRelationshipCreateResultV1Schema,
-  WorkspaceSyncRelationshipCreateRpcRequestV1Schema,
-  type WorkspaceSyncRelationshipCreateResultV1,
-  type WorkspaceSyncRelationshipCreateRpcRequestV1,
-} from '@happier-dev/protocol';
+import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1 } from '@happier-dev/protocol';
 
 import type { WorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
 

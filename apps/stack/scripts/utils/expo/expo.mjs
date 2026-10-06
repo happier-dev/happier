@@ -93,6 +93,7 @@ export async function waitForExpoMetroRunning(
     intervalMs = null,
     env = process.env,
     signal = null,
+    continueOnTimeout = env?.HAPPIER_STACK_TUI === '1',
     onTimeoutCheckpoint = ({ timeoutMs: checkpointMs }) => {
       console.warn(`[stack] Metro is still starting on port ${port} after ${checkpointMs}ms; continuing to wait (TUI is attended)`);
     },
@@ -123,7 +124,7 @@ export async function waitForExpoMetroRunning(
       return { ok: false, reason: 'aborted', probes };
     }
     if (nowMsImpl() - checkpointStartMs > resolvedTimeoutMs) {
-      if (env?.HAPPIER_STACK_TUI !== '1') break;
+      if (!continueOnTimeout) break;
       onTimeoutCheckpoint?.({ timeoutMs: resolvedTimeoutMs, port: p, probes });
       checkpointStartMs = nowMsImpl();
     }

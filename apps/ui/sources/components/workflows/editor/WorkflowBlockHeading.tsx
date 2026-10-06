@@ -1,13 +1,14 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import { WorkflowBlockActionsMenu, type WorkflowBlockAction } from './WorkflowBlockActionsMenu';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * The one heading every authored block uses: a stable tabular ordinal, the
@@ -55,7 +56,7 @@ export function WorkflowBlockHeading(props: Readonly<{
                 style={(state) => [
                     workflowEditorStyles.actionTarget,
                     workflowEditorStyles.headingButton,
-                    workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                    state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                 ]}
             >
                 {props.kindMark === undefined ? null : <View testID={`${props.testID}-kind-mark`}

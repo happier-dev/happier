@@ -1,14 +1,8 @@
-import {
-    SessionWorkStateItemV1Schema,
-    buildDeterministicSessionWorkStateItemId,
-    mergeSessionWorkStateV1,
-    readSessionWorkStateV1FromMetadata,
-    resolveSessionWorkStatePrimaryItemId,
-    writeSessionWorkStateV1ToMetadata,
-    type SessionWorkStateItemKindV1,
-    type SessionWorkStateTruncationV1,
-    type SessionWorkStateV1,
-} from '@happier-dev/protocol';
+import { SessionWorkStateItemV1Schema, readSessionWorkStateV1FromMetadata, writeSessionWorkStateV1ToMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { buildDeterministicSessionWorkStateItemId } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateItemIds';
+import { mergeSessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateMerge';
+import { resolveSessionWorkStatePrimaryItemId } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
+import type { SessionWorkStateItemKindV1, SessionWorkStateTruncationV1, SessionWorkStateV1 } from '@happier-dev/protocol';
 import type {
     WorkStatePublisher,
     WorkStateService,

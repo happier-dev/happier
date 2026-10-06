@@ -50,6 +50,7 @@ import {
     type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 import { ConnectedAccountSetupController, ConnectedAccountServiceView } from './ConnectedAccountServiceView';
+import { ANTHROPIC_API_KEY_INPUT_SCHEMA } from '../../../../../../../packages/plugins/claude/src/connectedAccounts/anthropicRuntime';
 
 const platform = vi.hoisted(() => ({
     params: {} as Record<string, string | undefined>,
@@ -316,6 +317,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             : available ? description : { status: 'unavailable', code: 'connected_account_service_description_unavailable' };
         const screen = await renderScreen(element());
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('connected_account_service_description_unavailable');
         expect(authenticationCommands).toEqual([]);
         available = true;
         await screen.pressByTestIdAsync('connected-account:error:retry');
@@ -323,32 +325,55 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(screen.findHostByTestId('connected-account:error')).toBeNull();
     });
 
-    it('returns to an editable manual form after a rejected credential and submits only the corrected value', async () => {
+    it('rejects a malformed plugin-declared key inline before submission and accepts a corrected shape', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: {
+            defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+                fields: [{ id: 'token', title: 'API key', secret: true, schema: ANTHROPIC_API_KEY_INPUT_SCHEMA }] }],
+        } } });
+        const screen = await manualScreen();
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'not-a-valid-key'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        expect(authenticationCommands.filter((command) => command.operation === 'submitManual')).toEqual([]);
+        expect(screen.findHostByTestId('connected-account-manual:token.error')).not.toBeNull();
+        expect(screen.findHostByTestId('connected-account-manual:token')!.props.value).toBe('not-a-valid-key');
+        expect(onConnected).not.toHaveBeenCalled();
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-corrected'));
+        await screen.pressByTestIdAsync('connected-account-manual:submit');
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service, accountId: 'new-account' }));
+    });
+
+    it('returns to a fresh editable manual form after provider verification rejects a valid-shaped key', async () => {
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: {
+            defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+                fields: [{ id: 'token', title: 'API key', secret: true, schema: ANTHROPIC_API_KEY_INPUT_SCHEMA }] }],
+        } } });
         handleAuthentication = (command) => {
             if (command.operation === 'submitManual') {
-                return command.fields.token === ' '
-                    ? { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_invalid' }
+                return command.fields.token === 'sk-ant-qa-fake'
+                    ? { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_rejected' }
                     : { status: 'connected', attemptId: 'attempt-2', account: { service, accountId: 'corrected-account' } };
             }
             if (command.operation === 'read') {
-                return { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_invalid' };
+                return { status: 'rejected', attemptId: 'attempt-1', code: 'anthropic_api_key_rejected' };
             }
             return { status: 'awaitingManual', attemptId: authenticationCommands.some((entry) => entry.operation === 'submitManual') ? 'attempt-2' : 'attempt-1' };
         };
         const screen = await manualScreen();
-        await act(async () => screen.changeTextByTestId('connected-account-manual:token', ' '));
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-qa-fake'));
         await screen.pressByTestIdAsync('connected-account-manual:submit');
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+        expect(onConnected).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('connected-account:error:retry');
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
         expect(screen.findHostByTestId('connected-account-manual:token')!.props.editable).toBe(true);
+        expect(screen.findHostByTestId('connected-account-manual:token')!.props.value).toBe('');
         expect(screen.findHostByTestId('connected-account:error')).toBeNull();
-        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'corrected-token'));
+        await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'sk-ant-corrected'));
         await screen.pressByTestIdAsync('connected-account-manual:submit');
         await vi.waitFor(() => expect(onConnected).toHaveBeenCalledWith({ service, accountId: 'corrected-account' }));
         expect(authenticationCommands.filter((command) => command.operation === 'submitManual')).toEqual([
-            { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: ' ' } },
-            { operation: 'submitManual', attemptId: 'attempt-2', fields: { token: 'corrected-token' } },
+            { operation: 'submitManual', attemptId: 'attempt-1', fields: { token: 'sk-ant-qa-fake' } },
+            { operation: 'submitManual', attemptId: 'attempt-2', fields: { token: 'sk-ant-corrected' } },
         ]);
     });
 

@@ -34,6 +34,22 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it('rebases a pending replacement on the confirmed reminder clear before rollback', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: false, remindAt: 1000, updatedAt: 1 }],
+        }));
+        const clear = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, updatedAt: 2 });
+        const replacement = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, remindAt: 2000, updatedAt: 3 });
+        const key = buildSessionOrganizationSessionKey('srv-a', 's1');
+        harness.get().confirmSessionOrganizationOptimistic(clear, 'sessionOrganizationAttentionStandingsBySessionKey', key,
+            { sessionId: 's1', standing: true, updatedAt: 4 });
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey[key]?.remindAt).toBe(2000);
+        harness.get().rollbackSessionOrganizationOptimistic(replacement);
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey[key])
+            .toEqual({ sessionId: 's1', standing: true, updatedAt: 4 });
+    });
+
     it.each([false, true, null])('restores the original standing %s after two same-session reminder writes both fail', (originalStanding) => {
         for (const failureOrder of [[0, 1], [1, 0]]) {
             const harness = createHarness();

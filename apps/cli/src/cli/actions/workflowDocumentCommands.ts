@@ -1,10 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
-import {
-  WorkflowActionOutputSchemasV1,
-  parseWorkflowDocumentJsonIngressV1,
-  serializeWorkflowDocumentJsonV1,
-} from '@happier-dev/protocol';
+import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { parseWorkflowDocumentJsonIngressV1, serializeWorkflowDocumentJsonV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
 
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { argvBeforeOptionTerminator } from '@/cli/commands/shared/argvFlags';

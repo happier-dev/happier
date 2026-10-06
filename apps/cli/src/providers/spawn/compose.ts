@@ -16,13 +16,9 @@ import {
   resolve,
 } from 'node:path';
 
-import {
-  AgentProviderBindingLaunchMaterializationV1Schema,
-  AgentProviderBindingMaterializationV1Schema,
-  type AgentProviderBindingLaunchMaterializationV1,
-  type AgentProviderBindingMaterializationV1,
-  type SessionEnvOverlayV1,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingLaunchMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import type { AgentProviderBindingLaunchMaterializationV1, AgentProviderBindingMaterializationV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
 
 export type ComposedProviderBindingMaterialization = Readonly<{
   providerEnvironmentOverlay: SessionEnvOverlayV1;

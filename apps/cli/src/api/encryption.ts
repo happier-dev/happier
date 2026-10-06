@@ -1,21 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import {
-  decodeBase64 as decodeBase64Protocol,
-  encodeBase64 as encodeBase64Protocol,
-  deriveBoxPublicKeyFromSeed,
-  openBoxBundle,
-  packSessionDataKeyBundleV0,
-  parseSessionDataKeyValue,
-  parseSerializedJsonValue,
-  readSessionDataKeyBundleV0,
-  sealBoxBundle,
-  serializeSessionDataKeyValue,
-  SESSION_DATA_KEY_BYTES,
-  SESSION_DATA_KEY_NONCE_BYTES,
-  stringifySerializedJsonValue,
-  type Base64Variant,
-} from '@happier-dev/protocol';
+import { decodeBase64 as decodeBase64Protocol, encodeBase64 as encodeBase64Protocol } from '@happier-dev/protocol/crypto/base64';
+import { deriveBoxPublicKeyFromSeed, openBoxBundle, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { packSessionDataKeyBundleV0, parseSessionDataKeyValue, readSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_BYTES, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
+import { parseSerializedJsonValue, stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
+import type { Base64Variant } from '@happier-dev/protocol';
 
 /**
  * Encode a Uint8Array to base64 string

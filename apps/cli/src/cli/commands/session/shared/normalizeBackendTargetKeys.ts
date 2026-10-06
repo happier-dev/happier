@@ -1,14 +1,9 @@
-import {
-  BackendTargetKeySchema,
-  BackendTargetKeyV2Schema,
-  buildBackendTargetKey,
-  buildBackendTargetKeyV2,
-  convertBackendTargetRefV2ToV1,
-  parseBackendTargetKey,
-  parseBackendTargetKeyV2,
-  readBackendTargetRefV2,
-  type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeySchema, buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetKeyV2Schema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { getAgentCatalogDefinition } from '@happier-dev/agents';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';

@@ -14,7 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveSessionListDensityViewState } from '@/components/sessions/shell/resolveSessionListDensityViewState';
-import type { CompactAppDestinationPreferencesV1 } from './compactAppDestinationCatalog';
+import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 
 const routeState = vi.hoisted(() => ({ push: vi.fn(), pathname: '/' }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
@@ -84,7 +84,7 @@ function setCatalog(input: Readonly<{
     pages?: readonly PluginUiSurfacePlacementProjection[];
     externalSessions?: boolean;
     tabs?: readonly PluginUiSurfacePlacementProjection[];
-    preferences?: CompactAppDestinationPreferencesV1;
+    navigationPlacements?: NavigationSurfacePlacementsV1;
 }>) {
     const placements = [...(input.pages ?? []), ...(input.tabs ?? [])];
     projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
@@ -93,7 +93,7 @@ function setCatalog(input: Readonly<{
         settings: { ...storage.getState().settings, sessionListDensity: 'narrow',
             featureToggles: { ...storage.getState().settings.featureToggles, 'sessions.direct': input.externalSessions ?? true } },
         localSettings: { ...storage.getState().localSettings,
-            compactAppDestinationPreferencesV1: input.preferences ?? { orderedDestinationIds: [], hiddenDestinationIds: [] } },
+            navigationSurfacePlacementsV1: NavigationSurfacePlacementsV1Schema.parse(input.navigationPlacements ?? {}) },
     });
 }
 function Wrapper({ children }: React.PropsWithChildren) {
@@ -242,14 +242,17 @@ describe('ColumnDestinationRows', () => {
         expect(row?.props.subtitle).not.toBe('feature_disabled');
     });
 
-    it('does not list a destination the person hid', async () => {
+    it('keeps column and phone discovery visible when the rail icon is hidden', async () => {
         setCatalog({
             pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })],
-            preferences: { orderedDestinationIds: [], hiddenDestinationIds: ['plugin:acme.notes:notes'] },
+            navigationPlacements: { appRail: { orderedIds: ['plugin:acme.notes:notes'], placements: { 'plugin:acme.notes:notes': 'hidden' } } },
         });
         const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
         const screen = await render(<ColumnDestinationRows column="sessions" />);
 
-        expect(screen.findByTestId('compact-app-destination:plugin:acme.notes:notes')).toBeNull();
+        expect(screen.findByTestId('compact-app-destination:plugin:acme.notes:notes')).not.toBeNull();
+        expect(rowIds(screen)[0]).toBe('external-sessions-browse-button');
+        const launcher = await render(<ColumnDestinationRows />);
+        expect(launcher.findByTestId('compact-app-destination:plugin:acme.notes:notes')).not.toBeNull();
     });
 });

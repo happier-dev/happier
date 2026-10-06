@@ -1,4 +1,5 @@
-import { TransferEndpointCandidateSchema, type TransferEndpointCandidate } from '@happier-dev/protocol';
+import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
 export function fingerprintPeerEndpoints(endpointCandidates: readonly TransferEndpointCandidate[]): string | null {
     const normalizedCandidates = endpointCandidates

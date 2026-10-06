@@ -8,8 +8,8 @@ import * as privacyKit from 'privacy-kit';
 import type { ArtifactBlobWriteV1 } from '@happier-dev/protocol';
 
 export type ArtifactHttpMutationResult = Awaited<ReturnType<typeof createArtifactHttpMutation | typeof updateArtifactHttpMutation>>;
-export type ArtifactCreateHttpInput = Readonly<{ id: string; header: string; body: string; dataEncryptionKey: string; blob?: ArtifactBlobWriteV1 }>;
-export type ArtifactUpdateHttpInput = Readonly<{ header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; blob?: ArtifactBlobWriteV1 | null }>;
+export type ArtifactCreateHttpInput = Readonly<{ id: string; header: string; body: string; dataEncryptionKey: string; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 }>;
+export type ArtifactUpdateHttpInput = Readonly<{ header?: string; expectedHeaderVersion?: number; body?: string; expectedBodyVersion?: number; provenance?: string | null; provenanceDataEncryptionKey?: string | null; blob?: ArtifactBlobWriteV1 | null }>;
 
 export async function createArtifactHttpMutation(userId: string, input: ArtifactCreateHttpInput) {
         const { id, header, body, dataEncryptionKey, blob } = input;
@@ -22,6 +22,8 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                provenance: input.provenance == null ? undefined : privacyKit.decodeBase64(input.provenance),
+                provenanceDataEncryptionKey: input.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(input.provenanceDataEncryptionKey),
                 blob,
             });
 
@@ -63,6 +65,8 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
                 body: privacyKit.encodeBase64(artifact.body),
                 bodyVersion: artifact.bodyVersion,
                 dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
+                provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
+                provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
                 seq: artifact.seq,
                 createdAt: artifact.createdAt.getTime(),
                 updatedAt: artifact.updatedAt.getTime()
@@ -101,6 +105,8 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 artifactId: id,
                 header: headerParam,
                 body: bodyParam,
+                provenance: input.provenance == null ? undefined : privacyKit.decodeBase64(input.provenance),
+                provenanceDataEncryptionKey: input.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(input.provenanceDataEncryptionKey),
                 blob,
             });
 
@@ -140,13 +146,13 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 ? { value: body!, version: result.body.version }
                 : undefined;
 
-            const legacyRecipient = result.ownerUpdate ?? { accountId: userId, cursor: result.cursor };
-            const updatePayload = buildUpdateArtifactUpdate(id, legacyRecipient.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate);
-            eventRouter.emitUpdate({
-                userId: legacyRecipient.accountId,
-                payload: updatePayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
+            for (const recipient of result.recipientUpdates) {
+                eventRouter.emitUpdate({
+                    userId: recipient.accountId,
+                    payload: buildUpdateArtifactUpdate(id, recipient.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate, recipient),
+                    recipientFilter: { type: 'user-scoped-only' }
+                });
+            }
 
             return { statusCode: 200 as const, body: {
                 success: true as const,

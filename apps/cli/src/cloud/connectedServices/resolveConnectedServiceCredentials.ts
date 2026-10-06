@@ -5,20 +5,12 @@
  * material. The server never decrypts these payloads.
  */
 
-import {
-  ConnectedServiceCredentialBindingMismatchError,
-  assertConnectedServiceCredentialRecordBinding,
-  openConnectedServiceCredentialCiphertext,
-  parseBuiltInLegacyConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialBindingMismatchError, assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
+import { openConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import { parseBuiltInLegacyConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import type { ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionBoundaryV1, ConnectedServiceId } from '@happier-dev/protocol';
 
-export {
-  ConnectedServiceCredentialBindingMismatchError,
-  assertConnectedServiceCredentialRecordBinding,
-} from '@happier-dev/protocol';
+export { ConnectedServiceCredentialBindingMismatchError, assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
 
 import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import type { StoredCredentials } from '@/persistence';

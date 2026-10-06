@@ -1,13 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import {
-  WorkspaceSyncConflictPageRequestV1Schema,
-  WorkspaceSyncConflictV1Schema,
-  WorkspaceSyncCopyOnceV1Schema,
-  WorkspaceSyncPathSelectionV1Schema,
-  WorkspaceSyncSelectionDiagnoseV1Schema,
-  type WorkspaceSyncPathSelectionV1,
-  type WorkspaceSyncSelectionDiagnoseV1,
-} from '@happier-dev/protocol';
+import { WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncPathSelectionV1Schema, WorkspaceSyncSelectionDiagnoseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1 } from '@happier-dev/protocol';
 
 import type { WorkspaceSyncMutagenAdapter, WorkspaceSyncResolvedRef } from './workspaceSyncController';
 import {

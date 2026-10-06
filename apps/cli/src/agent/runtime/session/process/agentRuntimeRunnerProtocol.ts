@@ -1,45 +1,31 @@
 import { z } from 'zod';
 
-import {
-  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-  AgentLaunchEnvironmentV1Schema,
-  AgentRuntimeJsonValueV1Schema,
-  AgentSessionConfigurationSnapshotV1Schema,
-  AgentSessionProviderCheckpointV1Schema,
-  AgentSessionStartupInstructionsV1Schema,
-} from '@happier-dev/protocol/runtime';
-import {
-  AgentSessionProviderBindingV1Schema,
-  AgentIdV1Schema,
-  ActionInputHintsSchema,
-  ActionSafetySchema,
-  ComposerAttachmentMessageAcceptedV1Schema,
-  ComposerAttachmentResolveRequestV1Schema,
-  ComposerAttachmentResolveResultV1Schema,
-  ComposerContentHandleV1Schema,
-  ComposerInstanceIdSchema,
-  ComposerRefV1Schema,
-  ComposerReferenceCandidateV1Schema,
-  ComposerReferenceResolutionV1Schema,
-  ConnectedServicesProviderStateSharingPolicyV1Schema,
-  ModelSelectionApplyPolicySchema,
-  PluginContributionIdentityV1Schema,
-  PluginActionAvailabilityV2Schema,
-  PluginActionDefinitionExamplesV1Schema,
-  PluginJsonSchemaV2Schema,
-  PluginAgentContributionV2Schema,
-  PluginRuntimeCapabilityFamilyV1Schema,
-  PluginSourceCustodyV1Schema,
-  ProviderAgentTargetKeySchema,
-  ProviderConnectionIdSchema,
-  ProviderModelDescriptorV1Schema,
-  ProviderModelIdSchema,
-    ProviderRuntimeBindingBasisV1Schema,
-    RuntimeDescriptorV1Schema,
-  SessionProviderBindingMetadataV1Schema,
-  SessionExecutionTargetV1Schema,
-  PluginSourceKindV1Schema,
-} from '@happier-dev/protocol';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
+import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema, AgentSessionProviderCheckpointV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
+import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { ComposerInstanceIdSchema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
+import { InputHintsSchema as ActionInputHintsSchema } from '@happier-dev/protocol/inputs/inputFields';
+import { ActionSafetySchema } from '@happier-dev/protocol/actions/safetyVocabulary';
+import { ComposerAttachmentMessageAcceptedV1Schema, ComposerAttachmentResolveRequestV1Schema, ComposerAttachmentResolveResultV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
+import { ComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { ComposerReferenceCandidateV1Schema, ComposerReferenceResolutionV1Schema } from '@happier-dev/protocol/plugins/contributions/composer-reference-providers';
+import { ConnectedServicesProviderStateSharingPolicyV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
+import { ModelSelectionApplyPolicySchema } from '@happier-dev/protocol/providers/compatibility/v1';
+import { ProviderRuntimeBindingBasisV1Schema, SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginActionAvailabilityV2Schema, PluginActionDefinitionExamplesV1Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginRuntimeCapabilityFamilyV1Schema } from '@happier-dev/protocol/plugins/runtime/api';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import { PluginSourceKindV1Schema } from '@happier-dev/protocol/plugins/source-spec';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 /**

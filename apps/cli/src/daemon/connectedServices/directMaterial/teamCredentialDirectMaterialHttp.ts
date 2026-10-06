@@ -1,19 +1,9 @@
 import axios, { type AxiosResponse } from 'axios';
 
-import {
-  TeamCredentialDirectMaterialMineResponseV1Schema,
-  TeamCredentialDirectMaterialPreparationResponseV1Schema,
-  TeamCredentialDirectMaterialCensusOutputV1Schema,
-  TeamCredentialDirectMaterialUpsertRequestV1Schema,
-  TeamCredentialDirectMaterialUpsertResponseV1Schema,
-  TeamCredentialDirectMaterialWithdrawRequestV1Schema,
-  TeamCredentialDirectMaterialWithdrawResponseV1Schema,
-  type TeamCredentialDirectMaterialWithdrawRequestV1,
-  type TeamCredentialDirectMaterialUpsertRequestV1,
-  TeamCredentialDirectMaterialOpenRequestV1Schema,
-  type TeamCredentialDirectMaterialOpenRequestV1,
-  TeamCredentialResourceErrorV1Schema,
-} from '@happier-dev/protocol/teams';
+import { TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialDirectMaterialPreparationResponseV1Schema, TeamCredentialDirectMaterialUpsertRequestV1Schema, TeamCredentialDirectMaterialUpsertResponseV1Schema, TeamCredentialDirectMaterialWithdrawRequestV1Schema, TeamCredentialDirectMaterialWithdrawResponseV1Schema, TeamCredentialDirectMaterialOpenRequestV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { TeamCredentialDirectMaterialCensusOutputV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialCensusV1';
+import type { TeamCredentialDirectMaterialWithdrawRequestV1, TeamCredentialDirectMaterialUpsertRequestV1, TeamCredentialDirectMaterialOpenRequestV1 } from '@happier-dev/protocol/teams';
+import { TeamCredentialResourceErrorV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 

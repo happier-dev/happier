@@ -1,17 +1,7 @@
-import {
-    ExecutionRunStartResponseSchema,
-    ScmDiffSummaryGenerateOutputSchema,
-    readExecutionRunStartRunCreation,
-    buildBackendTargetKeyV2,
-    buildScmDiffSummaryCacheKey,
-    SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
-    type ActionExecuteResult,
-    type BackendTargetRefV2,
-    type ScmDiffSummaryGenerateInput,
-    type ScmDiffSummaryGenerateOutput,
-    type ScmDiffSummaryOutputKind,
-    type ScmDiffSummaryOutputs,
-} from '@happier-dev/protocol';
+import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ScmDiffSummaryGenerateOutputSchema, buildScmDiffSummaryCacheKey, SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION } from '@happier-dev/protocol/scm/diffSummary';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ActionExecuteResult, BackendTargetRefV2, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
 
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';

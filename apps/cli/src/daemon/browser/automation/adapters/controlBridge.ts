@@ -2,7 +2,9 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { BrowserActiveTargetV1Schema, browserViewContextId, normalizeBrowserActiveTargetRect, parseLocator, readBrowserActiveTargetLabel } from '@happier-dev/protocol';
+import { BrowserActiveTargetV1Schema, normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
+import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
+import { parseLocator } from '@happier-dev/protocol/browser/automation/locators';
 
 import type {
   BrowserSidecarCdpPageHandle,

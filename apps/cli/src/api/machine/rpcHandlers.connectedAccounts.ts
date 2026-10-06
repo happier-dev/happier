@@ -1,14 +1,5 @@
-import {
-    CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
-    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
-    ConnectedAccountAttemptResponseSchema,
-    ConnectedAccountAuthenticationCommandRequestSchema,
-    ConnectedAccountControlCommandRequestSchema,
-    ConnectedAccountDaemonCommandSchema,
-    ConnectedAccountDaemonControlCommandSchema,
-    ConnectedAccountDaemonControlResponseSchema,
-    type ConnectedAccountDaemonCommand,
-} from '@happier-dev/protocol';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountAttemptResponseSchema, ConnectedAccountAuthenticationCommandRequestSchema, ConnectedAccountControlCommandRequestSchema, ConnectedAccountDaemonCommandSchema, ConnectedAccountDaemonControlCommandSchema, ConnectedAccountDaemonControlResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import type { ConnectedAccountDaemonCommand } from '@happier-dev/protocol';
 
 import type {
     ConnectedAccountDaemonRuntime,

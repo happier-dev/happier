@@ -59,8 +59,8 @@ export function presentConnectedServicesIndexAccount(
     const email = account.profile.providerIdentity?.email?.trim() || null;
     const providerAccountId = account.profile.providerIdentity?.accountId?.trim() || null;
     const shown = present({ label: presentation.primaryLabel, labelKind: presentation.primaryLabelKind, email, accountId: providerAccountId });
-    const identity = email && email !== presentation.primaryLabel
-        ? shown.email
+    const identity = email
+        ? email !== presentation.primaryLabel ? shown.email : null
         : providerAccountId && providerAccountId !== presentation.primaryLabel ? shown.accountId : null;
     return {
         title: shown.label ?? presentation.primaryLabel,

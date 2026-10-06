@@ -1,7 +1,5 @@
-import {
-    ConnectedServiceMaterializationIdentityV1Schema,
-    type ConnectedServiceMaterializationIdentityV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
 export const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON' as const;

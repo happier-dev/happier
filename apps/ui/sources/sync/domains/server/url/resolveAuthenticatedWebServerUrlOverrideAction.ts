@@ -1,4 +1,4 @@
-import { normalizeServerUrl } from '../activeServerSwitch';
+import { canonicalizeServerUrl as normalizeServerUrl } from './serverUrlCanonical';
 import { getActiveServerUrl, resolveUniqueServerProfileByUrl } from '../serverProfiles';
 import { readWebServerUrlOverrideFromLocation } from './bootstrapActiveServerFromWebLocation';
 import { shouldSwitchToServerUrl } from './serverUrlOverridePolicy';

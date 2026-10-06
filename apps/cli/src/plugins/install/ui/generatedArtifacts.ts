@@ -2,10 +2,8 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  PluginUiArtifactsManifestV2Schema,
-  type PluginUiArtifactsManifestV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 export const GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH = 'dist/happier-plugin-ui';
 export const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =

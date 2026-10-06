@@ -2111,7 +2111,6 @@ describe('VoiceProviderSection', () => {
             executionMachine: {
                 mode: 'fixed' as const,
                 machineId: 'machine-online',
-                autoMachineId: null,
             },
             daemon: {
                 featureEnabled: true,
@@ -2128,7 +2127,6 @@ describe('VoiceProviderSection', () => {
             executionMachine: {
                 mode: 'fixed' as const,
                 machineId: 'machine-online',
-                autoMachineId: null,
             },
             daemon: {
                 featureEnabled: true,
@@ -2145,7 +2143,6 @@ describe('VoiceProviderSection', () => {
             executionMachine: {
                 mode: 'fixed' as const,
                 machineId: 'machine-online',
-                autoMachineId: null,
             },
             daemon: {
                 featureEnabled: true,
@@ -2162,7 +2159,6 @@ describe('VoiceProviderSection', () => {
             executionMachine: {
                 mode: 'fixed' as const,
                 machineId: 'machine-offline',
-                autoMachineId: null,
             },
             daemon: {
                 featureEnabled: true,
@@ -2179,7 +2175,6 @@ describe('VoiceProviderSection', () => {
             executionMachine: {
                 mode: 'fixed' as const,
                 machineId: 'machine-online',
-                autoMachineId: null,
             },
             daemon: {
                 featureEnabled: false,

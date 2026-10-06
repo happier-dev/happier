@@ -3,7 +3,10 @@
  * settings sections (FIN 07 S7, S8, S10). Mounted as `workflows.page` by `workflowTranslations.ts`.
  */
 
+import { workflowFieldTranslations } from './workflowFieldTranslations';
+
 const en = {
+    fields: workflowFieldTranslations.en,
     blocks: {
         actionSub: 'Action · no agent turn',
         notSet: 'Not set',
@@ -17,6 +20,7 @@ const en = {
         waitSub: 'This lane waits until you continue.',
         waitPlaceholder: 'What should you check or decide here?',
         returnsText: 'Returns text',
+        returnsFields: ({ fields }: { fields: string }) => `Returns ${fields}`,
         workflowDefaults: 'Workflow defaults',
         addNamedResults: 'Add named results',
         menuRun: 'Run a workflow',
@@ -29,6 +33,7 @@ const en = {
         useNumber: 'Use a number',
         actionUnavailable: ({ action }: { action: string }) => `${action} isn't available here.`,
         childInputs: ({ workflow }: { workflow: string }) => `Inputs come from ${workflow}.`,
+        retryLoading: "Retry loading",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} runs this workflow, so it can't run inside it.`,
         maxFromInput: ({ name }: { name: string }) => `From input · ${name}`,
         useInput: ({ name }: { name: string }) => `Use input ${name}`,
@@ -152,6 +157,7 @@ function pluralRu(count: number, one: string, few: string, many: string): string
 }
 
 const de: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.de,
     blocks: {
         actionSub: 'Aktion · kein Agentenzug',
         notSet: 'Nicht gesetzt',
@@ -165,6 +171,7 @@ const de: WorkflowEditorPageTranslations = {
         waitSub: 'Diese Spur wartet, bis du weitermachst.',
         waitPlaceholder: 'Was solltest du hier prüfen oder entscheiden?',
         returnsText: 'Gibt Text zurück',
+        returnsFields: ({ fields }) => `Gibt zurück: ${fields}`,
         workflowDefaults: 'Workflow-Standards',
         addNamedResults: 'Benannte Ergebnisse hinzufügen',
         menuRun: 'Einen Workflow ausführen',
@@ -177,6 +184,7 @@ const de: WorkflowEditorPageTranslations = {
         useNumber: 'Eine Zahl verwenden',
         actionUnavailable: ({ action }: { action: string }) => `${action} ist hier nicht verfügbar.`,
         childInputs: ({ workflow }: { workflow: string }) => `Die Eingaben kommen von ${workflow}.`,
+        retryLoading: "Erneut laden",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} führt diesen Workflow aus und kann daher nicht darin laufen.`,
         maxFromInput: ({ name }: { name: string }) => `Aus Eingabe · ${name}`,
         useInput: ({ name }: { name: string }) => `Eingabe ${name} verwenden`,
@@ -281,6 +289,7 @@ const de: WorkflowEditorPageTranslations = {
 };
 
 const es: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.es,
     blocks: {
         actionSub: 'Acción · sin turno de agente',
         notSet: 'Sin definir',
@@ -294,6 +303,7 @@ const es: WorkflowEditorPageTranslations = {
         waitSub: 'Este carril espera hasta que continúes.',
         waitPlaceholder: '¿Qué deberías revisar o decidir aquí?',
         returnsText: 'Devuelve texto',
+        returnsFields: ({ fields }) => `Devuelve ${fields}`,
         workflowDefaults: 'Valores del flujo de trabajo',
         addNamedResults: 'Añadir resultados con nombre',
         menuRun: 'Ejecutar un flujo',
@@ -306,6 +316,7 @@ const es: WorkflowEditorPageTranslations = {
         useNumber: 'Usar un número',
         actionUnavailable: ({ action }: { action: string }) => `${action} no está disponible aquí.`,
         childInputs: ({ workflow }: { workflow: string }) => `Las entradas vienen de ${workflow}.`,
+        retryLoading: "Volver a cargar",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} ejecuta este flujo, así que no puede ejecutarse dentro de él.`,
         maxFromInput: ({ name }: { name: string }) => `Desde la entrada · ${name}`,
         useInput: ({ name }: { name: string }) => `Usar la entrada ${name}`,
@@ -410,6 +421,7 @@ const es: WorkflowEditorPageTranslations = {
 };
 
 const fr: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.fr,
     blocks: {
         actionSub: 'Action · aucun tour d’agent',
         notSet: 'Non défini',
@@ -423,6 +435,7 @@ const fr: WorkflowEditorPageTranslations = {
         waitSub: 'Cette voie attend que vous continuiez.',
         waitPlaceholder: 'Que devez-vous vérifier ou décider ici ?',
         returnsText: 'Renvoie du texte',
+        returnsFields: ({ fields }) => `Renvoie ${fields}`,
         workflowDefaults: 'Réglages du flux de travail',
         addNamedResults: 'Ajouter des résultats nommés',
         menuRun: 'Exécuter un workflow',
@@ -435,6 +448,7 @@ const fr: WorkflowEditorPageTranslations = {
         useNumber: 'Utiliser un nombre',
         actionUnavailable: ({ action }: { action: string }) => `${action} n’est pas disponible ici.`,
         childInputs: ({ workflow }: { workflow: string }) => `Les entrées viennent de ${workflow}.`,
+        retryLoading: "Réessayer le chargement",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} exécute ce workflow, il ne peut donc pas s’exécuter dedans.`,
         maxFromInput: ({ name }: { name: string }) => `Depuis l’entrée · ${name}`,
         useInput: ({ name }: { name: string }) => `Utiliser l’entrée ${name}`,
@@ -539,6 +553,7 @@ const fr: WorkflowEditorPageTranslations = {
 };
 
 const it: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.it,
     blocks: {
         actionSub: 'Azione · nessun turno dell’agente',
         notSet: 'Non impostato',
@@ -552,6 +567,7 @@ const it: WorkflowEditorPageTranslations = {
         waitSub: 'Questa corsia attende finché non continui.',
         waitPlaceholder: 'Cosa dovresti controllare o decidere qui?',
         returnsText: 'Restituisce testo',
+        returnsFields: ({ fields }) => `Restituisce ${fields}`,
         workflowDefaults: 'Impostazioni del flusso di lavoro',
         addNamedResults: 'Aggiungi risultati con nome',
         menuRun: 'Esegui un workflow',
@@ -564,6 +580,7 @@ const it: WorkflowEditorPageTranslations = {
         useNumber: 'Usa un numero',
         actionUnavailable: ({ action }: { action: string }) => `${action} non è disponibile qui.`,
         childInputs: ({ workflow }: { workflow: string }) => `Gli input arrivano da ${workflow}.`,
+        retryLoading: "Riprova a caricare",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} esegue questo workflow, quindi non può essere eseguito al suo interno.`,
         maxFromInput: ({ name }: { name: string }) => `Dall’input · ${name}`,
         useInput: ({ name }: { name: string }) => `Usa l’input ${name}`,
@@ -668,6 +685,7 @@ const it: WorkflowEditorPageTranslations = {
 };
 
 const pt: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.pt,
     blocks: {
         actionSub: 'Ação · sem turno do agente',
         notSet: 'Não definido',
@@ -681,6 +699,7 @@ const pt: WorkflowEditorPageTranslations = {
         waitSub: 'Esta faixa espera até que continue.',
         waitPlaceholder: 'O que deve verificar ou decidir aqui?',
         returnsText: 'Devolve texto',
+        returnsFields: ({ fields }) => `Devolve ${fields}`,
         workflowDefaults: 'Padrões do fluxo de trabalho',
         addNamedResults: 'Adicionar resultados nomeados',
         menuRun: 'Executar um workflow',
@@ -693,6 +712,7 @@ const pt: WorkflowEditorPageTranslations = {
         useNumber: 'Usar um número',
         actionUnavailable: ({ action }: { action: string }) => `${action} não está disponível aqui.`,
         childInputs: ({ workflow }: { workflow: string }) => `As entradas vêm de ${workflow}.`,
+        retryLoading: "Tentar carregar novamente",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} executa este workflow, por isso não pode ser executado dentro dele.`,
         maxFromInput: ({ name }: { name: string }) => `Da entrada · ${name}`,
         useInput: ({ name }: { name: string }) => `Usar a entrada ${name}`,
@@ -797,6 +817,7 @@ const pt: WorkflowEditorPageTranslations = {
 };
 
 const ca: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.ca,
     blocks: {
         actionSub: 'Acció · sense torn d’agent',
         notSet: 'Sense definir',
@@ -810,6 +831,7 @@ const ca: WorkflowEditorPageTranslations = {
         waitSub: 'Aquest carril espera fins que continuïs.',
         waitPlaceholder: 'Què hauries de revisar o decidir aquí?',
         returnsText: 'Retorna text',
+        returnsFields: ({ fields }) => `Retorna ${fields}`,
         workflowDefaults: 'Valors del flux de treball',
         addNamedResults: 'Afegeix resultats amb nom',
         menuRun: 'Executa un flux',
@@ -822,6 +844,7 @@ const ca: WorkflowEditorPageTranslations = {
         useNumber: 'Fes servir un número',
         actionUnavailable: ({ action }: { action: string }) => `${action} no està disponible aquí.`,
         childInputs: ({ workflow }: { workflow: string }) => `Les entrades vénen de ${workflow}.`,
+        retryLoading: "Torna a carregar",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} executa aquest flux, així que no s’hi pot executar a dins.`,
         maxFromInput: ({ name }: { name: string }) => `Des de l’entrada · ${name}`,
         useInput: ({ name }: { name: string }) => `Fes servir l’entrada ${name}`,
@@ -926,6 +949,7 @@ const ca: WorkflowEditorPageTranslations = {
 };
 
 const pl: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.pl,
     blocks: {
         actionSub: 'Akcja · bez tury agenta',
         notSet: 'Nie ustawiono',
@@ -939,6 +963,7 @@ const pl: WorkflowEditorPageTranslations = {
         waitSub: 'Ten tor czeka, aż będziesz kontynuować.',
         waitPlaceholder: 'Co powinieneś tu sprawdzić lub zdecydować?',
         returnsText: 'Zwraca tekst',
+        returnsFields: ({ fields }) => `Zwraca ${fields}`,
         workflowDefaults: 'Domyślne przepływu pracy',
         addNamedResults: 'Dodaj nazwane wyniki',
         menuRun: 'Uruchom przepływ',
@@ -951,6 +976,7 @@ const pl: WorkflowEditorPageTranslations = {
         useNumber: 'Użyj liczby',
         actionUnavailable: ({ action }: { action: string }) => `${action} nie jest tu dostępna.`,
         childInputs: ({ workflow }: { workflow: string }) => `Dane wejściowe pochodzą z ${workflow}.`,
+        retryLoading: "Spróbuj wczytać ponownie",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} uruchamia ten przepływ, więc nie może działać w jego wnętrzu.`,
         maxFromInput: ({ name }: { name: string }) => `Z wejścia · ${name}`,
         useInput: ({ name }: { name: string }) => `Użyj wejścia ${name}`,
@@ -1055,6 +1081,7 @@ const pl: WorkflowEditorPageTranslations = {
 };
 
 const ru: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.ru,
     blocks: {
         actionSub: 'Действие · без хода агента',
         notSet: 'Не задано',
@@ -1068,6 +1095,7 @@ const ru: WorkflowEditorPageTranslations = {
         waitSub: 'Эта ветка ждёт, пока вы не продолжите.',
         waitPlaceholder: 'Что здесь нужно проверить или решить?',
         returnsText: 'Возвращает текст',
+        returnsFields: ({ fields }) => `Возвращает ${fields}`,
         workflowDefaults: 'Настройки процесса',
         addNamedResults: 'Добавить именованные результаты',
         menuRun: 'Запустить сценарий',
@@ -1080,6 +1108,7 @@ const ru: WorkflowEditorPageTranslations = {
         useNumber: 'Указать число',
         actionUnavailable: ({ action }: { action: string }) => `${action} здесь недоступно.`,
         childInputs: ({ workflow }: { workflow: string }) => `Входные данные приходят из ${workflow}.`,
+        retryLoading: "Повторить загрузку",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} запускает этот сценарий, поэтому не может выполняться внутри него.`,
         maxFromInput: ({ name }: { name: string }) => `Из входа · ${name}`,
         useInput: ({ name }: { name: string }) => `Взять вход ${name}`,
@@ -1184,6 +1213,7 @@ const ru: WorkflowEditorPageTranslations = {
 };
 
 const ja: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.ja,
     blocks: {
         actionSub: 'アクション · エージェントのターンなし',
         notSet: '未設定',
@@ -1197,6 +1227,7 @@ const ja: WorkflowEditorPageTranslations = {
         waitSub: 'このレーンはあなたが続けるまで待ちます。',
         waitPlaceholder: 'ここで何を確認または判断しますか？',
         returnsText: 'テキストを返す',
+        returnsFields: ({ fields }) => `返す値: ${fields}`,
         workflowDefaults: 'ワークフローの既定',
         addNamedResults: '名前付きの結果を追加',
         menuRun: 'ワークフローを実行',
@@ -1209,6 +1240,7 @@ const ja: WorkflowEditorPageTranslations = {
         useNumber: '数値を使う',
         actionUnavailable: ({ action }: { action: string }) => `${action} はここでは利用できません。`,
         childInputs: ({ workflow }: { workflow: string }) => `入力は ${workflow} から受け取ります。`,
+        retryLoading: "読み込みを再試行",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} はこのワークフローを実行するため、その中では実行できません。`,
         maxFromInput: ({ name }: { name: string }) => `入力から · ${name}`,
         useInput: ({ name }: { name: string }) => `入力 ${name} を使う`,
@@ -1313,6 +1345,7 @@ const ja: WorkflowEditorPageTranslations = {
 };
 
 const zhHans: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.zhHans,
     blocks: {
         actionSub: '操作 · 无代理回合',
         notSet: '未设置',
@@ -1326,6 +1359,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         waitSub: '此通道会等待你继续。',
         waitPlaceholder: '你需要在这里检查或决定什么？',
         returnsText: '返回文本',
+        returnsFields: ({ fields }) => `返回 ${fields}`,
         workflowDefaults: '工作流默认设置',
         addNamedResults: '添加命名结果',
         menuRun: '运行工作流',
@@ -1338,6 +1372,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         useNumber: '使用数字',
         actionUnavailable: ({ action }: { action: string }) => `${action} 在此不可用。`,
         childInputs: ({ workflow }: { workflow: string }) => `输入来自 ${workflow}。`,
+        retryLoading: "重试加载",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} 会运行此工作流，因此不能在其中运行。`,
         maxFromInput: ({ name }: { name: string }) => `来自输入 · ${name}`,
         useInput: ({ name }: { name: string }) => `使用输入 ${name}`,
@@ -1442,6 +1477,7 @@ const zhHans: WorkflowEditorPageTranslations = {
 };
 
 const zhHant: WorkflowEditorPageTranslations = {
+    fields: workflowFieldTranslations.zhHant,
     blocks: {
         actionSub: '動作 · 無代理回合',
         notSet: '未設定',
@@ -1455,6 +1491,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         waitSub: '此通道會等待你繼續。',
         waitPlaceholder: '你需要在這裡檢查或決定什麼？',
         returnsText: '傳回文字',
+        returnsFields: ({ fields }) => `傳回 ${fields}`,
         workflowDefaults: '工作流程預設',
         addNamedResults: '新增具名結果',
         menuRun: '執行工作流程',
@@ -1467,6 +1504,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         useNumber: '使用數字',
         actionUnavailable: ({ action }: { action: string }) => `${action} 在此無法使用。`,
         childInputs: ({ workflow }: { workflow: string }) => `輸入來自 ${workflow}。`,
+        retryLoading: "重試載入",
         selfRef: ({ workflow }: { workflow: string }) => `${workflow} 會執行此工作流程，因此無法在其中執行。`,
         maxFromInput: ({ name }: { name: string }) => `來自輸入 · ${name}`,
         useInput: ({ name }: { name: string }) => `使用輸入 ${name}`,

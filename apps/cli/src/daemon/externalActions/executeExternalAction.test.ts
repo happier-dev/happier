@@ -89,6 +89,23 @@ function createExactLimitMultibyteResult(): string {
 }
 
 describe('executeExternalAction', () => {
+  it('admits a Companion widget client Action through an exact Session envelope', async () => {
+    const target = { kind: 'session' as const, sessionId: 'session-1' };
+    const ref = { surface: { serverId: 'home', accountId: principal.accountId,
+      owner: { kind: 'companion' as const, sessionId: target.sessionId } }, instanceId: 'checks' };
+    // Only the connected-client transport is replaced; ingress and Action admission are real.
+    const clientActionExecute = vi.fn(async () => ({ ok: true as const, result: { ref, bindings: {} } }));
+    const result = await executeExternalAction({ actionId: 'widgets.instance.inputs.get',
+      envelope: { v: 1, target, input: { ref } }, principal, currentMachineId: 'machine-1',
+      resolveTarget: async ({ target: resolved }) => resolved ?? null,
+      executor: createActionExecutor({ ...createUnavailableHostActionDeps(), clientActionExecute }),
+    });
+    expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: true, result: { bindings: {} } } } });
+    expect(clientActionExecute).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'widgets.instance.inputs.get', input: { ref }, context: expect.objectContaining({ defaultSessionId: target.sessionId }),
+    }));
+  });
+
   it('uses the current signed grant instead of a wider cached PAT grant', async () => {
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(9) };
     const binding = { serverIdentityId: 'srv_test', accountId: principal.accountId,
@@ -779,6 +796,7 @@ describe('executeExternalAction', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(resolveTarget).toHaveBeenCalledWith({
       actionId: 'session.spawn_new',
+      actionInput: { directory: '/workspace', prompt: 'hello' },
       target: undefined,
       currentMachineId: 'machine-1',
       signal,
@@ -923,6 +941,7 @@ describe('executeExternalAction', () => {
 
     expect(resolveTarget).toHaveBeenCalledWith({
       actionId: 'session.open',
+      actionInput: { sessionId: 'session-other-machine' },
       target: { kind: 'session', sessionId: 'session-other-machine' },
       currentMachineId: 'machine-1',
       signal: undefined,
@@ -963,6 +982,7 @@ describe('executeExternalAction', () => {
 
     expect(resolveTarget).toHaveBeenCalledWith({
       actionId: 'session.open',
+      actionInput: { sessionId: 'session-1' },
       target: { kind: 'session', sessionId: 'session-1' },
       currentMachineId: 'machine-1',
       signal: undefined,

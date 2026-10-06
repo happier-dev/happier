@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RoleArtifactV1Schema, RoleEngineV1Schema, RoleRunsAsV1Schema } from './roleArtifactV1.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 
 export const RoleOverrideV1Schema = z.object({
   roleId: z.string().min(1),
@@ -13,10 +14,17 @@ export type RoleOverrideV1 = z.infer<typeof RoleOverrideV1Schema>;
 export const RoleInstructionsOverrideV1Schema = RoleOverrideV1Schema.extend({ instructionsOverride: z.string().optional() });
 export type RoleInstructionsOverrideV1 = z.infer<typeof RoleInstructionsOverrideV1Schema>;
 
-export const WorkflowRoleV1Schema = z.union([
+const InlineWorkflowRoleV1Schema = RoleOverrideV1Schema.extend({ name: z.string().min(1), instructions: z.string(), runsAs: RoleRunsAsV1Schema });
+export const WorkflowRoleV1Schema = defineStoredReadProjection(z.union([
   RoleOverrideV1Schema,
-  RoleOverrideV1Schema.extend({ name: z.string().min(1), instructions: z.string(), runsAs: RoleRunsAsV1Schema }),
-]);
+  InlineWorkflowRoleV1Schema,
+]), () => z.union([
+  createStoredReadSchema(InlineWorkflowRoleV1Schema),
+  // Inline fields identify that arm even when invalid; stripping must not
+  // silently turn an authored role into a reference-only override.
+  z.preprocess((value) => value !== null && typeof value === 'object'
+    && ('name' in value || 'instructions' in value) ? null : value, createStoredReadSchema(RoleOverrideV1Schema)),
+]));
 export type WorkflowRoleV1 = z.infer<typeof WorkflowRoleV1Schema>;
 
 export const RoleResolutionLayerV1Schema = z.enum(['run', 'workflow', 'session', 'settings']);

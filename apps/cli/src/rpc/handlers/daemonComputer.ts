@@ -1,9 +1,6 @@
-import {
-    DaemonComputerActionExecuteRequestV1Schema,
-    DaemonComputerActionExecuteResponseV1Schema,
-    type DaemonComputerActionExecuteResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonComputerActionExecuteRequestV1Schema, DaemonComputerActionExecuteResponseV1Schema } from '@happier-dev/protocol/computer/v1';
+import type { DaemonComputerActionExecuteResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ComputerRoutes } from '@/daemon/computer/routes';

@@ -1,10 +1,8 @@
 import { createHash } from 'node:crypto';
-import {
-  GH_INSTALLABLE_DESCRIPTOR,
-  InstallableDependencyDescriptorSchema,
-  resolveInstallablesRegistry,
-  type InstallableDependencyDescriptor,
-} from '@happier-dev/protocol';
+import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol/installables/definitions/gh';
+import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/installables/descriptor';
+import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/registry';
+import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
 import { getRuntimeInstallableAdapter } from '../registry';
 

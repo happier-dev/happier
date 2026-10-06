@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happierCloud';
 
 import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';

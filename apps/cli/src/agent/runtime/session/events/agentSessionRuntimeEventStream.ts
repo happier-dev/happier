@@ -1,7 +1,5 @@
-import {
-  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-  AgentSessionRuntimeEventSchema,
-} from '@happier-dev/protocol/runtime';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { Disposable, PluginDiagnosticData } from '@happier-dev/plugin-sdk';

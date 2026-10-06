@@ -107,6 +107,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
     'HAPPIER_HOME_DIR',
     'HAPPIER_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
     'HAPPIER_TOKEN',
     'HAPPIER_ACCOUNT_SETTINGS_MODE',
@@ -119,6 +120,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
       HAPPIER_HOME_DIR: home,
       HAPPIER_SERVER_URL: 'http://account.test',
       HAPPIER_PUBLIC_SERVER_URL: 'http://account.test',
+      HAPPIER_LOCAL_SERVER_URL: undefined,
       HAPPIER_WEBAPP_URL: 'http://account.test',
       HAPPIER_TOKEN: undefined,
       HAPPIER_ACCOUNT_SETTINGS_MODE: 'never',
@@ -816,6 +818,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
   });
 
   it('changes an E2EE password through canonical preparation without rotating the recovery secret', async () => {
+    env.patch({ HAPPIER_PUBLIC_SERVER_URL: 'https://public.account.test', HAPPIER_LOCAL_SERVER_URL: 'http://account.test' });
     const app = fastify();
     const secret = new Uint8Array(32).fill(17);
     let preparedEnvelope: unknown;
@@ -856,7 +859,7 @@ describe('trusted interactive CLI Account Security vertical', () => {
           nonce: 'nonce',
           issuedAt: '2026-09-08T00:00:00.000Z',
           expiresAt: '2026-09-08T00:05:00.000Z',
-          audience: { origin: 'http://account.test', serverIdentityId: 'srv_home' },
+          audience: { origin: 'https://public.account.test', serverIdentityId: 'srv_home' },
           expectedAccountId: 'account-1',
           operationKind: 'password_credential_mutation_v1',
           operationDigest: createPasswordCredentialMutationDigestV1({

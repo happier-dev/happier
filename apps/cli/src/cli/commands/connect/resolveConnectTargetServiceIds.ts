@@ -1,8 +1,6 @@
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import {
-  ConnectedServiceIdSchema,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {

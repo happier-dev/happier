@@ -47,8 +47,8 @@ export type ProjectWidgetAreaProps = Readonly<{
  */
 export function ProjectWidgetArea(props: ProjectWidgetAreaProps): React.ReactElement {
     const unavailable = React.useMemo(() => (props.port ? undefined : {
+        // One sentence that says what would bring them, not the mechanism behind it.
         title: t('widgetAdd.projectSourceUnavailableTitle'),
-        reason: t('widgetAdd.projectSourceUnavailableReason'),
         reasonCode: props.unavailableReasonCode ?? 'widget_project_source_unavailable',
     }), [props.port, props.unavailableReasonCode]);
     return (

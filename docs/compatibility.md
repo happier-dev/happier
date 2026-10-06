@@ -53,6 +53,45 @@ An existing same-concept split-brain in the touched corridor must be consolidate
 
 Before adding dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or a mandatory client floor, compare their lifetime cost with the actual user behavior required. If preserving old-client/new-server behavior for a major change would require substantial machinery, stop and obtain an explicit developer/product decision among: operation-scoped degradation, a documented client update requirement, or the heavier compatibility transition. An agent must not silently choose either forced upgrades or heavy compatibility machinery. This exception is for genuinely incompatible, high-cost transitions; routine server changes must remain compatible and must not manufacture client-update requirements.
 
+### Widget and organization stored readers (0.3 development)
+
+Account Settings' retained legacy JSON carriers use the same stored-read owner.
+Valid predecessor profiles and SavedSecrets remain readable above current
+collection or byte budgets; new-write admission applies those budgets and
+returns a typed refusal. Present profile/secret data must not recover to an
+empty default merely because it exceeds a new-write budget. Automatic Voice
+machine selection and recovery now remember their target in the device's
+Account/Home-scoped runtime memory, not in Account Settings. The never-shipped
+`executionMachine.autoMachineId` field is dropped by the stored Voice reader;
+an explicit fixed machine choice remains an Account preference.
+
+Stored widget definitions, instances and placements, Session/WorkBoard and Home
+layouts, Companion preferences, workspace tabs/canvas state, and legacy folder
+settings read their known fields and drop unknown object fields recursively.
+The Protocol-owned `json/storedReadSchema.ts` derives persistence projections
+from the canonical schemas, preserving required identities, domain refinements
+and opaque JSON values. UI-local persistence schemas use the same stripping
+policy. Organization display envelopes use a stored projection only when opening
+database content; HTTP snapshots and mutations remain strict.
+
+Action/request inputs, runtime events and wire results keep their strict
+validators. Writers emit the current canonical shape, including when editing
+an opened record. This changes additive-field read tolerance, not the persisted
+format, storage-mode authority, access policy or supported version frontier.
+The generic Artifact header remains an open metadata custodian; kind-owned
+readers project its known fields. Artifact body and private-revision readers
+drop extras separately while retaining body, Artifact/revision binding and
+encryption-mode checks. Source validation is not loaded-runtime certification.
+
+Saved Home profiles read their retained connection descriptor through
+`StoredHomeConnectionDescriptorV1Schema`, dropping additive fields recursively
+while retaining identity, origin, revision and endpoint validation. Incoming
+descriptors and feature responses remain strict. When a signed-in Home moves,
+address admission confirms the saved and selected addresses before forwarding
+the incumbent credential, then reads its exact authenticated descriptor at the selected
+address and commits through the existing credential/profile adoption transaction;
+public discovery alone cannot replace a retained descriptor generation.
+
 ### Live-stream relay diagnostics (development)
 
 `capabilities.machines.liveStream.serverRouted` is an optional read projection.
@@ -154,11 +193,29 @@ setting `sessionAgentStartAllowListsV1`. The host reads it into the admission co
 an empty list allows none in that selection family. The UI writes this setting
 independently, so a current V1 policy remains readable by 0.2 strict readers.
 
+### Android file actions native runtime (development)
+
+The development UI's Android Save As, Open With, and Share actions require the
+compiled `HappierFileActions` Expo module. The destination uses the fresh
+`0.3.0-native` runtime train for non-publicdev lanes; publicdev retains Expo's
+fingerprint policy. This train is distinct from the predecessor's native runtime
+and must be paired with a new native build before publishing its updates. Do not
+use a runtime maintenance override to send this JavaScript to a binary without
+the module.
+
+Workspace downloads and previews continue through the canonical prepared transfer
+carrier; the port does not restore predecessor bulk-RPC probing or alter encrypted
+transfer contracts and daemon-owned limits. Native cache files have independent
+storage identities while Android receives the original display name. Failed or
+canceled document copies remove the newly created destination; a provider that
+refuses deletion produces an error identifying the remaining document. Web and
+iOS keep their existing download actions.
+
 ### Native date/time picker availability (development)
 
 An OTA update cannot add a compiled native module to an installed app. The
-current UI package defaults non-publicdev Expo lanes to the manually maintained
-`0.2.1-native` runtime; publicdev defaults to fingerprint compatibility, and
+current UI package defaults non-publicdev Expo lanes to its configured
+`happierExpoRuntimeVersion` train; publicdev defaults to fingerprint compatibility, and
 explicit runtime overrides remain configuration-owned. A runtime match alone is
 not evidence that the installed binary contains a newly added native SDK.
 
@@ -485,13 +542,23 @@ absence means false. Qualified V4 routes expose and accept it only while
 enabled; masked policy edits preserve any stored choice. No 0.2 Accept-header
 adapter is revived on this line.
 
-The Codex plugin emits model-scoped `plan_invalid` evidence only for the exact
-ChatGPT-account unsupported-model response. The daemon records a 24-hour
+The Codex plugin emits model-scoped `plan_invalid` evidence for explicit
+ChatGPT-account unsupported, unavailable, or not-enabled model responses. The daemon records a 24-hour
 per-model exclusion. When the pool opt-in is true it also disables that member;
 manual re-enable clears the automatic-disable marker and runtime blockers.
 Generic or provider-scoped `plan_invalid` evidence never triggers persistent
 disable. Qualified V4 persists the marker, model cooldown, and disabled flag in
 one member mutation guarded by both group generation and runtime-state revision.
+For a finite Run's rejected initial input, the provider also attests that no
+turn work was accepted. The Run's scoped materialization bridge validates the
+exact activation, runner, member, generation, credential revision and model
+before the existing pool coordinator records the exclusion and selects another
+member. These rejected starts do not consume turn or hourly switch limits;
+ordinary switches retain those limits. Exhaustion reports
+`connected_service_run_model_unavailable` with the requested model. This is an
+unreleased 0.3 source contract, not a change to the predecessor's daemon. Detached
+Codex production reachability remains blocked on its canonical Run auth-service
+refresh hook; isolated rejection/recovery tests do not establish availability.
 The projected `ConnectedAccountUiProjectionEntryV1` contract is also absent from
 that predecessor; its current strict development schema adds the optional
 recovery-credit declaration together with its producer and UI consumer.

@@ -8,22 +8,14 @@ import type {
     EventSubscriptionTargetV1 as ProtocolEventSubscriptionTargetV1,
 } from '@happier-dev/protocol';
 
-import {
-    createPluginEventAutomationSetupResultV1JsonSchema as canonicalCreatePluginEventAutomationSetupResultV1JsonSchema,
-    PluginEventAutomationSetupResultV1Schema as canonicalPluginEventAutomationSetupResultV1Schema,
-} from '@happier-dev/protocol/automations/event-setup-result';
+import { createPluginEventAutomationSetupResultV1JsonSchema as canonicalCreatePluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationSetupResultV1Schema as canonicalPluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import type {
     PluginEventAutomationSetupResultV1,
 } from '@happier-dev/protocol/automations/event-setup-result';
 export type {
     PluginEventAutomationSetupResultV1,
 } from '@happier-dev/protocol/automations/event-setup-result';
-import {
-    PluginEventAutomationHistoryGapResetActionInputV1Schema as canonicalPluginEventAutomationHistoryGapResetActionInputV1Schema,
-    PluginEventAutomationHistoryGapResetActionResultV1Schema as canonicalPluginEventAutomationHistoryGapResetActionResultV1Schema,
-    PluginEventAutomationHistoryGapResetActionInputV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
-    PluginEventAutomationHistoryGapResetActionResultV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
-} from '@happier-dev/protocol/automations/event-history-gap-reset-action';
+import { PluginEventAutomationHistoryGapResetActionInputV1Schema as canonicalPluginEventAutomationHistoryGapResetActionInputV1Schema, PluginEventAutomationHistoryGapResetActionResultV1Schema as canonicalPluginEventAutomationHistoryGapResetActionResultV1Schema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema as canonicalPluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import type {
     PluginEventAutomationHistoryGapResetActionInputV1,
     PluginEventAutomationHistoryGapResetActionResultV1,

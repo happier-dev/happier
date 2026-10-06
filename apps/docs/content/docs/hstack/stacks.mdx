@@ -180,7 +180,7 @@ Notes:
 - Snapshot identity comes from the exact immutable component artifacts, target, server flavor, database provider, and build recipe it contains. Unrelated edits elsewhere in a busy checkout do not invalidate a completed artifact set or prevent it from becoming the latest usable snapshot; a later request can publish newer component artifacts when needed.
 - `hstack stack runtime <name> activate ...` creates a new active runtime snapshot by combining the selected latest artifact(s) with the currently active runtime for unselected components.
 - `hstack stack runtime <name> select` adopts the build authority's already-active snapshot without building, publishing, changing that producer's selection, or changing the consumer's launch mode.
-- Building an artifact alone does **not** change the selected runtime. Selecting or activating a snapshot also does **not** restart a running stack: server and daemon bytes change only after an explicit restart.
+- In 0.3 development, every successful component build publishes a complete snapshot for its target, reusing that target's current unrequested components. Native-target publication advances the producer's current selection; foreign-target publication remains selectable without replacing its native pin. Initialize a target once with `--all` if it has no complete snapshot. The consumer adopts the result through `runtime select`; other consumers use only `select`, with no rebuild. Publication and selection do **not** restart a running stack: server and daemon bytes change only after an explicit restart.
 - `--tauri` remains the legacy local `hstack build` flag. It is not part of named-stack artifact/runtime builds in v1.
 - Runtime snapshots are currently for **named stacks**. Repo-local `yarn tui` / `hstack start` remain source-backed flows.
 - `hstack stack auth <name> login` follows the same mode: if a valid runtime snapshot is active, guided login uses the stack-served runtime UI instead of waiting for Expo.
@@ -322,24 +322,23 @@ node ./apps/stack/scripts/repo_local.mjs stack auth agent-qa-17 -- copy-from <ap
 
 A complete runtime snapshot selects independent web, server, and daemon artifacts. A borrowed-Expo consumer does not build a web artifact by default: server-only requests publish server code/support only, while strict snapshot UI requires an explicit `--web` request. Managed snapshots and support references are dev/QA-only; release and self-host packaging use their existing per-target self-contained builders directly from target-owned component/support inputs and do not consume or flatten a host-target snapshot.
 
-`stack runtime agent-qa-17 select` is the zero-build path: it adopts the authority's active snapshot without changing running processes. If that snapshot already contains the bytes under test, reuse it.
+`stack runtime agent-qa-17 select` is the zero-build path: it adopts the authority's newest complete snapshot for the consumer's execution target without changing running processes. If that snapshot already contains the bytes under test, reuse it. In 0.3 development source, QA runtime placement is explicit per-stack opt-in for fresh stacks: automatic rollout of the producer default is not active until the full remote path is verified. Configure build and QA hosts together on the [dev-targets page](/hstack/dev-targets#choose-where-work-runs). Existing local data stays local; a retained remote server stays on its authoritative data host and fails closed when unavailable. Moving retained local data requires the explicit `dev-targets move-server` handoff described there, not a placement write alone.
 
 When current server or daemon bytes are required, request the narrow build through the remembered consumer. The command resolves the repository authority and joins/reuses a publication already in flight; it does not create a consumer build store or take over the producer's running services:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack build agent-qa-17 --server --daemon --json
-node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 activate --all --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 select --json
 node ./apps/stack/scripts/repo_local.mjs stack info agent-qa-17
 # The TUI shows "pending manual restart" until you press r.
 ```
 
-Use only `--server` or `--daemon` when one component changed. Run one build request and wait for it instead of launching retries or another publisher. `runtime activate --all` composes the latest authority web, server, and daemon artifacts and selects that exact snapshot; selection still cannot restart the consumer.
+Use only `--server` or `--daemon` when one component changed. A successful build returns its complete `snapshotId`; then `select` adopts the newest complete publication. Run one build request and wait for it instead of launching retries or another publisher. Every other consumer uses only `select` to pick up the same fixes. `runtime activate ...` remains an explicit way to recompose stored artifacts without preparing or compiling source; selection still cannot restart the consumer.
 
 For a UI-only controlled-live check, manually reload the browser to receive the producer's current Expo bundle; do not build a web artifact. For explicitly strict snapshot UI, use the same checkout-local launcher:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack build agent-qa-17 --web --json
-node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 activate --all --json
 node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-17 select --json
 ```
 
@@ -347,7 +346,39 @@ Selection remains non-disruptive. Restart the remembered consumer deliberately, 
 `stack info --json` and require `selectedSnapshotId == loadedSnapshotId` before claiming the
 strict UI bytes are loaded.
 
-Each controlled stack still owns its mutable state: ports, server database, CLI home, daemon state, logs, and process lifecycle. Only immutable runtime artifacts are shared. In particular, creating a controlled stack does not copy or share the repository stack's SQLite database.
+By default, each controlled stack owns its mutable state: ports, server database, CLI home, daemon state, logs, and process lifecycle. Creating a stack does not copy or share the repository stack's SQLite database. Sharing development data requires the explicit preset below.
+
+### Share a development database explicitly (0.3 development)
+
+When your QA needs existing development data, keep an independently reloadable QA server and daemon while sharing the development stack's SQLite database and blob roots. This is an opt-in development workflow, not a production deployment recipe. The source stack must use SQLite with its server explicitly placed on a configured remote host. Apply the preset to a fresh QA stack before its first start:
+
+This workflow is not yet live-certified. Before starting, verify that the preset's source env references the running development server's database, not a separate retained database on the same host.
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack new agent-qa-shared --repo=/absolute/path/to/your/dev-checkout --server=happier-server-light --db-provider=sqlite --no-copy-auth --non-interactive
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-shared shared-db <development-stack> --json
+node ./apps/stack/scripts/repo_local.mjs stack env agent-qa-shared set HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>
+```
+
+The preset places the QA server on the database host. That server reads the source stack's existing SQLite URL, at-rest secret, and file roots on the host; no secret is copied into the QA env file. QA has separate ports, runtime/data directories, CLI home, daemon state, logs, and process ownership. Its daemon remains on the VM. QA metrics and automatic migrations are disabled, and Stack skips migration. Do not migrate or restart the development server to recover a QA stack.
+
+All Accounts and their data are in one database, with normal Account access controls unchanged. A new QA Account does not inherit the development Account's connected services: use the development Account when you are authorized to test its connected services. Separate servers still have separate in-memory socket/RPC relays, so database sharing alone does not route live operations to a daemon connected to the other server.
+
+For a macOS ARM64 database host, build only the Darwin server through the normal repository publication flight, then select and start the QA stack:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack build agent-qa-shared --server --target=darwin-arm64 --json
+node ./apps/stack/scripts/repo_local.mjs stack runtime agent-qa-shared select --json
+node ./apps/stack/scripts/repo_local.mjs stack start agent-qa-shared --background --runtime --no-browser
+```
+
+The foreign snapshot needs only a server component; CLI login and the VM daemon use a native daemon snapshot from the same repository authority. No Darwin daemon or web artifact is needed for borrowed Expo. Create a new QA Account in the browser and approve `stack auth agent-qa-shared login --no-open` there, or sign into an explicitly authorized existing Account.
+
+If the development schema advances beyond the loaded QA snapshot, known missing tables or columns report `shared_qa_schema_mismatch` with a reload instruction. Build/select a newer server snapshot and explicitly restart only the QA stack. QA never migrates the shared database. Stop the remembered QA stack when it is idle:
+
+```bash
+node ./apps/stack/scripts/repo_local.mjs stack stop agent-qa-shared --json
+```
 
 ### Default browser QA with the repository Expo server
 

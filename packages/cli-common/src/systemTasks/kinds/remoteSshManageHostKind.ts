@@ -1,10 +1,6 @@
-import {
-  HomeConnectionDescriptorV1Schema,
-  isLoopbackHostname,
-  type HomeConnectionDescriptorV1,
-  type SystemTaskJsonObject,
-  type SystemTaskJsonValue,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { HomeConnectionDescriptorV1, SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { basename, resolve } from 'node:path';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';

@@ -1,4 +1,4 @@
-import { AZ_DEP_ID } from '@happier-dev/protocol/installables';
+import { AZ_DEP_ID } from '@happier-dev/protocol/installables/definitions/az';
 
 import type { Capability } from '../service';
 import { getAzDepStatus } from '../deps/az';

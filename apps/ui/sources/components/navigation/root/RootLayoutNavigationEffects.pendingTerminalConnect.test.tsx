@@ -43,7 +43,8 @@ vi.mock('@/activity/notifications/runtime/useNotificationResponseRouting', () =>
 vi.mock('@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext', () => ({
     isDesktopActivityOverlayWindowContext: () => false,
 }));
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     invokeDesktopHost: vi.fn(),
     isDesktopHost: () => false,
 }));

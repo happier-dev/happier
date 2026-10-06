@@ -245,8 +245,8 @@ describe('workspace sync UI operations', () => {
             },
         });
         const persistedApproval = artifacts.read(conflictRpc.payload.actionReceiptId);
-        expect(persistedApproval).toBeDefined();
-        const persistedBodyEnvelope = decodePlainArtifactStoredContent(persistedApproval!.body);
+        if (typeof persistedApproval?.body !== 'string') throw new Error('Workspace conflict approval body was not persisted');
+        const persistedBodyEnvelope = decodePlainArtifactStoredContent(persistedApproval.body);
         expect(persistedBodyEnvelope).toMatchObject({ body: expect.any(String) });
         if (
             !persistedBodyEnvelope

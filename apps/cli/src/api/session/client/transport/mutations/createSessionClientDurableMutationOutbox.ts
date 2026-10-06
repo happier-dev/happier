@@ -15,14 +15,8 @@ import {
     type SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import type { SessionClientConnectionContractResult } from '../sessionClientConnectionContract';
-import {
-    SessionRuntimeActivityProjectionSchema,
-    SessionRuntimeActivitySnapshotSchema,
-    type ExactSessionTurnEndMutationV1,
-    type SessionRuntimeActivityProjection,
-    type SessionRuntimeActivitySnapshot,
-    type SessionTurnMutationV1,
-} from '@happier-dev/protocol';
+import { SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import type { ExactSessionTurnEndMutationV1, SessionRuntimeActivityProjection, SessionRuntimeActivitySnapshot, SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import {
     resolveSessionClientDurableMutationMaxAttempts,

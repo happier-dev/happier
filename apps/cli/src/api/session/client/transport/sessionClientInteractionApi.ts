@@ -46,24 +46,12 @@ import {
     type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { SessionCatchUpRequest } from '../../sessionChangesSyncOnConnect';
-import {
-    coerceSessionUserPromptV1,
-    SessionInputAdmissionReceiptV1Schema,
-    assertSessionInputAdmissionReceiptForRequest,
-    PENDING_INPUT_PROTOCOL_VERSION_V3,
-    SESSION_INPUT_REQUEST_META_KEY,
-    SESSION_MESSAGE_PROVENANCE_META_KEY,
-    readSessionInputRequest,
-    settleSessionInputRequestV1,
-    settleSessionInputRequestV2,
-    settleSessionMessageProvenanceV1,
-    settleSessionMessageProvenanceV2,
-    SessionBroadcastContainerSchema,
-    withSessionInputAuthority,
-    type SessionInputRequest,
-    type SessionInputAuthority,
-    type SessionInputSettlementValidationV1,
-} from '@happier-dev/protocol';
+import { coerceSessionUserPromptV1 } from '@happier-dev/protocol/sessions/messages/coerceSessionUserPromptV1';
+import { SessionInputAdmissionReceiptV1Schema, assertSessionInputAdmissionReceiptForRequest, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputRequest, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { PENDING_INPUT_PROTOCOL_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { settleSessionInputRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionBroadcastContainerSchema } from '@happier-dev/protocol/updates';
+import type { SessionInputRequest, SessionInputAuthority, SessionInputSettlementValidationV1 } from '@happier-dev/protocol';
 import { buildImmutableSessionInputEqualityEnvelopeV1 } from '@/session/services/sessionInputEqualityEnvelope';
 
 /**

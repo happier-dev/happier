@@ -7,7 +7,8 @@ import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
 import type { ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult } from '@/scm/workspace/workspaceCheckoutRealization';
-import { normalizeSessionHandoffWorkspaceRootPath, type HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
+import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceRootOwnershipHandle, WorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import {
   beginWorkspaceTargetMaterialization,

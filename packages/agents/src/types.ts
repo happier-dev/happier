@@ -1,7 +1,5 @@
 export type { ConnectedServiceId } from '@happier-dev/protocol';
-import {
-    SESSION_PERMISSION_MODES,
-} from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import {
     type ConnectedServiceId,
     type ConnectedServicesProviderConfigSharingModeV1,

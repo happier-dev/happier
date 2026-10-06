@@ -1,15 +1,7 @@
-import {
-  BUILT_IN_ROLES_V1,
-  readSessionRolesV1,
-  readSessionWorkspaceWritesV1,
-  resolveRoleSelectionV1,
-  type AccountSettings,
-  type RoleEngineV1,
-  type RoleArtifactV1,
-  type ResolvedRolesSnapshotV1,
-  type SessionRolePromptContextV1,
-  type V2SessionByIdResponse,
-} from '@happier-dev/protocol';
+import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { readSessionWorkspaceWritesV1, resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { AccountSettings, RoleEngineV1, RoleArtifactV1, ResolvedRolesSnapshotV1, SessionRolePromptContextV1, V2SessionByIdResponse } from '@happier-dev/protocol';
 import type { RoleSourceReader } from './roleSources';
 
 /** One live role resolver for the Session prompt plan, native ceilings and child snapshots. */

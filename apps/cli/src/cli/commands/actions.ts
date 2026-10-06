@@ -1,19 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
-import {
-  ActionDefinitionV1Schema,
-  actionSpecToActionDefinitionV1,
-  compilePluginJsonSchema,
-  ExternalActionRequestIdV1Schema,
-  getActionSpec,
-  isValidPluginJsonSchemaValue,
-  parseQualifiedPluginActionId,
-  SignedRootActionIdSchema,
-  type ActionDefinitionV1,
-  type ActionExecuteFailure,
-  type ActionExecuteResult,
-  type SignedRootActionId,
-} from '@happier-dev/protocol';
+import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionDefinitionV1, ActionExecuteFailure, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
 
 import {
   compileActionCliFields,

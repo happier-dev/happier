@@ -1,13 +1,10 @@
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
-import {
-  buildBackendTargetKey,
-  isLaunchProfileV2,
-  isProfileCompatibleWithAgent,
-  PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
-  resolveBackendProfile,
-  type AIBackendProfile,
-  type LaunchProfileV2,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
+import { isProfileCompatibleWithAgent } from '@happier-dev/protocol/profiles/profileCompatibility';
+import { PROVIDER_MIGRATION_SOURCE_PROFILE_IDS } from '@happier-dev/protocol/profiles/builtInBackendProfiles';
+import { resolveBackendProfile } from '@happier-dev/protocol/profiles/resolveBackendProfile';
+import type { AIBackendProfile, LaunchProfileV2 } from '@happier-dev/protocol';
 import type { CliAiLaunchProfile } from './readProfilesFromAccountSettings';
 
 const REMOVED_LEGACY_PROFILE_ALIASES = new Map<string, string>([

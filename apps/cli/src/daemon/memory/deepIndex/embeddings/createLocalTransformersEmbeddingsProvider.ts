@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { INSTALLABLE_KEYS, type MemoryEmbeddingsLocalTransformersConfig } from '@happier-dev/protocol';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import type { MemoryEmbeddingsLocalTransformersConfig } from '@happier-dev/protocol';
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import {

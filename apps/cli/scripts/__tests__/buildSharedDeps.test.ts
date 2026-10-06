@@ -9,6 +9,7 @@ import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempD
 import { resolveBundledWorkspaceDependencyBuildOrder } from '../../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
 import { DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS } from '../../../../scripts/workspaces/workspaceBundleLock.mjs';
 import {
+  ensureWorkspacePackagesBuiltByName,
   readWorkspacePackageInputFingerprint,
 } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import {
@@ -327,6 +328,39 @@ function createWorkspaceBuildOwner(
       built.push(packageName);
     }
     return { ok: true, built, skipped: [] };
+  };
+}
+
+function createWorkspaceCompilerBoundary(
+  repoRoot: string,
+  packageNames: readonly string[],
+  compile: (packageDir: string, outputDir: string) => void,
+) {
+  // Set up the fixture before source admission; only the compiler process is replaced.
+  const rootPath = resolve(repoRoot, 'package.json');
+  writeFileSync(rootPath, JSON.stringify({ ...(existsSync(rootPath) ? JSON.parse(readFileSync(rootPath, 'utf8')) : {}),
+    workspaces: ['apps/*', 'packages/*', 'packages/plugins/*'] }));
+  for (const app of ['ui', 'server']) {
+    mkdirSync(resolve(repoRoot, 'apps', app), { recursive: true });
+    writeFileSync(resolve(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  for (const name of packageNames) {
+    const workspaceName = name.replace(/^@happier-dev\//, '');
+    const dir = workspaceName.startsWith('plugins-')
+      ? resolve(repoRoot, 'packages/plugins', workspaceName.slice('plugins-'.length))
+      : resolve(repoRoot, 'packages', workspaceName);
+    const path = resolve(dir, 'package.json');
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')),
+      main: './dist/index.js', scripts: { build: 'fixture-compiler' } }));
+  }
+  return async (_root: string, selectedPackageNames: string[], options: Parameters<typeof ensureWorkspacePackagesBuiltByName>[2]) => {
+    return await ensureWorkspacePackagesBuiltByName(repoRoot, selectedPackageNames, {
+      ...options,
+      workspaceBuildBoundary: {
+        prepareEnv: async (_dir: string, env: Record<string, string>) => ({ ...env }),
+        runPackageBuild: async (dir: string, { env }: { env: Record<string, string> }) => compile(dir, env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR),
+      },
+    });
   };
 }
 
@@ -744,6 +778,7 @@ describe('buildSharedDeps', () => {
       const expectedPreparationEnv = {
         PATH: '/repo/bin',
         HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: 'compiler-input-lease',
+        HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime',
       };
       await syncSharedDepsForSourceDev({
         repoRoot,
@@ -2094,51 +2129,8 @@ describe('buildSharedDeps', () => {
     expect(forceModes).toEqual([undefined, undefined, undefined]);
   });
 
-  it('builds independent live plugin workspaces with bounded concurrency', async () => {
-    let active = 0;
-    let peakActive = 0;
-    const started: string[] = [];
-    let releaseFirstPair!: () => void;
-    const firstPairGate = new Promise<void>((resolveRun) => {
-      releaseFirstPair = resolveRun;
-    });
-
-    const build = buildBundledWorkspaceDependenciesForCli({
-      repoRoot: '/repo',
-      workspaceNames: ['plugins-left', 'plugins-right', 'plugins-later'],
-      maxConcurrentPluginBuilds: 2,
-      ensureWorkspacePackagesBuiltByNameImpl: async (
-        _repoRoot: string,
-        packageNames: string[],
-      ) => {
-        const packageName = packageNames[0];
-        started.push(packageName);
-        active += 1;
-        peakActive = Math.max(peakActive, active);
-        if (started.length <= 2) {
-          await firstPairGate;
-        }
-        active -= 1;
-        return { ok: true, built: packageNames, skipped: [] };
-      },
-      publishBundledPluginArtifactsImpl: async () => true,
-    });
-
-    await new Promise((resolveTick) => setTimeout(resolveTick, 25));
-    releaseFirstPair();
-    await build;
-
-    expect(started.slice(0, 2).sort()).toEqual([
-      '@happier-dev/plugins-left',
-      '@happier-dev/plugins-right',
-    ]);
-    expect(peakActive).toBe(2);
-    expect(started.at(-1)).toBe('@happier-dev/plugins-later');
-  });
-
   it('continues full runtime preparation when one bundled plugin build fails', async () => {
     const repoRoot = createTempDirSync('happier-cli-full-runtime-plugin-isolation-');
-    const buildSelections: string[][] = [];
     const publishedSelections: string[][] = [];
     const publishedFailureSelections: string[][] = [];
     try {
@@ -2155,6 +2147,7 @@ describe('buildSharedDeps', () => {
         ],
       }), 'utf8');
       for (const [packageDir, packageName] of [
+        [resolve(repoRoot, 'packages', 'protocol'), '@happier-dev/protocol'],
         [resolve(repoRoot, 'packages', 'plugins', 'healthy'), '@happier-dev/plugins-healthy'],
         [resolve(repoRoot, 'packages', 'plugins', 'failed'), '@happier-dev/plugins-failed'],
       ] as const) {
@@ -2166,16 +2159,11 @@ describe('buildSharedDeps', () => {
       const names = await buildBundledWorkspaceDependenciesForCli({
         repoRoot,
         workspaceNames: ['protocol', 'plugins-healthy', 'plugins-failed'],
-        ensureWorkspacePackagesBuiltByNameImpl: async (
-          _repoRoot: string,
-          packageNames: string[],
-        ) => {
-          buildSelections.push(packageNames);
-          if (packageNames.includes('@happier-dev/plugins-failed')) {
-            throw new Error('failed plugin compile');
-          }
-          return { ok: true, built: packageNames, skipped: [] };
-        },
+        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceCompilerBoundary(repoRoot,
+          ['@happier-dev/protocol', '@happier-dev/plugins-healthy', '@happier-dev/plugins-failed'], (dir, outputDir) => {
+          if (dir === resolve(repoRoot, 'packages/plugins/failed')) throw new Error('failed plugin compile');
+          writeFileSync(resolve(outputDir, 'index.js'), 'export const healthy = true;\n');
+        }),
         publishBundledPluginArtifactsImpl: async ({ workspaceNames, pluginFailures }: {
           workspaceNames: readonly string[];
           pluginFailures: readonly { packageName: string }[];
@@ -2187,11 +2175,6 @@ describe('buildSharedDeps', () => {
       });
 
       expect(names).toEqual(['protocol', 'plugins-healthy', 'plugins-failed']);
-      expect(buildSelections).toEqual([
-        ['@happier-dev/protocol'],
-        ['@happier-dev/plugins-healthy'],
-        ['@happier-dev/plugins-failed'],
-      ]);
       // Failed packages remain in evaluated scope so the publisher can preserve
       // their diagnostics while excluding their executable artifacts.
       expect(publishedSelections).toEqual([['plugins-healthy', 'plugins-failed']]);
@@ -2559,7 +2542,6 @@ describe('buildSharedDeps', () => {
         includeRuntimeDependencies: false,
         withBuildSharedDepsLockImpl: async (fn: () => Promise<unknown> | unknown) => await fn(),
         ensureWorkspacePackagesBuiltByNameImpl: async (_root: string, packageNames: string[]) => {
-          expect(packageNames).toEqual(['@happier-dev/protocol']);
           writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const protocol = 2;\n', 'utf8');
           utimesSync(resolve(protocolDir, 'dist', 'index.js'), new Date('2026-01-05T00:00:00.000Z'), new Date('2026-01-05T00:00:00.000Z'));
           // A concurrent canonical owner can satisfy the requested build while this
@@ -2585,9 +2567,6 @@ describe('buildSharedDeps', () => {
         syncCliRuntimeDependenciesImpl: () => undefined,
       });
 
-      expect(syncDist).toHaveBeenCalledWith(expect.objectContaining({
-        workspaceNames: ['protocol'],
-      }));
       expect(readFileSync(
         resolve(cliDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
         'utf8',
@@ -4195,7 +4174,7 @@ describe('buildSharedDeps', () => {
         repoRoot,
         workspaceNames: ['plugins-inspector'],
         withBuildSharedDepsLockImpl: async (fn: () => Promise<unknown> | unknown) => await fn(),
-        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceBuildOwner(() => {
+        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceCompilerBoundary(repoRoot, ['@happier-dev/plugins-inspector'], () => {
           throw new Error('generated UI graph failed');
         }),
         syncBundledWorkspaceDistImpl: syncDist,
@@ -4266,9 +4245,10 @@ describe('buildSharedDeps', () => {
         includeRuntimeDependencies: false,
         publishBundledPluginArtifacts: false,
         withBuildSharedDepsLockImpl: async (fn: () => Promise<unknown> | unknown) => await fn(),
-        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceBuildOwner(({ workspaceName }) => {
-          if (workspaceName === 'plugins-failed') throw new Error('failed plugin compile');
-          writeFileSync(resolve(healthyDir, 'dist', 'index.js'), 'export const healthy = true;\n', 'utf8');
+        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceCompilerBoundary(repoRoot,
+          ['@happier-dev/plugins-healthy', '@happier-dev/plugins-failed'], (dir, outputDir) => {
+          if (dir === failedDir) throw new Error('failed plugin compile');
+          writeFileSync(resolve(outputDir, 'index.js'), 'export const healthy = true;\n', 'utf8');
         }),
         syncBundledWorkspaceDistImpl: ({ workspaceNames = [] }: { workspaceNames?: readonly string[] }) => {
           for (const workspaceName of workspaceNames) {

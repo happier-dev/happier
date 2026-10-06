@@ -4,7 +4,7 @@ import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protoco
 
 import { getPreferredLanguage, t } from '@/text';
 
-import { PoolMultiSelectField } from './PoolMultiSelectField';
+import { MultiSelectField } from '@/components/ui/forms/dropdown/MultiSelectField';
 
 export type PoolQuotaLimitCandidate = Readonly<{
     providerLimitId: string;
@@ -92,7 +92,7 @@ export const PoolQuotaLimitsSelectField = React.memo(function PoolQuotaLimitsSel
         : [ALL_LIMITS_ID];
 
     return (
-        <PoolMultiSelectField
+        <MultiSelectField
             candidates={candidates}
             selectedIds={selectedIds}
             onCommit={(ids) => props.onCommit(ids.includes(ALL_LIMITS_ID)

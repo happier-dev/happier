@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../../json/storedReadSchema.js';
 import { SessionBoardLayoutV1Schema } from '../../board/layout.js';
 import { SessionSurfaceItemV1Schema } from '../../board/item.js';
 
@@ -137,6 +138,12 @@ export const SESSION_SYSTEM_RECORD_CATALOG = defineSessionSystemRecordCatalog({
 export function getSessionSystemRecordPayloadSchema(namespace: string, kind: string): z.ZodType<unknown> | null {
   const catalog: SessionSystemRecordCatalog = SESSION_SYSTEM_RECORD_CATALOG;
   return catalog[namespace]?.kinds[kind]?.payloadSchema ?? null;
+}
+
+/** Stored payloads normalize from the same registered contract as strict write admission. */
+export function getSessionSystemRecordStoredPayloadSchema(namespace: string, kind: string): z.ZodType<unknown> | null {
+  const schema = getSessionSystemRecordPayloadSchema(namespace, kind);
+  return schema ? createStoredReadSchema(schema) : null;
 }
 
 export function getSessionSystemRecordKindPolicy(namespace: string, kind: string): SessionSystemRecordKindPolicy | null {

@@ -1,49 +1,8 @@
-import {
-  areWorkspaceSyncRelationshipDefinitionsEqual,
-  deriveWorkspaceSyncTopology,
-  deriveWorkspaceSyncConflictOperationId,
-  HandoffTargetReplacementApprovalV1Schema,
-  HandoffTargetReplacementPreflightResultV1Schema,
-  HandoffTargetReplacementPreflightV1Schema,
-  ReadWorkspaceSyncFileResultV1Schema,
-  WorkspaceSyncEntryExpectationV1Schema,
-  WorkspaceSyncTargetEntryObserveV1Schema,
-  WorkspaceSyncTargetBootstrapPrepareResultV1Schema,
-  WorkspaceSyncTargetBootstrapPrepareV1Schema,
-  WorkspaceSyncTargetBootstrapReleaseResultV1Schema,
-  WorkspaceSyncTargetBootstrapReleaseV1Schema,
-  WorkspaceSyncTargetConflictStageV1Schema,
-  WorkspaceSyncConflictCaptureReleaseV1Schema,
-  WorkspaceSyncTargetConflictApplyV1Schema,
-  WorkspaceSyncTargetConflictApplyResultV1Schema,
-  WorkspaceSyncTargetConflictRecoverV1Schema,
-  WorkspaceSyncTargetConflictRecoverResultV1Schema,
-  WorkspaceSyncTargetFileReadV1Schema,
-  resolveWorkspaceSyncRelationshipEndpointRoles,
-  resolveWorkspaceSyncRelationshipTransferDirection,
-  type ReadWorkspaceSyncFileResultV1,
-  type WorkspaceSyncEntryExpectationV1,
-  type WorkspaceSyncTargetEntryObserveV1,
-  type WorkspaceSyncConflictResolveActionInputV1,
-  type HandoffTargetReplacementPreflightResultV1,
-  type HandoffTargetReplacementPreflightV1,
-  type WorkspaceContentPolicyV1,
-  type WorkspaceRefV1,
-  type WorkspaceSyncCopyOnceV1,
-  type WorkspaceSyncRelationshipV1,
-  type WorkspaceSyncTargetBootstrapPrepareResultV1,
-  type WorkspaceSyncTargetBootstrapPrepareV1,
-  type WorkspaceSyncTargetBootstrapReleaseResultV1,
-  type WorkspaceSyncTargetBootstrapReleaseV1,
-  type WorkspaceSyncTargetConflictStageV1,
-  type WorkspaceSyncConflictCaptureReleaseV1,
-  type WorkspaceSyncTargetConflictApplyV1,
-  type WorkspaceSyncTargetConflictApplyResultV1,
-  type WorkspaceSyncTargetConflictRecoverV1,
-  type WorkspaceSyncTargetConflictRecoverResultV1,
-  type WorkspaceSyncTargetFileReadV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { areWorkspaceSyncRelationshipDefinitionsEqual, deriveWorkspaceSyncConflictOperationId, HandoffTargetReplacementPreflightResultV1Schema, HandoffTargetReplacementPreflightV1Schema, ReadWorkspaceSyncFileResultV1Schema, WorkspaceSyncEntryExpectationV1Schema, WorkspaceSyncTargetEntryObserveV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapReleaseResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema, WorkspaceSyncTargetConflictStageV1Schema, WorkspaceSyncConflictCaptureReleaseV1Schema, WorkspaceSyncTargetConflictApplyV1Schema, WorkspaceSyncTargetConflictApplyResultV1Schema, WorkspaceSyncTargetConflictRecoverV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema, WorkspaceSyncTargetFileReadV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncRelationshipEndpointRoles, resolveWorkspaceSyncRelationshipTransferDirection } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { HandoffTargetReplacementApprovalV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
+import type { ReadWorkspaceSyncFileResultV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncTargetEntryObserveV1, WorkspaceSyncConflictResolveActionInputV1, HandoffTargetReplacementPreflightResultV1, HandoffTargetReplacementPreflightV1, WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncTargetBootstrapPrepareResultV1, WorkspaceSyncTargetBootstrapPrepareV1, WorkspaceSyncTargetBootstrapReleaseResultV1, WorkspaceSyncTargetBootstrapReleaseV1, WorkspaceSyncTargetConflictStageV1, WorkspaceSyncConflictCaptureReleaseV1, WorkspaceSyncTargetConflictApplyV1, WorkspaceSyncTargetConflictApplyResultV1, WorkspaceSyncTargetConflictRecoverV1, WorkspaceSyncTargetConflictRecoverResultV1, WorkspaceSyncTargetFileReadV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { lstat, readdir, realpath, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { basename, dirname, join, normalize, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';

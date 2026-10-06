@@ -10,17 +10,18 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { findGestureByKind } from '@/dev/testkit/mocks/gestureHandler';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { SESSION_LIST_ROW_HEIGHT_DEFAULT } from './sessionListRowHeights';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { applySessionOrganizationLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
-import type { SessionListFilterEditorProps } from './search/SessionListFilterEditor';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -614,7 +615,10 @@ async function renderSessionsList(props: React.ComponentProps<typeof import('./S
     });
     NativeSessionsListView = (await import('./SessionsList')).SessionsListView;
     useFixtureFolderSupport = (await import('@/sync/domains/session/listing/useSessionListQuerySourceState')).useSessionListFeatureHomeSupportByServerId;
-    return renderScreen(<SessionsList {...props} />);
+    const screen = await renderScreen(<SessionsList {...props} />);
+    // Resolve the fixture's async secure-storage reads before identity baselines are captured.
+    await flushHookEffects();
+    return screen;
 }
 
 async function renderSessionsListWithSurfaceOwnership(surfaceOwnership: Readonly<{
@@ -652,10 +656,19 @@ function findFirstDropdownMenuItems(screen: Awaited<ReturnType<typeof renderSess
     return [];
 }
 
-function findFilterEditor(screen: Awaited<ReturnType<typeof renderSessionsList>>): SessionListFilterEditorProps {
-    const control = screen.root.findAll((node) => typeof node.props.editor === 'object'
-        && node.props.editor !== null && Array.isArray(node.props.editor.tags))[0];
-    return expectPresent(control?.props.editor, 'expected canonical filter editor');
+async function selectHeaderTagFilter(
+    screen: Awaited<ReturnType<typeof renderSessionsList>>,
+    label: string,
+) {
+    const control = screen.root.find((node) => typeof node.props.editor?.updateFilters === 'function');
+    const { editor } = control.props as import('./search/SessionListFilterEditorControl').SessionListFilterEditorControlProps;
+    const tag = expectPresent(editor.tags.find((option) => option.label === label), 'expected qualified tag filter option');
+    // The phone modal is a presentation boundary; exercise its canonical editor callback and
+    // retained filter owner instead of restoring the retired standalone tag dropdown.
+    await act(async () => editor.updateFilters({
+        ...editor.filters,
+        tagIds: [{ serverId: tag.serverId, tagId: tag.tagId }],
+    }));
 }
 
 function findRecordedGestureDetectors(
@@ -877,6 +890,18 @@ describe('SessionsList (native virtualization)', () => {
         );
         expect(trigger.props.accessibilityRole).toBe('button');
         expect(trigger.props.accessibilityLabel).toBe('sessionsList.filtersMyWork');
+    });
+
+    it('labels the filter trigger with the legacy corpus when its Home lacks structural listing support', async () => {
+        filteredListingEnabled = true;
+
+        const screen = await renderSessionsList();
+        const trigger = expectPresent(
+            screen.findByTestId('session-list-filter-trigger'),
+            'expected legacy filter editor trigger',
+        );
+        expect(trigger.props.accessibilityRole).toBe('button');
+        expect(trigger.props.accessibilityLabel).toBe('sessionsList.filtersLegacyOwnerDirect');
     });
 
     it('keeps the header search input open with text and filters visible sessions', async () => {
@@ -1276,12 +1301,7 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        const editor = findFilterEditor(screen);
-        const importantTag = expectPresent(editor.tags.find((tag) => tag.label === 'important'), 'expected qualified important tag');
-
-        await act(async () => {
-            editor.updateFilters({ ...editor.filters, tagIds: [{ serverId: importantTag.serverId, tagId: importantTag.tagId }] });
-        });
+        await selectHeaderTagFilter(screen, 'important');
 
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
@@ -1290,12 +1310,7 @@ describe('SessionsList (native virtualization)', () => {
     it('retains a selected tag through a temporary missing organization projection', async () => {
         sessionTagsV1 = { 'srv_server_a:sess_a': ['important'], 'srv_server_a:sess_b': ['later'] };
         const screen = await renderSessionsList();
-        const editor = findFilterEditor(screen);
-        const importantTag = expectPresent(editor.tags.find((tag) => tag.label === 'important'), 'expected qualified important tag');
-
-        await act(async () => {
-            editor.updateFilters({ ...editor.filters, tagIds: [{ serverId: importantTag.serverId, tagId: importantTag.tagId }] });
-        });
+        await selectHeaderTagFilter(screen, 'important');
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
 
         // A loading/offline projection may temporarily have no known tags. That
@@ -1567,7 +1582,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(virtualizedListState.current?.props?.extraData?.sessionListIdentityDisplay).toBe('none');
     });
 
-    it('emits one bounded semantic status-demand batch without invalidating rows on a native viewability change', async () => {
+    it('emits one bounded semantic status-demand batch and projects native viewability to row subscription inputs', async () => {
         nativeBoundary.platformOs = 'ios';
         const header = expectPresent(
             mockVisibleSessionListViewData.find((item) => item.type === 'header'),
@@ -1661,8 +1676,16 @@ describe('SessionsList (native virtualization)', () => {
             expect(visibleDemand.entries).toHaveLength(13);
             expect(visibleDemand.entries.every((entry) => entry.demand === 'visible')).toBe(true);
             const nextExtraData = virtualizedListState.current?.props?.extraData;
-            expect(Object.keys(initialExtraData).filter((key) => !Object.is(initialExtraData[key], nextExtraData[key]))).toEqual(['viewableSessionRowKeys']);
-            expect(nextExtraData.viewableSessionRowKeys.size).toBe(13);
+            const changedKeys = Object.keys(initialExtraData ?? {}).filter((key) =>
+                !Object.is(initialExtraData[key], nextExtraData?.[key]));
+            const changedAudienceInputs = Object.keys(initialExtraData?.audience ?? {}).filter((key) =>
+                !Object.is(initialExtraData.audience[key], nextExtraData?.audience?.[key]));
+            // Mounted Run rows consume this exact viewport set to retire offscreen subscriptions.
+            // The global row input must change; every unrelated row input must stay stable.
+            expect(changedKeys, `changed audience inputs: ${changedAudienceInputs.join(', ')}`).toEqual(['viewableSessionRowKeys']);
+            expect(nextExtraData.viewableSessionRowKeys).toEqual(new Set(
+                profiledSessions.slice(75, 88).map((session) => buildSessionListServerScopedRowKey('srv_server_a', session.id)),
+            ));
             expect(virtualizedListState.current?.props?.data).toBe(initialData);
             const events = syncPerformanceTelemetry.snapshot().events;
             expect(events.find((event) => event.name === 'ui.sessionsList.viewableRows.changed')?.fields).toEqual(expect.objectContaining({
@@ -1738,7 +1761,12 @@ describe('SessionsList (native virtualization)', () => {
         await screen.update(<SessionsList />);
 
         expect(virtualizedListState.current?.props?.data).toBe(initialData);
-        expect(virtualizedListState.current?.props?.extraData).toBe(initialExtraData);
+        const updatedExtraData = virtualizedListState.current?.props?.extraData;
+        const changedInputs = Object.keys(initialExtraData ?? {}).filter((key) =>
+            !Object.is(initialExtraData[key], updatedExtraData?.[key]));
+        const changedAudienceInputs = Object.keys(initialExtraData?.audience ?? {}).filter((key) =>
+            !Object.is(initialExtraData.audience[key], updatedExtraData?.audience?.[key]));
+        expect(updatedExtraData, `changed row inputs: ${changedInputs.join(', ')}; audience: ${changedAudienceInputs.join(', ')}`).toBe(initialExtraData);
     });
 
     it('keeps row move action props stable when an equivalent session-list refresh only replaces data objects', async () => {

@@ -1,8 +1,4 @@
-import {
-    AutomationEventAdmitResultV1Schema,
-    AutomationEventSourcesListResultV1Schema,
-    isAutomationEventSourcesListPageProgressingV1,
-} from '@happier-dev/protocol/automations/event';
+import { AutomationEventAdmitResultV1Schema, AutomationEventSourcesListResultV1Schema, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import type { PluginActionInputById, PluginActionResultById } from './actions/index.js';
 import type { JsonValue, PluginContributionRef } from './identity.js';
 import type { PluginInvocationContext } from './invocation.js';

@@ -8,9 +8,18 @@ import {
 } from './sessionSystemRecordRoutes.js';
 import { FeatureGatesSchema } from '../../../features/payload/featureGatesSchema.js';
 import { describe, expect, it } from 'vitest';
-import { getSessionSystemRecordKindPolicy, getSessionSystemRecordPayloadSchema } from './sessionSystemRecordCatalog.js';
+import { getSessionSystemRecordKindPolicy, getSessionSystemRecordPayloadSchema, getSessionSystemRecordStoredPayloadSchema } from './sessionSystemRecordCatalog.js';
 
 describe('surface host records', () => {
+  it('derives stored payload readers from the registered strict write contract', () => {
+    const stored = { v: 1, tabs: [{ id: 'overview', title: 'Overview', extra: true,
+      items: [{ itemId: 'note', width: 'wide', extra: true }] }], extra: true };
+    expect(getSessionSystemRecordStoredPayloadSchema('surface', 'layout.v1')?.parse(stored)).toEqual({ v: 1,
+      tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'note', width: 'wide' }] }] });
+    expect(getSessionSystemRecordPayloadSchema('surface', 'layout.v1')?.safeParse(stored).success).toBe(false);
+    expect(getSessionSystemRecordStoredPayloadSchema('surface', 'layout.v1')?.safeParse({ ...stored, tabs: null }).success).toBe(false);
+    expect(getSessionSystemRecordStoredPayloadSchema('surface', 'unknown')).toBeNull();
+  });
   it('keeps every surface shape out of predecessor routes and serializers', () => {
     const surfaceRecord = {
       id: 'surface-layout',

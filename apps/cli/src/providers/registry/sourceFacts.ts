@@ -1,4 +1,4 @@
-import { ProviderEndpointTemplateV1Schema } from '@happier-dev/protocol';
+import { ProviderEndpointTemplateV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 import type { ResolvedProviderConnectionRecord } from './types';
 

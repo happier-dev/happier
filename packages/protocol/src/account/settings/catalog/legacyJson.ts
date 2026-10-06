@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
+import { defineStoredReadProjection } from '../../../json/storedReadSchema.js';
 import {
   ACCOUNT_SETTING_MAX_COLLECTION_ENTRIES,
   ACCOUNT_SETTING_MAX_NESTING_DEPTH,
@@ -41,12 +42,16 @@ function createBoundedLegacyJsonValueSchema(depthRemaining: number): z.ZodType<B
 }
 
 /**
- * Compatibility-only JSON carrier for retained entity-shaped Account roots. It is bounded and
- * preserves an accepted value exactly; it never interprets a future or malformed provider shape
+ * Compatibility-only JSON carrier for retained entity-shaped Account roots. New writes are bounded;
+ * stored reads preserve valid JSON without those budgets. It never interprets a future or malformed provider shape
  * as the current provider contract.
  */
-export const BoundedLegacyJsonValueSchema = createBoundedLegacyJsonValueSchema(
-  ACCOUNT_SETTING_MAX_NESTING_DEPTH,
+export const BoundedLegacyJsonValueSchema = defineStoredReadProjection(
+  createBoundedLegacyJsonValueSchema(ACCOUNT_SETTING_MAX_NESTING_DEPTH),
+  // Legacy readers historically receive their own mutable parsed copy. Strict
+  // JSON validates unsafe structures first; Zod's JSON parser retains that copy
+  // contract rather than exposing StrictJsonValueSchema's frozen snapshot.
+  () => StrictJsonValueSchema.pipe(z.json()),
 );
 
 /**

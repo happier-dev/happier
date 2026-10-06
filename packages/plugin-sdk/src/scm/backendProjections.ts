@@ -1,13 +1,8 @@
-import {
-    ScmBackendCapabilitiesSchema as canonicalScmBackendCapabilitiesSchema,
-    ScmBackendContributionSchema as canonicalScmBackendContributionSchema,
-    createScmCapabilitiesFromBackendCapabilities as canonicalCreateScmCapabilitiesFromBackendCapabilities,
-    mapGitScmErrorCode as canonicalMapGitScmErrorCode,
-    mapSaplingScmErrorCode as canonicalMapSaplingScmErrorCode,
-    supportedCapability as canonicalSupportedCapability,
-    unsupportedCapability as canonicalUnsupportedCapability,
-    resolveScmBackendCapabilities as canonicalResolveScmBackendCapabilities,
-} from '@happier-dev/protocol/scm';
+import { ScmBackendCapabilitiesSchema as canonicalScmBackendCapabilitiesSchema, supportedCapability as canonicalSupportedCapability, unsupportedCapability as canonicalUnsupportedCapability } from '@happier-dev/protocol/scm/backendCapabilities';
+import { ScmBackendContributionSchema as canonicalScmBackendContributionSchema } from '@happier-dev/protocol/plugins/contributions/scmBackends';
+import { createScmCapabilitiesFromBackendCapabilities as canonicalCreateScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import { mapGitScmErrorCode as canonicalMapGitScmErrorCode, mapSaplingScmErrorCode as canonicalMapSaplingScmErrorCode } from '@happier-dev/protocol/scm';
+import { resolveScmBackendCapabilities as canonicalResolveScmBackendCapabilities } from '@happier-dev/protocol/scm/resolveScmBackendCapabilities';
 
 import type {
     ScmBackendCapabilities,

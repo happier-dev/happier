@@ -1,12 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import {
-  AcpConfigOptionOverridesV1Schema,
-  readNonBlankOpaqueIdentifier,
-  readRuntimeDescriptorV1,
-  SessionMcpSelectionV1Schema,
-  SessionModelSelectionV1Schema,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';

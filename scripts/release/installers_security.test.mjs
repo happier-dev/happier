@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,3 +76,64 @@ test('release-owned minisign public key exists', async () => {
   assert.match(publicKey, /minisign public key/i);
   assert.match(publicKey, /^RWQ/m);
 });
+
+for (const powerShell of ['powershell.exe', 'pwsh']) {
+test(`install.ps1 bootstraps the native minisign executable without winget under ${powerShell}`, {
+  skip: process.platform !== 'win32' && 'Requires Windows executable and PowerShell boundaries',
+}, async (t) => {
+  const raw = (await readFile(installPs1Path, 'utf8')).replaceAll('\r\n', '\n');
+  const functions = ['Resolve-MinisignExecutablePath', 'Invoke-NativeCommandCapturingOutput',
+    'Test-InstallerAnimationDisabled', 'Test-InstallerTransientWebException', 'Invoke-InstallerWebRequestWithRetry', 'Ensure-Minisign'].map((name) => {
+    const source = raw.match(new RegExp(`function ${name}\\s*\\{[\\s\\S]*?\\n\\}(?=\\n\\nfunction )`));
+    assert.ok(source, `Missing installer function ${name}`);
+    return source[0];
+  });
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-minisign-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const fixtureSource = join(scratch, 'Fixture.cs');
+  await writeFile(fixtureSource, 'class Fixture { static int Main(string[] args) { return args.Length == 1 && args[0] == "-v" ? 0 : 17; } }');
+  const binary = join(scratch, 'minisign.exe');
+  execFileSync(join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    ['/nologo', '/target:exe', `/out:${binary}`, fixtureSource], { encoding: 'utf8' });
+  const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+  const script = join(scratch, 'exercise.ps1');
+  const hash = raw.match(/\$expectedSha = "([a-f0-9]{64})"/)[1];
+  await writeFile(script, [
+    "$ErrorActionPreference = 'Stop'", "$ProgressPreference = 'SilentlyContinue'",
+    `$fixtureRoot = ${quote(scratch)}`,
+    '$env:PATH = "$env:SystemRoot\\System32;$env:SystemRoot"',
+    '$env:LOCALAPPDATA = $fixtureRoot', '$env:HAPPIER_NO_ANIMATION = "1"',
+    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    '$archiveRoot = Join-Path $fixtureRoot "archive"',
+    // Both directories model the vendor archive. Native execution is an OS
+    // boundary; the fixture verifies selection and successful version probing.
+    'foreach ($arch in @("aarch64", "x86_64")) {',
+    '  $dir = Join-Path $archiveRoot ("minisign-win64\\" + $arch)',
+    '  [IO.Directory]::CreateDirectory($dir) | Out-Null',
+    `  [IO.File]::Copy(${quote(binary)}, (Join-Path $dir 'minisign.exe'))`, '}',
+    '$fixtureZip = Join-Path $fixtureRoot "fixture.zip"',
+    '[IO.Compression.ZipFile]::CreateFromDirectory($archiveRoot, $fixtureZip)',
+    // Network/download bytes and filesystem visibility are genuine system
+    // boundaries. Hash the real vendor archive separately in live validation;
+    // here the fake network artifact has the pinned checksum at that boundary.
+    'function Invoke-WebRequest { param($Uri, $OutFile, [switch] $UseBasicParsing, $Headers); [IO.File]::Copy($fixtureZip, $OutFile, $true) }',
+    `function Get-FileHash { param($Path, $Algorithm); return @{ Hash = '${hash}' } }`,
+    `function Test-Path {
+      param($Path, $LiteralPath, $PathType)
+      if ($LiteralPath) { $Path = $LiteralPath }
+      if ($Path -like '*minisign.exe' -and -not $Path.StartsWith($fixtureRoot)) { return $false }
+      if ($Path -like '*WinGet*') { return $false }
+      if ($PathType) { return Microsoft.PowerShell.Management\\Test-Path -LiteralPath $Path -PathType $PathType }
+      return Microsoft.PowerShell.Management\\Test-Path -LiteralPath $Path
+    }`,
+    'function winget { throw "Bundled minisign must work without installing a system package" }',
+    ...functions,
+    '$selected = Ensure-Minisign -TempRoot $fixtureRoot',
+    '$arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -eq "Arm64") { "aarch64" } else { "x86_64" }',
+    '$expected = Join-Path $fixtureRoot ("minisign-extract\\minisign-win64\\" + $arch + "\\minisign.exe")',
+    'if ($selected -ne $expected) { throw ("Wrong minisign selected: " + $selected) }',
+    'Write-Output "native-minisign-ready"',
+  ].join('\n'));
+  assert.match(execFileSync(powerShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { encoding: 'utf8' }), /native-minisign-ready/);
+});
+}

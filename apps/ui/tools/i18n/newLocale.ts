@@ -129,7 +129,7 @@ function toLocaleModule(translated: string, locale: string, modules: readonly st
         output = `import type { TranslationStructure } from "../_types";\n\n${output}`;
     }
 
-    const exportAnchor = new RegExp(`export const ${SOURCE_LOCALE} = \\{`);
+    const exportAnchor = new RegExp(`export const ${SOURCE_LOCALE}(?:: TranslationStructure)? = \\{`);
     if (!exportAnchor.test(output)) {
         throw new Error(`anchor \`export const ${SOURCE_LOCALE} = {\` not found — en.ts changed shape`);
     }

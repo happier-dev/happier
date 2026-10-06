@@ -1,6 +1,7 @@
 export * from './Action.js';
 export * from './Button.js';
 export * from './Collection.js';
+export type { CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest } from '../presentation/collection/collectionVirtualizer.js';
 export * from './Content.js';
 export { Chart, DataRows, DataTable, Metric, type ChartProps, type DataRowsProps, type MetricProps } from './Data.js';
 export {

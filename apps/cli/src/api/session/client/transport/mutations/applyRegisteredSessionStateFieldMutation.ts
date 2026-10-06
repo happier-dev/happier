@@ -2,14 +2,11 @@ import {
     clearSessionStateFieldFromMetadata,
     writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    SessionRoleIdV1Schema,
-    SessionRoleConfigurationV1Schema,
-    SessionRunnerRuntimeStateV1Schema,
-    SessionStateUsageLimitRecoveryValueSchema,
-    SessionStateWorkStateValueSchema,
-} from '@happier-dev/protocol';
-import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions';
+import { SessionRoleIdV1Schema, SessionRoleConfigurationV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 
 import type { Metadata } from '@/api/types';
 import { mergeUsageLimitRecoveryFieldIntoMetadata } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryFieldIntoMetadata';

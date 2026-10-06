@@ -1,6 +1,6 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 
-import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol';
+import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import { createDaemonSessionClientDurableMutationOutbox } from './createDaemonSessionClientDurableMutationOutbox';
 import { createRuntimeSessionClientDurableMutationOutbox } from './createRuntimeSessionClientDurableMutationOutbox';

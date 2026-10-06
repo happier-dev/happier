@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { t } from '@/text';
 
 import {
   indexWorkflowFlowRunStates,
@@ -38,6 +39,14 @@ function definition(blocks: WorkflowDefinitionV1['blocks']): WorkflowDefinitionV
 }
 
 describe('definition flow projection', () => {
+  it('uses catalog-declared labels without inferring them from prompts or changing structure', () => {
+    const source = definition([step('ask', 'An entire authored prompt'), step('other')]);
+    const projection = projectWorkflowFlow(source, {}, { ask: 'Ask' });
+    expect(projection.nodesById.get('ask')?.label).toBe('Ask');
+    expect(projection.nodesById.get('other')?.label).toBe(t('workflows.editor.addStep'));
+    expect(projection.rootNodeIds).toEqual(['ask', 'other']);
+    expect(source.blocks[0]).toEqual(step('ask', 'An entire authored prompt'));
+  });
   it('keeps Action, Workflow and Wait leaves in authored order and targets their owning editor', () => {
     const projection = projectWorkflowFlow(definition([
       { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {} },
@@ -80,13 +89,22 @@ describe('definition flow projection', () => {
     expect(projection.nodesById.get('implement')).toMatchObject({ ordinal: 2, depth: 0, parentNodeId: null });
   });
 
-  it('derives step labels from the first nonempty prompt line without a persisted display field', () => {
+  it('names agent nodes by their kind without clipping authored prompt content into titles', () => {
     const projection = projectWorkflowFlow(definition([
       step('a', '\n  Analyze the repository  \nthen report'),
       step('b', 'Implement the safe plan'),
     ]));
-    expect(projection.nodesById.get('a')?.label).toBe('Analyze the repository');
-    expect(projection.nodesById.get('b')?.label).toBe('Implement the safe plan');
+    expect(projection.nodesById.get('a')?.label).toBe(t('workflows.editor.addStep'));
+    expect(projection.nodesById.get('b')?.label).toBe(t('workflows.editor.addStep'));
+  });
+
+  it('uses the document vocabulary for conditional and repeating containers', () => {
+    const projection = projectWorkflowFlow(definition([
+      { kind: 'loop', id: 'loop-opaque', body: [], repetition: { kind: 'count', count: { kind: 'literal', value: 2 } } },
+      { kind: 'if', id: 'condition-opaque', when: { kind: 'exists', value: { kind: 'literal', value: true } }, then: [], otherwise: [] },
+    ]));
+    expect(projection.nodesById.get('loop-opaque')?.label).toBe(t('workflows.editor.addLoop'));
+    expect(projection.nodesById.get('condition-opaque')?.label).toBe(t('workflows.editor.addIf'));
   });
 
   it('uses localized structural labels with position for unnamed containers and branches', () => {

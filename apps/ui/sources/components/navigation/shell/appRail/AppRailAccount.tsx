@@ -30,14 +30,16 @@ type AccountIdentity =
  * to the Home's own sign-in service (`state.accountService`, the popover's owner) does the mark stand
  * for "Link to {service}" instead.
  */
-export const AppRailAccount = React.memo(function AppRailAccount() {
+export const AppRailAccount = React.memo(function AppRailAccount(props: Readonly<{
+    renderTrigger?: (state: ConnectionStatusTriggerState) => React.ReactNode;
+}>) {
     const renderTrigger = React.useCallback(
         (state: ConnectionStatusTriggerState) => <AppRailAccountTrigger state={state} />,
         [],
     );
 
     return (
-        <ConnectionStatusControl variant="sidebar" popoverPlacement="right" renderTrigger={renderTrigger} />
+        <ConnectionStatusControl variant="sidebar" popoverPlacement="right" renderTrigger={props.renderTrigger ?? renderTrigger} />
     );
 });
 

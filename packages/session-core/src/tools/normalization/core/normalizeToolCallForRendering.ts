@@ -1,5 +1,5 @@
 import type { ToolCall } from "../../../messages/messageTypes.js";
-import { maybeParseJson } from '@happier-dev/protocol';
+import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { normalizeToolInputForRendering } from "../normalize/inputNormalization.js";
 import { canonicalizeToolNameForRendering } from "../normalize/nameInference.js";
 import { normalizeToolResultForRendering } from "../normalize/resultNormalization.js";

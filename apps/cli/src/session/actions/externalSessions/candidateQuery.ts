@@ -18,11 +18,8 @@ import type {
     PluginContributionIdentityV1,
     PluginSourceCustodyV1,
 } from '@happier-dev/protocol';
-import {
-    ExternalSessionCandidateThreadV1Schema,
-    PluginSourceCustodyV1Schema,
-    pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
+import { ExternalSessionCandidateThreadV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import {
     compareExternalSessionCandidatePrecedence,

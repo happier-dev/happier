@@ -96,6 +96,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -649,83 +650,128 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - Type safety enforced by TranslationStructure interface
  * - New translation keys must be added to ALL language files
  */
-export const en = {
-    homeDeviceApproval: homeDeviceApprovalTranslations.en,
-    settingsOverview: settingsOverviewTranslations.en,
-    homeSetup: homeSetupTranslations.en,
-    personalize: personalizeTranslations.en,
-    connectedServicesSetup: connectedServicesSetupTranslations.en,
-    homeWidgets: homeWidgetTranslations.en,
-    widgetFrame: widgetFrameTranslations.en,
-    inputPicker: inputPickerTranslations.en,
-    widgetAdd: widgetAddTranslations.en,
-    widgetDefinition: widgetDefinitionTranslations.en,
-    widgetGlances: widgetGlanceTranslations.en,
-    voicePresence: voicePresenceTranslations.en,
-    voiceMoments: voiceMomentsTranslations.en,
-    homeIndex: homeIndexTranslations.en,
-    addFlows: addFlowsTranslations.en,
-    machineAdd: machineAddTranslations.en,
-    machineAgents: machineAgentsTranslations.en,
-    homeComposer: homeComposerTranslations.en,
-    sidebarFooter: sidebarFooterTranslations.en,
-    accountPopover: accountPopoverTranslations.en,
-    homesHub: homesHubTranslations.en,
-    homesJourneys: homesJourneysTranslations.en,
-    homeAdd: homeAddTranslations.en,
-    accountDisplay: accountDisplayTranslations.en,
-    actionConfirmations: actionConfirmationTranslations.en,
-    detailPages: detailPageTranslations.en,
-    roles: rolesTranslations.en,
-    boards: boardsTranslations.en,
-    find: findTranslations.en,
-    transcriptFind: transcriptFindTranslations['en'],
-    workStatus: workStatusTranslations.en,
-    shareSheet: shareSheetTranslations.en,
-    surfaceState: surfaceStateTranslations.en,
-    sessionCompanion: sessionCompanionTranslations.en,
-    runPage: runPageTranslations.en,
-    detailsSurface: {
+// Infer each namespace separately so declaration emit never serializes one enormous inferred tree.
+const enHomeDeviceApproval = homeDeviceApprovalTranslations.en;
+
+const enSettingsOverview = settingsOverviewTranslations.en;
+
+const enHomeSetup = homeSetupTranslations.en;
+
+const enPersonalize = personalizeTranslations.en;
+
+const enConnectedServicesSetup = connectedServicesSetupTranslations.en;
+
+const enHomeWidgets = homeWidgetTranslations.en;
+
+const enWidgetFrame = widgetFrameTranslations.en;
+
+const enInputPicker = inputPickerTranslations.en;
+
+const enWidgetAdd = widgetAddTranslations.en;
+
+const enWidgetDefinition = widgetDefinitionTranslations.en;
+
+const enWidgetGlances = widgetGlanceTranslations.en;
+
+const enVoicePresence = voicePresenceTranslations.en;
+
+const enVoiceMoments = voiceMomentsTranslations.en;
+
+const enHomeIndex = homeIndexTranslations.en;
+
+const enAddFlows = addFlowsTranslations.en;
+
+const enMachineAdd = machineAddTranslations.en;
+
+const enMachineAgents = machineAgentsTranslations.en;
+
+const enHomeComposer = homeComposerTranslations.en;
+
+const enSidebarFooter = sidebarFooterTranslations.en;
+
+const enAccountPopover = accountPopoverTranslations.en;
+
+const enHomesHub = homesHubTranslations.en;
+
+const enHomesJourneys = homesJourneysTranslations.en;
+
+const enHomeAdd = homeAddTranslations.en;
+
+const enAccountDisplay = accountDisplayTranslations.en;
+
+const enActionConfirmations = actionConfirmationTranslations.en;
+
+const enDetailPages = detailPageTranslations.en;
+
+const enRoles = rolesTranslations.en;
+
+const enBoards = boardsTranslations.en;
+
+const enFind = findTranslations.en;
+
+const enTranscriptFind = transcriptFindTranslations['en'];
+
+const enWorkStatus = workStatusTranslations.en;
+
+const enShareSheet = shareSheetTranslations.en;
+
+const enSurfaceState = surfaceStateTranslations.en;
+
+const enSessionCompanion = sessionCompanionTranslations.en;
+
+const enRunPage = runPageTranslations.en;
+
+const enDetailsSurface = {
         chrome: detailsChromeTranslations.en,
         file: detailsFileTranslations.en,
         history: detailsHistoryTranslations.en,
         review: detailsReviewTranslations.en,
-    },
-    sessionDrafts: sessionDraftTranslations.en,
-    pendingNavigation: pendingNavigationTranslations.en,
-    sessionDirectoryRecovery: sessionDirectoryRecoveryTranslations.en,
-    transferRecovery: {
+    };
+
+const enSessionDrafts = sessionDraftTranslations.en;
+
+const enPendingNavigation = pendingNavigationTranslations.en;
+
+const enSessionDirectoryRecovery = sessionDirectoryRecoveryTranslations.en;
+
+const enTransferRecovery = {
         title: 'Finish staged upload',
         message: 'The upload reached the machine, but the final save needs attention. Retry only the final save step, or discard the staged upload.',
         retryFinalization: 'Retry finalization',
         discardStagedUpload: 'Discard staged upload',
         discarded: 'The staged upload was discarded.',
         unavailable: 'This staged upload is no longer available.',
-    },
-    voice: voiceReadinessTranslations.en,
-    pluginPermissions: pluginPermissionTranslations.en,
-    sessionBoard: sessionBoardTranslations.en,
-    sessionAgentActivity: sessionAgentActivityTranslations.en,
-    sessionWork: sessionWorkTranslations.en,
-    entityDragDrop: entityDragDropTranslations.en,
-    agentStart: agentStartTranslations.en,
-    goalControl: goalControlTranslations.en,
-    sessionGitPane: sessionGitPaneTranslations.en,
-    sessionGitDisplay: sessionGitDisplayTranslations.en,
-    sessionGitBranches: sessionGitBranchesTranslations.en,
-    sessionGitPullRequest: sessionGitPullRequestTranslations.en,
-    sessionConversation: sessionConversationSurfaceTranslations.en,
-    ...changedFileEvidenceTranslations.en,
-    ...turnChangesTranslations.en,
-    ...committedMessageActionTranslations.en,
-    ...scmComparisonTranslations.en,
-    ...walkthroughTranslations.en,
-    ...walkthroughSettingsTranslations.en,
-    ...walkthroughStartTranslations.en,
-    ...reviewWalkthroughTranslations.en,
-    ...commitProposalTranslations.en,
-    sessionRemotePermissionGrants: sessionRemotePermissionGrantTranslations.en,
-    pluginSurfaces: {
+    };
+
+const enVoice = voiceReadinessTranslations.en;
+
+const enPluginPermissions = pluginPermissionTranslations.en;
+
+const enSessionBoard = sessionBoardTranslations.en;
+
+const enSessionAgentActivity = sessionAgentActivityTranslations.en;
+
+const enSessionWork = sessionWorkTranslations.en;
+
+const enEntityDragDrop = entityDragDropTranslations.en;
+
+const enAgentStart = agentStartTranslations.en;
+
+const enGoalControl = goalControlTranslations.en;
+
+const enSessionGitPane = sessionGitPaneTranslations.en;
+
+const enSessionGitDisplay = sessionGitDisplayTranslations.en;
+
+const enSessionGitBranches = sessionGitBranchesTranslations.en;
+
+const enSessionGitPullRequest = sessionGitPullRequestTranslations.en;
+
+const enSessionConversation = sessionConversationSurfaceTranslations.en;
+
+const enSessionRemotePermissionGrants = sessionRemotePermissionGrantTranslations.en;
+
+const enPluginSurfaces = {
         state: {
             loading: {
                 title: 'Loading plugin content',
@@ -763,8 +809,9 @@ export const en = {
         appScopeRightSidebar: {
             empty: 'No app plugin tabs available.',
         },
-    },
-    settingsKeyboard: {
+    };
+
+const enSettingsKeyboard = {
         title: 'Keyboard shortcuts',
         entrySubtitle: 'Change the keys that run app commands, or turn them off.',
         generalGroupTitle: 'Shortcuts',
@@ -860,9 +907,9 @@ export const en = {
             splitCanvasToggleMaximize: "Toggle split maximize",
             transcriptMessageNext: "Next message",
             transcriptMessagePrevious: "Previous message",},
-    },
+    };
 
-    tabs: {
+const enTabs = {
         // Tab navigation labels
         inbox: 'Inbox',
         friends: 'Friends',
@@ -870,9 +917,9 @@ export const en = {
         sessionsNeedsAttention: 'Sessions, needs attention',
         settings: 'Settings',
 
-        projects: 'Projects',},
+        projects: 'Projects',};
 
-    transcript: {
+const enTranscript = {
 
 
       unsupportedContent: {
@@ -957,10 +1004,9 @@ export const en = {
 
       },
 
-    },
+    };
 
-
-    inbox: {
+const enInbox = {
         work: inboxWorkTranslations.en,
         ...actionOperationInboxTranslations,
         openSession: ({ session }: { session: string }) => `Open session: ${session}`,
@@ -979,9 +1025,9 @@ export const en = {
         markAllRead: 'Mark all as read',
         openInbox: 'Open Inbox',
         updates: 'Activity',
-    },
+    };
 
-    approvals: {
+const enApprovals = {
         title: 'Approval',
         untitled: 'Untitled approval',
         details: 'Details',
@@ -1012,9 +1058,9 @@ export const en = {
             canceled: 'Canceled',
             expired: 'Expired',
         },
-    },
+    };
 
-	    promptLibrary: {
+const enPromptLibrary = {
 	        surface: {
 	            installAction: 'Install',
 	            projectDirectoryPlaceholder: 'Path to the project on the machine',
@@ -1297,9 +1343,9 @@ export const en = {
         templatesEmptyTitle: 'No templates yet',
         templatesEmptySubtitle: 'Create a slash template to quickly insert prompts.',
         librarySearchPlaceholder: 'Search library',
-    },
+    };
 
-    runs: {
+const enRuns = {
         title: 'Runs',
         empty: 'No runs yet.',
         groupLabel: ({ groupId }: { groupId: string }) => `Group ${groupId}`,
@@ -1363,9 +1409,9 @@ export const en = {
             interruptHelp: 'Cancel the current turn, then send your message as a new turn.',
             promptLabel: 'Prompt',
         },
-    },
+    };
 
-    sessionLog: {
+const enSessionLog = {
         title: 'Session log',
         devModeRequiredTitle: 'Developer mode is required',
         devModeRequiredBody: 'Enable developer mode in settings to view session logs.',
@@ -1384,9 +1430,9 @@ export const en = {
         tailTitleTruncated: 'Log tail (truncated)',
         noOutputYet: '(No log output yet)',
         readFailed: 'Failed to read session log',
-    },
+    };
 
-    automations: {
+const enAutomations = {
         unsupportedReference: ({ reference }: { reference: string }) =>
             `Automations save the message text only, so ${reference} would no longer point to what you picked. Remove it from the message, or mention a file path instead.`,
         openA11y: 'Open automations',
@@ -1820,18 +1866,18 @@ export const en = {
             missingResumeKey: 'This session does not have a resume encryption key loaded yet.',
             createButtonTitle: 'Create automation',
         },
-    },
+    };
 
-    appCrash: {
+const enAppCrash = {
         title: 'Something went wrong',
         subtitle: 'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
         detailsTitle: 'Error details',
         restart: 'Restart app',
         restartAndReportIssue: 'Restart and open bug report',
         copyDetails: 'Copy error details',
-    },
+    };
 
-    webCryptoGate: {
+const enWebCryptoGate = {
         title: 'Secure connection required',
         subtitle: 'This page needs WebCrypto to keep your data safe. WebCrypto isn’t available on this origin because browsers require a secure context.',
         howToFix: 'How to fix',
@@ -1842,9 +1888,9 @@ export const en = {
         secureContext: 'Secure context',
         copyDetails: 'Copy details',
         reload: 'Reload',
-    },
+    };
 
-	    common: {
+const enCommon = {
         decrease: "Decrease",
         increase: "Increase",
 	        // Simple string constants
@@ -1968,9 +2014,9 @@ export const en = {
 	        tabs: 'Tabs',
 	        logs: 'Logs',
 	        share: "Share",
-	        unreachable: 'Unreachable',},
+	        unreachable: 'Unreachable',};
 
-    ui: {
+const enUi = {
         resizableDockedPane: {
             resizeA11y: 'Resize panel',
             resizeHint: 'Use keyboard arrows or adjustment actions to resize',
@@ -1988,9 +2034,9 @@ export const en = {
             error: 'Something went wrong',
             moreActions: 'More actions',
         },
-    },
+    };
 
-    dropdown: {
+const enDropdown = {
         category: {
             general: 'General',
             results: 'Results',
@@ -1998,19 +2044,18 @@ export const en = {
         createItem: {
             prefix: 'Add',
         },
-    },
+    };
 
-    profile: {
+const enProfile = {
         userProfile: 'User Profile',
         details: 'Details',
         firstName: 'First Name',
         lastName: 'Last Name',
         username: 'Username',
         status: 'Status',
-    },
+    };
 
-
-    status: {
+const enStatus = {
         encryptedUnavailable: "Encrypted details unavailable",
         encryptedPreparing: "Preparing encrypted access",
         encryptedRepairNeeded: "Encrypted access needs repair",
@@ -2042,9 +2087,9 @@ export const en = {
         permissionRequired: 'permission required',
         activeNow: 'Active now',
         unknown: 'unknown',
-    },
+    };
 
-    connectionStatus: {
+const enConnectionStatus = {
         title: 'Connection',
         summary: {
             connected: 'Connected',
@@ -2084,9 +2129,9 @@ export const en = {
         },
         copyDiagnostics: 'Copy diagnostics',
         diagnosticsCopied: 'Diagnostics copied',
-    },
+    };
 
-    time: {
+const enTime = {
         justNow: 'just now',
         minutesAgo: ({ count }: { count: number }) => `${count} minute${count !== 1 ? 's' : ''} ago`,
         hoursAgo: ({ count }: { count: number }) => `${count} hour${count !== 1 ? 's' : ''} ago`,
@@ -2096,13 +2141,13 @@ export const en = {
         minutesAgoShort: ({ count }: { count: number }) => `${count}m ago`,
         hoursAgoShort: ({ count }: { count: number }) => `${count}h ago`,
         daysAgoShort: ({ count }: { count: number }) => `${count}d ago`,
-    },
+    };
 
-    commandMenu: {
+const enCommandMenu = {
         empty: 'No results',
-    },
+    };
 
-    selectionList: {
+const enSelectionList = {
         // Generic strings consumed by the `components/ui/selectionList/`
         // primitive surface (empty state, clear input button, back-chip
         // accessibility label).
@@ -2117,9 +2162,9 @@ export const en = {
         // shortcut. Surfaces whenever the user has somewhere to back to (a
         // sub-step, or a non-root path in path-mode).
         backShortcut: 'back',
-    },
+    };
 
-    connect: {
+const enConnect = {
         addPhonePage: {
             description: 'Use Happier on your phone with the Homes you already have.',
             qrTitle: 'QR code',
@@ -2205,9 +2250,9 @@ export const en = {
                 `Run the following command in your terminal:\n\n${command}`,
             command: ({ name }: { name: string }) => `happier connect ${name}`,
         },
-    },
+    };
 
-    bugReports: {
+const enBugReports = {
         composer: {
             pageDescription: 'Tell us what went wrong. Include diagnostics so we can find it faster.',
             alerts: {
@@ -2338,9 +2383,9 @@ export const en = {
                 submitNew: 'Submit bug report',
             },
         },
-    },
+    };
 
-    memorySearchSettings: {
+const enMemorySearchSettings = {
         indexing: {
             description: 'Which sessions go into the index, and how much of each.',
             title: 'What gets indexed',
@@ -2499,9 +2544,9 @@ export const en = {
             modelPlaceholder: 'Xenova/all-MiniLM-L6-v2',
             ...memoryEmbeddingsTranslationExtension.embeddings,
         },
-    },
+    };
 
-    subAgentGuidance: {
+const enSubAgentGuidance = {
           ruleEditor: {
             header: {
                 newRule: 'New rule',
@@ -2626,9 +2671,9 @@ export const en = {
                   },
               },
           },
-      },
+      };
 
-    settings: {
+const enSettings = {
         title: 'Settings',
         overview: 'Overview',
 
@@ -3204,9 +3249,9 @@ export const en = {
 	            `${name} is ${status}`,
         featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
             `${feature} ${enabled ? 'enabled' : 'disabled'}`,
-    },
+    };
 
-    systemStatus: {
+const enSystemStatus = {
         pageDescription: 'How this app, your Homes and your machines are connected right now.',
         sections: {
             application: 'Application',
@@ -3301,9 +3346,9 @@ export const en = {
             copyJson: 'Copy as JSON',
             copyJsonSubtitle: 'Share a redacted snapshot for support',
         },
-    },
+    };
 
-    diagnosis: {
+const enDiagnosis = {
         pageDescription: 'Check this app, your Home and your machines for setup problems, with steps to fix them.',
         title: 'Diagnosis',
         sections: {
@@ -3423,9 +3468,9 @@ export const en = {
                 title: 'Multiple servers detected across machines',
             },
         },
-    },
+    };
 
-    connectedServices: {
+const enConnectedServices = {
         purposeTargets: {
             requiredPrompt: 'Choose an account or group',
             legacyUnavailable: 'This server cannot show connected-account targets yet',
@@ -3515,6 +3560,19 @@ export const en = {
             invalidGroup: 'This account group is invalid. Review its settings and try again.',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: 'The connected-service action failed. Refresh and try again.',
+            accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+            accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+            accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+            accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+            accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+            accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+            accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+            accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+            accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+            accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+            accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+            accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
         },
         diagnostics: {
             title: {
@@ -4012,9 +4070,9 @@ export const en = {
             notConnectedSubtitle: 'Tap to open settings',
             profileLabel: 'Profile',
         },
-    },
+    };
 
-    attachments: {
+const enAttachments = {
         alerts: {
             fileTooLargeTitle: 'File too large',
             fileTooLargeBody: ({ count }: { count: number }) =>
@@ -4022,9 +4080,9 @@ export const en = {
             noClipboardImageTitle: 'No clipboard image',
             noClipboardImageBody: 'Copy an image, then paste it as an attachment.',
         },
-    },
+    };
 
-    settingsAttachments: {
+const enSettingsAttachments = {
         pageDescription: 'Where files you attach are saved, and how source control treats them.',
         disabled: {
             bannerTitle: 'File uploads are turned off',
@@ -4100,9 +4158,9 @@ export const en = {
                 invalidValueMessage: 'Enter a number between 1024 and 1073741824.',
             },
         },
-    },
+    };
 
-    settingsSourceControl: {
+const enSettingsSourceControl = {
         page: {
             description: "How commits, pushes, and diffs work in your sessions.",
             commits: {
@@ -4356,9 +4414,9 @@ export const en = {
             combined: 'Combined',
             included: 'Included',
         },
-    },
+    };
 
-    settingsDesktop: {
+const enSettingsDesktop = {
         ...menuBarModeTranslations.en,
         title: 'Desktop app',
         footer: 'How the desktop app starts and shows activity on this computer.',
@@ -4449,9 +4507,9 @@ export const en = {
             showPreviewTextTitle: 'Show preview text',
             showPreviewTextSubtitle: 'Show the latest preview text when space allows',
         },
-    },
+    };
 
-    settingsPets: {
+const enSettingsPets = {
         title: 'Pets',
         previewTitle: 'Blink',
         previewSubtitle: 'A small companion for session status and review attention.',
@@ -4534,9 +4592,9 @@ export const en = {
         visibilityModeAlwaysWhenEnabled: 'Always when enabled',
         visibilityModeAttentionOrActive: 'Attention or active',
         visibilityModeAttentionOnly: 'Attention only',
-    },
+    };
 
-    settingsNotifications: {
+const enSettingsNotifications = {
         mutePhoneWhenComputerFocusedTitle: "Mute phone while a computer is focused",
         mutePhoneWhenComputerFocusedSubtitle: "Mute Ready, request, and Home activity push alerts while any Happier computer window is focused. New alerts resume when no Happier computer window is focused.",
         pageDescription: 'Choose what alerts you, where, and when it stays quiet.',
@@ -4893,9 +4951,9 @@ export const en = {
                 subtitle: 'Notify when a session needs an answer or confirmation',
             },
         },
-    },
+    };
 
-    notifications: {
+const enNotifications = {
         actions: {
             allow: 'Allow',
             deny: 'Deny',
@@ -4923,12 +4981,15 @@ export const en = {
             permissionRequests: 'Permission requests',
             userActionRequests: 'Action requests',
         },
-    },
+    };
 
-    mcpSettings: mcpSettingsTranslations.en,
-    agentInstallJob: agentInstallJobTranslations.en,
-    secretsSettings: secretsSettingsTranslations.en,
-    settingsProviders: {
+const enMcpSettings = mcpSettingsTranslations.en;
+
+const enAgentInstallJob = agentInstallJobTranslations.en;
+
+const enSecretsSettings = secretsSettingsTranslations.en;
+
+const enSettingsProviders = {
         title: 'Providers',
         entrySubtitle: 'Connect cloud and local model sources',
         detailTitle: 'Provider connection',
@@ -5332,9 +5393,9 @@ export const en = {
             connectionUnavailable: 'This provider is unavailable on the selected machine.',
             connectedServiceSuppressed: 'The agent\'s native connected-service sign-in is not used with this provider. Your saved selection is unchanged.',
         },
-    },
+    };
 
-    settingsAgents: {
+const enSettingsAgents = {
         authoring: {
             setUpMachine: 'Set up a machine',
             configureAcpBackendPrompt: 'Help me add a custom ACP agent to Happier. Ask me which agent I want to run and how it starts (command, arguments, any environment variables), check that the command runs on this machine, then save it with the agents.acp.backends.upsert action (read its input with action_spec_get first). Tell me when it appears in Settings → Agents.',
@@ -5941,9 +6002,9 @@ export const en = {
 	                },
 	            },
 	        },
-	    },
+	    };
 
-    workspaceCockpit: {
+const enWorkspaceCockpit = {
         sessionPosition: ({ position, total }: { position: number; total: number }) => position + ' of ' + total,
         previousSession: 'Previous session',
         nextSession: 'Next session',
@@ -5951,9 +6012,9 @@ export const en = {
         openCockpit: 'Open cockpit',
         openClassicView: 'Open classic view',
         tabs: 'Tabs',
-    },
+    };
 
-    instrument: {
+const enInstrument = {
         contextGauge: {
             usedLabel: ({ percent }: { percent: number }) => `Context ${percent}% used`,
             staleLabel: 'Context usage unavailable after model change',
@@ -5979,9 +6040,9 @@ export const en = {
         strip: {
             moreLabel: 'More instruments',
         },
-    },
+    };
 
-    settingsAppearance: {
+const enSettingsAppearance = {
       pageDescription: 'Theme, text, layout and motion.',
       themesSummary: ({ light, dark }: { light: string; dark: string }) => `Light uses ${light} · Dark uses ${dark}`,
       themesCount: ({ builtIn, custom }: { builtIn: number; custom: number }) => `${builtIn} built-in · ${custom} custom`,
@@ -6198,9 +6259,9 @@ export const en = {
             compact: 'Compact',
             compactDescription: 'Fit more rows on screen with tighter spacing',
         },
-    },
+    };
 
-    settingsFeatures: {
+const enSettingsFeatures = {
         // Features settings screen
         experiments: 'Experiments',
         generalTitle: 'General',
@@ -6314,9 +6375,9 @@ export const en = {
         machinePickerSearchSubtitle: 'Show a search field in machine pickers',
         pathPickerSearch: 'Path search',
         pathPickerSearchSubtitle: 'Show a search field in path pickers',
-    },
+    };
 
-    errors: {
+const enErrors = {
         networkError: 'Network error occurred',
         serverError: 'Server error occurred',
         unknownError: 'An unknown error occurred',
@@ -6404,9 +6465,9 @@ export const en = {
         codexAcpNotInstalledMessage:
             'To use the Codex ACP experiment, install codex-acp on the target machine (Machine Details → Installables) or disable the experiment.',
 
-        sourceControlUnavailableForSession: "Source control is unavailable for this session.",},
+        sourceControlUnavailableForSession: "Source control is unavailable for this session.",};
 
-    cliAcquisitionProgress: {
+const enCliAcquisitionProgress = {
         blockedCliUnavailableStatus: "Happier couldn’t start its command line on this computer.",
         blockedCliFailedStatus: 'Happier couldn’t finish reading this computer’s setup.',
         acquisitionResolvingReleaseStatus: "Finding the Happier command line release.",
@@ -6423,8 +6484,9 @@ export const en = {
         acquisitionInstallFailed: "The command line installation didn’t finish. Try again.",
         acquisitionDownloadBytes: ({ received }: { received: string }) => `${received} downloaded`,
         acquisitionDownloadBytesTotal: ({ received, total }: { received: string; total: string }) => `${received} of ${total} downloaded`,
-    },
-    deps: {
+    };
+
+const enDeps = {
         installNotSupported: 'Update Happier CLI to install this dependency.',
         installFailed: 'Install failed',
         installed: 'Installed',
@@ -6473,9 +6535,9 @@ export const en = {
             lastInstallLog: 'Last install log',
             installLogTitle: 'Install log',
         },
-    },
+    };
 
-    newSession: {
+const enNewSession = {
       terminalHostUnavailableTitle: "Terminal host unavailable",
       terminalHostUnavailableBody: ({ host }: { host: string }) => `Install or update ${host} and restart its server on this machine, or choose another terminal host. Your draft is kept.`,
         folder: folderlessSessionTranslations.en.composer,
@@ -6864,9 +6926,9 @@ export const en = {
             updateTitle: 'Update GitHub CLI?',
             reinstallTitle: 'Reinstall GitHub CLI?',
             description: 'This installs the optional GitHub CLI dependency used by source-control GitHub workflows after you confirm.',
-        },},
+        },};
 
-    sessionHistory: {
+const enSessionHistory = {
         // Used by session history screen
         title: 'Session History',
         empty: 'No sessions found',
@@ -6874,9 +6936,9 @@ export const en = {
         yesterday: 'Yesterday',
         daysAgo: ({ count }: { count: number }) => `${count} ${count === 1 ? 'day' : 'days'} ago`,
         viewAll: 'View all sessions',
-    },
+    };
 
-    sessionHandoff: {
+const enSessionHandoff = {
         awaitingAdmission: 'Checking the destination before starting. Your choices are saved here.',
         targetApproval: {
             title: 'What happens at the destination',
@@ -6934,9 +6996,9 @@ export const en = {
             restartOnSource: 'Restart on source',
             keepStopped: 'Keep stopped',
         },
-    },
+    };
 
-    session: {
+const enSession = {
         folderless: folderlessSessionTranslations.en.display,
         access: sessionAccessTranslations['en'],
         untitled: 'Untitled session',
@@ -7771,9 +7833,9 @@ export const en = {
             noMessages: 'No messages yet',
             session: 'Session',
         },
-    },
+    };
 
-    universalSearch: {
+const enUniversalSearch = {
         content: fileContentSearchTranslations["en"],
         scopeFilterLabel: 'Home',
         commitsUpdateRequired: 'Update Happier on this machine to search commits.',
@@ -7788,9 +7850,9 @@ export const en = {
             files: 'Files',
             commits: 'Commits',
         },
-    },
+    };
 
-    commandPalette: {
+const enCommandPalette = {
         placeholder: fileContentSearchTranslations["en"].placeholder,
         noCommandsFound: 'No commands found',
         activationFailed: 'That command could not be completed.',
@@ -7843,20 +7905,20 @@ export const en = {
             open: 'Open',
             close: 'Close',
         },
-    },
+    };
 
-    commandView: {
+const enCommandView = {
         completedWithNoOutput: '[Command completed with no output]',
-    },
+    };
 
-    delegation: {
+const enDelegation = {
         output: {
             title: 'Delegation',
             deliverablesTitle: 'Deliverables',
         },
-    },
+    };
 
-    modelPickerOverlay: {
+const enModelPickerOverlay = {
         refreshModelsA11y: 'Refresh models',
         loadingModelsA11y: 'Loading models…',
         refreshingModelsA11y: 'Refreshing models…',
@@ -7865,9 +7927,9 @@ export const en = {
         customInputA11y: 'Custom model identifier',
         optionControlA11y: ({ name }: { name: string }) => `Model option: ${name}`,
         effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
-    },
+    };
 
-    voiceAssistant: {
+const enVoiceAssistant = {
         connecting: 'Connecting…',
         reconnecting: 'Reconnecting…',
         listening: 'Listening',
@@ -7903,9 +7965,9 @@ export const en = {
             microphoneOwnedByVoice: 'End Voice before starting Dictation.',
             microphoneOwnedByDictation: 'Dictation is already using the microphone. End the current dictation before starting another.',
         },
-    },
+    };
 
-    voiceSurface: {
+const enVoiceSurface = {
         reviewCredentials: 'Review credentials',
         connectAgent: 'Connect',
         installAgentRuntime: 'Install',
@@ -7942,9 +8004,9 @@ export const en = {
 
             mute: 'Mute microphone',
             unmute: 'Unmute microphone',},
-    },
+    };
 
-    voiceActivity: {
+const enVoiceActivity = {
         title: 'Voice Activity',
         empty: 'No voice activity yet.',
         partial: 'Live',
@@ -7963,9 +8025,9 @@ export const en = {
             errorFallback: 'error',
             eventFallback: 'event',
         },
-    },
+    };
 
-    devVoiceQa: {
+const enDevVoiceQa = {
         menuTitle: 'Voice QA Harness',
         menuSubtitle: 'Drive the real voice agent with text prompts',
         title: 'Voice QA Harness',
@@ -8012,9 +8074,9 @@ export const en = {
             transcribe: 'Transcribe recorded audio',
             statusLabel: 'Status',
             noResult: 'No transcription result',
-        },},
+        },};
 
-    server: {
+const enServer = {
         pageSections: {
             savedDescription: 'Switch the Home you’re working in, or rename and remove saved ones.',
             addTitle: 'Add a Home',
@@ -8161,9 +8223,9 @@ export const en = {
                 installAction: 'Install Tailscale',
                 desktopPrepareAction: 'Prepare Tailscale',
             },
-        },},
+        },};
 
-    sessionTags: {
+const enSessionTags = {
         searchOrAddPlaceholder: 'Add or search tag…',
         editTagsLabel: 'Edit tags',
         noTagsFound: 'No tags found',
@@ -8171,9 +8233,9 @@ export const en = {
         newTagTitle: 'New tag',
         newTagMessage: 'Enter a name for the new tag.',
         newTagConfirm: 'Add',
-    },
+    };
 
-    sessionsList: {
+const enSessionsList = {
         reminders: sessionReminderTranslations['en'],
         ...sessionListFilterTranslations.en,
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
@@ -8286,9 +8348,9 @@ export const en = {
         openProject: 'Open project',
         workspaceRoot: "Workspace root",
         failedToMoveSessionToFolder: "Failed to move session to folder.",
-        newFolderDefaultName: "New folder",},
+        newFolderDefaultName: "New folder",};
 
-    directSessions: {
+const enDirectSessions = {
         browseTitle: 'Browse external sessions',
         browseOpenExisting: 'Browse external sessions',
         browseActionSubtitle: 'Choose a machine, Agent, and session to open it here.',
@@ -8317,9 +8379,9 @@ export const en = {
         browseDeleteCandidateConfirmTitle: 'Delete provider session?',
         browseDeleteCandidateConfirmMessage: ({ title, agent }: { title: string; agent: string }) => `Delete “${title}” from ${agent}? The agent removes its own session; your Happier session history stays.`,
         browseDeleteCandidateFailed: 'Failed to delete the agent session.',
-    },
+    };
 
-	    sessionInfo: {
+const enSessionInfo = {
 	        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
 	        title: 'Session Info',
 	        killSession: 'Kill Session',
@@ -8462,25 +8524,26 @@ export const en = {
 
 	        openInSplitRight: 'Open in split right',
 	        openInSplitDown: 'Open in split down',
-	        revealInCurrentSplit: 'Reveal in current split',},
+	        revealInCurrentSplit: 'Reveal in current split',};
 
-    workspacePresentation: {
+const enWorkspacePresentation = {
         homeFolder: 'Home folder',
         checkoutKinds: {
             primary: 'Primary checkout',
             git_worktree: 'Git worktree',
         },
-    },
-    sourceControlWorkspace: {
+    };
+
+const enSourceControlWorkspace = {
         createTitle: 'Create linked workspace',
         createSubtitle: 'Add this checkout to a linked workspace and open its settings.',
         otherCheckoutsTitle: 'Other checkouts',
         unlinkedWorktreesTitle: 'Unlinked worktrees',
         createSessionInWorktreeTitle: 'Create session here',
         adoptWorktreeTitle: 'Add worktree to workspace',
-    },
+    };
 
-    components: {
+const enComponents = {
         emptyMainScreen: {
             // Used by SessionGettingStartedGuidance component
             readyToCode: 'Ready to code?',
@@ -8500,9 +8563,9 @@ export const en = {
             startNewSessionButton: 'Start New Session',
             openTerminalToStart: 'Open a new terminal on your computer to start session.',
         },
-    },
+    };
 
-    zen: {
+const enZen = {
         title: 'Zen',
         add: {
             placeholder: 'What needs to be done?',
@@ -8517,9 +8580,9 @@ export const en = {
             linkedSessions: 'Linked Sessions',
             tapTaskTextToEdit: 'Tap the task text to edit',
         },
-    },
+    };
 
-    agentInput: {
+const enAgentInput = {
         promptPicker: promptPickerTranslations['en'],
         chipPicker: {
             selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selected.`,
@@ -8737,29 +8800,29 @@ export const en = {
             sectionTitle: 'Profile',
         },
         noMachinesAvailable: 'No machines',
-    },
+    };
 
-    machineLauncher: {
+const enMachineLauncher = {
         showLess: 'Show less',
         showAll: ({ count }: { count: number }) => `Show all (${count} paths)`,
         enterCustomPath: 'Enter custom path',
         offlineUnableToSpawn: 'Unable to spawn new session, offline',
-    },
+    };
 
-    sidebar: {
+const enSidebar = {
         sessionsTitle: 'Happier',
-    },
+    };
 
-    toolView: {
+const enToolView = {
         open: 'Open details',
         expand: 'Expand/collapse',
         input: 'Input',
         output: 'Output',
         showFullContent: 'Show full content',
         showLessContent: 'Show less',
-    },
+    };
 
-    tools: {
+const enTools = {
         common: {
             more: ({ count }: { count: number }) => `+${count} more`,
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,
@@ -8970,9 +9033,9 @@ export const en = {
             showingDiff: 'Showing changes',
             turnDiffRecap: 'Recap of the changes that occurred during this turn',
         }
-    },
+    };
 
-        files: {
+const enFiles = {
             pane: filesPaneTranslations.en,
             revealInFiles: "Reveal in Files",
             openChanges: "Open Changes",
@@ -8993,6 +9056,8 @@ export const en = {
 	                        copyPath: 'Copy path',
 	                        download: 'Download',
 	                        downloadAsZip: 'Download as zip',
+	                        openWith: 'Open with',
+	                        share: 'Share',
 	                    },
 	                    dropToUpload: 'Drop files to upload',
 	                    rename: {
@@ -9236,6 +9301,9 @@ export const en = {
           unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
             // File viewer strings
             fileReadFailed: 'Failed to read file',
+            androidFileActionsUnavailable: "Android file actions are unavailable in this app build. Update Happier and try again.",
+            fileSharingUnavailable: "File sharing is unavailable on this device.",
+            fileCleanupFailed: "Could not remove the temporary file",
             fileTooLargeToPreview: 'File is too large to preview',
             fileWriteFailed: 'Failed to write file',
                 fileEditor: {
@@ -9366,6 +9434,7 @@ export const en = {
             },
             loadingFile: ({ fileName }: { fileName: string }) => `Loading ${fileName}...`,
             binaryFile: 'Binary File',
+            videoPreview: 'Video preview',
             imagePreviewTooLarge: 'Image preview is too large to display',
             sessionMedia: {
                 generatedImageA11y: ({ name }: { name: string }) => `Open generated image ${name}`,
@@ -9681,9 +9750,9 @@ export const en = {
 		                failed: ({ error }: { error: string }) => `Index-lock recovery failed: ${error}`,
 		            },
             noAgentReportedTurnChanges: 'No agent-reported changes currently detected for this turn.',
-            noCheckpointTurnChanges: 'No checkpoint changes currently detected for this turn.',},
+            noCheckpointTurnChanges: 'No checkpoint changes currently detected for this turn.',};
 
-    localServices: {
+const enLocalServices = {
         inventory: {
             title: 'Local services',
             loadingTitle: 'Scanning local services',
@@ -9900,9 +9969,9 @@ export const en = {
                 copyExposure: 'Could not copy the public link',
             },
         },
-    },
+    };
 
-    browserContext: {
+const enBrowserContext = {
         composer: {
             attachPageReference: 'Attach page',
             startAnnotation: 'Annotate page',
@@ -9932,9 +10001,9 @@ export const en = {
             markRegion: 'Region',
             markStroke: 'Drawing',
         },
-    },
+    };
 
-    browserRecording: {
+const enBrowserRecording = {
         actions: {
             start: 'Start recording',
             stop: 'Stop recording',
@@ -9949,21 +10018,22 @@ export const en = {
         status: {
             noView: 'No browser view selected.',
         },
-    },
+    };
 
-    browserPresence: browserPresenceTranslations.en,
+const enBrowserPresence = browserPresenceTranslations.en;
 
-    computerUse: computerUseTranslations.en,
-    browserTool: browserToolTranslations.en,
+const enComputerUse = computerUseTranslations.en;
 
-    browserSurface: {
+const enBrowserTool = browserToolTranslations.en;
+
+const enBrowserSurface = {
         title: 'Browser',
         openA11y: 'Open browser',
         openHint: 'Opens the browser launchpad in details.',
         openDisabledA11y: 'Browser unavailable',
-    },
+    };
 
-    browserLaunchpad: {
+const enBrowserLaunchpad = {
         pane: {
             previewsFrom: ({ machine }: { machine: string }) => `Previews from ${machine}`,
             previews: 'Previews from this machine',
@@ -9997,9 +10067,9 @@ export const en = {
         error: {
             title: 'Browser targets need attention',
         },
-    },
+    };
 
-    browserShell: {
+const enBrowserShell = {
         address: {
             label: 'Browser address',
             placeholder: 'Enter URL',
@@ -10132,9 +10202,9 @@ export const en = {
                 performance: 'Performance',
             },
         },
-    },
+    };
 
-    streamPlayer: {
+const enStreamPlayer = {
         status: {
             opening: 'Opening stream…',
             playing: 'Live',
@@ -10157,9 +10227,9 @@ export const en = {
         renderer: {
             fallback: 'Fallback renderer',
         },
-    },
+    };
 
-    simulatorPreview: {
+const enSimulatorPreview = {
         picker: {
             title: 'Devices',
             empty: 'No simulator devices are available.',
@@ -10229,9 +10299,9 @@ export const en = {
         diagnostics: {
             item: ({ reasonCode }: { reasonCode: string }) => `Diagnostic: ${reasonCode}`,
         },
-    },
+    };
 
-    browserDiagnostics: {
+const enBrowserDiagnostics = {
         previewProxy: {
             title: 'Preview diagnostics',
             status: {
@@ -10369,9 +10439,9 @@ export const en = {
                 },
             },
         },
-    },
+    };
 
-    executionRuns: {
+const enExecutionRuns = {
         newRun: {
             headerTitle: 'Start run',
             sections: {
@@ -10437,9 +10507,9 @@ export const en = {
                 finished: 'Finished',
             },
         },
-    },
+    };
 
-          settingsActions: {
+const enSettingsActions = {
         searchPlaceholder: 'Search actions',
         detailSearchPlaceholder: 'Search surfaces',
         noResults: 'No actions match your current search.',
@@ -10711,9 +10781,9 @@ export const en = {
                 title: 'Voice',
                 subtitle: 'Available to the voice agent as a callable surface.',
             },},
-    },
+    };
 
-workspaceSync: {
+const enWorkspaceSync = {
     title: 'Workspace sync',
     availableOn: 'Available on',
     addMachine: {
@@ -10908,9 +10978,9 @@ workspaceSync: {
         reasonEndpointUnavailable: 'Endpoint unavailable',
         reasonSelectionUnavailable: 'Selection evaluator unavailable',
     },
-},
+};
 
-settingsSession: {
+const enSettingsSession = {
     pageDescription: 'How new sessions start, what Happier remembers, and how the session list is organized.',
     newSessionDraftEntry: {
         title: 'New session drafts',
@@ -11007,6 +11077,8 @@ settingsSession: {
 	              attentionPromotionModeGlobalSubtitle: 'Show one attention section above the rest',
 	              attentionPromotionModeWithinGroupsTitle: 'Move to top of current group',
 	              attentionPromotionModeWithinGroupsSubtitle: 'Keep sessions in their folder or workspace',
+	              reminderAutoClearOnOpenTitle: "Clear reminders on open",
+	              reminderAutoClearOnOpenSubtitle: "Turn off to remove due reminders manually. Future reminders stay scheduled.",
 	              attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
 	              attentionStandingDefaultEnabledSubtitle: 'Every session stays until you remove it',
 	              attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
@@ -11163,21 +11235,21 @@ settingsSession: {
           },
           providerUsageGauge: {
               title: 'Provider usage',
-              footer: 'Controls the quota gauge shown beside the composer when reliable provider usage is available. Pin a usage window on a connected account to show it as an extra gauge.',
+              footer: "Choose composer gauges for all accounts. Gauges respect each pool’s selected usage limits. Account favorites add extra gauges for the active account.",
               visibilityTitle: 'Show provider usage gauge',
               labelsTitle: 'Show labels',
               labelsSubtitle: 'Name the context and usage gauges beside the composer.',
               visibilityEnabledSubtitle: 'Show remaining provider quota next to the composer when available.',
               visibilityHiddenSubtitle: 'Hide provider quota from the composer.',
-              windowTitle: 'Gauge window',
+              windowTitle: "Gauge windows",
               windowMostConstrainedTitle: 'Most constrained',
               windowMostConstrainedSubtitle: 'Show the reliable quota window with the least remaining quota.',
               windowDailyTitle: 'Daily',
               windowDailySubtitle: 'Prefer the daily quota window.',
               windowWeeklyTitle: 'Weekly',
               windowWeeklySubtitle: 'Prefer the weekly quota window.',
-              windowSessionTitle: 'Session',
-              windowSessionSubtitle: 'Prefer the current session quota window.',
+              windowSessionTitle: "Short window",
+              windowSessionSubtitle: "Show short quota windows, such as a five-hour allowance.",
               windowPrimaryTitle: 'Primary',
               windowPrimarySubtitle: 'Prefer the provider primary quota window.',
               windowSecondaryTitle: 'Secondary',
@@ -11643,8 +11715,9 @@ settingsSession: {
             windowNamePlaceholder: 'happier',
             windowNameHint: 'Sessions opened in Windows Terminal use this named window so new sessions can appear as tabs.',
         },
-    },
-    windowsRemoteSessionLaunchMode: {
+    };
+
+const enWindowsRemoteSessionLaunchMode = {
         hidden: 'Hidden',
         shortHidden: 'Hidden',
         hiddenSubtitle: 'Start the session in the background without opening a terminal window.',
@@ -11654,8 +11727,9 @@ settingsSession: {
         console: 'Console',
         shortConsole: 'Console',
         consoleSubtitle: 'Open the session in a standard Windows console window.',
-    },
-    settingsVoice: {
+    };
+
+const enSettingsVoice = {
         ...voiceSettingsPagesTranslations.en,
         intents: {
             dictation: { title: 'Dictation', subtitle: 'Turn one spoken utterance into composer text.' },
@@ -11753,7 +11827,7 @@ settingsSession: {
             byo: "My ElevenLabs account",
             byoSubtitle: 'Use your own ElevenLabs API key and agent',
             openaiRealtime: 'OpenAI Realtime',
-            openaiRealtimeSubtitle: 'Use a saved API key or an explicitly selected OpenAI account',
+            openaiRealtimeSubtitle: 'Uses your OpenAI account or API key',
             grokRealtime: "Grok Voice",
             grokRealtimeSubtitle: "Uses your xAI API key",
         },
@@ -12918,9 +12992,9 @@ settingsSession: {
                 spanish: 'Spanish',
             },
         }
-    },
+    };
 
-    settingsAccount: {
+const enSettingsAccount = {
         ...accountEncryptionRecoveryTranslations['en'],
         providerCatalogUnavailable: 'Couldn’t check available sign-in connections.',
         securityPageDescription: "Sign-in methods, recovery, sessions and encryption for this Home.",
@@ -13150,9 +13224,9 @@ settingsSession: {
             failed:
                 'The recovery state changed or could not be cleared. Your credentials and recovery key were kept. Please try again.',
         },
-    },
+    };
 
-    settingsLanguage: {
+const enSettingsLanguage = {
         // Language settings screen
         title: 'Language',
         pageDescription: 'The language Happier uses on all your devices.',
@@ -13165,27 +13239,27 @@ settingsSession: {
         needsRestart: 'Language changed',
         needsRestartMessage: 'The app needs to restart to apply the new language setting.',
         restartNow: 'Restart now',
-    },
+    };
 
-    connectButton: {
+const enConnectButton = {
         authenticate: 'Authenticate Terminal',
         authenticateWithUrlPaste: 'Authenticate Terminal with URL paste',
         pasteAuthUrl: 'Paste the auth URL from your terminal',
-    },
+    };
 
-    updateBanner: {
+const enUpdateBanner = {
         updateAvailable: 'Update available',
         nativeUpdateAvailable: 'App Update Available',
 
-        lastCheckedTitle: 'Last checked',},
+        lastCheckedTitle: 'Last checked',};
 
-    changelog: {
+const enChangelog = {
         // Used by the changelog screen
         version: ({ version }: { version: string }) => `Version ${version}`,
         noEntriesAvailable: 'No changelog entries available.',
-    },
+    };
 
-    releaseNotes: {
+const enReleaseNotes = {
         viewFullChangelog: 'View full release notes',
         mediaUnavailable: 'Media unavailable',
         storyDeck: {
@@ -13476,9 +13550,9 @@ settingsSession: {
                     },
                 },
             },
-    },
+    };
 
-    terminal: {
+const enTerminal = {
         plaintextStorage: 'Home-managed (not end-to-end encrypted)',
         plaintextStorageDescription: 'This Home can read Account data. The connection response is encrypted for this terminal.',
         // Used by terminal connection screens
@@ -13504,9 +13578,9 @@ settingsSession: {
         linkProcessedOnDevice: 'Link processed locally on device',
         switchServerToConnectTerminal: ({ serverUrl, signedInServerUrl }: { serverUrl: string; signedInServerUrl: string }) =>
             `This connection is for ${serverUrl}. You’re signed in to ${signedInServerUrl}. Switch Homes and continue?`,
-    },
+    };
 
-    terminalEmbedded: {
+const enTerminalEmbedded = {
         nativeAccessibility: {
             terminalLabel: 'Terminal',
             fallbackValue: 'Native terminal content is unavailable. Use the xterm WebView fallback for accessible terminal content.',
@@ -13546,9 +13620,9 @@ settingsSession: {
             busy: 'Terminal is busy. Try again.',
         },
 
-        openNewTabA11y: 'Open a new terminal tab',},
+        openNewTabA11y: 'Open a new terminal tab',};
 
-    modals: {
+const enModals = {
         // Used across connect flows and settings
         authenticateTerminal: 'Authenticate Terminal',
         pasteUrlFromTerminal: 'Paste the authentication URL from your terminal',
@@ -13580,9 +13654,9 @@ settingsSession: {
         failedToLinkDevice: 'Failed to link device',
         cameraPermissionsRequiredToScanQr: 'Camera permissions are required to scan QR codes',
         qrScannerUnavailable: 'Unable to open the QR scanner. Please try again or enter the URL manually.'
-    },
+    };
 
-    navigation: {
+const enNavigation = {
         // Navigation titles and screen headers
         connectTerminal: 'Connect Terminal',
         linkNewDevice: 'Link New Device',
@@ -13604,9 +13678,9 @@ settingsSession: {
         connectClaude: 'Connect to Claude',
         zenNewTask: 'New Task',
         zenTaskDetails: 'Task Details',
-    },
+    };
 
-    welcome: {
+const enWelcome = {
         // Main welcome screen for unauthenticated users
         title: 'Codex, Claude Code and OpenCode mobile client',
         subtitle: 'End-to-end encrypted by default, with account restore for your other devices.',
@@ -13711,10 +13785,9 @@ settingsSession: {
 
         // Mobile brand hero CTA
         brandHeroGetStarted: 'Get started',
-    },
+    };
 
-
-    sessionGettingStarted: {
+const enSessionGettingStarted = {
         title: {
             connectMachine: 'Set up this computer',
             startDaemon: 'Reconnect this computer',
@@ -13779,9 +13852,9 @@ settingsSession: {
                 copyLabel: 'Start session',
             },
         },
-    },
+    };
 
-    journey: {
+const enJourney = {
         actions: {
             skipToSetup: 'Skip to setup',
         },
@@ -13939,9 +14012,9 @@ settingsSession: {
                 },
             },
         },
-    },
+    };
 
-    setupOnboarding: {
+const enSetupOnboarding = {
         screenTitle: 'Set up this computer',
         welcomeTitle: 'Welcome to Happier',
         welcomeBody: 'Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer and continue seamlessly from your phone, browser, or desktop app.',
@@ -14137,23 +14210,23 @@ settingsSession: {
             startFailed: 'Unable to start remote SSH setup.',
             continueFailed: 'Unable to continue remote SSH setup.',
         },
-    },
+    };
 
-    review: {
+const enReview = {
         // Used by utils/requestReview.ts
         enjoyingApp: 'Enjoying the app?',
         feedbackPrompt: "We'd love to hear your feedback!",
         yesILoveIt: 'Yes, I love it!',
         notReally: 'Not really'
-    },
+    };
 
-	    items: {
+const enItems = {
 	        // Used by Item component for copy toast
 	        copiedToClipboard: ({ label }: { label: string }) => `${label} copied to clipboard`,
 	        failedToCopyToClipboard: 'Failed to copy to clipboard',
-	    },
+	    };
 
-    machine: {
+const enMachine = {
         launchNewSessionInDirectory: 'Launch new session in directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
         offlineHelp: '• Make sure your computer is online\n• Run happier daemon status to diagnose\n• Are you running the latest CLI version? Run happier self update',
@@ -14333,9 +14406,9 @@ settingsSession: {
             stateStale: 'Configured (stale)',
             stateActive: 'Active',
             stateUnavailable: 'Unavailable',
-        },},
+        },};
 
-    message: {
+const enMessage = {
         ...sessionMessageAccountActorTranslations['en'],
         sessionReferenceUnavailable: 'Unavailable session',
         sessionReferenceOpen: ({ name }: { name: string }) => `Open session ${name}`,
@@ -14390,9 +14463,9 @@ settingsSession: {
         connectedServiceRuntimeAuthRecoveryRecovered: 'Provider authentication recovered',
         connectedServiceRuntimeAuthRecoveryCancelled: 'Provider authentication recovery cancelled',
         unknownTime: 'unknown time',
-    },
+    };
 
-    chatFooter: {
+const enChatFooter = {
         permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
         sessionRunningLocally: 'This session is running locally on this computer. You can switch to remote to control it from the app.',
         sessionRunningLocallyAndRemotely: 'This session is attached locally in OpenCode and is still controllable from the app.',
@@ -14419,9 +14492,9 @@ settingsSession: {
         externalSessionProcessRunning: "This external session's Agent appears to be running.",
         externalSessionRecheck: 'Re-check',
         externalSessionTakeoverBlocked: 'Happier could not verify that the external Agent has stopped. Stop it in its terminal, then try again.',
-    },
+    };
 
-    codex: {
+const enCodex = {
         // Codex permission dialog buttons
         permissions: {
             yesAlwaysAllowCommand: 'Yes, always allow globally',
@@ -14429,9 +14502,9 @@ settingsSession: {
             stop: 'Stop',
             stopAndExplain: 'Stop, and explain what to do',
         }
-    },
+    };
 
-    claude: {
+const enClaude = {
         // Claude permission dialog buttons
         permissions: {
             yesAllowAllEdits: 'Yes, allow all edits during this session',
@@ -14442,9 +14515,9 @@ settingsSession: {
             stop: 'Stop',
             noTellClaude: 'No, and provide feedback',
         }
-    },
+    };
 
-    textSelection: {
+const enTextSelection = {
         // Text selection screen
         selectText: 'Select text range',
         title: 'Select Text',
@@ -14454,9 +14527,9 @@ settingsSession: {
         failedToCopy: 'Failed to copy text to clipboard',
         noTextToCopy: 'No text available to copy',
         failedToOpen: 'Failed to open text selection. Please try again.',
-    },
+    };
 
-    markdown: {
+const enMarkdown = {
         // Markdown copy functionality
         codeCopied: 'Code copied',
         copyFailed: 'Failed to copy',
@@ -14518,10 +14591,10 @@ settingsSession: {
             save: 'Save',
             inputPlaceholder: 'Paste or type a link…',
         },
-    },
+    };
 
-    // Accessibility labels for the rich markdown editor formatting toolbar.
-    markdownEditorToolbar: {
+// Accessibility labels for the rich markdown editor formatting toolbar.
+const enMarkdownEditorToolbar = {
         bold: 'Bold',
         italic: 'Italic',
         strikethrough: 'Strikethrough',
@@ -14537,9 +14610,9 @@ settingsSession: {
         horizontalRule: 'Divider',
         openLink: 'Open link',
         unlink: 'Remove link',
-    },
+    };
 
-    artifacts: {
+const enArtifacts = {
         browser: artifactsBrowserTranslations.en,
         // Artifacts feature
         title: 'Artifacts',
@@ -14565,9 +14638,9 @@ settingsSession: {
         save: 'Save',
         saving: 'Saving...',
         error: 'Failed to load artifact',
-    },
+    };
 
-    friends: {
+const enFriends = {
         // Friends feature
         title: 'Friends',
         manageFriends: 'Manage your friends and connections',
@@ -14645,9 +14718,9 @@ settingsSession: {
             notAvailable: 'Not available?',
             notConfigured: ({ provider }: { provider: string }) => `${provider} OAuth is not configured on this server.`,
         },
-    },
+    };
 
-    usage: {
+const enUsage = {
         // Usage panel strings
         today: 'Today',
         last7Days: 'Last 7 days',
@@ -14768,17 +14841,17 @@ settingsSession: {
                 modelTimeline: 'Model timeline',
                 engineTimeline: 'Engine timeline',
             },
-        },},
+        },};
 
-    feed: {
+const enFeed = {
         // Feed notifications for friend requests and acceptances
         friendRequestFrom: ({ name }: { name: string }) => `${name} sent you a friend request`,
         friendRequestGeneric: 'New friend request',
         friendAccepted: ({ name }: { name: string }) => `You are now friends with ${name}`,
         friendAcceptedGeneric: 'Friend request accepted',
-    },
+    };
 
-    secrets: {
+const enSecrets = {
         catalog: {
             unavailableName: 'Shared secret',
             operationFailed: 'This shared secret changed or is temporarily unavailable. Refresh and try again.',
@@ -14879,9 +14952,9 @@ settingsSession: {
             deleteTitle: 'Delete secret',
             deleteConfirm: ({ name }: { name: string }) => `Delete “${name}”? This cannot be undone.`,
         },
-    },
+    };
 
-    profiles: {
+const enProfiles = {
         launchPlacement: {
             title: 'Where sessions run',
             footer: 'A preference, resolved when a session starts. It never stores a machine as an answer.',
@@ -15185,9 +15258,9 @@ settingsSession: {
             confirm: 'Delete',
             cancel: 'Cancel',
         },
-    }
-,
-    projects: {
+    };
+
+const enProjects = {
         emptyTitle: 'No projects yet',
         emptyDescription: 'Projects let you browse and edit files, and use Git on your machines outside of sessions.',
         noneOpenTitle: 'No project open',
@@ -15239,24 +15312,9 @@ settingsSession: {
                 filesAndScmSubtitle: 'This screen will reuse the existing sidebar + details panes, but scoped to a workspace instead of a session.',
             },
         },
-    },
-   ...apiTokenSettingsTranslations.en,
-   ...embedSettingsTranslations.en,
-   ...embedTranslations.en,
-   ...actionFamilyTranslations.en,
-   ...providerCollectionTranslations.en,
-   ...settingsSearchKeywordsTranslations.en,
-   ...automationPageTranslations.en,
-    ...settingsSessionPagesTranslations.en,
-    ...workspaceTabTranslations.en,
-    ...terminalWorkspaceTranslations.en,
-    ...phoneNavigationTranslations.en,
-    ...workspaceBarTranslations.en,
-   ...settingsProfilesRemoteHostsPageTranslations.en,
-   ...profilesPageTranslations.en,
-   ...machineDetailPageTranslations.en,
-   ...sessionPageTranslations.en,
-   settingsPlugins: {
+    };
+
+const enSettingsPlugins = {
       updateReview: pluginUpdateReviewTranslations.en,
       ...pluginWebhookAdministrationTranslations['en'],
       ...pluginAccountDataEraseTranslations.en,
@@ -15498,8 +15556,9 @@ settingsSession: {
       registriesNoMachine: "Select a machine to manage private registries.",
       registriesLoadError: "Private registry settings could not be loaded.",
       registriesEmpty: "No private registries configured.",
-    },
-    settingsScmDiffSummary: {
+    };
+
+const enSettingsScmDiffSummary = {
         title: 'Diff summaries',
         enabledTitle: 'Enable diff summaries',
         enabledSubtitle: 'Allow AI-generated summaries for source-control diffs.',
@@ -15510,8 +15569,9 @@ settingsSession: {
         modelOverrideDefault: 'Use runtime default',
         cacheTitle: 'Summary cache',
         cacheSubtitle: 'Checkpoint summaries are reused by receipt; working tree summaries stay temporary.',
-    },
-    updates: {
+    };
+
+const enUpdates = {
         pageDescription: 'Everything Happier can update, on this device and your machines.',
         catalogSubtitle: 'This app, command lines and agent tools',
         title: 'Updates',
@@ -15635,14 +15695,21 @@ settingsSession: {
             required: 'Update required…',
             failed: 'An update didn’t finish…',
         },
-    },
-    machinePools: machinePoolTranslations.en,
-    settingsConnections: settingsConnectionsTranslations.en,
-    settingsMachines: settingsMachinesTranslations.en,
-    connectedServicesSettings: connectedServicesSettingsTranslations.en,
-    connectedServicesPool: connectedServicesPoolTranslations.en,
-    connectedServicesCollection: connectedServicesCollectionTranslations.en,
-    externalSessions: {
+    };
+
+const enMachinePools = machinePoolTranslations.en;
+
+const enSettingsConnections = settingsConnectionsTranslations.en;
+
+const enSettingsMachines = settingsMachinesTranslations.en;
+
+const enConnectedServicesSettings = connectedServicesSettingsTranslations.en;
+
+const enConnectedServicesPool = connectedServicesPoolTranslations.en;
+
+const enConnectedServicesCollection = connectedServicesCollectionTranslations.en;
+
+const enExternalSessions = {
         ...externalSessionOperationTranslations.en,
         ...externalSessionSettingsTranslations.en,
         settingsTitle: 'External sessions',
@@ -15724,13 +15791,15 @@ settingsSession: {
         browseDeleteCandidateConfirmTitle: 'Delete provider session?',
         browseDeleteCandidateConfirmMessage: ({ title, agent }: { title: string; agent: string }) => `Delete “${title}” from ${agent}? The agent removes its own session; your Happier session history stays.`,
         browseDeleteCandidateFailed: 'Failed to delete the agent session.',
-    },
-    pluginReactNative: {
+    };
+
+const enPluginReactNative = {
         unavailable: 'React Native plugin UI unavailable',
         disabled: 'React Native plugin UI disabled',
         fallback: 'Using plugin fallback',
-    },
-    pluginRuntime: {
+    };
+
+const enPluginRuntime = {
         unavailableGeneric: 'This plugin view is unavailable right now.',
         crashLoop: 'The plugin was stopped after repeated crashes.',
         disabledByPolicy: 'This plugin view is disabled by current settings or compatibility.',
@@ -15747,14 +15816,21 @@ settingsSession: {
         incompatible: 'This plugin view needs a compatible Happier or plugin version.',
         authorFailure: 'This plugin view could not start because its executable UI is invalid. Ask the plugin author to rebuild it.',
         retired: 'This plugin view is no longer active. Open plugin settings to enable or reinstall it.',
-    },
-    workflows: workflowTranslations.en,
-    homeGovernance: homeGovernanceTranslations.en,
-    homeFeatures: homeFeatureTranslations.en,
-    homeSettings: homeSettingsTranslations.en,
-    teams: teamsTranslations.en.teams,
-    identityAdministration: identityAdministrationTranslations.en.identityAdministration,
-    personalHome: {
+    };
+
+const enWorkflows = workflowTranslations.en;
+
+const enHomeGovernance = homeGovernanceTranslations.en;
+
+const enHomeFeatures = homeFeatureTranslations.en;
+
+const enHomeSettings = homeSettingsTranslations.en;
+
+const enTeams = teamsTranslations.en.teams;
+
+const enIdentityAdministration = identityAdministrationTranslations.en.identityAdministration;
+
+const enPersonalHome = {
         settings: personalHomeSettingsTranslations.en,
         auth: {
             signupClosed: 'Your Personal Home accepts existing accounts only. Sign in with an account already connected to this Home.',
@@ -15786,17 +15862,248 @@ settingsSession: {
                 personal_home_erased: 'Your Home data was deleted. Nothing is left to recover here — create a new Personal Home, or use another Home.',
             },
         },
-    },
-    settingsSearch: {
+    };
+
+const enSettingsSearch = {
         placeholder: 'Search settings',
         pagesTitle: 'Pages',
         settingsTitle: 'Settings',
-    },
-    onboardingJourney: {
+    };
+
+const enOnboardingJourney = {
         accessibility: {
             skipToContent: 'Skip to content',
         },
-    },};
+    };
+
+export const en: TranslationStructure = {
+    homeDeviceApproval: enHomeDeviceApproval,
+    settingsOverview: enSettingsOverview,
+    homeSetup: enHomeSetup,
+    personalize: enPersonalize,
+    connectedServicesSetup: enConnectedServicesSetup,
+    homeWidgets: enHomeWidgets,
+    widgetFrame: enWidgetFrame,
+    navigationPlacement: navigationPlacementTranslations.en,
+    inputPicker: enInputPicker,
+    widgetAdd: enWidgetAdd,
+    widgetDefinition: enWidgetDefinition,
+    widgetGlances: enWidgetGlances,
+    voicePresence: enVoicePresence,
+    voiceMoments: enVoiceMoments,
+    homeIndex: enHomeIndex,
+    addFlows: enAddFlows,
+    machineAdd: enMachineAdd,
+    machineAgents: enMachineAgents,
+    homeComposer: enHomeComposer,
+    sidebarFooter: enSidebarFooter,
+    accountPopover: enAccountPopover,
+    homesHub: enHomesHub,
+    homesJourneys: enHomesJourneys,
+    homeAdd: enHomeAdd,
+    accountDisplay: enAccountDisplay,
+    actionConfirmations: enActionConfirmations,
+    detailPages: enDetailPages,
+    roles: enRoles,
+    boards: enBoards,
+    find: enFind,
+    transcriptFind: enTranscriptFind,
+    workStatus: enWorkStatus,
+    shareSheet: enShareSheet,
+    surfaceState: enSurfaceState,
+    sessionCompanion: enSessionCompanion,
+    runPage: enRunPage,
+    detailsSurface: enDetailsSurface,
+    sessionDrafts: enSessionDrafts,
+    pendingNavigation: enPendingNavigation,
+    sessionDirectoryRecovery: enSessionDirectoryRecovery,
+    transferRecovery: enTransferRecovery,
+    voice: enVoice,
+    pluginPermissions: enPluginPermissions,
+    sessionBoard: enSessionBoard,
+    sessionAgentActivity: enSessionAgentActivity,
+    sessionWork: enSessionWork,
+    entityDragDrop: enEntityDragDrop,
+    agentStart: enAgentStart,
+    goalControl: enGoalControl,
+    sessionGitPane: enSessionGitPane,
+    sessionGitDisplay: enSessionGitDisplay,
+    sessionGitBranches: enSessionGitBranches,
+    sessionGitPullRequest: enSessionGitPullRequest,
+    sessionConversation: enSessionConversation,
+    ...changedFileEvidenceTranslations.en,
+    ...turnChangesTranslations.en,
+    ...committedMessageActionTranslations.en,
+    ...scmComparisonTranslations.en,
+    ...walkthroughTranslations.en,
+    ...walkthroughSettingsTranslations.en,
+    ...walkthroughStartTranslations.en,
+    ...reviewWalkthroughTranslations.en,
+    ...commitProposalTranslations.en,
+    sessionRemotePermissionGrants: enSessionRemotePermissionGrants,
+    pluginSurfaces: enPluginSurfaces,
+    settingsKeyboard: enSettingsKeyboard,
+    tabs: enTabs,
+    transcript: enTranscript,
+    inbox: enInbox,
+    approvals: enApprovals,
+    promptLibrary: enPromptLibrary,
+    runs: enRuns,
+    sessionLog: enSessionLog,
+    automations: enAutomations,
+    appCrash: enAppCrash,
+    webCryptoGate: enWebCryptoGate,
+    common: enCommon,
+    ui: enUi,
+    dropdown: enDropdown,
+    profile: enProfile,
+    status: enStatus,
+    connectionStatus: enConnectionStatus,
+    time: enTime,
+    commandMenu: enCommandMenu,
+    selectionList: enSelectionList,
+    connect: enConnect,
+    bugReports: enBugReports,
+    memorySearchSettings: enMemorySearchSettings,
+    subAgentGuidance: enSubAgentGuidance,
+    settings: enSettings,
+    systemStatus: enSystemStatus,
+    diagnosis: enDiagnosis,
+    connectedServices: enConnectedServices,
+    attachments: enAttachments,
+    settingsAttachments: enSettingsAttachments,
+    settingsSourceControl: enSettingsSourceControl,
+    settingsDesktop: enSettingsDesktop,
+    settingsPets: enSettingsPets,
+    settingsNotifications: enSettingsNotifications,
+    notifications: enNotifications,
+    mcpSettings: enMcpSettings,
+    agentInstallJob: enAgentInstallJob,
+    secretsSettings: enSecretsSettings,
+    settingsProviders: enSettingsProviders,
+    settingsAgents: enSettingsAgents,
+    workspaceCockpit: enWorkspaceCockpit,
+    instrument: enInstrument,
+    settingsAppearance: enSettingsAppearance,
+    settingsFeatures: enSettingsFeatures,
+    errors: enErrors,
+    cliAcquisitionProgress: enCliAcquisitionProgress,
+    deps: enDeps,
+    newSession: enNewSession,
+    sessionHistory: enSessionHistory,
+    sessionHandoff: enSessionHandoff,
+    session: enSession,
+    universalSearch: enUniversalSearch,
+    commandPalette: enCommandPalette,
+    commandView: enCommandView,
+    delegation: enDelegation,
+    modelPickerOverlay: enModelPickerOverlay,
+    voiceAssistant: enVoiceAssistant,
+    voiceSurface: enVoiceSurface,
+    voiceActivity: enVoiceActivity,
+    devVoiceQa: enDevVoiceQa,
+    server: enServer,
+    sessionTags: enSessionTags,
+    sessionsList: enSessionsList,
+    directSessions: enDirectSessions,
+    sessionInfo: enSessionInfo,
+    workspacePresentation: enWorkspacePresentation,
+    sourceControlWorkspace: enSourceControlWorkspace,
+    components: enComponents,
+    zen: enZen,
+    agentInput: enAgentInput,
+    machineLauncher: enMachineLauncher,
+    sidebar: enSidebar,
+    toolView: enToolView,
+    tools: enTools,
+    files: enFiles,
+    localServices: enLocalServices,
+    browserContext: enBrowserContext,
+    browserRecording: enBrowserRecording,
+    browserPresence: enBrowserPresence,
+    computerUse: enComputerUse,
+    browserTool: enBrowserTool,
+    browserSurface: enBrowserSurface,
+    browserLaunchpad: enBrowserLaunchpad,
+    browserShell: enBrowserShell,
+    streamPlayer: enStreamPlayer,
+    simulatorPreview: enSimulatorPreview,
+    browserDiagnostics: enBrowserDiagnostics,
+    executionRuns: enExecutionRuns,
+    settingsActions: enSettingsActions,
+    workspaceSync: enWorkspaceSync,
+    settingsSession: enSettingsSession,
+    windowsRemoteSessionLaunchMode: enWindowsRemoteSessionLaunchMode,
+    settingsVoice: enSettingsVoice,
+    settingsAccount: enSettingsAccount,
+    settingsLanguage: enSettingsLanguage,
+    connectButton: enConnectButton,
+    updateBanner: enUpdateBanner,
+    changelog: enChangelog,
+    releaseNotes: enReleaseNotes,
+    terminal: enTerminal,
+    terminalEmbedded: enTerminalEmbedded,
+    modals: enModals,
+    navigation: enNavigation,
+    welcome: enWelcome,
+    sessionGettingStarted: enSessionGettingStarted,
+    journey: enJourney,
+    setupOnboarding: enSetupOnboarding,
+    review: enReview,
+    items: enItems,
+    machine: enMachine,
+    message: enMessage,
+    chatFooter: enChatFooter,
+    codex: enCodex,
+    claude: enClaude,
+    textSelection: enTextSelection,
+    markdown: enMarkdown,
+    markdownEditorToolbar: enMarkdownEditorToolbar,
+    artifacts: enArtifacts,
+    friends: enFriends,
+    usage: enUsage,
+    feed: enFeed,
+    secrets: enSecrets,
+    profiles: enProfiles,
+    projects: enProjects,
+    ...apiTokenSettingsTranslations.en,
+    ...embedSettingsTranslations.en,
+    ...embedTranslations.en,
+    ...actionFamilyTranslations.en,
+    ...providerCollectionTranslations.en,
+    ...settingsSearchKeywordsTranslations.en,
+    ...automationPageTranslations.en,
+    ...settingsSessionPagesTranslations.en,
+    ...workspaceTabTranslations.en,
+    ...terminalWorkspaceTranslations.en,
+    ...phoneNavigationTranslations.en,
+    ...workspaceBarTranslations.en,
+    ...settingsProfilesRemoteHostsPageTranslations.en,
+    ...profilesPageTranslations.en,
+    ...machineDetailPageTranslations.en,
+    ...sessionPageTranslations.en,
+    settingsPlugins: enSettingsPlugins,
+    settingsScmDiffSummary: enSettingsScmDiffSummary,
+    updates: enUpdates,
+    machinePools: enMachinePools,
+    settingsConnections: enSettingsConnections,
+    settingsMachines: enSettingsMachines,
+    connectedServicesSettings: enConnectedServicesSettings,
+    connectedServicesPool: enConnectedServicesPool,
+    connectedServicesCollection: enConnectedServicesCollection,
+    externalSessions: enExternalSessions,
+    pluginReactNative: enPluginReactNative,
+    pluginRuntime: enPluginRuntime,
+    workflows: enWorkflows,
+    homeGovernance: enHomeGovernance,
+    homeFeatures: enHomeFeatures,
+    homeSettings: enHomeSettings,
+    teams: enTeams,
+    identityAdministration: enIdentityAdministration,
+    personalHome: enPersonalHome,
+    settingsSearch: enSettingsSearch,
+    onboardingJourney: enOnboardingJourney,
+};
 
 // Keep the literal keys above as the compile-time locale shape, while the shared
 // brand owner supplies the canonical English values used at runtime.
@@ -15816,7 +16123,269 @@ type DeepTranslationShape<T> =
                     ? { readonly [K in keyof T]: DeepTranslationShape<T[K]> }
                     : T;
 
-export type TranslationsEn = typeof en;
+type TranslationOverlay<Base, Overlay> = Omit<Base, keyof Overlay> & Overlay;
+
+type EnglishNamespaces0 = {
+    readonly homeDeviceApproval: typeof enHomeDeviceApproval;
+    readonly settingsOverview: typeof enSettingsOverview;
+    readonly homeSetup: typeof enHomeSetup;
+    readonly personalize: typeof enPersonalize;
+    readonly connectedServicesSetup: typeof enConnectedServicesSetup;
+    readonly homeWidgets: typeof enHomeWidgets;
+    readonly widgetFrame: typeof enWidgetFrame;
+    readonly navigationPlacement: typeof navigationPlacementTranslations.en;
+    readonly inputPicker: typeof enInputPicker;
+    readonly widgetAdd: typeof enWidgetAdd;
+    readonly widgetDefinition: typeof enWidgetDefinition;
+    readonly widgetGlances: typeof enWidgetGlances;
+    readonly voicePresence: typeof enVoicePresence;
+    readonly voiceMoments: typeof enVoiceMoments;
+    readonly homeIndex: typeof enHomeIndex;
+    readonly addFlows: typeof enAddFlows;
+    readonly machineAdd: typeof enMachineAdd;
+    readonly machineAgents: typeof enMachineAgents;
+    readonly homeComposer: typeof enHomeComposer;
+    readonly sidebarFooter: typeof enSidebarFooter;
+    readonly accountPopover: typeof enAccountPopover;
+    readonly homesHub: typeof enHomesHub;
+    readonly homesJourneys: typeof enHomesJourneys;
+    readonly homeAdd: typeof enHomeAdd;
+    readonly accountDisplay: typeof enAccountDisplay;
+    readonly actionConfirmations: typeof enActionConfirmations;
+    readonly detailPages: typeof enDetailPages;
+    readonly roles: typeof enRoles;
+    readonly boards: typeof enBoards;
+    readonly find: typeof enFind;
+    readonly transcriptFind: typeof enTranscriptFind;
+    readonly workStatus: typeof enWorkStatus;
+    readonly shareSheet: typeof enShareSheet;
+    readonly surfaceState: typeof enSurfaceState;
+    readonly sessionCompanion: typeof enSessionCompanion;
+    readonly runPage: typeof enRunPage;
+    readonly detailsSurface: typeof enDetailsSurface;
+    readonly sessionDrafts: typeof enSessionDrafts;
+    readonly pendingNavigation: typeof enPendingNavigation;
+    readonly sessionDirectoryRecovery: typeof enSessionDirectoryRecovery;
+    readonly transferRecovery: typeof enTransferRecovery;
+    readonly voice: typeof enVoice;
+    readonly pluginPermissions: typeof enPluginPermissions;
+    readonly sessionBoard: typeof enSessionBoard;
+    readonly sessionAgentActivity: typeof enSessionAgentActivity;
+    readonly sessionWork: typeof enSessionWork;
+    readonly entityDragDrop: typeof enEntityDragDrop;
+    readonly agentStart: typeof enAgentStart;
+    readonly goalControl: typeof enGoalControl;
+    readonly sessionGitPane: typeof enSessionGitPane;
+    readonly sessionGitDisplay: typeof enSessionGitDisplay;
+    readonly sessionGitBranches: typeof enSessionGitBranches;
+    readonly sessionGitPullRequest: typeof enSessionGitPullRequest;
+    readonly sessionConversation: typeof enSessionConversation;
+};
+
+type EnglishNamespaces1 = TranslationOverlay<EnglishNamespaces0, typeof changedFileEvidenceTranslations.en>;
+
+type EnglishNamespaces2 = TranslationOverlay<EnglishNamespaces1, typeof turnChangesTranslations.en>;
+
+type EnglishNamespaces3 = TranslationOverlay<EnglishNamespaces2, typeof committedMessageActionTranslations.en>;
+
+type EnglishNamespaces4 = TranslationOverlay<EnglishNamespaces3, typeof scmComparisonTranslations.en>;
+
+type EnglishNamespaces5 = TranslationOverlay<EnglishNamespaces4, typeof walkthroughTranslations.en>;
+
+type EnglishNamespaces6 = TranslationOverlay<EnglishNamespaces5, typeof walkthroughSettingsTranslations.en>;
+
+type EnglishNamespaces7 = TranslationOverlay<EnglishNamespaces6, typeof walkthroughStartTranslations.en>;
+
+type EnglishNamespaces8 = TranslationOverlay<EnglishNamespaces7, typeof reviewWalkthroughTranslations.en>;
+
+type EnglishNamespaces9 = TranslationOverlay<EnglishNamespaces8, typeof commitProposalTranslations.en>;
+
+type EnglishNamespaces10 = TranslationOverlay<EnglishNamespaces9, {
+    readonly sessionRemotePermissionGrants: typeof enSessionRemotePermissionGrants;
+    readonly pluginSurfaces: typeof enPluginSurfaces;
+    readonly settingsKeyboard: typeof enSettingsKeyboard;
+    readonly tabs: typeof enTabs;
+    readonly transcript: typeof enTranscript;
+    readonly inbox: typeof enInbox;
+    readonly approvals: typeof enApprovals;
+    readonly promptLibrary: typeof enPromptLibrary;
+    readonly runs: typeof enRuns;
+    readonly sessionLog: typeof enSessionLog;
+    readonly automations: typeof enAutomations;
+    readonly appCrash: typeof enAppCrash;
+    readonly webCryptoGate: typeof enWebCryptoGate;
+    readonly common: typeof enCommon;
+    readonly ui: typeof enUi;
+    readonly dropdown: typeof enDropdown;
+    readonly profile: typeof enProfile;
+    readonly status: typeof enStatus;
+    readonly connectionStatus: typeof enConnectionStatus;
+    readonly time: typeof enTime;
+    readonly commandMenu: typeof enCommandMenu;
+    readonly selectionList: typeof enSelectionList;
+    readonly connect: typeof enConnect;
+    readonly bugReports: typeof enBugReports;
+    readonly memorySearchSettings: typeof enMemorySearchSettings;
+    readonly subAgentGuidance: typeof enSubAgentGuidance;
+    readonly settings: typeof enSettings;
+    readonly systemStatus: typeof enSystemStatus;
+    readonly diagnosis: typeof enDiagnosis;
+    readonly connectedServices: typeof enConnectedServices;
+    readonly attachments: typeof enAttachments;
+    readonly settingsAttachments: typeof enSettingsAttachments;
+    readonly settingsSourceControl: typeof enSettingsSourceControl;
+    readonly settingsDesktop: typeof enSettingsDesktop;
+    readonly settingsPets: typeof enSettingsPets;
+    readonly settingsNotifications: typeof enSettingsNotifications;
+    readonly notifications: typeof enNotifications;
+    readonly mcpSettings: typeof enMcpSettings;
+    readonly agentInstallJob: typeof enAgentInstallJob;
+    readonly secretsSettings: typeof enSecretsSettings;
+    readonly settingsProviders: typeof enSettingsProviders;
+    readonly settingsAgents: typeof enSettingsAgents;
+    readonly workspaceCockpit: typeof enWorkspaceCockpit;
+    readonly instrument: typeof enInstrument;
+    readonly settingsAppearance: typeof enSettingsAppearance;
+    readonly settingsFeatures: typeof enSettingsFeatures;
+    readonly errors: typeof enErrors;
+    readonly cliAcquisitionProgress: typeof enCliAcquisitionProgress;
+    readonly deps: typeof enDeps;
+    readonly newSession: typeof enNewSession;
+    readonly sessionHistory: typeof enSessionHistory;
+    readonly sessionHandoff: typeof enSessionHandoff;
+    readonly session: typeof enSession;
+    readonly universalSearch: typeof enUniversalSearch;
+    readonly commandPalette: typeof enCommandPalette;
+    readonly commandView: typeof enCommandView;
+    readonly delegation: typeof enDelegation;
+    readonly modelPickerOverlay: typeof enModelPickerOverlay;
+    readonly voiceAssistant: typeof enVoiceAssistant;
+    readonly voiceSurface: typeof enVoiceSurface;
+    readonly voiceActivity: typeof enVoiceActivity;
+    readonly devVoiceQa: typeof enDevVoiceQa;
+    readonly server: typeof enServer;
+    readonly sessionTags: typeof enSessionTags;
+    readonly sessionsList: typeof enSessionsList;
+    readonly directSessions: typeof enDirectSessions;
+    readonly sessionInfo: typeof enSessionInfo;
+    readonly workspacePresentation: typeof enWorkspacePresentation;
+    readonly sourceControlWorkspace: typeof enSourceControlWorkspace;
+    readonly components: typeof enComponents;
+    readonly zen: typeof enZen;
+    readonly agentInput: typeof enAgentInput;
+    readonly machineLauncher: typeof enMachineLauncher;
+    readonly sidebar: typeof enSidebar;
+    readonly toolView: typeof enToolView;
+    readonly tools: typeof enTools;
+    readonly files: typeof enFiles;
+    readonly localServices: typeof enLocalServices;
+    readonly browserContext: typeof enBrowserContext;
+    readonly browserRecording: typeof enBrowserRecording;
+    readonly browserPresence: typeof enBrowserPresence;
+    readonly computerUse: typeof enComputerUse;
+    readonly browserTool: typeof enBrowserTool;
+    readonly browserSurface: typeof enBrowserSurface;
+    readonly browserLaunchpad: typeof enBrowserLaunchpad;
+    readonly browserShell: typeof enBrowserShell;
+    readonly streamPlayer: typeof enStreamPlayer;
+    readonly simulatorPreview: typeof enSimulatorPreview;
+    readonly browserDiagnostics: typeof enBrowserDiagnostics;
+    readonly executionRuns: typeof enExecutionRuns;
+    readonly settingsActions: typeof enSettingsActions;
+    readonly workspaceSync: typeof enWorkspaceSync;
+    readonly settingsSession: typeof enSettingsSession;
+    readonly windowsRemoteSessionLaunchMode: typeof enWindowsRemoteSessionLaunchMode;
+    readonly settingsVoice: typeof enSettingsVoice;
+    readonly settingsAccount: typeof enSettingsAccount;
+    readonly settingsLanguage: typeof enSettingsLanguage;
+    readonly connectButton: typeof enConnectButton;
+    readonly updateBanner: typeof enUpdateBanner;
+    readonly changelog: typeof enChangelog;
+    readonly releaseNotes: typeof enReleaseNotes;
+    readonly terminal: typeof enTerminal;
+    readonly terminalEmbedded: typeof enTerminalEmbedded;
+    readonly modals: typeof enModals;
+    readonly navigation: typeof enNavigation;
+    readonly welcome: typeof enWelcome;
+    readonly sessionGettingStarted: typeof enSessionGettingStarted;
+    readonly journey: typeof enJourney;
+    readonly setupOnboarding: typeof enSetupOnboarding;
+    readonly review: typeof enReview;
+    readonly items: typeof enItems;
+    readonly machine: typeof enMachine;
+    readonly message: typeof enMessage;
+    readonly chatFooter: typeof enChatFooter;
+    readonly codex: typeof enCodex;
+    readonly claude: typeof enClaude;
+    readonly textSelection: typeof enTextSelection;
+    readonly markdown: typeof enMarkdown;
+    readonly markdownEditorToolbar: typeof enMarkdownEditorToolbar;
+    readonly artifacts: typeof enArtifacts;
+    readonly friends: typeof enFriends;
+    readonly usage: typeof enUsage;
+    readonly feed: typeof enFeed;
+    readonly secrets: typeof enSecrets;
+    readonly profiles: typeof enProfiles;
+    readonly projects: typeof enProjects;
+}>;
+
+type EnglishNamespaces11 = TranslationOverlay<EnglishNamespaces10, typeof apiTokenSettingsTranslations.en>;
+
+type EnglishNamespaces12 = TranslationOverlay<EnglishNamespaces11, typeof embedSettingsTranslations.en>;
+
+type EnglishNamespaces13 = TranslationOverlay<EnglishNamespaces12, typeof embedTranslations.en>;
+
+type EnglishNamespaces14 = TranslationOverlay<EnglishNamespaces13, typeof actionFamilyTranslations.en>;
+
+type EnglishNamespaces15 = TranslationOverlay<EnglishNamespaces14, typeof providerCollectionTranslations.en>;
+
+type EnglishNamespaces16 = TranslationOverlay<EnglishNamespaces15, typeof settingsSearchKeywordsTranslations.en>;
+
+type EnglishNamespaces17 = TranslationOverlay<EnglishNamespaces16, typeof automationPageTranslations.en>;
+
+type EnglishNamespaces18 = TranslationOverlay<EnglishNamespaces17, typeof settingsSessionPagesTranslations.en>;
+
+type EnglishNamespaces19 = TranslationOverlay<EnglishNamespaces18, typeof workspaceTabTranslations.en>;
+
+type EnglishNamespaces20 = TranslationOverlay<EnglishNamespaces19, typeof terminalWorkspaceTranslations.en>;
+
+type EnglishNamespaces21 = TranslationOverlay<EnglishNamespaces20, typeof phoneNavigationTranslations.en>;
+
+type EnglishNamespaces22 = TranslationOverlay<EnglishNamespaces21, typeof workspaceBarTranslations.en>;
+
+type EnglishNamespaces23 = TranslationOverlay<EnglishNamespaces22, typeof settingsProfilesRemoteHostsPageTranslations.en>;
+
+type EnglishNamespaces24 = TranslationOverlay<EnglishNamespaces23, typeof profilesPageTranslations.en>;
+
+type EnglishNamespaces25 = TranslationOverlay<EnglishNamespaces24, typeof machineDetailPageTranslations.en>;
+
+type EnglishNamespaces26 = TranslationOverlay<EnglishNamespaces25, typeof sessionPageTranslations.en>;
+
+type EnglishNamespaces27 = TranslationOverlay<EnglishNamespaces26, {
+    readonly settingsPlugins: typeof enSettingsPlugins;
+    readonly settingsScmDiffSummary: typeof enSettingsScmDiffSummary;
+    readonly updates: typeof enUpdates;
+    readonly machinePools: typeof enMachinePools;
+    readonly settingsConnections: typeof enSettingsConnections;
+    readonly settingsMachines: typeof enSettingsMachines;
+    readonly connectedServicesSettings: typeof enConnectedServicesSettings;
+    readonly connectedServicesPool: typeof enConnectedServicesPool;
+    readonly connectedServicesCollection: typeof enConnectedServicesCollection;
+    readonly externalSessions: typeof enExternalSessions;
+    readonly pluginReactNative: typeof enPluginReactNative;
+    readonly pluginRuntime: typeof enPluginRuntime;
+    readonly workflows: typeof enWorkflows;
+    readonly homeGovernance: typeof enHomeGovernance;
+    readonly homeFeatures: typeof enHomeFeatures;
+    readonly homeSettings: typeof enHomeSettings;
+    readonly teams: typeof enTeams;
+    readonly identityAdministration: typeof enIdentityAdministration;
+    readonly personalHome: typeof enPersonalHome;
+    readonly settingsSearch: typeof enSettingsSearch;
+    readonly onboardingJourney: typeof enOnboardingJourney;
+}>;
+
+export type TranslationsEn = EnglishNamespaces27;
 
 // Shape contract for all locales: enforce identical key structure without requiring English literal
 // string values. Functions are preserved so parameter lists remain typechecked.

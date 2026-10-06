@@ -22,13 +22,8 @@ import {
     type ManagedServiceEndpointProjectionInputV1,
     type ManagedServiceEndpointProjectionV1,
 } from './managedServiceEndpointProjection';
-import {
-    type AgentProviderBindingMaterializationV1,
-    type PluginAgentContributionV2,
-    type PluginHostAccessRequestV2,
-    pluginSourceCustodyV1Equal,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import type { AgentProviderBindingMaterializationV1, PluginAgentContributionV2, PluginHostAccessRequestV2, PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 import type {
     AgentRuntimeDaemonServiceAuthorityExpectedInput,

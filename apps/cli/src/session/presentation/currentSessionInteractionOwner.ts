@@ -1,13 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  createTransientInteractionOwner,
-  createUnavailableTransientInteractionOwner,
-  isTransientInteractionDeadlineMs,
-  type TransientInteractionOwner,
-  type TransientInteractionPresenter,
-  type PluginExecutionScopeV1,
-} from '@happier-dev/protocol';
+import { createTransientInteractionOwner, createUnavailableTransientInteractionOwner, isTransientInteractionDeadlineMs } from '@happier-dev/protocol/plugins/interactions/owner';
+import type { TransientInteractionOwner, TransientInteractionPresenter, PluginExecutionScopeV1 } from '@happier-dev/protocol';
 
 /** Kept for existing Session adapters; the cross-realm core owns the validation and the bound. */
 export function isCurrentSessionInteractionDeadlineMs(value: unknown): value is number {

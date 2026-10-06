@@ -31,20 +31,15 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
-import {
-  PromptRegistryInstallRequestV1Schema,
-  PromptRegistryInstallResponseV1Schema,
-  AgentStartSessionCallerV1Schema,
-  type ActionId,
-  type AccountSettings,
-  type ActionExecutorDeps,
-  type BackendTargetRefV2,
-  getActionSpec,
-  isActionSpecSurfacedOn,
-  normalizeServerIdentityIdCapability,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1, type SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
+import { PromptRegistryInstallRequestV1Schema, PromptRegistryInstallResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
+import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import type { ActionId, AccountSettings, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
+import { getActionSpec, isActionSpecSurfacedOn } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
+import type { MemorySearchResultV1, MemoryWindowV1, SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
 import {
   createMcpActionApprovalRequirement,

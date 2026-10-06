@@ -12,6 +12,9 @@ export const TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 = 'ui/mounted-v1';
 const identifier = defineProtocolString({ minLength: 1 });
 const closed = { policy: 'closed' } as const;
 export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('focusRow'), entryRef: TriageEntryRefV1Schema }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('peekRow'), entryRef: TriageEntryRefV1Schema,
+    expanded: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('openDetail'), entryRef: TriageEntryRefV1Schema, tab: identifier.optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('closeDetail') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectDetailTab'), tab: identifier }, closed),
@@ -20,6 +23,8 @@ export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
     order: defineProtocolUnion([defineProtocolLiteral('newest'), defineProtocolLiteral('oldest'), defineProtocolLiteral('smart')]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectSavedView'), viewId: identifier.nullable() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setSelection'), entryRefs: defineProtocolArray(TriageEntryRefV1Schema) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('retryRun') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('cancelRun') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('refresh') }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('loadMore'), section: defineProtocolUnion([defineProtocolLiteral('entries'), defineProtocolLiteral('pins')]) }, closed),
 ]);

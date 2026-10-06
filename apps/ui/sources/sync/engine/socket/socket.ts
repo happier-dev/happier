@@ -2075,6 +2075,8 @@ export async function handleUpdateContainer(params: {
         const artifactId = artifactUpdate.artifactId;
 
         await handleNewArtifactSocketUpdate({
+            provenance: artifactUpdate.provenance,
+            provenanceDataEncryptionKey: artifactUpdate.provenanceDataEncryptionKey,
             artifactId,
             dataEncryptionKey: artifactUpdate.dataEncryptionKey,
             header: artifactUpdate.header,
@@ -2095,6 +2097,9 @@ export async function handleUpdateContainer(params: {
         const artifactId = artifactUpdate.artifactId;
 
         await handleUpdateArtifactSocketUpdate({
+            provenance: artifactUpdate.provenance,
+            provenanceDataEncryptionKey: artifactUpdate.provenanceDataEncryptionKey,
+            encryption,
             artifactId,
             createdAt: updateData.createdAt,
             header: artifactUpdate.header,

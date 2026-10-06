@@ -1,16 +1,9 @@
 /** @moduleRealm any */
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import {
-  PluginWebhookEndpointIdV1Schema as canonicalPluginWebhookEndpointIdV1Schema,
-  PluginWebhookEndpointIdV1JsonSchema,
-  type PluginWebhookEndpointIdV1,
-} from '@happier-dev/protocol/plugins/webhooks/endpointV1';
-import {
-  PluginWebhookActionInputV1Schema as canonicalPluginWebhookActionInputV1Schema,
-  PluginWebhookActionResultV1Schema as canonicalPluginWebhookActionResultV1Schema,
-  type PluginWebhookActionInputV1,
-  type PluginWebhookActionResultV1,
-} from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import { PluginWebhookEndpointIdV1Schema as canonicalPluginWebhookEndpointIdV1Schema, PluginWebhookEndpointIdV1JsonSchema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import type { PluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PluginWebhookActionInputV1Schema as canonicalPluginWebhookActionInputV1Schema, PluginWebhookActionResultV1Schema as canonicalPluginWebhookActionResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import type { PluginWebhookActionInputV1, PluginWebhookActionResultV1 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 
 export const PluginWebhookActionInputSchema: Readonly<{
   parse(value: unknown): PluginWebhookActionInputV1;
@@ -32,9 +25,7 @@ export const PluginWebhookEndpointIdV1Schema: Readonly<{
 }> = canonicalPluginWebhookEndpointIdV1Schema;
 export { PluginWebhookEndpointIdV1JsonSchema };
 
-export {
-  PluginWebhookEndpointSetupV1Schema,
-} from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+export { PluginWebhookEndpointSetupV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 export type {
   PluginWebhookContributionV1 as PluginWebhookContribution,

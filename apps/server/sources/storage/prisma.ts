@@ -9,6 +9,8 @@ import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
+import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic } from './prismaErrors';
+export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
 export type PrismaClientType = PrismaClientInstance;
 
@@ -133,7 +135,26 @@ export function resolvePreferredGeneratedClientEntrypoint(
         : resolveGeneratedClientEntrypoint("../../generated/sqlite-client");
 }
 
-let _db: PrismaClientType | null = null;
+function withSharedQaSchemaDiagnostics(client: PrismaClientType) {
+    if (!process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK?.trim()) return client;
+    return client.$extends({
+        query: {
+            async $allOperations({ args, query }) {
+                try {
+                    return await query(args);
+                } catch (error) {
+                    const diagnostic = readSharedQaSchemaMismatchDiagnostic(error);
+                    // Preserve Prisma's code, metadata and identity for existing error owners.
+                    // All socket event logs that interpolate the error now carry the reload action.
+                    if (diagnostic && error instanceof Error) error.message = diagnostic.message;
+                    throw error;
+                }
+            },
+        },
+    });
+}
+
+let _db: ReturnType<typeof withSharedQaSchemaDiagnostics> | null = null;
 let _pglite: PGlite | null = null;
 let _pgliteServer: PGLiteSocketServer | null = null;
 let _provider: DbProvider | null = null;
@@ -172,7 +193,7 @@ export function initDbPostgres(): void {
     if (process.env.DATABASE_URL) {
         process.env.DATABASE_URL = applyConfiguredDatabaseConnectionLimit(process.env.DATABASE_URL, process.env);
     }
-    _db = createDefaultPrismaClient();
+    _db = withSharedQaSchemaDiagnostics(createDefaultPrismaClient());
     activePrismaRuntime = prismaRuntime;
 }
 
@@ -206,7 +227,7 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
     }
     _provider = provider;
     const generated = await createGeneratedPrismaClient(provider);
-    _db = generated.client;
+    _db = withSharedQaSchemaDiagnostics(generated.client);
     activePrismaRuntime = generated.prisma;
 }
 
@@ -359,7 +380,7 @@ export async function initDbPglite(): Promise<void> {
             _pglite = pglite;
             _pgliteServer = server;
             _provider = "pglite";
-            _db = prismaClient;
+            _db = withSharedQaSchemaDiagnostics(prismaClient);
             activePrismaRuntime = prismaRuntime;
             _releasePgliteDirLock = releaseLock;
         } catch (e) {
@@ -380,13 +401,6 @@ export async function initDbPglite(): Promise<void> {
     } finally {
         _initDbPgliteInFlight = null;
     }
-}
-
-export function isPrismaErrorCode(err: unknown, code: string): boolean {
-    if (!err || typeof err !== "object") {
-        return false;
-    }
-    return (err as any).code === code;
 }
 
 function readErrorMessageParts(err: unknown): string {
@@ -553,7 +567,7 @@ export function resolveSqliteStartupDiagnosticsFromEnv(env: NodeJS.ProcessEnv): 
     };
 }
 
-export async function applySqliteRuntimePragmas(client: PrismaClientType, env: NodeJS.ProcessEnv): Promise<void> {
+export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "$queryRawUnsafe">, env: NodeJS.ProcessEnv): Promise<void> {
     const pragmas = resolveSqliteRuntimePragmasFromEnv(env);
     // These PRAGMA values come from strict allow-list / numeric-range resolvers above.
     // Keep the resolution step as the SQL safety boundary for these raw statements.

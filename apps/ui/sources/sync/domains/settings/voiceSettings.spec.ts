@@ -10,8 +10,20 @@ import {
   voiceSettingsParse,
 } from './voiceSettings';
 import { DEFAULT_ELEVENLABS_VOICE_ID } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
+import { settingsParse } from './settings';
 
 describe('voiceSettings', () => {
+  it('loads stored Account settings while dropping the never-shipped automatic machine key', () => {
+    const parsed = settingsParse({
+      voiceSettingsV1: {
+        ...voiceSettingsDefaults,
+        assistantLanguage: 'fr',
+        executionMachine: { mode: 'fixed', machineId: 'chosen-machine', autoMachineId: 'stray-machine' },
+      },
+    });
+    expect(parsed.voice.assistantLanguage).toBe('fr');
+    expect(parsed.voice.executionMachine).toEqual({ mode: 'fixed', machineId: 'chosen-machine' });
+  });
   it('defaults fresh Local Voice to device speech and preserves explicit endpoint selections', () => {
     const config = readLocalConversationVoiceSettings(voiceSettingsParse({}));
     expect(config.stt.provider).toBe('device');
@@ -332,7 +344,6 @@ describe('voiceSettings', () => {
     expect(voiceSettingsDefaults.executionMachine).toEqual({
       mode: 'auto',
       machineId: null,
-      autoMachineId: null,
     });
     expect(voiceSettingsDefaults.welcome).toEqual({
       enabled: false,
@@ -512,7 +523,6 @@ describe('voiceSettings', () => {
     expect(parsed.executionMachine).toEqual({
       mode: 'fixed',
       machineId: 'machine-1',
-      autoMachineId: 'machine-old',
     });
     expect(JSON.stringify(parsed)).not.toContain('machineTargetMode');
     expect(JSON.stringify(parsed.providers[elevenLabsProviderId].config)).not.toContain('assistantLanguage');
@@ -867,7 +877,6 @@ describe('voiceSettings', () => {
     const agent = readLocalConversationVoiceSettings(voiceSettingsDefaults).agent;
     expect(voiceSettingsDefaults.executionMachine.mode).toBe('auto');
     expect(voiceSettingsDefaults.executionMachine.machineId).toBe(null);
-    expect(voiceSettingsDefaults.executionMachine.autoMachineId).toBe(null);
     expect(agent?.stayInVoiceHome).toBe(false);
     expect(agent?.teleportEnabled).toBe(true);
     expect(agent?.rootSessionPolicy).toBe('single');

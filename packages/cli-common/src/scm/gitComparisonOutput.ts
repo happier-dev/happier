@@ -1,4 +1,5 @@
-import { splitUnifiedDiffByFile, type FileChangeKind } from '@happier-dev/protocol';
+import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
+import type { FileChangeKind } from '@happier-dev/protocol';
 
 export type GitFileLineage = Readonly<{
     path: string;

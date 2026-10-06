@@ -3,7 +3,7 @@ import { basename, join } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ActionId } from '@happier-dev/protocol';
 
 import { listDirectoryEntries } from './directoryListing/listDirectoryEntries';

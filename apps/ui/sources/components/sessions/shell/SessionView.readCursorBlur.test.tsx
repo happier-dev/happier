@@ -40,6 +40,7 @@ const scheduledInteractionCallbacks = vi.hoisted<(() => void)[]>(() => []);
 const sessionState = vi.hoisted(() => ({
     current: {
         id: 's1',
+        serverId: 'server-1',
         seq: 2,
         presence: 'online',
         active: true,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { CustomProviderTemplateV1Schema } from '../providers/connections/customTemplateV1.js';
@@ -58,12 +59,12 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
 import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
 import { TeamCredentialResourceTestApplicationRequestV1Schema } from '../teams/credentials/externalProviderApiV1.js';
 
-const ProviderRpcIdentityV1Schema = z.object({
+const ProviderRpcIdentityV1Schema = lazyZodSchema(() => z.object({
   connectionId: ProviderConnectionIdSchema,
   machineId: ProviderMachineIdSchema,
-}).strict();
+}).strict());
 
-export const DaemonProviderDraftProbeRequestV1Schema = z.object({
+export const DaemonProviderDraftProbeRequestV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('draft'),
   draftConnectionId: ProviderConnectionIdSchema,
   machineId: ProviderMachineIdSchema,
@@ -79,13 +80,13 @@ export const DaemonProviderDraftProbeRequestV1Schema = z.object({
       message: 'Draft SavedSecret identity must match the template credential contract',
     });
   }
-});
+}));
 export type DaemonProviderDraftProbeRequestV1 = z.infer<typeof DaemonProviderDraftProbeRequestV1Schema>;
 
-export const DaemonProviderProbeRequestV1Schema = z.union([
+export const DaemonProviderProbeRequestV1Schema = lazyZodSchema(() => z.union([
   ProviderRpcIdentityV1Schema,
   DaemonProviderDraftProbeRequestV1Schema,
-]);
+]));
 export type DaemonProviderProbeRequestV1 = z.infer<typeof DaemonProviderProbeRequestV1Schema>;
 
 export const DaemonProviderModelsRequestV1Schema = ProviderRpcIdentityV1Schema;
@@ -96,7 +97,7 @@ export type DaemonProviderModelsRequestV1 = z.infer<typeof DaemonProviderModelsR
  * candidate. The public Action carries only resource identity; current source
  * and revision are pinned here so stale daemon work fails closed.
  */
-export const DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema = z.object({
+export const DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   teamId: z.string().min(1).max(256),
   resourceId: z.string().min(1).max(256),
@@ -105,12 +106,12 @@ export const DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema = 
   /** Pool fanout reads current source observations without scheduling work on
    * every candidate Machine. Exact-Machine Tests retain their normal demand. */
   refreshPolicy: z.literal('current_only').optional(),
-}).strict();
+}).strict());
 export type DaemonProviderTeamCredentialResourceTestCandidateRequestV1 = z.infer<
   typeof DaemonProviderTeamCredentialResourceTestCandidateRequestV1Schema
 >;
 
-export const DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     application: ProviderBrokerApplicationBindingV1Schema,
@@ -120,7 +121,7 @@ export const DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema =
     status: z.literal('unavailable'),
     reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable']),
   }).strict(),
-]);
+]));
 export type DaemonProviderTeamCredentialResourceTestCandidateResponseV1 = z.infer<
   typeof DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema
 >;
@@ -129,15 +130,15 @@ export type DaemonProviderTeamCredentialResourceTestCandidateResponseV1 = z.infe
  * The Home fans this exact operation across its verified Pool snapshot and
  * retains the Machine-id association; the response discloses no settings,
  * credentials, endpoint details, model catalog, or application bytes. */
-const DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema = z.object({
+const DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   teamId: z.string().min(1).max(256),
   resourceId: z.string().min(1).max(256),
   expectedResourceRevision: z.number().int().nonnegative(),
   source: TeamCredentialSourceBindingV1Schema,
-});
+}));
 
-export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = z.union([
+export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = lazyZodSchema(() => z.union([
   DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema.extend({
     application: ProviderBrokerApplicationBindingV1Schema,
     modelId: ProviderModelIdSchema,
@@ -146,45 +147,45 @@ export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = z.un
   DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema.extend({
     scope: z.literal('source_any'),
   }).strict(),
-]);
+]));
 export type DaemonProviderTeamCredentialBrokerEligibilityRequestV1 = z.infer<
   typeof DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema
 >;
 
-export const DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('eligible') }).strict(),
   z.object({
     status: z.literal('unavailable'),
     reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable', 'source_changed']),
   }).strict(),
-]);
+]));
 export type DaemonProviderTeamCredentialBrokerEligibilityResponseV1 = z.infer<
   typeof DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema
 >;
 
-const DaemonProviderModelLoadIdentityV1Schema = ProviderRpcIdentityV1Schema.extend({
+const DaemonProviderModelLoadIdentityV1Schema = lazyZodSchema(() => ProviderRpcIdentityV1Schema.extend({
   modelId: ProviderModelIdSchema,
-}).strict();
+}).strict());
 
-export const DaemonProviderModelLoadRequestV1Schema = z.discriminatedUnion('action', [
+export const DaemonProviderModelLoadRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   DaemonProviderModelLoadIdentityV1Schema.extend({ action: z.literal('load') }).strict(),
   DaemonProviderModelLoadIdentityV1Schema.extend({ action: z.literal('cancel') }).strict(),
-]);
+]));
 export type DaemonProviderModelLoadRequestV1 = z.infer<typeof DaemonProviderModelLoadRequestV1Schema>;
 
 export const DaemonProviderRpcErrorV1Schema = ProviderErrorV1Schema;
 
-export const DaemonProviderModelRowV1Schema = z.object({
+export const DaemonProviderModelRowV1Schema = lazyZodSchema(() => z.object({
   id: ProviderModelIdSchema,
   name: z.string().trim().min(1).max(256).optional(),
   source: z.enum(['manual', 'static', 'probe']),
   stale: z.boolean(),
   loadState: z.enum(['loaded', 'unloaded', 'unknown']),
   visibility: z.enum(['visible', 'hidden_all_agents']),
-}).strict();
+}).strict());
 export type DaemonProviderModelRowV1 = z.infer<typeof DaemonProviderModelRowV1Schema>;
 
-export const DaemonProviderModelsResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderModelsResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     connectionId: ProviderConnectionIdSchema,
@@ -194,10 +195,10 @@ export const DaemonProviderModelsResponseV1Schema = z.discriminatedUnion('status
     models: z.array(DaemonProviderModelRowV1Schema).max(50_000),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderModelsResponseV1 = z.infer<typeof DaemonProviderModelsResponseV1Schema>;
 
-export const DaemonProviderProbeResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderProbeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     models: ProviderCatalogProbeModelsV1Schema,
@@ -205,18 +206,18 @@ export const DaemonProviderProbeResponseV1Schema = z.discriminatedUnion('status'
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
   z.object({ status: z.literal('not_supported') }).strict(),
-]);
+]));
 export type DaemonProviderProbeResponseV1 = z.infer<typeof DaemonProviderProbeResponseV1Schema>;
 
-export const DaemonProviderModelLoadResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderModelLoadResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('loaded'), source: z.enum(['already_loaded', 'requested']) }).strict(),
   z.object({ status: z.literal('not_supported'), reason: z.enum(['feature_disabled', 'descriptor_absent']) }).strict(),
   z.object({ status: z.literal('cancelled'), providerMayContinue: z.literal(true) }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderModelLoadResponseV1 = z.infer<typeof DaemonProviderModelLoadResponseV1Schema>;
 
-const ProviderAuthoringEndpointOverridesV1Schema = z.array(ProviderEndpointOverrideV1Schema)
+const ProviderAuthoringEndpointOverridesV1Schema = lazyZodSchema(() => z.array(ProviderEndpointOverrideV1Schema)
   .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)
   .superRefine((overrides, ctx) => {
     const endpointIds = new Set<string>();
@@ -230,9 +231,9 @@ const ProviderAuthoringEndpointOverridesV1Schema = z.array(ProviderEndpointOverr
       }
       endpointIds.add(override.endpointTemplateId);
     });
-  });
+  }));
 
-export const DaemonProviderConnectionsDescribeRequestV1Schema = z.object({
+export const DaemonProviderConnectionsDescribeRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   connectionId: ProviderConnectionIdSchema.optional(),
   authoringPreview: z.object({
@@ -242,10 +243,10 @@ export const DaemonProviderConnectionsDescribeRequestV1Schema = z.object({
     selectedCandidateId: ProviderDiscoveryCandidateIdV1Schema.nullable(),
     endpointOverrides: ProviderAuthoringEndpointOverridesV1Schema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type DaemonProviderConnectionsDescribeRequestV1 = z.infer<typeof DaemonProviderConnectionsDescribeRequestV1Schema>;
 
-const ProviderConnectionRpcRuntimeSummaryV1Schema = z.object({
+const ProviderConnectionRpcRuntimeSummaryV1Schema = lazyZodSchema(() => z.object({
   health: ProviderConnectionSummaryHealthV1Schema,
   modelCount: z.number().int().nonnegative().max(50_000).nullable(),
   checkedAt: z.number().finite().nonnegative().nullable(),
@@ -257,9 +258,9 @@ const ProviderConnectionRpcRuntimeSummaryV1Schema = z.object({
     errorCode: z.string().trim().min(1).max(128).nullable(),
     retryAt: z.number().finite().nonnegative().nullable(),
   }).strict()).max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration).default([]),
-}).strict();
+}).strict());
 
-const ProviderRpcDisplayEndpointUrlV1Schema = z.string().trim().min(1).max(2_048).superRefine((value, ctx) => {
+const ProviderRpcDisplayEndpointUrlV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(2_048).superRefine((value, ctx) => {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
@@ -268,17 +269,17 @@ const ProviderRpcDisplayEndpointUrlV1Schema = z.string().trim().min(1).max(2_048
   } catch {
     ctx.addIssue({ code: 'custom', message: 'Endpoint display URL must be absolute' });
   }
-});
+}));
 
-const DaemonProviderAuthoringEndpointV1Schema = z.object({
+const DaemonProviderAuthoringEndpointV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: z.string().trim().min(1).max(128),
   protocol: ProviderWireProtocolSchema,
   normalizedUrl: ProviderRpcDisplayEndpointUrlV1Schema,
   locality: z.enum(['public', 'private', 'loopback']),
   scope: z.enum(['account', 'machine']),
-}).strict();
+}).strict());
 
-const DaemonProviderAuthoringDestinationV1Schema = z.object({
+const DaemonProviderAuthoringDestinationV1Schema = lazyZodSchema(() => z.object({
   scope: z.enum(['account', 'machine']),
   machineId: ProviderMachineIdSchema.nullable(),
   endpoints: z.array(DaemonProviderAuthoringEndpointV1Schema).min(1)
@@ -290,18 +291,18 @@ const DaemonProviderAuthoringDestinationV1Schema = z.object({
       message: 'Machine-scoped authoring destinations require exactly one machine identity',
     });
   }
-});
+}));
 
-const DaemonProviderAuthoringCredentialV1Schema = z.object({
+const DaemonProviderAuthoringCredentialV1Schema = lazyZodSchema(() => z.object({
   slotId: z.literal('apiKey'),
   label: z.literal('api_key'),
   required: z.boolean(),
-}).strict();
+}).strict());
 
-const ProviderAuthoringReviewFingerprintV1Schema = z.string().trim().min(1).max(256)
-  .startsWith('authoring-review:v1:');
+const ProviderAuthoringReviewFingerprintV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256)
+  .startsWith('authoring-review:v1:'));
 
-export const DaemonProviderContributionAuthoringPreviewV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderContributionAuthoringPreviewV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('selection_required'),
     connectionId: ProviderConnectionIdSchema,
@@ -332,10 +333,10 @@ export const DaemonProviderContributionAuthoringPreviewV1Schema = z.discriminate
       ctx.addIssue({ code: 'custom', path: ['machineId'], message: 'Review scope and machine identity disagree' });
     }
   }),
-]);
+]));
 export type DaemonProviderContributionAuthoringPreviewV1 = z.infer<typeof DaemonProviderContributionAuthoringPreviewV1Schema>;
 
-export const DaemonProviderConnectionEndpointViewV1Schema = z.object({
+export const DaemonProviderConnectionEndpointViewV1Schema = lazyZodSchema(() => z.object({
   endpointTemplateId: z.string().trim().min(1).max(128),
   protocol: ProviderWireProtocolSchema,
   baseUrl: ProviderRpcDisplayEndpointUrlV1Schema,
@@ -343,13 +344,13 @@ export const DaemonProviderConnectionEndpointViewV1Schema = z.object({
   defaultBaseUrl: ProviderRpcDisplayEndpointUrlV1Schema.nullable().default(null),
   accountOverrideBaseUrl: ProviderRpcDisplayEndpointUrlV1Schema.nullable().default(null),
   machineOverrideBaseUrl: ProviderRpcDisplayEndpointUrlV1Schema.nullable().default(null),
-}).strict();
+}).strict());
 
-const DaemonProviderAgentCompatibilitySummaryBaseV1Schema = z.object({
+const DaemonProviderAgentCompatibilitySummaryBaseV1Schema = lazyZodSchema(() => z.object({
   agentTargetKey: BackendTargetKeyV2Schema,
   agentName: z.string().trim().min(1).max(128),
-});
-export const DaemonProviderAgentCompatibilitySummaryV1Schema = z.discriminatedUnion('status', [
+}));
+export const DaemonProviderAgentCompatibilitySummaryV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   DaemonProviderAgentCompatibilitySummaryBaseV1Schema.extend({
     status: z.literal('verified'),
     reasons: z.tuple([]),
@@ -362,20 +363,20 @@ export const DaemonProviderAgentCompatibilitySummaryV1Schema = z.discriminatedUn
     status: z.literal('incompatible'),
     reasons: z.array(ProviderCompatibilityReasonCodeV1Schema).min(1).max(16),
   }).strict(),
-]);
+]));
 export type DaemonProviderAgentCompatibilitySummaryV1 = z.infer<typeof DaemonProviderAgentCompatibilitySummaryV1Schema>;
 
 const DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema =
-  z.object({
+  lazyZodSchema(() => z.object({
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionIdentityV1Schema),
   title: PluginLocalizedStringV2Schema.optional(),
   required: z.boolean(),
   materializationKinds: PluginConnectedAccountMaterializationKindsSchema.optional(),
-}).strict();
+}).strict());
 
 const DaemonProviderManagedConnectedAccountPurposeV1Schema =
-  DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema.extend({
+  lazyZodSchema(() => DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema.extend({
   target: QualifiedConnectedAccountPurposeBindingTargetV1Schema,
 }).strict().superRefine((value, context) => {
   const targetService = value.target.kind === 'account'
@@ -391,9 +392,9 @@ const DaemonProviderManagedConnectedAccountPurposeV1Schema =
       message: 'Managed Provider purpose target must use its declared Connected Account service',
     });
   }
-});
+}));
 
-const DaemonProviderConnectionDeploymentV1Schema = z.discriminatedUnion('kind', [
+const DaemonProviderConnectionDeploymentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('external'),
   }).strict(),
@@ -410,9 +411,9 @@ const DaemonProviderConnectionDeploymentV1Schema = z.discriminatedUnion('kind', 
         ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema.optional(),
     }).strict().nullable(),
   }).strict(),
-]);
+]));
 
-export const DaemonProviderConnectionViewV1Schema = z.object({
+export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.object({
   connectionId: ProviderConnectionIdSchema,
   contributionKey: ProviderContributionKeySchema.nullable(),
   provenance: z.enum(['first_party', 'external', 'custom']).default('first_party'),
@@ -484,15 +485,15 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
       message: 'Managed Provider connection views must not expose durable endpoints',
     });
   }
-});
+}));
 export type DaemonProviderConnectionViewV1 = z.infer<typeof DaemonProviderConnectionViewV1Schema>;
 
-const ProviderConnectionMutationBaseV1Schema = z.object({
+const ProviderConnectionMutationBaseV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   connectionId: ProviderConnectionIdSchema,
-});
+}));
 
-const DaemonProviderConnectionDeploymentUpdateV1Schema = z.discriminatedUnion(
+const DaemonProviderConnectionDeploymentUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'kind',
   [
     z.object({ kind: z.literal('external') }).strict(),
@@ -502,9 +503,9 @@ const DaemonProviderConnectionDeploymentUpdateV1Schema = z.discriminatedUnion(
         ProviderConnectionPurposeBindingDefaultsV1Schema,
     }).strict(),
   ],
-);
+));
 
-export const DaemonProviderConnectionMutationRequestV1Schema = z.discriminatedUnion('action', [
+export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   ProviderConnectionMutationBaseV1Schema.extend({
     action: z.literal('createContribution'),
     contributionKey: ProviderContributionKeySchema,
@@ -595,10 +596,10 @@ export const DaemonProviderConnectionMutationRequestV1Schema = z.discriminatedUn
     savedSecretId: z.string().trim().min(1).max(256).nullable(),
     scope: z.enum(['account', 'machine']),
   }).strict(),
-]);
+]));
 export type DaemonProviderConnectionMutationRequestV1 = z.infer<typeof DaemonProviderConnectionMutationRequestV1Schema>;
 
-export const DaemonProviderConnectionsDescribeResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderConnectionsDescribeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     connections: z.array(DaemonProviderConnectionViewV1Schema),
@@ -636,10 +637,10 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = z.discriminated
     }).strict().nullable().optional(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderConnectionsDescribeResponseV1 = z.infer<typeof DaemonProviderConnectionsDescribeResponseV1Schema>;
 
-export const DaemonProviderConnectionMutationResponseV1Schema = z.union([
+export const DaemonProviderConnectionMutationResponseV1Schema = lazyZodSchema(() => z.union([
   z.object({
     status: z.literal('success'),
     action: z.enum(['createContribution', 'createCustom', 'enableDetected', 'update', 'setEndpointOverride', 'duplicate', 'setEnabled', 'bindSecret']),
@@ -654,10 +655,10 @@ export const DaemonProviderConnectionMutationResponseV1Schema = z.union([
     phase: z.enum(['detecting', 'running']),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderConnectionMutationResponseV1 = z.infer<typeof DaemonProviderConnectionMutationResponseV1Schema>;
 
-export const DaemonProviderModelProjectionRequestV1Schema = z.object({
+export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   agentTargetKey: BackendTargetKeyV2Schema,
   application: ProviderBrokerApplicationBindingV1Schema.optional(),
@@ -690,13 +691,13 @@ export const DaemonProviderModelProjectionRequestV1Schema = z.object({
   if (value.refreshPolicy === 'current_only' && value.forceRefresh) {
     ctx.addIssue({ code: 'custom', path: ['forceRefresh'], message: 'Current-only projection cannot force refresh' });
   }
-});
+}));
 export type DaemonProviderModelProjectionRequestV1 = z.infer<typeof DaemonProviderModelProjectionRequestV1Schema>;
 
-const ProviderCompatibilityFingerprintV1Schema = z.string().trim().min(1).max(256)
-  .startsWith('compatibility:v1:');
+const ProviderCompatibilityFingerprintV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256)
+  .startsWith('compatibility:v1:'));
 
-const DaemonProviderReasoningEffortSupportV1Schema = z.union([
+const DaemonProviderReasoningEffortSupportV1Schema = lazyZodSchema(() => z.union([
   z.object({ supported: z.literal(false) }).strict(),
   z.object({
     supported: z.literal(true),
@@ -710,9 +711,9 @@ const DaemonProviderReasoningEffortSupportV1Schema = z.union([
       ctx.addIssue({ code: 'custom', path: ['defaultValue'], message: 'Reasoning effort default must be supported' });
     }
   }),
-]);
+]));
 
-export const DaemonProviderTeamCredentialRequestPolicySupportV1Schema = z.object({
+export const DaemonProviderTeamCredentialRequestPolicySupportV1Schema = lazyZodSchema(() => z.object({
   /** Value-free current catalog metadata required by the Home projection. */
   descriptor: ProviderModelDescriptorV1Schema,
   application: ProviderBrokerApplicationBindingV1Schema,
@@ -753,23 +754,23 @@ export const DaemonProviderTeamCredentialRequestPolicySupportV1Schema = z.object
     || descriptorAliases.some((alias, index) => alias !== value.model.aliases[index])) {
     ctx.addIssue({ code: 'custom', path: ['descriptor', 'aliases'], message: 'Request-policy descriptor aliases must match the model aliases' });
   }
-});
+}));
 export type DaemonProviderTeamCredentialRequestPolicySupportV1 = z.infer<
   typeof DaemonProviderTeamCredentialRequestPolicySupportV1Schema
 >;
 
 /** Exact source-only discovery; the daemon enumerates its current Agent/application
  * bindings so no UI or Home caller authors executable Provider identity. */
-export const DaemonProviderTeamCredentialRequestPolicySupportRequestV1Schema = z.object({
+export const DaemonProviderTeamCredentialRequestPolicySupportRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   source: TeamCredentialSourceBindingV1Schema,
   refreshPolicy: z.literal('current_only').optional(),
-}).strict();
+}).strict());
 export type DaemonProviderTeamCredentialRequestPolicySupportRequestV1 = z.infer<
   typeof DaemonProviderTeamCredentialRequestPolicySupportRequestV1Schema
 >;
 
-export const DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     models: z.array(DaemonProviderTeamCredentialRequestPolicySupportV1Schema),
@@ -778,12 +779,12 @@ export const DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema = 
     status: z.literal('unavailable'),
     reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable']),
   }).strict(),
-]);
+]));
 export type DaemonProviderTeamCredentialRequestPolicySupportResponseV1 = z.infer<
   typeof DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema
 >;
 
-export const DaemonProviderModelProjectionRowV1Schema = z.object({
+export const DaemonProviderModelProjectionRowV1Schema = lazyZodSchema(() => z.object({
   ref: ProviderBoundModelRefSchema,
   descriptor: ProviderModelDescriptorV1Schema,
   application: ProviderBrokerApplicationBindingV1Schema.optional(),
@@ -813,10 +814,10 @@ export const DaemonProviderModelProjectionRowV1Schema = z.object({
   }).strict(),
   loadState: ProviderModelLoadStateV1Schema,
   visibility: z.enum(['visible', 'hidden_agent', 'hidden_all_agents', 'hidden_current_selection']),
-}).strict();
+}).strict());
 export type DaemonProviderModelProjectionRowV1 = z.infer<typeof DaemonProviderModelProjectionRowV1Schema>;
 
-export const DaemonProviderModelProjectionGroupV1Schema = z.object({
+export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.object({
   connectionId: ProviderConnectionIdSchema,
   providerName: z.string().trim().min(1).max(128),
   connectionName: z.string().trim().min(1).max(128),
@@ -922,10 +923,10 @@ export const DaemonProviderModelProjectionGroupV1Schema = z.object({
       message: 'A Provider model projection may exceed the active model limit only for one stale-current recovery row',
     });
   }
-});
+}));
 export type DaemonProviderModelProjectionGroupV1 = z.infer<typeof DaemonProviderModelProjectionGroupV1Schema>;
 
-export const DaemonProviderCurrentSelectionRecoveryV1Schema = z.object({
+export const DaemonProviderCurrentSelectionRecoveryV1Schema = lazyZodSchema(() => z.object({
   kind: z.enum([
     'contribution_unavailable',
     'connection_deleted',
@@ -960,7 +961,7 @@ export const DaemonProviderCurrentSelectionRecoveryV1Schema = z.object({
   if (value.error.connectionId !== value.ref.providerConnectionId) {
     ctx.addIssue({ code: 'custom', path: ['error', 'connectionId'], message: 'Recovery error must match the selected connection' });
   }
-});
+}));
 export type DaemonProviderCurrentSelectionRecoveryV1 = z.infer<typeof DaemonProviderCurrentSelectionRecoveryV1Schema>;
 
 /**
@@ -969,15 +970,15 @@ export type DaemonProviderCurrentSelectionRecoveryV1 = z.infer<typeof DaemonProv
  * render from their observations while every failed connection carries its
  * own typed recovery fact beside them.
  */
-const DaemonProviderModelProjectionRefreshFailureV1Schema = z.object({
+const DaemonProviderModelProjectionRefreshFailureV1Schema = lazyZodSchema(() => z.object({
   connectionId: ProviderConnectionIdSchema,
   error: ProviderErrorV1Schema,
-}).strict();
+}).strict());
 export type DaemonProviderModelProjectionRefreshFailureV1 = z.infer<
   typeof DaemonProviderModelProjectionRefreshFailureV1Schema
 >;
 
-export const DaemonProviderModelProjectionResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderModelProjectionResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     agentTargetKey: BackendTargetKeyV2Schema,
@@ -986,15 +987,15 @@ export const DaemonProviderModelProjectionResponseV1Schema = z.discriminatedUnio
     refreshFailures: z.array(DaemonProviderModelProjectionRefreshFailureV1Schema).optional(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderModelProjectionResponseV1 = z.infer<typeof DaemonProviderModelProjectionResponseV1Schema>;
 
-const ProviderModelSettingsMutationBaseV1Schema = z.object({ machineId: ProviderMachineIdSchema });
-const ProviderManualModelMutationInputV1Schema = z.object({
+const ProviderModelSettingsMutationBaseV1Schema = lazyZodSchema(() => z.object({ machineId: ProviderMachineIdSchema }));
+const ProviderManualModelMutationInputV1Schema = lazyZodSchema(() => z.object({
   id: ProviderModelIdSchema,
   name: z.string().trim().min(1).max(256).optional(),
-}).strict();
-export const DaemonProviderModelSettingsMutationRequestV1Schema = z.discriminatedUnion('action', [
+}).strict());
+export const DaemonProviderModelSettingsMutationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   ProviderModelSettingsMutationBaseV1Schema.extend({
     action: z.literal('manualAdd'), connectionId: ProviderConnectionIdSchema,
     expectedConnectionRevision: z.number().int().nonnegative(),
@@ -1046,18 +1047,18 @@ export const DaemonProviderModelSettingsMutationRequestV1Schema = z.discriminate
     agentTargetKey: BackendTargetKeyV2Schema, modelId: ProviderModelIdSchema.nullable(),
     compatibilityFingerprint: ProviderCompatibilityFingerprintV1Schema,
   }).strict(),
-]);
+]));
 export type DaemonProviderModelSettingsMutationRequestV1 = z.infer<typeof DaemonProviderModelSettingsMutationRequestV1Schema>;
 
-export const DaemonProviderModelSettingsMutationResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderModelSettingsMutationResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('success'), action: z.enum([
     'manualAdd', 'manualRemove', 'setVisibility', 'resetVisibility', 'bulkVisibility', 'confirmExperimental',
   ]) }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderModelSettingsMutationResponseV1 = z.infer<typeof DaemonProviderModelSettingsMutationResponseV1Schema>;
 
-export const DaemonProviderBindingStatusRequestV1Schema = z.object({
+export const DaemonProviderBindingStatusRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   agentTargetKey: BackendTargetKeyV2Schema,
   selection: SessionModelSelectionV1Schema,
@@ -1070,10 +1071,10 @@ export const DaemonProviderBindingStatusRequestV1Schema = z.object({
     || value.selection.ref.providerConnectionId !== value.launchBinding.connectionId) {
     ctx.addIssue({ code: 'custom', path: ['launchBinding', 'connectionId'], message: 'Launch binding does not match the provider selection' });
   }
-});
+}));
 export type DaemonProviderBindingStatusRequestV1 = z.infer<typeof DaemonProviderBindingStatusRequestV1Schema>;
 
-export const DaemonProviderBindingStatusResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderBindingStatusResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({ status: z.literal('current') }).strict(),
   z.object({
     status: z.literal('changed'),
@@ -1081,45 +1082,45 @@ export const DaemonProviderBindingStatusResponseV1Schema = z.discriminatedUnion(
   }).strict(),
   ...(['connection_missing', 'contribution_unavailable', 'disabled', 'grant_stale', 'incompatible'] as const)
     .map((status) => z.object({ status: z.literal(status), error: ProviderErrorV1Schema }).strict()),
-]);
+]));
 export type DaemonProviderBindingStatusResponseV1 = z.infer<typeof DaemonProviderBindingStatusResponseV1Schema>;
 
-const ProviderProfileMigrationSourceFingerprintV1Schema = z.string().trim().min(1).max(256)
-  .startsWith('legacy-profile-migration-source:v1:');
+const ProviderProfileMigrationSourceFingerprintV1Schema = lazyZodSchema(() => z.string().trim().min(1).max(256)
+  .startsWith('legacy-profile-migration-source:v1:'));
 
-const DaemonProviderProfileMigrationRequestBaseV1Schema = z.object({
+const DaemonProviderProfileMigrationRequestBaseV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   sourceProfileId: ProviderMigrationSourceProfileIdSchema,
   reviewedMapping: LegacyProfileReviewedMappingV1Schema,
-});
+}));
 
 export const DaemonProviderProfileMigrationPreviewRequestV1Schema =
-  DaemonProviderProfileMigrationRequestBaseV1Schema.strict();
+  lazyZodSchema(() => DaemonProviderProfileMigrationRequestBaseV1Schema.strict());
 export type DaemonProviderProfileMigrationPreviewRequestV1 = z.infer<
   typeof DaemonProviderProfileMigrationPreviewRequestV1Schema
 >;
 
-export const DaemonProviderProfileMigrationPreviewResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderProfileMigrationPreviewResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
     sourceFingerprint: ProviderProfileMigrationSourceFingerprintV1Schema,
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderProfileMigrationPreviewResponseV1 = z.infer<
   typeof DaemonProviderProfileMigrationPreviewResponseV1Schema
 >;
 
 export const DaemonProviderProfileMigrationConfirmRequestV1Schema =
-  DaemonProviderProfileMigrationRequestBaseV1Schema.extend({
+  lazyZodSchema(() => DaemonProviderProfileMigrationRequestBaseV1Schema.extend({
     expectedSourceFingerprint: ProviderProfileMigrationSourceFingerprintV1Schema,
-  }).strict();
+  }).strict());
 export type DaemonProviderProfileMigrationConfirmRequestV1 = z.infer<
   typeof DaemonProviderProfileMigrationConfirmRequestV1Schema
 >;
 
-export const DaemonProviderProfileMigrationConfirmResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderProfileMigrationConfirmResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
@@ -1127,23 +1128,23 @@ export const DaemonProviderProfileMigrationConfirmResponseV1Schema = z.discrimin
     settingsVersion: z.number().int().nonnegative(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderProfileMigrationConfirmResponseV1 = z.infer<
   typeof DaemonProviderProfileMigrationConfirmResponseV1Schema
 >;
 
-export const DaemonProviderProfileMigrationConflictConfirmRequestV1Schema = z.object({
+export const DaemonProviderProfileMigrationConflictConfirmRequestV1Schema = lazyZodSchema(() => z.object({
   machineId: ProviderMachineIdSchema,
   sourceProfileId: LegacyProfileMigrationConflictResolutionV1Schema.shape.sourceProfileId,
   expectedCandidateFingerprint:
     LegacyProfileMigrationConflictResolutionV1Schema.shape.expectedCandidateFingerprint,
   decision: LegacyProfileMigrationConflictResolutionV1Schema.shape.decision,
-}).strict();
+}).strict());
 export type DaemonProviderProfileMigrationConflictConfirmRequestV1 = z.infer<
   typeof DaemonProviderProfileMigrationConflictConfirmRequestV1Schema
 >;
 
-export const DaemonProviderProfileMigrationConflictConfirmResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonProviderProfileMigrationConflictConfirmResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
@@ -1151,7 +1152,7 @@ export const DaemonProviderProfileMigrationConflictConfirmResponseV1Schema = z.d
     settingsVersion: z.number().int().nonnegative(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
-]);
+]));
 export type DaemonProviderProfileMigrationConflictConfirmResponseV1 = z.infer<
   typeof DaemonProviderProfileMigrationConflictConfirmResponseV1Schema
 >;

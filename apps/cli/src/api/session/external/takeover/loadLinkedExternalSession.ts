@@ -1,16 +1,6 @@
-import {
-  buildLinkedExternalSessionMetadataV1,
-  normalizeLinkedExternalSessionMetadataV1,
-  resolveExternalHistoryImportV1FromMetadata,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  resolveLinkedExternalSessionMetadataV1,
-  readRuntimeDescriptorV1FromMetadata,
-  type RuntimeDescriptorV1,
-  type ExternalSessionsAgentId,
-  type ExternalSessionsSource,
-  type PluginAgentExternalSessionLinkData,
-  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
-} from '@happier-dev/protocol';
+import { buildLinkedExternalSessionMetadataV1, normalizeLinkedExternalSessionMetadataV1, resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { RuntimeDescriptorV1, ExternalSessionsAgentId, ExternalSessionsSource, PluginAgentExternalSessionLinkData, PluginAgentExternalLinkedTakeoverWriterSafetyV1 } from '@happier-dev/protocol';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { StoredCredentials } from '@/persistence';

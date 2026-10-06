@@ -5,7 +5,8 @@ import { SessionPresentedSurfacePresentationTarget } from '@/components/sessions
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createWidgetActionInputResolverV1, WidgetMoveCaptureV1Schema } from '@happier-dev/protocol/widgets';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
-import { createActionExecutor, createWorkBoardArtifactPortV1, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor, createWorkBoardArtifactPortV1, RPC_METHODS, UiActionDispatchRequestV1Schema, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
 import { createWorkBoardArtifactBoundary } from '../../../../../../packages/protocol/src/boards/workBoardArtifactV1.testkit';
 import { localSettingsDefaults, LocalSettingsSchema } from '@/sync/domains/settings/localSettings';
 import { registerSessionPresentationOnlyTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
@@ -123,7 +124,20 @@ describe('mounted Companion widget Action dependency', () => {
                     validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
                 }),
             } as unknown as ActionExecutorDeps;
-            const executor = createActionExecutor(deps);
+            const clientExecutor = createActionExecutor(deps);
+            // Replace only the Machine network hop. Both dispatchers, configuration
+            // admission, Artifact owner and mounted Companion preference owner stay real.
+            const executor = createActionExecutor({ ...deps, clientActionExecute: createClientActionReverseDispatcher(() => ({
+                hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+                callConnectedClientRpc: async (_method, payload, options) => {
+                    const request = UiActionDispatchRequestV1Schema.parse(payload);
+                    options.onIssued();
+                    return { ok: true, result: { v: 1, execution: await clientExecutor.execute(request.actionId, request.input, {
+                        ...request.context, serverId: scope.serverId,
+                        bypassApprovals: true, ...(options.signal ? { signal: options.signal } : {}),
+                    }) } };
+                },
+            })) });
             const ref = { surface: home, instanceId: instance.id };
             const admission = await readWidgetEntityMovementAdmission(deps, ref, companion, { surface: 'mcp', bypassApprovals: true });
             expect(admission).toMatchObject({ status: 'ready', ref, instance });
@@ -155,6 +169,18 @@ describe('mounted Companion widget Action dependency', () => {
             ]);
             expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
             const companionRef = { surface: companion, instanceId: instance.id };
+            expect(await executor.execute('widgets.instance.inputs.get', { ref: companionRef }, { surface: 'mcp' }))
+                .toMatchObject({ ok: true, result: { ref: companionRef, bindings: instance.bindings } });
+            await React.act(async () => {
+                expect(await executor.execute('widgets.instance.inputs.set', { ref: companionRef,
+                    bindings: { count: { kind: 'value', value: 4 } } }, { surface: 'mcp', bypassApprovals: true }))
+                    .toMatchObject({ ok: true, result: { instance: { bindings: { count: { kind: 'value', value: 4 } } } } });
+            });
+            expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
+            await React.act(async () => {
+                expect(await executor.execute('widgets.instance.inputs.set', { ref: companionRef, bindings: instance.bindings },
+                    { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: true });
+            });
             const updateBindings = (bindings: Parameters<typeof setSessionCompanionInstanceInputs>[2]) => React.act(async () => {
                 const localSettings = storage.getState().localSettings;
                 const updated = LocalSettingsSchema.parse({ ...localSettings, sessionCompanionPreferencesBySessionV1: { ...localSettings.sessionCompanionPreferencesBySessionV1,

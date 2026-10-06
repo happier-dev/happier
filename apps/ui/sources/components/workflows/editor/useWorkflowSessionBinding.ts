@@ -53,7 +53,7 @@ export function useWorkflowSessionBinding(input: Readonly<{
             } };
             const block = stepId === null ? null : findWorkflowBlock(current.context.draft, stepId);
             return { status: 'allowed', effect: { actionId: 'workflow.authoring.conversation.bind', input: request,
-                preview: { verb: t('workflows.page.inspector.dropContinue', { session: admission.option.label }),
+                preview: { glyph: 'add', verb: t('workflows.page.inspector.dropContinue', { session: admission.option.label }),
                     target: block === null ? t('workflows.page.blocks.workflowDefaults') : workflowBlockReferenceLabel(block) },
             } };
         };

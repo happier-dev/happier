@@ -1,14 +1,8 @@
-import {
-    InstallableDependencyDescriptorSchema,
-    type InstallableDependencyDescriptor,
-    type InstallableRegistryContribution,
-    type InstallablesRegistry,
-    resolveInstallablesRegistry,
-} from '@happier-dev/protocol/installables';
-import {
-    PluginManagedDependencyContributionV2Schema,
-    type PluginManagedDependencyContributionV2,
-} from '@happier-dev/protocol';
+import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/installables/descriptor';
+import type { InstallableDependencyDescriptor, InstallableRegistryContribution, InstallablesRegistry } from '@happier-dev/protocol/installables';
+import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/registry';
+import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/managedDependencies';
+import type { PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from './types';

@@ -1,11 +1,7 @@
-import {
-  normalizeConnectedServiceLimitCategoryV1,
-  normalizeConnectedServiceUxDiagnosticV1,
-  SessionRuntimeIssueV1Schema,
-  type ConnectedServiceUxDiagnosticV1,
-  type SessionUsageLimitRecoveryOperationResultV1,
-  type SessionRuntimeIssueV1,
-} from '@happier-dev/protocol';
+import { normalizeConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
+import { normalizeConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { ConnectedServiceUxDiagnosticV1, SessionUsageLimitRecoveryOperationResultV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';

@@ -1,7 +1,5 @@
-import {
-    ScmHostingProviderCapabilitiesSchema,
-    buildQualifiedPluginContributionKey,
-} from '@happier-dev/protocol';
+import { ScmHostingProviderCapabilitiesSchema } from '@happier-dev/protocol/scm/pullRequests';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 

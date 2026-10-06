@@ -6,14 +6,14 @@ import {
   type NormalizedMessage, type OrderedTranscript, type PendingRequestFacts,
 } from '@happier-dev/session-core';
 import { readSharedMetadataActionConfirmationState, readSharedMetadataPresentationCompletedRequests } from '@happier-dev/session-core/pending';
-import {
-  ChangesResponseSchema, CurrentCursorResponseSchema, RPC_METHODS,
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-  readSessionUpdatedMessageChangeHintV1, SessionEffectiveAccessV1Schema, TranscriptOpenedFollowOutputV1Schema,
-  type SessionEffectiveAccessV1, type SessionMessageV1, type SessionMessagesPageV1, type TranscriptOpenedFollowOutputV1,
-  V2SessionByIdResponseSchema,
-} from '@happier-dev/protocol';
+import { ChangesResponseSchema, CurrentCursorResponseSchema, readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { TranscriptOpenedFollowOutputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
+import type { SessionEffectiveAccessV1, SessionMessageV1, SessionMessagesPageV1, TranscriptOpenedFollowOutputV1 } from '@happier-dev/protocol';
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import {
   callSocketRpc, createHappierSocket, fetchSessionMessagesPage, followSession,
   openSessionStateValue, openSessionStoredContent, repairSessionMessagesTargets,

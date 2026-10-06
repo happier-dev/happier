@@ -8,7 +8,7 @@ import {
     type ProcessLiveness,
 } from '@happier-dev/cli-common/process';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { createManagedServiceEndpointProjectionV1,
     managedServiceEndpointProjectionFileName,
     parseManagedServiceEndpointProjectionV1,

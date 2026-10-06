@@ -1,4 +1,5 @@
-import { getActionSpec, type RuntimeActionIdV1 } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserRecordingRoutes } from './routes';
 

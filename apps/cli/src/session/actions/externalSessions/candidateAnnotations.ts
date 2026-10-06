@@ -1,11 +1,6 @@
-import {
-    readExternalHistoryImportV1FromMetadata,
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-    SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
-    type ExternalSessionCandidateV1,
-    type ExternalSessionsAgentId,
-    type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+import { readExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2 } from '@happier-dev/protocol/sessions/control/contract';
+import type { ExternalSessionCandidateV1, ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { resolveExternalSessionTagLookupCandidates } from '@/api/session/external/linking/externalSessionTagLookupCandidates';
 import type { StoredCredentials } from '@/persistence';

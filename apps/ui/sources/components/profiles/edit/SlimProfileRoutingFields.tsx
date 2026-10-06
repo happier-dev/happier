@@ -27,7 +27,7 @@ import { useConfirmExperimentalProviderModel } from '@/providers/hooks/useConfir
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { resolveProfileBackendTargetKeyForEntry } from './profileBackendEntryStorage';
 
@@ -79,7 +79,9 @@ export function SlimProfileRoutingFields(props: Readonly<{
         scopeKind: 'spawn',
         serverId: props.serverId,
     });
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        providerSettingsV1: settings.providerSettingsV1,
+    }));
     const [openPermissionTarget, setOpenPermissionTarget] = React.useState<string | null>(null);
     const [openPersistenceTarget, setOpenPersistenceTarget] = React.useState<string | null>(null);
     const [agentOpen, setAgentOpen] = React.useState(false);

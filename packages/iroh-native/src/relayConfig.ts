@@ -1,4 +1,4 @@
-import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol';
+import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 
 import type { IrohRelayPolicy } from './types.js';
 

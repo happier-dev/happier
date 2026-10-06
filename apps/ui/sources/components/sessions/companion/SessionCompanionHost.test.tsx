@@ -95,14 +95,15 @@ const storedPreference = { value: undefined as unknown };
 const mutate = vi.fn();
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    // Device persistence is the boundary; retain real preference/controller exports.
     return createPartialStorageModuleMock(importOriginal, {
-    useSessionCompanionPreferenceSlot: () => ({
-        stored: storedPreference.value,
-        storageKey: 'server-a account-a session-1',
-    }),
-    useMutateSessionCompanionPreference: () => mutate,
-    // The Companion's Appearance frame default (Widgets); unset falls back to the placement default.
-    useLocalSetting: () => undefined,
+        useSessionCompanionPreferenceSlot: () => ({
+            stored: storedPreference.value,
+            storageKey: 'server-a account-a session-1',
+        }),
+        useMutateSessionCompanionPreference: () => mutate,
+        // The Companion's Appearance frame default (Widgets); unset falls back to the placement default.
+        useLocalSetting: () => undefined,
     });
 });
 

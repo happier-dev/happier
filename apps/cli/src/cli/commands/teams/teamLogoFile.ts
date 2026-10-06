@@ -1,11 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import {
-    TEAM_LOGO_ACCEPTED_MIME_TYPES_V1,
-    TEAM_LOGO_MAX_SOURCE_BYTES_V1,
-    type TeamLogoMimeTypeV1,
-    type TeamLogoSourceV1,
-} from '@happier-dev/protocol';
+import { TEAM_LOGO_ACCEPTED_MIME_TYPES_V1, TEAM_LOGO_MAX_SOURCE_BYTES_V1 } from '@happier-dev/protocol/teams/logo';
+import type { TeamLogoMimeTypeV1, TeamLogoSourceV1 } from '@happier-dev/protocol';
 
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 

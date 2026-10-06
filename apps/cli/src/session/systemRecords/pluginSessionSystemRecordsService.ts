@@ -3,14 +3,9 @@ import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {
   SessionHandle,
 } from '@happier-dev/plugin-sdk/sessions';
-import {
-  PluginIdSchema,
-  SessionSystemRecordDeleteRequestSchema,
-  SessionSystemRecordListQuerySchema,
-  SessionSystemRecordReadRequestSchema,
-  SessionSystemRecordUpsertRequestSchema,
-  type SessionSystemRecordStored,
-} from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { SessionSystemRecordDeleteRequestSchema, SessionSystemRecordListQuerySchema, SessionSystemRecordReadRequestSchema, SessionSystemRecordUpsertRequestSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import type { SessionSystemRecordStored } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

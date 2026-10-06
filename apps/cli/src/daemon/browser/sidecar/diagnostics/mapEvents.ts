@@ -1,12 +1,5 @@
-import {
-    BrowserDiagnosticEventV1Schema,
-    BrowserDiagnosticsEvalResultV1Schema,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticFamilyV1,
-    type BrowserDiagnosticUnavailableReasonV1,
-    type BrowserDiagnosticsEvalResultV1,
-    type BrowserDiagnosticsRemoteObjectPreviewPropertyV1,
-} from '@happier-dev/protocol';
+import { BrowserDiagnosticEventV1Schema, BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserDiagnosticEventV1, BrowserDiagnosticFamilyV1, BrowserDiagnosticUnavailableReasonV1, BrowserDiagnosticsEvalResultV1, BrowserDiagnosticsRemoteObjectPreviewPropertyV1 } from '@happier-dev/protocol';
 
 import {
     createSidecarPrivateReference,

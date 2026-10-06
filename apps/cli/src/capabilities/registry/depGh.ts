@@ -1,4 +1,4 @@
-import { GH_DEP_ID } from '@happier-dev/protocol/installables';
+import { GH_DEP_ID } from '@happier-dev/protocol/installables/definitions/gh';
 
 import { CapabilityError } from '../errors';
 import type { Capability } from '../service';

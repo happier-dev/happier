@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -91,6 +92,55 @@ describe('assertPluginAuthorPrepublicationRuntimeDeclarations', () => {
 });
 
 describe('runPluginAuthorToolchain', () => {
+  it.each([
+    { name: 'author-owned', contents: 'packages:\n  - plugins/*\n', replaceable: false },
+    { name: 'author-owned with a quoted marker', contents: 'packages:\n  - plugins/*\n# Happier transient public author workspace\n', replaceable: false },
+    { name: 'empty leaked', contents: '', replaceable: true },
+    { name: 'marked leaked', contents: '# Happier transient public author workspace\noverrides:\n  stale: file:///missing\n', replaceable: true },
+  ])('handles $name pnpm workspace configuration for bundled SDK resolution', async ({ contents, replaceable }) => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-owned-pnpm-workspace-'));
+    const workspaceConfigPath = join(projectRoot, 'pnpm-workspace.yaml');
+    const spawn = vi.fn(async () => {
+      const config = await readFile(workspaceConfigPath, 'utf8');
+      const sdkFileUrl = config.match(/^  "@happier-dev\/plugin-sdk": "(file:\/\/\/[^\n]+)"$/mu)?.[1];
+      expect(sdkFileUrl).toBeDefined();
+      expect((await lstat(fileURLToPath(sdkFileUrl!))).isDirectory()).toBe(true);
+      return successfulSpawn();
+    });
+    try {
+      await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+        name: 'external-happier-plugin', version: '0.1.0', type: 'module',
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }), 'utf8');
+      await writeFile(workspaceConfigPath, contents, 'utf8');
+      const result = await runPluginAuthorToolchain({ operation: 'install', projectRoot }, {
+        ensureManagedPnpmCommand: async () => '/happier/tools/pnpm/current/bin/pnpm',
+        managedPnpmBinPath: () => '/happier/tools/pnpm/current/bin/pnpm',
+        managedJavaScriptRuntimeBinPath: () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
+        buildManagedPnpmEnvironment: (env = {}) => env,
+        ensureManagedJavaScriptRuntimeCommand: async () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
+        resolveNativeTypeScriptBin: () => '/fixture/plugin/node_modules/@typescript/native/bin/tsc',
+        spawn, processEnv: {},
+      });
+      if (replaceable) {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, operation: 'install' });
+        await expect(readFile(workspaceConfigPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } else {
+        expect(result).toMatchObject({
+          ok: false, operation: 'install',
+          diagnostics: [expect.objectContaining({
+            code: 'plugin_author_tool_failed',
+            message: expect.stringContaining('refuses to replace an author-owned pnpm workspace configuration'),
+          })],
+        });
+        expect(spawn).not.toHaveBeenCalled();
+        await expect(readFile(workspaceConfigPath, 'utf8')).resolves.toBe(contents);
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   it('does not reinstall dependencies before a focused check when the author root is already materialized', async () => {
     const fixture = await createColdAuthorBuildFixture(createPluginManifestV2Fixture({ entrypoints: undefined }));
     try {

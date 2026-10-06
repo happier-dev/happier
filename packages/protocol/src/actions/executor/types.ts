@@ -1054,7 +1054,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<ActionExecuteResult>;
   /** The mounted client's pending-navigation owner; absent on headless hosts. */
   nextPendingSession?: (context: ActionExecutorContext) => Promise<Readonly<{ status: 'opened' | 'none' | 'unavailable' }>>;
-  launchProfilePublish?: (input: Readonly<{ profileId: string }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<Readonly<{ artifactId: string }>>;
+  launchProfilePublish?: (input: Readonly<{ profileId: string }>, options?: Readonly<{ signal?: AbortSignal; context?: ActionExecutorContext }>) => Promise<Readonly<{ artifactId: string }>>;
   roleActionExecute?: (args: Readonly<{
     actionId: RoleActionIdV1;
     input: unknown;
@@ -1979,7 +1979,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
 
-  /** The answering client's declared-preference owner; Account writes retain captured Account scope. */
+  /** Declared preferences through the captured Account owner or the answering device's local owner. */
   settingsDeclarationAction?: (args: Readonly<{
     actionId: SettingsDeclarationActionIdV1;
     input: unknown;

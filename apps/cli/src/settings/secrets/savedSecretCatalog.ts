@@ -1,15 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import {
-  decryptSecretValueWithKeysV1,
-  openSavedSecretResourceStoredContentV1,
-  parseSavedSecretCatalogReferenceV1,
-  projectSavedSecretCatalogCollisionStateV1,
-  SecretStringV1Schema,
-  type SavedSecretCatalogResourceV1,
-  type SavedSecretResourceStoredContentV1,
-  type SecretStringV1,
-} from '@happier-dev/protocol';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { parseSavedSecretCatalogReferenceV1, projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { SavedSecretCatalogResourceV1, SavedSecretResourceStoredContentV1, SecretStringV1 } from '@happier-dev/protocol';
 import {
   getActiveAccountSettingsSnapshot,
   type ActiveAccountSettingsSnapshot,

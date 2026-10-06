@@ -1,7 +1,9 @@
 import {
     AutomationRunExecutionTargetV1Schema,
     AutomationRunTemplateV1Schema,
+    AutomationRunTemplateV1ReadSchema,
     AutomationStoredDefinitionExecutionRecipeV1Schema,
+    AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
     type AutomationRunExecutionTargetV1,
     type AutomationStoredDefinitionExecutionRecipeV1,
     type AutomationRunTemplateV1,
@@ -51,8 +53,8 @@ export async function openAutomationRecipeForAuthoring(params: Readonly<{
     decryptRaw?: (ciphertext: string) => Promise<unknown | null>;
     isCurrent?: () => boolean;
 }>): Promise<AutomationRunTemplateV1> {
-    const recipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse(params.recipe);
-    return openAutomationRecipePayloadForAuthoring({ ...params, envelope: recipe.template, schema: AutomationRunTemplateV1Schema });
+    const recipe = AutomationStoredDefinitionExecutionRecipeV1ReadSchema.parse(params.recipe);
+    return openAutomationRecipePayloadForAuthoring({ ...params, envelope: recipe.template, schema: AutomationRunTemplateV1ReadSchema });
 }
 
 /**

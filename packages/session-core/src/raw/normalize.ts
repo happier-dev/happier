@@ -1,16 +1,9 @@
 import { readReleasedOutputNonTranscriptRecordTypes } from '@happier-dev/agents';
-import {
-    createEmptyCanonicalTurnDiffSuppressionState,
-    rememberSuppressedEmptyCanonicalTurnDiffCallId,
-    shouldSuppressEmptyCanonicalTurnDiffToolResult,
-    resolveTranscriptBodySessionMessageRole,
-    type EmptyCanonicalTurnDiffSuppressionState,
-    isSessionToolAnswerDeliveryMeta,
-    readEmptyCanonicalTurnDiffToolCallId,
-    shouldSuppressEmptyCanonicalTurnDiffToolCall,
-    type MessageStructuredPresentationV1,
-    type SessionMessageRole,
-} from '@happier-dev/protocol';
+import { createEmptyCanonicalTurnDiffSuppressionState, rememberSuppressedEmptyCanonicalTurnDiffCallId, shouldSuppressEmptyCanonicalTurnDiffToolResult } from '@happier-dev/protocol/sessions/messages/emptyCanonicalTurnDiffSuppression';
+import { resolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { EmptyCanonicalTurnDiffSuppressionState, MessageStructuredPresentationV1, SessionMessageRole } from '@happier-dev/protocol';
+import { isSessionToolAnswerDeliveryMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
+import { readEmptyCanonicalTurnDiffToolCallId, shouldSuppressEmptyCanonicalTurnDiffToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 
 import type { MessageMeta } from "../messages/messageMetaTypes.js";
 import { markUnsupportedContentMeta } from "../messages/unsupportedContentMeta.js";

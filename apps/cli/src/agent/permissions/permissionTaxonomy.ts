@@ -1,4 +1,4 @@
-import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2/aliases';
 
 import { isDefaultWriteLikeToolName } from './writeLikeToolNameHeuristics';
 

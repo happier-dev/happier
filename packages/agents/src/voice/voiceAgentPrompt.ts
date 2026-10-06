@@ -1,16 +1,9 @@
-import {
-  listVoiceActionBlockSpecs,
-  listVoiceSdkSafeToolActionSpecs,
-  listVoiceToolActionSpecs,
-} from '@happier-dev/protocol/actions/actionSpecs';
-import {
-  buildMemoryRecallGuidanceBlockV1,
-  buildPromptPlanV1,
-  renderPromptPlanV1,
-  VOICE_ACTIONS_TAG,
-  VOICE_TOOL_RESULTS_JSON_PREFIX,
-  type PromptBlockV1,
-} from '@happier-dev/protocol/voice/prompt';
+import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
+import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import { VOICE_ACTIONS_TAG } from '@happier-dev/protocol/voice/actions';
+import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
+import type { PromptBlockV1 } from '@happier-dev/protocol/voice/prompt';
 
 import {
   buildVoiceDiscoveryChecklistLines,

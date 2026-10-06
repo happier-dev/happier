@@ -142,7 +142,8 @@ const RoleDetail = React.memo(function RoleDetail(props: Readonly<{ entry: RoleC
                 kind: 'role.v1',
                 artifactId: entry.roleId,
                 name: role.name,
-                subtitle: `${engine.label} · ${t(role.runsAs.kind === 'session' ? 'roles.settings.runsAsSession' : 'roles.settings.runsAsBackgroundRun')}`,
+                subtitle: [engine.label, t(role.runsAs.kind === 'session' ? 'roles.settings.runsAsSession' : 'roles.settings.runsAsBackgroundRun')]
+                    .filter(Boolean).join(' · '),
                 linkPath: roleRoute(entry.roleId),
                 onSendCopy: () => { void sendRoleCopy(role); },
             }),

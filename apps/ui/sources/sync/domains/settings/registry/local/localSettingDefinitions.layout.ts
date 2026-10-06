@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { normalizeSessionMobileSurface, type SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
+import { StoredNavigationSurfacePlacementsV1Schema } from '../../mobileSurfacePinning';
 
 import {
     EMPTY_PERSISTED_PANE_SCOPE_STATE,
@@ -176,6 +177,12 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
             identityScope: 'device_user',
             serializeCurrent: objectKeyCount,
         },
+    },
+    navigationSurfacePlacementsV1: {
+        schema: StoredNavigationSurfacePlacementsV1Schema.catch({}),
+        default: {},
+        description: 'Device-local ordering and pinned, overflow or hidden placement for navigation surfaces',
+        storageScope: 'local',
     },
     sessionCockpitBarSurfaceIds: {
         // The person's Session bar in order; null until they change it (host defaults apply).

@@ -7,7 +7,14 @@ import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
-import { buildWidgetFrameStyleActions, buildWidgetInstanceActions, buildWidgetWidthActions } from '@/components/widgets/frame/widgetFrameMenu';
+import {
+    buildWidgetDefinitionActions,
+    buildWidgetFrameStyleActions,
+    buildWidgetInstanceActions,
+    buildWidgetMoveActions,
+    buildWidgetWidthActions,
+    orderWidgetMenu,
+} from '@/components/widgets/frame/widgetFrameMenu';
 
 import { homeHubSectionTitle, isHomeHubCardSection } from '../homeHubSections';
 import type { HomeHubSection } from './homeHubLayout';
@@ -44,19 +51,20 @@ export function HubSectionMenu(props: Readonly<{
     const { section, layout } = props;
     const title = homeHubSectionTitle(section);
     const surfaceDefault = useWidgetFrameSurfaceDefault('home');
+    // Menu events consume rejection; the layout queue retains the failed intent for Customize's Retry.
     // Only sections drawn in the widget frame have a frame to show or hide.
     const frameActions = isHomeHubCardSection(section)
         ? buildWidgetFrameStyleActions({
             placement: 'home',
             surfaceDefault,
             override: section.frameStyle,
-            onSet: (style) => layout.setFrameStyle(section.id, style),
+            onSet: (style) => layout.setFrameStyle(section.id, style).catch(() => {}),
         })
         : [];
 
     // A widget's width on Home: half (two to a row) or the whole row (lab dlayout H2).
     const widthActions = section.kind === 'widget'
-        ? buildWidgetWidthActions({ width: section.width, onSet: (width) => { void layout.setWidth(section.instance.id, width); } })
+        ? buildWidgetWidthActions({ width: section.width, onSet: (width) => { void layout.setWidth(section.instance.id, width).catch(() => {}); } })
         : [];
 
     return (
@@ -73,46 +81,30 @@ export function HubSectionMenu(props: Readonly<{
                 compactThreshold={ALWAYS_OVERFLOW}
                 compactActionIds={[]}
                 overflowTriggerTestID={`home-hub.${section.id}.menuTrigger`}
-                overflowTriggerAccessibilityLabel={`${t('settingsOverview.homeSectionOptions')}: ${title}`}
-                actions={[
-                    ...buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename, onAbout: props.onAbout }),
-                    ...(props.onOpen ? [{
-                        id: 'open',
-                        title: t('common.open'),
-                        icon: 'arrow-square-out' as const,
-                        onPress: props.onOpen,
-                    }] : []),
-                    ...(section.hideable ? [{
+                overflowTriggerAccessibilityLabel={`${section.kind === 'widget' ? t('widgetAdd.widgetOptions') : t('settingsOverview.homeSectionOptions')}: ${title}`}
+                actions={orderWidgetMenu({
+                    instance: buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename }),
+                    width: widthActions,
+                    frame: frameActions,
+                    move: buildWidgetMoveActions({
+                        index: props.index,
+                        count: layout.sections.length,
+                        onMove: (delta) => { void layout.move(section.id, delta).catch(() => {}); },
+                    }),
+                    definition: buildWidgetDefinitionActions({ onAbout: props.onAbout }),
+                    surface: [
+                        ...(props.onOpen ? [{ id: 'open', title: t('common.open'), icon: 'arrow-square-out' as const, onPress: props.onOpen }] : []),
+                        { id: 'customize', title: t('settingsOverview.homeCustomize'), icon: 'sliders-horizontal' as const, onPress: props.onCustomize },
+                    ],
+                    remove: section.hideable ? [{
                         id: 'hide',
                         title: section.kind === 'widget'
                             ? t('settingsOverview.homeRemoveWidget')
                             : t('settingsOverview.homeHideSection'),
                         icon: 'eye-slash' as const,
-                        onPress: () => layout.setHidden(section.id, true),
-                    }] : []),
-                    {
-                        id: 'moveUp',
-                        title: t('common.moveUp'),
-                        icon: 'caret-up',
-                        disabled: props.index === 0,
-                        onPress: () => layout.move(section.id, -1),
-                    },
-                    {
-                        id: 'moveDown',
-                        title: t('common.moveDown'),
-                        icon: 'caret-down',
-                        disabled: props.index === layout.sections.length - 1,
-                        onPress: () => layout.move(section.id, 1),
-                    },
-                    ...widthActions,
-                    ...frameActions,
-                    {
-                        id: 'customize',
-                        title: t('settingsOverview.homeCustomize'),
-                        icon: 'sliders-horizontal',
-                        onPress: props.onCustomize,
-                    },
-                ]}
+                        onPress: () => { void layout.setHidden(section.id, true).catch(() => {}); },
+                    }] : [],
+                })}
             />
         </View>
     );

@@ -1,8 +1,5 @@
-import {
-  ConnectedAccountServiceKeySchema,
-  ConnectedServiceBindingsV2IngressSchema,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import { parseConnectedServicesBindings } from '../parseConnectedServicesBindings';
 import {

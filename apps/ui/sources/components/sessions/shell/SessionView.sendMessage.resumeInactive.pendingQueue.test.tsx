@@ -270,6 +270,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 const { SessionView } = await import('./SessionView');
+const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { emitSessionResumeRequest } = await import('@/components/sessions/model/sessionResumeRequests');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
 const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
@@ -331,7 +332,16 @@ async function publishDurablePendingState(row: PendingMessage, authorization: Se
 
 describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
     async function renderSessionView(props: { routeServerId?: string } = {}) {
-        const screen = await renderScreen(<SessionView id="s1" routeServerId={props.routeServerId} />, { wrapper: runtime.Wrapper });
+        const screen = await renderScreen(
+            <DestinationInstanceHost tabId="queue-session" ref={{ kind: 'session', params: {
+                id: 's1', ...(props.routeServerId ? { serverId: props.routeServerId } : {}),
+            } }} pathname="/session/s1" focused visible navigation={{
+                push: routerPushSpy, pushRetainingCurrent: routerPushSpy, replace: vi.fn(), back: vi.fn(),
+            }}>
+                <SessionView id="s1" routeServerId={props.routeServerId} />
+            </DestinationInstanceHost>,
+            { wrapper: runtime.Wrapper },
+        );
         await flushHookEffects();
         return screen;
     }

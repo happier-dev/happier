@@ -1,7 +1,5 @@
-import {
-  isAgentThreadTextConversationTurnMeta,
-  redactBugReportSensitiveText,
-} from '@happier-dev/protocol';
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 import {

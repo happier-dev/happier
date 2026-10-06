@@ -1,17 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import {
-  ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, SessionMessageSendResultV1Schema,
-  resolveExecutionRunInteractionAffordances, readExecutionRunStartRunCreation,
-  readBackendTargetRefV2,
-  buildReviewCommentsOutboundMessage,
-  ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultEditInputSchema, ScmDiffSummaryResultRevisionInputSchema,
-  ScmDiffSummaryRefineInputSchema, ScmDiffSummaryAddOutputsInputSchema, ScmDiffSummaryDiscussInputSchema,
-  type ScmActionExecute, type ScmActionId, type ScmDiffSummaryResultResponse,
-  type ScmDiffSummaryResultDeleteResponse, type ScmDiffSummaryOutputKind,
-  type ScmComparison, type ScmReviewedMarkResponse,
-  type ReviewCommentDraftMessageV1,
-  type ActionExecutorContext, type ScmReviewExplanationRequester,
-} from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { resolveExecutionRunInteractionAffordances } from '@happier-dev/protocol/execution/runs/interactionAffordances';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildReviewCommentsOutboundMessage } from '@happier-dev/protocol/messages/structured/reviewCommentsInput';
+import { ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultEditInputSchema, ScmDiffSummaryResultRevisionInputSchema, ScmDiffSummaryRefineInputSchema, ScmDiffSummaryAddOutputsInputSchema, ScmDiffSummaryDiscussInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import type { ScmActionExecute, ScmActionId, ScmDiffSummaryResultResponse, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryOutputKind, ScmComparison, ScmReviewedMarkResponse, ReviewCommentDraftMessageV1, ActionExecutorContext, ScmReviewExplanationRequester } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { buildDiffSummaryPrompt } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { presentScmDiffSummaryModelContext } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';

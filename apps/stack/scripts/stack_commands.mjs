@@ -36,6 +36,7 @@ import { getStackHelpUsageLine, renderStackRootHelpText, renderStackSubcommandHe
 import { copyAuthFromStackIntoNewStack } from './stack/copy_auth_from_stack.mjs';
 import {
   createStackEnv,
+  configureSharedDatabasePreset,
   getRuntimePortExtraEnv,
   parseServerComponentFromEnv,
   readStackEnvObject,
@@ -1787,9 +1788,16 @@ async function cmdInfo({ rootDir, argv }) {
   console.log(`- env: ${out.envPath}`);
   console.log(`- runtime: ${out.runtimeStatePath}`);
   console.log(`- server: ${out.serverComponent}`);
+  for (const [component, packages] of Object.entries(out.runtime?.sourceWorkspaceStalePackages ?? {})) {
+    for (const stale of packages ?? []) {
+      console.log(`- source-dev last-green (${component}): ${stale.packageName} built ${stale.lastGreenBuiltAt}\n${stale.diagnosticSummary}`);
+    }
+  }
   for (const [component, entry] of Object.entries(out.runtime?.snapshotComponents ?? {})) {
     for (const stale of entry.stalePackages ?? []) {
-      console.log(`- QA last-green (${component}): ${stale.packageName} built ${stale.lastGreenBuiltAt}`);
+      console.log(stale.reason === 'typecheck'
+        ? `- QA typecheck (${component}): ${stale.packageName}: ${stale.errorCount} errors in ${stale.files.join(', ')}`
+        : `- QA last-green (${component}): ${stale.packageName} built ${stale.lastGreenBuiltAt}`);
     }
   }
   const runningPid = Number(out.runtime?.runningPid);
@@ -2495,6 +2503,11 @@ async function main() {
   }
 
   if (cmd === 'env') {
+    if (passthrough[0] === 'shared-db') {
+      const result = await configureSharedDatabasePreset({ stackName, sourceStackName: passthrough[1] });
+      printResult({ json, data: result, text: `[stack] ${stackName} shares ${result.sourceStackName}'s database on ${result.serverTarget}; reload to apply` });
+      return;
+    }
     const hasPositional = passthrough.some((a) => !a.startsWith('-'));
     const envArgv = hasPositional ? passthrough : ['list', ...passthrough];
     // Forward to scripts/env.mjs under the stack env.

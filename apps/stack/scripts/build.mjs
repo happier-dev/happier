@@ -55,7 +55,8 @@ async function main() {
         'note:',
         '  If run from inside the Happier UI checkout/worktree, the build uses that checkout.',
         '  Explicit component flags publish or reuse repository-authority artifacts for named stacks.',
-        '  Building artifacts alone does not switch the active runtime; use `hstack stack runtime <name> activate ...` or `--activate-runtime`.',
+        '  Every component build publishes a complete producer snapshot; use `hstack stack runtime <name> select` to adopt it without rebuilding.',
+        '  Initialize a target with --all when no complete snapshot exists. --activate-runtime also selects the requesting consumer.',
         '  --tauri remains a legacy local UI/Tauri build flag and cannot be mixed with named-stack artifact/runtime flags.',
       ].join('\n'),
     });
@@ -94,6 +95,7 @@ async function main() {
       for (const [component, artifact] of Object.entries(result.artifacts ?? {})) {
         console.log(`[build] ${component}: ${artifact.artifactDir}`);
       }
+      if (result.snapshotPath) console.log(`[build] runtime snapshot published: ${result.snapshotPath}`);
       if (result.runtime?.snapshotPath) {
         console.log(`[build] runtime snapshot selected: ${result.runtime.snapshotPath}`);
       }

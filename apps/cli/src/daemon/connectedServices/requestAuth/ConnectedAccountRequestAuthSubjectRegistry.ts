@@ -1,10 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import {
-    QualifiedConnectedAccountPurposeBindingsV1Schema,
-    QualifiedConnectedAccountRequestAuthUseV1Schema,
-    qualifiedPurposeKey,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import {
     digestConnectedAccountRequestAuthCapability,
     removeConnectedAccountRequestAuthCapabilityFileIfOwned,

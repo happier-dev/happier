@@ -108,6 +108,28 @@ async function writeDaemonCodePayload({ payloadDir }) {
   return { entrypoint: 'happier', workspaceRuntimeIdentity: 'a'.repeat(64) };
 }
 
+test('daemon publication merges current CLI typecheck diagnostics into the existing QA degradation record', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-typecheck-'));
+  const stalePackages = [{ packageName: '@happier-dev/plugin-sdk', diagnosticSummary: 'last-green fixture', outputIdentity: 'prior' }];
+  const cliFailure = { packageName: '@happier-dev/cli', reason: 'typecheck', diagnosticSummary: 'src/index.ts(1,1): error TS2322: fixture', errorCount: 1, files: ['src/index.ts'] };
+  try {
+    const result = await buildDaemonArtifact({
+      rootDir: root, stackBaseDir: join(root, 'stack'), artifactDir: join(root, 'artifact'),
+      artifactFingerprint: 'typecheck-code', supportArtifactFingerprint: 'typecheck-support',
+      sourceMetadata: sourceMetadata(root), stalePackages,
+      env: { HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+      runCaptureImpl: readFixtureGoVersion,
+      buildDaemonSupportArtifactPayloadImpl: async args => await writeDaemonSupportPayload({ ...args, fingerprint: 'support' }),
+      buildCliBinaryArtifactPayloadImpl: async args => {
+        assert.equal(args.env.HAPPIER_WORKSPACE_BUILD_MODE, 'qa-runtime');
+        return { ...await writeDaemonCodePayload(args), stalePackages: [cliFailure] };
+      },
+      writeCliBinaryArtifactRuntimeAssetBuildManifestImpl: () => {},
+    });
+    assert.deepEqual(result.manifest.stalePackages, [...stalePackages, cliFailure]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 function sourceMetadata(root) {
   return {
     repoDir: root,
@@ -152,6 +174,7 @@ test('two concurrent code-only daemon publications reuse one immutable support p
       artifactDir: join(stackBaseDir, 'artifacts', 'daemon', artifactFingerprint),
       artifactFingerprint,
       supportArtifactFingerprint: supportFingerprint,
+      target: { platform: 'linux', arch: 'arm64' },
       preparedWorkspacePublication,
       requiredCliDistInputFingerprint: 'c'.repeat(64),
       workspaceSourceFingerprint: 'd'.repeat(64),
@@ -159,6 +182,8 @@ test('two concurrent code-only daemon publications reuse one immutable support p
       runCaptureImpl: readFixtureGoVersion,
       resolveDaemonSupportArtifactFingerprintImpl: async () => supportFingerprint,
       buildDaemonSupportArtifactPayloadImpl: async (args) => {
+        assert.equal(args.target.os, 'linux');
+        assert.equal(args.target.arch, 'arm64');
         assert.equal(args.workspaceSourceFingerprint, 'd'.repeat(64));
         supportBuilds += 1;
         if (supportBuilds === 1) {
@@ -171,6 +196,8 @@ test('two concurrent code-only daemon publications reuse one immutable support p
         });
       },
       buildCliBinaryArtifactPayloadImpl: async (args) => {
+        assert.equal(args.target.arch, 'arm64');
+        assert.equal(args.target.bunTarget, 'bun-linux-arm64');
         codeBuilds += 1;
         assert.equal(args.preparedWorkspacePublication, preparedWorkspacePublication);
         assert.equal(args.requiredCliDistInputFingerprint, 'c'.repeat(64));
@@ -195,6 +222,9 @@ test('two concurrent code-only daemon publications reuse one immutable support p
     );
     assert.equal(first.manifest.daemonSupportArtifactFingerprint, supportFingerprint);
     assert.equal(second.manifest.daemonSupportArtifactFingerprint, supportFingerprint);
+    assert.deepEqual(second.manifest.target, { platform: 'linux', arch: 'arm64' });
+    assert.deepEqual(JSON.parse(await readFile(join(stackBaseDir, 'artifacts', 'daemon-support', supportFingerprint, 'manifest.json'), 'utf8')).target,
+      { platform: 'linux', arch: 'arm64' });
     const supportPayloadDir = join(stackBaseDir, 'artifacts', 'daemon-support', supportFingerprint, 'payload');
     assert.equal(
       await readFile(join(second.artifactDir, 'payload', 'node_modules', 'runtime.txt'), 'utf8'),

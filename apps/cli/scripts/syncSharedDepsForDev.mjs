@@ -28,6 +28,9 @@ async function main() {
       lockPath: process.env.HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_PATH,
     },
   });
+  for (const stale of result?.stalePackages ?? []) {
+    console.error(`[source-dev] running on last-green: ${stale.packageName} built ${stale.lastGreenBuiltAt}\n${stale.diagnosticSummary}`);
+  }
   if (json) {
     process.stdout.write(`__HAPPIER_SOURCE_DEV_SYNC_RESULT__=${JSON.stringify(result ?? null)}\n`);
   }

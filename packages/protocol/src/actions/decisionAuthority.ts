@@ -2,6 +2,7 @@ import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '../auth/apiTokenG
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+import { isPresentUserSettingWriteV1 } from './accountSettingDeclarations.js';
 
 export const DECISION_ACTION_IDS = ['approval.request.decide', 'session.permission.respond'] as const;
 export const TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS = ['session.user_action.answer'] as const;
@@ -32,6 +33,7 @@ export function requiresPresentUserExecutionAuthorityForActionInputV1(
   input?: unknown,
 ): boolean {
   return spec.requiredAuthority === 'present_user'
+    || isPresentUserSettingWriteV1(spec.id, input)
     || (spec.id === 'session.open' && typeof input === 'object' && input !== null
       && 'approvedNewDirectoryCreation' in input && input.approvedNewDirectoryCreation === true);
 }
@@ -62,6 +64,15 @@ export function resolveCredentialActionAdmissionV1(input: Readonly<{
   hasExternalCredential?: boolean;
   actionInput?: unknown;
 }>): { ok: true } | { ok: false; errorCode: 'present_user_required' } {
+  // Host Agent/MCP permission answers reach the shared, user-waivable approval
+  // policy. External credentials retain the opt-in approve authority; changing
+  // this Action's minimum authority must not widen token or terminal access.
+  if (input.spec.id === 'session.permission.respond') {
+    return canCredentialDecideV1(input)
+      || (isAgentApprovalRequestSurface(input.surface) && !input.hasExternalCredential && !input.grant)
+      ? { ok: true }
+      : { ok: false, errorCode: 'present_user_required' };
+  }
   if (!requiresPresentUserExecutionAuthorityForActionInputV1(input.spec, input.actionInput) || input.authority === 'present_user') return { ok: true };
   // Admission here permits requesting consent, never automatic execution.
   // The approval owner enforces a mandatory floor, including persisted waivers.

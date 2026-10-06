@@ -9,7 +9,7 @@ import {
   isSharedPermissionWriteLikeToolName,
 } from '@/agent/permissions/permissionTaxonomy';
 import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
-import { extractShellCommand } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import { isWorkspaceWriteDeniedByRole } from '@/agent/permissions/workspaceWritePolicy';
 
 import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';

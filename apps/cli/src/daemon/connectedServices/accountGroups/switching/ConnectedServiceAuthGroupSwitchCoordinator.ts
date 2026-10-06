@@ -30,6 +30,20 @@ const WAITABLE_CLASSIFIED_FAILURE_REASONS: ReadonlySet<string> = new Set([
     'temporary_throttle',
 ]);
 
+function isRejectedStartModelEntitlementFailure(input: Readonly<{
+    rejectedStart?: boolean;
+    reason: string;
+    limitCategory?: string | null;
+    quotaScope?: string | null;
+    providerLimitId?: string | null;
+}>): boolean {
+    return input.rejectedStart === true
+        && input.reason === 'plan'
+        && input.limitCategory === 'plan_invalid'
+        && input.quotaScope === 'model'
+        && Boolean(input.providerLimitId?.trim());
+}
+
 function shouldWaitForClassifiedFailure(input: Readonly<{
     reason: string;
     recoveryMode: ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
@@ -376,6 +390,8 @@ export type ConnectedServiceAuthGroupExpectedFailureSource = Readonly<{
     profileId: string;
     credentialRevision: ConnectedServiceCredentialRevisionV1;
     groupGeneration: number;
+    /** Supplements the exact account source with its retained runner/lease currentness. */
+    isCurrent?: () => boolean;
 }>;
 
 export type ConnectedServiceAuthGroupGenerationApplyFailure = Readonly<{
@@ -854,6 +870,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             serviceId: TServiceIdentity; groupId: string; sessionId?: string; reason: string;
             switchesThisTurn?: number; sessionSwitchesThisHour?: number;
             retryAtMs?: number | null; retryAfterMs?: number | null; resetsAtMs?: number | null;
+            rejectedStart?: boolean; limitCategory?: string | null; quotaScope?: string | null; providerLimitId?: string | null;
         }>;
         loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
     }>): ConnectedServiceAuthGroupSwitchResult | null {
@@ -868,6 +885,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         if (!loaded.policy.autoSwitch) return wait ? waitResult() : { status: 'auto_switch_disabled', generation: loaded.generation };
         if (!isReasonEnabled(loaded.policy, request.reason)) return wait ? waitResult() : { status: 'switch_reason_disabled', generation: loaded.generation };
         if (loaded.policy.recoveryMode === 'wait_until_reset') return waitResult();
+        // No accepted turn or work was moved, so entitlement rejection does not
+        // consume the continuity limits that govern ordinary account switches.
+        if (input.trigger === 'classified_failure' && isRejectedStartModelEntitlementFailure(request)) return null;
         const switchesThisTurn = typeof request.switchesThisTurn === 'number' && Number.isFinite(request.switchesThisTurn)
             ? Math.max(0, Math.trunc(request.switchesThisTurn)) : 0;
         const key = this.resolveSessionSwitchKey(request);
@@ -973,6 +993,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }>, state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>): boolean {
         const expected = input.expectedFailureSource;
         if (!expected) return true;
+        if (expected.isCurrent && !expected.isCurrent()) return false;
         const expectedProfileId = normalizeProfileId(expected.profileId);
         return expectedProfileId !== null
             && state.generation === expected.groupGeneration
@@ -1288,6 +1309,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         sessionId?: string;
         reason?: string;
         observedProfileId?: string | null;
+        providerLimitId?: string | null;
+        expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
         lease: Extract<
             LeaseAcquireResult<TServiceIdentity>,
             Readonly<{ kind: 'owner' }>
@@ -1299,6 +1322,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             serviceId: input.serviceId,
             groupId: input.groupId,
         });
+        if (!this.isExpectedFailureSourceCurrent(input, observed)) return { kind: 'retry', state: observed };
         if (observed.generation <= input.loaded.generation) return null;
         if (normalizeProfileId(observed.activeProfileId) === normalizeProfileId(input.loaded.activeProfileId)) {
             return { kind: 'retry', state: observed };
@@ -1316,6 +1340,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             policy: observed.policy,
             members: observed.members,
             memberStatesByProfileId: observed.memberStatesByProfileId,
+            providerLimitId: input.providerLimitId,
         });
         if (!isProfileEligibleForObservedGeneration({
             profileId: observedActiveProfileId,
@@ -1325,6 +1350,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             quotaFreshnessMs: this.deps.quotaFreshnessMs,
             memberStatesByProfileId: observed.memberStatesByProfileId,
             selected: observedGenerationSelection,
+            providerLimitId: input.providerLimitId,
         })) {
             return {
                 kind: 'retry',
@@ -1364,6 +1390,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         quotaScope?: string | null;
         providerLimitId?: string | null;
         planType?: string | null;
+        expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
         lease: Extract<
             LeaseAcquireResult<TServiceIdentity>,
             Readonly<{ kind: 'owner' }>
@@ -1375,6 +1402,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
 
         let loaded = input.loaded;
         for (;;) {
+            if (!this.isExpectedFailureSourceCurrent(input, loaded)) return { kind: 'recorded', state: loaded };
             try {
                 await this.deps.recordObservedFailureState({
                     serviceId: input.serviceId,
@@ -1406,6 +1434,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     sessionId: input.sessionId,
                     reason: input.reason,
                     observedProfileId: input.observedProfileId,
+                    providerLimitId: input.providerLimitId,
+                    expectedFailureSource: input.expectedFailureSource,
                     lease: input.lease,
                 });
                 if (!resolvedConflict) throw error;
@@ -1560,6 +1590,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         switchesThisTurn?: number;
         sessionSwitchesThisHour?: number;
         allowCurrentProfileRetry?: boolean;
+        /** Caller has proven the model was rejected before any accepted turn/work. */
+        rejectedStart?: boolean;
         expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
     }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
         const startedAtMs = this.deps.nowMs();
@@ -1663,7 +1695,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             }
             const observedFailureOutcome: RecordObservedFailureStateOutcome<
                 TServiceIdentity
-            > = input.expectedFailureSource
+            > = input.expectedFailureSource && !isRejectedStartModelEntitlementFailure(input)
                 ? { kind: 'recorded', state: loaded }
                 : await this.recordObservedFailureStateWithConflictRecovery({
                     serviceId: input.serviceId,
@@ -1678,6 +1710,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     quotaScope: input.quotaScope,
                     providerLimitId: input.providerLimitId,
                     planType: input.planType,
+                    expectedFailureSource: input.expectedFailureSource,
                     lease,
                 });
             if (observedFailureOutcome.kind === 'observed_generation') {
@@ -1720,6 +1753,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     policy: loaded.policy,
                     members: loaded.members,
                     memberStatesByProfileId: loaded.memberStatesByProfileId,
+                    providerLimitId: input.providerLimitId,
                 });
                 if (
                     currentLoadedActiveProfileId
@@ -1997,6 +2031,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         sessionId: input.sessionId,
                         reason: input.reason,
                         observedProfileId: input.observedProfileId,
+                        providerLimitId: input.providerLimitId,
+                        expectedFailureSource: input.expectedFailureSource,
                         lease,
                     });
                     if (resolvedConflict?.kind === 'observed_generation') {
@@ -2020,6 +2056,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                             state: commitLoaded,
                             activeProfileId: commitSelectionActiveProfileId,
                             reason: input.reason,
+                            providerLimitId: input.providerLimitId,
                         });
                         if (!retrySelected.selected) {
                             if (retrySelected.reason === 'manual_strategy') {
@@ -2138,7 +2175,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selectedDecisionTrace }),
                 };
             }
-            this.recordSessionSwitch(sessionSwitchKey, this.deps.nowMs());
+            if (!isRejectedStartModelEntitlementFailure(input)) {
+                this.recordSessionSwitch(sessionSwitchKey, this.deps.nowMs());
+            }
             this.emitSwitchResult({
                 request: input,
                 loaded: commitLoaded,
@@ -2190,8 +2229,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
         sessionId?: string;
         serviceId: TServiceIdentity;
         groupId: string;
-        reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+        reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'plan';
         observedProfileId?: string | null;
+        providerLimitId?: string | null;
         switchesThisTurn?: number;
         sessionSwitchesThisHour?: number;
         memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
@@ -2202,8 +2242,11 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
             overrides: input.memberStateOverridesByProfileId,
         });
         let didProbePreTurnQuota = false;
+        // Persisted model entitlement is independent of current usage quota.
+        const needsQuotaProbe = !(input.reason === 'plan' && input.providerLimitId?.trim());
         if (
-            preloaded.policy.autoSwitch
+            needsQuotaProbe
+            && preloaded.policy.autoSwitch
             && preloaded.policy.recoveryMode !== 'off'
             && preloaded.policy.recoveryMode !== 'wait_until_reset'
             && isReasonEnabled(preloaded.policy, input.reason)
@@ -2244,7 +2287,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 return policyResult;
             }
             const allowCurrentProfileRetry = canRetryObservedProfileDuringPreTurnSelection(input.reason);
-            if (!didProbePreTurnQuota) {
+            if (needsQuotaProbe && !didProbePreTurnQuota) {
                 loaded = applyMemberStateOverrides({
                     loaded: await this.probeQuotaSnapshotsBeforePreTurnSelection({
                         request: input,
@@ -2265,6 +2308,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     members: loaded.members,
                     memberStatesByProfileId: loaded.memberStatesByProfileId,
                     allowCurrentProfileRetry,
+                    providerLimitId: input.providerLimitId,
                 });
                 if (isProfileEligibleForObservedGeneration({
                     profileId: loadedActiveProfileId,
@@ -2274,6 +2318,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                     quotaFreshnessMs: this.deps.quotaFreshnessMs,
                     memberStatesByProfileId: loaded.memberStatesByProfileId,
                     selected: observedGenerationSelection,
+                    providerLimitId: input.providerLimitId,
                 })) {
                     const completion = {
                         serviceId: input.serviceId,
@@ -2424,6 +2469,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                         loaded: commitLoaded,
                         sessionId: input.sessionId,
                         reason: input.reason,
+                        providerLimitId: input.providerLimitId,
                         lease,
                     });
                     if (resolvedConflict?.kind === 'observed_generation') return resolvedConflict.result;
@@ -2436,6 +2482,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                             state: commitLoaded,
                             activeProfileId: commitLoaded.activeProfileId,
                             reason: input.reason,
+                            providerLimitId: input.providerLimitId,
                             allowCurrentProfileRetry: canRetryCurrentProfileForObservedProfile({
                                 reason: input.reason,
                                 observedProfileId: input.observedProfileId,

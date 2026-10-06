@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { createDaemonControlApp } from './controlServer';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
+import { createStopSession } from './sessions/stopSession';
 import {
   getActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
@@ -266,12 +269,52 @@ describe('daemon control server: /stop', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ status: 'stopping' });
 
-      expect(calls).toEqual([]);
+      expect(calls).toEqual(['stop:sess-1', 'stop:PID-222', 'stop:sess-3']);
       await new Promise((resolve) => setTimeout(resolve, 75));
 
       expect(calls).toEqual(['stop:sess-1', 'stop:PID-222', 'stop:sess-3', 'shutdown']);
     } finally {
       await app.close();
+    }
+  });
+
+  it('keeps the daemon available for retry when canonical runner exit confirmation is incomplete', async () => {
+    const child = spawn(process.execPath, ['-e', "process.send('ready'); setInterval(() => {}, 1000)"], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const exited = once(child, 'exit');
+    await once(child, 'message');
+    if (!child.pid) throw new Error('test runner has no PID');
+    const tracked = { startedBy: 'daemon' as const, pid: child.pid, happySessionId: 'unconfirmed-exit', childProcess: child };
+    const runners = new Map([[child.pid, tracked]]);
+    const requestShutdown = vi.fn();
+    const app = createDaemonControlApp({
+      getChildren: () => [...runners.values()],
+      machineId: 'machine_local',
+      stopSession: createStopSession({
+        pidToTrackedSession: runners,
+        // The filesystem boundary has no terminal attachment for this owned child.
+        readHostAttachmentState: async () => ({ status: 'absent' }),
+      }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      requestShutdown,
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+    try {
+      await app.ready();
+      const response = await app.inject({
+        method: 'POST', url: '/stop',
+        headers: { 'x-happier-daemon-token': 'test-token' },
+        payload: { stopSessions: true },
+      });
+      expect(response.json()).toEqual({ status: 'session_cleanup_incomplete' });
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(requestShutdown).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited;
     }
   });
 

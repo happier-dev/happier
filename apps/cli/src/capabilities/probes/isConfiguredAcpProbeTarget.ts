@@ -1,4 +1,5 @@
-import { isConfiguredAcpBackendTarget, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { isConfiguredAcpBackendTarget } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 export function isConfiguredAcpProbeTarget<T extends Readonly<{
   agentId: string;

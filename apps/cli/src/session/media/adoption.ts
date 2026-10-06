@@ -2,12 +2,8 @@ import { createHash } from 'node:crypto';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { configuration } from '@/configuration';
-import {
-  SessionMediaFailureV1Schema,
-  SessionMediaItemV1Schema,
-  type SessionMediaFailureV1,
-  type SessionMediaItemV1,
-} from '@happier-dev/protocol';
+import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import type { SessionMediaFailureV1, SessionMediaItemV1 } from '@happier-dev/protocol';
 
 import type { SessionMediaOrigin } from './_types';
 import {

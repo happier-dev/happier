@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HAPPIER_MOTION_V1 } from '@happier-dev/plugin-ui/presentation';
+
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { SplitCanvasDirection, SplitCanvasDropTarget } from '../model/splitCanvasTypes';
 
 /**
@@ -68,6 +71,15 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 const WEB_FROST = Platform.OS === 'web' ? ({ backdropFilter: 'blur(6px) saturate(1.1)' } as unknown as ViewStyle) : null;
+/**
+ * Centre ⇄ edge glides on web instead of jumping (the zone keeps its element while the pointer moves
+ * within one pane). Native and reduced motion switch instantly.
+ */
+const WEB_ZONE_GLIDE = Platform.OS === 'web' ? ({
+    transitionProperty: 'top, right, bottom, left',
+    transitionDuration: `${HAPPIER_MOTION_V1.fastMs}ms`,
+    transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
+} as unknown as ViewStyle) : null;
 
 export const SplitCanvasDropOverlay = React.memo((props: Readonly<{
     target: SplitCanvasDropTarget | null;
@@ -75,6 +87,7 @@ export const SplitCanvasDropOverlay = React.memo((props: Readonly<{
     edgeMarks?: readonly SplitCanvasDirection[];
 }>) => {
     useUnistyles();
+    const reducedMotion = useReducedMotionPreference();
     const styles = stylesheet;
     if (!props.target) return null;
     const { leafId, placement } = props.target;
@@ -83,7 +96,7 @@ export const SplitCanvasDropOverlay = React.memo((props: Readonly<{
         <View pointerEvents="none" style={StyleSheet.absoluteFillObject}
             accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <View testID={`split-canvas-drop-overlay-${leafId}-${placement}`}
-                style={[styles.zone, zoneFrame(placement), edge ? WEB_FROST : null]}>
+                style={[styles.zone, zoneFrame(placement), edge ? WEB_FROST : null, reducedMotion ? null : WEB_ZONE_GLIDE]}>
                 {edge ? <View style={styles.veil} /> : null}
                 <View style={styles.tint} />
             </View>

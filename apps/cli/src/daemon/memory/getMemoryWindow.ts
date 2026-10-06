@@ -1,4 +1,5 @@
-import { redactBugReportSensitiveText, type MemoryWindowV1 } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { MemoryWindowV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import {

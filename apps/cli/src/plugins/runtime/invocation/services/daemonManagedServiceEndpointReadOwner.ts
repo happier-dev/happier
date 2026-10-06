@@ -18,7 +18,7 @@ import type {
   AgentExternalSessionsManagedEndpointReadRequest,
   AgentExternalSessionsManagedEndpointReadResponse,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type {
   AgentExternalSessionsManagedEndpointReadHost,
 } from '@/session/external/agentExternalSessionsInvocation';

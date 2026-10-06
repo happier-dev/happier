@@ -1,35 +1,14 @@
-import {
-    PluginMachineExecutionOriginV1Schema,
-    PluginUiResourceBindingCapabilityV1Schema,
-    DaemonHostedWebFrameCapabilityV1Schema,
-    type DaemonHostedWebFrameCapabilityV1,
-    type DaemonPluginHostedWebArtifactCacheIdentityV1,
-    type DaemonPluginUiArtifactByteIdentityV1 as ReactNativeBundleCacheIdentity,
-    type PluginMachineExecutionOriginV1,
-    type PluginUiResourceBindingCapabilityV1,
-} from '@happier-dev/protocol';
-import {
-    normalizePluginUiDestinationBindingV1,
-    normalizePluginUiInlineSurfaceBindingV1,
-    isPluginUiAuthoredViewInlineSurfaceRoleV1,
-    normalizePluginSessionHeaderActionDescriptorV1,
-    normalizePluginUiSemanticCommandV1,
-    normalizePluginUiSettingsPageBindingV1,
-    PLUGIN_UI_HOST_API_VERSION_V1,
-    deriveGeneratedHostedWebAssetPolicyV1,
-    PluginUiDestinationBindingV1Schema,
-    selectPluginUiDestinationBindingRendererV1,
-    selectPluginUiInlineSurfaceBindingRendererV1,
-    type PluginUiArtifactsManifestEntryV2,
-    type PluginUiChannelV1,
-    type PluginUiDestinationBindingV1,
-    type PluginUiPlatformV1,
-    type PluginUiSurfaceBindingV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    createPluginSessionInfoSectionRendererIdV1,
-    type PluginUiViewDestinationBindingV2,
-} from '@happier-dev/protocol/plugins/contributions/ui';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginUiResourceBindingCapabilityV1Schema, DaemonHostedWebFrameCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { DaemonHostedWebFrameCapabilityV1, DaemonPluginHostedWebArtifactCacheIdentityV1, DaemonPluginUiArtifactByteIdentityV1 as ReactNativeBundleCacheIdentity, PluginMachineExecutionOriginV1, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
+import { normalizePluginUiDestinationBindingV1, normalizePluginUiInlineSurfaceBindingV1, isPluginUiAuthoredViewInlineSurfaceRoleV1, normalizePluginUiSettingsPageBindingV1, PluginUiDestinationBindingV1Schema, selectPluginUiDestinationBindingRendererV1, selectPluginUiInlineSurfaceBindingRendererV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
+import { normalizePluginSessionHeaderActionDescriptorV1 } from '@happier-dev/protocol/plugins/contributions/ui/sessionHeaderActions';
+import { normalizePluginUiSemanticCommandV1 } from '@happier-dev/protocol/plugins/ui/semanticCommands';
+import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
+import { deriveGeneratedHostedWebAssetPolicyV1 } from '@happier-dev/protocol/plugins/ui/hostedWebAssetPolicy';
+import type { PluginUiArtifactsManifestEntryV2, PluginUiChannelV1, PluginUiDestinationBindingV1, PluginUiPlatformV1, PluginUiSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui/sessionInfoSections';
+import type { PluginUiViewDestinationBindingV2 } from '@happier-dev/protocol/plugins/contributions/ui';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type {
@@ -1135,8 +1114,20 @@ function projectGeneratedUiViews(
         const projectedColumnRenderer = columnRenderer
             ? projectPluginUiRendererRef(columnRenderer, columnDeclarativeModel)
             : undefined;
-        const column = columnRenderer && projectedColumnRenderer
+        const columnBinding = columnRenderer && selectedBinding.kind === 'destination'
+            ? normalizePluginUiDestinationBindingV1({
+                pluginId,
+                destinationId: selectedBinding.destination.localId,
+                rendererId: columnRenderer.definition.id,
+                availableRendererIds,
+                container: selectedBinding.container,
+                target: selectedBinding.target,
+                instancePolicy: selectedBinding.instancePolicy,
+            })
+            : null;
+        const column = columnRenderer && projectedColumnRenderer && columnBinding
             ? Object.freeze({
+                binding: columnBinding,
                 renderer: projectedColumnRenderer.rendererRef,
                 availability: projectPluginUiRendererAvailability({
                     pluginId,

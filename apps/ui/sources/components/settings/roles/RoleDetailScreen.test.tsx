@@ -212,9 +212,11 @@ describe('Settings › Roles detail', () => {
         await share!.onSelect();
         expect(shared.shown).toHaveLength(1);
         expect(shared.shown[0]).toMatchObject({
-            chrome: { testID: 'document-share-modal' },
+            chrome: { testID: 'document-share-modal', subtitle: 'roles.settings.runsAsSession' },
             props: { kind: 'role.v1', artifactId: 'ui-builder', linkPath: '/settings/roles/ui-builder' },
         });
+        const sheet = shared.shown[0] as { chrome: { subtitle: string } };
+        expect(sheet.chrome.subtitle).not.toContain('null');
         // Opening the sheet writes nothing; grants change only inside the sheet.
         expect(writes()).toEqual([]);
     });

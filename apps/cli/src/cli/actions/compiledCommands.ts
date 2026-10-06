@@ -1,15 +1,7 @@
-import {
-  actionCliFlagNameForField,
-  listActionCliCommandDeclarations,
-  zodSchemaToJsonSchemaObject,
-  type ActionCliCommandBinding,
-  type ActionId,
-  type ActionInputFieldHint,
-  type ActionInputHints,
-  type ActionInputPredicate,
-  type ActionSpec,
-  type JsonSchemaObject,
-} from '@happier-dev/protocol';
+import { actionCliFlagNameForField } from '@happier-dev/protocol/actions/actionCliProjection';
+import { listActionCliCommandDeclarations } from '@happier-dev/protocol/actions/actionSpecs';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ActionCliCommandBinding, ActionId, ActionInputFieldHint, ActionInputHints, ActionInputPredicate, ActionSpec, JsonSchemaObject } from '@happier-dev/protocol';
 import {
   ACTION_CLI_COMPILER_OWNED_FLAGS,
   ACTION_CLI_MACHINE_ID_FLAG,

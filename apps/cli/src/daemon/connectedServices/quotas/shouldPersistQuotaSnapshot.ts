@@ -1,7 +1,4 @@
-import {
-  compareConnectedServiceQuotaObservationRecency,
-  isConnectedServiceQuotaObservationAtOrBeforeNow,
-} from '@happier-dev/protocol';
+import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationAtOrBeforeNow } from '@happier-dev/protocol/connect/quotaObservationTime';
 
 export type QuotaPersistenceMaterialState = Readonly<{
   fingerprint: string;

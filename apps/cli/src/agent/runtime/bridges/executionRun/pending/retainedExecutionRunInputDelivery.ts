@@ -1,13 +1,9 @@
-import {
-    normalizeStrictJsonValue,
-    readHappierStructuredInputV1FromMeta,
-    readSessionInputCausalPermissionAuthorityV1,
-    resolveSessionInputPromptProvenanceV1,
-    renderSessionInputContextBlockV1,
-    renderSessionInputContextPromptV1,
-    type SessionRunPromptContextV1,
-} from '@happier-dev/protocol';
-import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { readSessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { SessionRunPromptContextV1 } from '@happier-dev/protocol';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunAdmittedPendingInputV1 } from '@/api/session/client/transport/sessionClientInteractionApi';

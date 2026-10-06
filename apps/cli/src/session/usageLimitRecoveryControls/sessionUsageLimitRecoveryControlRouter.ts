@@ -3,15 +3,10 @@ import {
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import { writeSessionStateFieldToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionRuntimeIssueV1Schema,
-  SessionUsageLimitRecoveryV1Schema,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  type SessionUsageLimitRecoveryV1,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionUsageLimitRecoveryResumePromptModeV1, SessionUsageLimitRecoveryV1, SessionMetadata } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { resolveInactiveSessionUsageLimitRecoveryControls } from './catalogHooks';
 import type { StoredCredentials } from '@/persistence';

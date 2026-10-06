@@ -4,12 +4,9 @@ import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/co
 import type { StoredCredentials } from '@/persistence';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import type { BackendTargetRefV1, BackendTargetRefV2 } from '@happier-dev/protocol';
-import {
-  readAcpConfiguredBackendV1FromMetadata,
-  isInvalidNestedLegacyCustomAcpPlaceholder,
-  readLegacyConfiguredAcpBackendId,
-  resolveLinkedExternalSessionMetadataV1,
-} from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { isInvalidNestedLegacyCustomAcpPlaceholder, readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';

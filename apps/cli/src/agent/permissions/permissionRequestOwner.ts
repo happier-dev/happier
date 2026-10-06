@@ -1,7 +1,5 @@
-import {
-    SessionPermissionSourceAuthorityV1Schema,
-    type SessionPermissionSourceAuthorityV1,
-} from '@happier-dev/protocol';
+import { SessionPermissionSourceAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { SessionPermissionSourceAuthorityV1 } from '@happier-dev/protocol';
 
 export type PermissionRequestOwner = Readonly<{
     kind: 'plugin';

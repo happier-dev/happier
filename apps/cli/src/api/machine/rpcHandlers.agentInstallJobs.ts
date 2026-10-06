@@ -1,8 +1,5 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema,
-  DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallListRequestSchema,
-} from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallListRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { getDaemonAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import type { RpcHandlerRegistrar } from '../rpc/types';
 

@@ -1,16 +1,9 @@
 import axios from 'axios';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import {
-    openAccountScopedBlobCiphertext,
-    PLUGIN_ACCOUNT_SETTINGS_ACCOUNT_SCOPED_BLOB_KIND_V1,
-    PluginAccountSettingsMutationResponseV1Schema,
-    PluginAccountSettingsReadResponseV1Schema,
-    PluginAccountSettingsStorageUnavailableV1Schema,
-    PluginAccountSettingsValuesV1Schema,
-    sealAccountScopedBlobCiphertext,
-    type AccountScopedCryptoMaterial,
-} from '@happier-dev/protocol';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { PLUGIN_ACCOUNT_SETTINGS_ACCOUNT_SCOPED_BLOB_KIND_V1, PluginAccountSettingsMutationResponseV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsStorageUnavailableV1Schema, PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { isPluginError, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

@@ -14,11 +14,7 @@ import type {
     SessionRestoreResultV1,
     SessionTurnV1,
 } from '@happier-dev/protocol';
-import {
-    SessionRestoreRequestV1Schema,
-    buildCheckpointOperationReceiptV1,
-    sanitizeCheckpointRestoreCandidateV1,
-} from '@happier-dev/protocol';
+import { SessionRestoreRequestV1Schema, buildCheckpointOperationReceiptV1, sanitizeCheckpointRestoreCandidateV1 } from '@happier-dev/protocol/sessions/control/checkpoints/v1';
 import type {
     CheckpointProviderTargetRefV1,
     RestoreCheckpointResultV1,

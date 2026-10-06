@@ -24,6 +24,40 @@ function createBoundary(initial: unknown = null) {
 }
 
 describe('Boards through the canonical Action executor', () => {
+  it('admits raw Board widget adds and input edits exactly like widget Actions before persistence', async () => {
+    const boundary = createWorkBoardArtifactBoundary([{ id: 'b1', name: 'Widgets', source: { picked: [] } }]);
+    const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+    const instance = { v: 1, id: 'one', definition: { kind: 'builtin', id: 'counter' }, bindings: { count: { kind: 'value', value: 1 } } } as const;
+    let sourceAdmitted = true;
+    const executor = createActionExecutor({ workBoardArtifacts: createWorkBoardArtifactPortV1(boundary.transport),
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      // The descriptor/current-source facts are the metadata boundary, not schema logic.
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] }, inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => sourceAdmitted ? { status: 'valid' } : { status: 'denied', reasonCode: 'source_denied' }, resolveOptions: async () => [] }),
+    });
+    const context = { serverId: 'home', surface: 'mcp', bypassApprovals: true } as const;
+    const ref = { surface, instanceId: instance.id };
+    const invalid = { ...instance, bindings: { count: { kind: 'value', value: 'not-an-integer' } } } as const;
+    const rejected = { ok: false, errorCode: 'widget_inputs_invalid', details: { status: 'invalid', fields: [{ reasonCode: 'widget_input_schema_invalid' }] } };
+    const before = boundary.updates.length;
+    expect(await executor.execute('widgets.instance.add', { surface, instance: invalid }, context)).toMatchObject(rejected);
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref, instance: invalid } }, context)).toMatchObject(rejected);
+    expect(boundary.updates).toHaveLength(before);
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref, instance } }, context)).toMatchObject({ ok: true });
+    const saved = boundary.readCollection();
+    expect(await executor.execute('widgets.instance.inputs.set', { ref, bindings: invalid.bindings }, context)).toMatchObject(rejected);
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_inputs', boardId: 'b1', ref, bindings: invalid.bindings } }, context)).toMatchObject(rejected);
+    expect(boundary.readCollection()).toEqual(saved);
+    sourceAdmitted = false;
+    const denied = { ok: false, errorCode: 'widget_inputs_invalid', details: { status: 'denied', fields: [{ reasonCode: 'source_denied' }] } };
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref: { ...ref, instanceId: 'two' }, instance: { ...instance, id: 'two' } } }, context)).toMatchObject(denied);
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_inputs', boardId: 'b1', ref, bindings: instance.bindings } }, context)).toMatchObject(denied);
+    expect(boundary.readCollection()).toEqual(saved);
+    sourceAdmitted = true;
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_inputs', boardId: 'b1', ref, bindings: { count: { kind: 'value', value: 9 } } } }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.instance.inputs.get', { ref }, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
+  });
   it('dispatches configured WorkBoard copies through the canonical widget Action family', async () => {
     const boundary = createWorkBoardArtifactBoundary([{ id: 'b1', name: 'Widgets', source: { picked: [ref('home', 's1')], sections: ['running'] } }]);
     const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
@@ -128,7 +162,7 @@ describe('Boards through the canonical Action executor', () => {
   });
 
   it('preserves opaque stored Boards and unknown source values without admitting them as mutation input', async () => {
-    const unreadable = { id: 'future', name: 'Future', source: { picked: [] }, newField: true };
+    const unreadable = { id: 'future', name: 'Future', newField: true };
     const unknownPick = { kind: 'future-kind', qualifiedId: { serverId: 'a', id: 'future-item' } };
     const b = createBoundary({ v: 1, boards: [unreadable,
       { id: 'known', name: 'Known', source: { sections: ['needs_you', 'future-section'], picked: [unknownPick] } },

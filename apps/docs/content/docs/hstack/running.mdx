@@ -92,6 +92,8 @@ If hstack prints that a restart is disabled because the PID is unknown, re-run w
 
 Build targets:
 
+In 0.3 development, every successful component build publishes a complete snapshot and advances the repository producer. It reuses the producer's current unrequested components. Initialize a target once with `--all` if it has no complete snapshot yet.
+
 ```bash
 hstack stack build exp1 --web
 hstack stack build exp1 --server
@@ -134,22 +136,22 @@ hstack stack service exp1 restart
 Component-only update flows:
 
 ```bash
-# UI-only: build the artifact, activate only web, then reload the browser
+# Strict snapshot UI: build and select, then deliberately load the selection
 hstack stack build exp1 --web
-hstack stack runtime exp1 activate --web
+hstack stack runtime exp1 select
 ```
 
 ```bash
-# Server-only: build + activate only server, then restart
+# Server-only: build, select, then restart
 hstack stack build exp1 --server
-hstack stack runtime exp1 activate --server
+hstack stack runtime exp1 select
 hstack stack service exp1 restart
 ```
 
 ```bash
-# CLI/daemon-only: build + activate only daemon, then restart
+# CLI/daemon-only: build, select, then restart
 hstack stack build exp1 --daemon
-hstack stack runtime exp1 activate --daemon
+hstack stack runtime exp1 select
 hstack stack service exp1 restart
 ```
 
@@ -175,10 +177,10 @@ Mode meanings:
 Important:
 
 - `hstack stack build <name>` with no flags still builds the web bundle only for backward compatibility.
-- `hstack stack build <name> --web|--server|--daemon` only updates artifacts. It does not switch the running stack to those artifacts until you activate a new runtime snapshot.
-- `hstack stack build <name> --activate-runtime` is the full producer publication path. Use component flags for a narrow refresh; `hstack stack runtime <name> activate --all` composes a complete snapshot from the latest component artifacts.
+- `hstack stack build <name> --web|--server|--daemon` publishes a complete producer snapshot and returns `snapshotId`. Use `hstack stack runtime <name> select` to adopt it; other consumers use the same command with no rebuild.
+- `hstack stack build <name> --activate-runtime` builds all components and also selects the publication for this consumer. `hstack stack runtime <name> activate ...` explicitly recomposes stored artifacts without source preparation or compilation.
 - Artifact and full-snapshot builds use the repository build authority. Concurrent consumers wait for and reuse the newest compatible published result; explicit snapshot ids remain exact pins.
-- `hstack stack runtime <name> select` validates the build authority's active snapshot and writes only `<name>`'s selection. It never builds, publishes, activates, changes the producer's current pointer, or changes the consumer's launch mode.
+- `hstack stack runtime <name> select` validates the build authority's newest complete snapshot for the consumer's target and writes only `<name>`'s selection. It never builds, publishes, activates, changes the producer's current pointer, or changes the consumer's launch mode.
 - `--tauri` still belongs to the legacy local `hstack build` flow and is not part of named-stack artifact/runtime builds in v1.
 - Runtime snapshots are currently a **named stack** feature. Repo-local `yarn tui`, `hstack dev`, and repo-local `hstack start` are still source-backed flows.
 - `hstack stack dev <name>` remains source-only. It is rejected when the stack persists `HAPPIER_STACK_RUNTIME_MODE=require` so a controlled stack cannot silently acquire watchers.
@@ -187,7 +189,7 @@ Important:
 - Server-only or daemon-only activation requires a restart so the process re-resolves the active runtime.
 - A running named-stack service does not switch server/daemon processes in place. Rebuild or activate first, then restart the service or stack process so it re-resolves the active snapshot.
 
-For a controlled stack, persist `HAPPIER_STACK_RUNTIME_MODE=require`. From the checkout under test, start it with `node ./apps/stack/scripts/repo_local.mjs tui stack start <name> --runtime --mobile`, rather than a bare `hstack` that might resolve another checkout. By default, also set `HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>`; the consumer borrows the existing Expo process while its server loads snapshot bytes. If the fresh stack has not yet received approved credentials, its daemon remains stopped and no extra `--no-daemon` flag is needed; after auth is seeded, the next explicit start launches that daemon from the selected runtime. Reuse the producer's current snapshot with `node ./apps/stack/scripts/repo_local.mjs stack runtime <name> select`. When current server or daemon bytes are required, run the narrow `stack build <name> --server|--daemon` command through the consumer and then `stack runtime <name> activate --all`; the checkout authority coalesces publication and no producer service is restarted. Inspect runtime-backed health with `node ./apps/stack/scripts/repo_local.mjs stack doctor <name> --runtime`; without `--runtime`, the stack wrapper intentionally diagnoses the source path. Use the TUI `r` key only when you deliberately want to load a newly selected snapshot, then verify with `node ./apps/stack/scripts/repo_local.mjs stack info <name> --json` that `selectedSnapshotId` equals `loadedSnapshotId`. Choose the snapshot's static UI—and build `--web`—only for explicitly strict/reproducible UI QA. See [Stacks: controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa).
+For a controlled stack, persist `HAPPIER_STACK_RUNTIME_MODE=require`. From the checkout under test, start it with `node ./apps/stack/scripts/repo_local.mjs tui stack start <name> --runtime --mobile`, rather than a bare `hstack` that might resolve another checkout. By default, also set `HAPPIER_STACK_EXPO_SOURCE_STACK=<repository-stack>`; the consumer borrows the existing Expo process while its server loads snapshot bytes. If the fresh stack has not yet received approved credentials, its daemon remains stopped and no extra `--no-daemon` flag is needed; after auth is seeded, the next explicit start launches that daemon from the selected runtime. Reuse the producer's current snapshot with `node ./apps/stack/scripts/repo_local.mjs stack runtime <name> select`. When current server or daemon bytes are required, run the narrow `stack build <name> --server|--daemon` command through the consumer and then `stack runtime <name> select`; the checkout authority coalesces publication and no producer service is restarted. Every other consumer uses only `select` to pick up those fixes. Inspect runtime-backed health with `node ./apps/stack/scripts/repo_local.mjs stack doctor <name> --runtime`; without `--runtime`, the stack wrapper intentionally diagnoses the source path. Use the TUI `r` key only when you deliberately want to load a newly selected snapshot, then verify with `node ./apps/stack/scripts/repo_local.mjs stack info <name> --json` that `selectedSnapshotId` equals `loadedSnapshotId`. Choose the snapshot's static UI—and build `--web`—only for explicitly strict/reproducible UI QA. See [Stacks: controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa).
 
 These are four policies over the same owners: source validation reads source and does not publish runtime artifacts; source development starts from last-green outputs and refreshes in the background; managed publication writes changed component artifacts and a reference-only snapshot; release/self-host packaging uses the existing per-target self-contained builders directly from settled component inputs and does not consume or flatten a managed snapshot. A controlled consumer normally selects the newest valid snapshot and starts immediately, then crosses the selected-versus-loaded boundary only on an explicit restart.
 
@@ -221,6 +223,11 @@ Stop a single stack:
 hstack stack stop exp1
 ```
 
+In the 0.3 development checkout, an explicit named-stack stop first asks its daemon to
+stop and confirm its tracked session runners. If session cleanup is incomplete, the
+command fails and retains the daemon and stack runtime for a retry. Restart paths
+that preserve the daemon also preserve its sessions.
+
 Stop multiple stacks:
 
 ```bash
@@ -229,7 +236,7 @@ hstack stop --except-stacks=main --yes
 
 Useful flags:
 
-- `--aggressive`: stop additional daemon-tracked sessions (still stack-owned)
+- `--aggressive`: request aggressive cleanup attribution; named-stack stops already stop daemon-tracked sessions
 - `--sweep-owned`: final sweep for processes that still carry the stack env in their process env
 - `--no-docker`: skip Docker-managed infra shutdown
 

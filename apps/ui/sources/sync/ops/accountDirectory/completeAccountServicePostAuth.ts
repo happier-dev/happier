@@ -27,7 +27,8 @@ import type { HomeLoginContinuationResult } from './homeLoginApproval';
 export type AccountPostAuthFailureCode =
     | { source: 'directory'; code: AccountDirectoryErrorCodeV1 }
     | { source: 'home_auth'; code: 'restore_required' }
-    | { source: 'home'; code: Exclude<HomeLoginContinuationResult['kind'], 'enrolled' | 'approval_required'> }
+    | { source: 'home'; code: Exclude<HomeLoginContinuationResult['kind'], 'enrolled' | 'approval_required'>;
+        reason?: Extract<HomeLoginContinuationResult, { kind: 'failed' }>['reason'] }
     | { source: 'directory_validation'; code: Extract<AccountServiceDirectoryClassification, { kind: 'invalid' }>['reason'] }
     | { source: 'local'; code: 'session_mismatch' | 'link_failed' | 'refresh_failed' | 'account_mode_unavailable' | 'entry_failed' };
 
@@ -307,6 +308,10 @@ async function completeEnrollment(input: AccountPostAuthInput, homeServerIdentit
     if (shouldCancel() || result.kind === 'cancelled') return stopped(input);
     if (result.kind === 'enrolled') return await completeMaterial(input, homeServerIdentityId, selection, shouldCancel);
     if (result.kind === 'approval_required') return { kind: 'approval_required', homeServerIdentityId, expiresAtMs: result.expiresAtMs };
+    if (result.kind === 'failed' && result.reason === 'account_mismatch') {
+        return failure('enroll', { source: 'home', code: 'failed', reason: result.reason },
+            'use_home_auth', false, homeServerIdentityId);
+    }
     if (result.kind === 'failed' && 'error' in result && result.error) return projectFailure('enroll', result.error, false, homeServerIdentityId);
     return failure('enroll', { source: 'home', code: result.kind },
         result.kind === 'transport_unavailable' ? 'retry_stage' : 'stop',

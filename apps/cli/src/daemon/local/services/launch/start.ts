@@ -1,9 +1,5 @@
-import {
-    DaemonLocalServiceLauncherStartResponseV1Schema,
-    type DaemonLocalServiceLauncherStartRequestV1,
-    type DaemonLocalServiceLauncherStartResponseV1,
-    type LocalServiceLauncherSnapshotV1,
-} from '@happier-dev/protocol';
+import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { DaemonLocalServiceLauncherStartRequestV1, DaemonLocalServiceLauncherStartResponseV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 
 import type { LocalServiceLauncherFeed } from './feed';
 

@@ -1,12 +1,8 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  createProviderErrorV1,
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  normalizeProviderEndpointUrlSyntax,
-  type AssessedProviderEndpoint,
-  type ProviderErrorV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import type { AssessedProviderEndpoint, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type {

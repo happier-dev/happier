@@ -1,19 +1,9 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionOwnerMetadataEnvelopeV1Schema,
-  SessionSharedMetadataV1Schema,
-  projectSessionOwnerCompatibilityViewV1,
-  readAcpConfiguredBackendV1FromMetadata,
-  readLegacyConfiguredAcpBackendId,
-  resolveLinkedExternalSessionMetadataV1,
-  type BackendTargetRefV1,
-  type SessionOwnerMetadataEnvelopeV1,
-  type SessionOwnerMetadataV1,
-  type AccountEncryptionCurrentnessResponse,
-  type SessionReportsToV1,
-  type SessionAwarenessOriginV1,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { BackendTargetRefV1, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, AccountEncryptionCurrentnessResponse, SessionReportsToV1, SessionAwarenessOriginV1 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { AgentState, Metadata } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';

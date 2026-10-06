@@ -7,6 +7,7 @@ import { t, tLoose } from '@/text';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 
 export type WorkflowStartSelection = Readonly<{
     id: string;
@@ -47,25 +48,33 @@ export function WorkflowStartPicker(props: Readonly<{
                 disabled: BUILTIN_WORKFLOW_CATALOG_V1.find((candidate) => candidate.id === entry.id)?.requiresOriginSession,
             })) },
             { kind: 'dynamic', id: 'library', title: t('workflows.start.library'),
-                resolverKey: JSON.stringify(library.definitions.map((entry) => [entry.definitionId, entry.revision])),
+                resolverKey: JSON.stringify(library.definitions.map((entry) => [entry.definitionId, entry.revision, entry.contentStatus,
+                    entry.contentStatus === 'unavailable' ? entry.contentUnavailableReason : null])),
                 showSkeletonsOnFirstLoad: true,
                 resolve: async (query, signal) => {
                     const lifetime = captureActiveServerAccountScopeLifetime();
                     if (lifetime === null) return { options: [] };
                     // Hydrate only the matching loaded page, through FIN's exact read. No second catalog/cache.
                     const rows = await Promise.all(library.definitions.filter((entry) =>
-                        entry.metadata.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+                        formatWorkflowDefinitionLibraryTitle(entry).toLocaleLowerCase().includes(query.toLocaleLowerCase()),
                     ).map(async (header) => {
+                        if (header.contentStatus === 'unavailable') return {
+                            option: { id: header.definitionId, label: formatWorkflowDefinitionLibraryTitle(header),
+                                subtitle: formatWorkflowDefinitionContentUnavailableReason(header.contentUnavailableReason), disabled: true },
+                            selection: null,
+                        };
                         const result = await getWorkflowDefinition({ definitionId: header.definitionId, signal });
-                        return {
+                        const selection = {
                             id: result.definitionId, name: result.metadata.title, description: result.metadata.description ?? '',
                             definition: result.definition,
                             source: { kind: 'saved', definitionId: result.definitionId, revision: result.revision },
                         } satisfies WorkflowStartSelection;
+                        return { option: { id: selection.id, label: selection.name, subtitle: asks(selection.definition) }, selection };
                     }));
                     if (signal.aborted || !lifetime.isCurrent()) return { options: [] };
-                    savedSelections.current = new Map(rows.map((entry) => [entry.id, { selection: entry, lifetime }]));
-                    return { options: rows.map((entry) => ({ id: entry.id, label: entry.name, subtitle: asks(entry.definition) })) };
+                    savedSelections.current = new Map(rows.flatMap((entry) => entry.selection === null ? []
+                        : [[entry.selection.id, { selection: entry.selection, lifetime }] as const]));
+                    return { options: rows.map((entry) => entry.option) };
                 },
             },
             { kind: 'static', id: 'plugins', title: t('workflows.plugins.fromPlugins'), options: pluginSelections.map((entry) => ({
@@ -79,7 +88,8 @@ export function WorkflowStartPicker(props: Readonly<{
                 const saved = savedSelections.current.get(id);
                 const selection = builtinSelections.find((entry) => entry.id === id)
                     ?? pluginSelections.find((entry) => entry.id === id)
-                    ?? (saved?.lifetime.isCurrent() ? saved.selection : undefined);
+                    ?? (saved?.lifetime.isCurrent() && library.definitions.some((entry) => entry.definitionId === id && entry.contentStatus === 'available')
+                        ? saved.selection : undefined);
                 if (!selection) return;
                 props.onSelect(selection);
                 props.onRequestClose();
