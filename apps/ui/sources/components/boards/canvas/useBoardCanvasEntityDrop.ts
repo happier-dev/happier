@@ -89,7 +89,7 @@ export function useBoardCanvasEntityDrop(binding: WorkBoardEntityBinding, measur
         execute: effect => latest.current.binding.execute(effect),
     });
     const dropDom = useEntityDropDomBinding(runtime);
-    const contentRef = React.useCallback((node: View | null) => { content.current = node; dropDom(node); }, [dropDom]);
-    const viewportRef = React.useCallback((node: unknown) => { viewport.current = node; }, []);
+    const contentRef = React.useCallback((node: View | null) => { content.current = node; }, []);
+    const viewportRef = React.useCallback((node: unknown) => { viewport.current = node; dropDom(node); }, [dropDom]);
     return React.useMemo(() => ({ targetId, contentRef, viewportRef, refresh, setGrab }), [targetId, contentRef, viewportRef, refresh, setGrab]);
 }

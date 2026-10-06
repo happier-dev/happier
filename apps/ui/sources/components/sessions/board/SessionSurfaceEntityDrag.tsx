@@ -1,13 +1,15 @@
 import * as React from 'react';
 import { sameStrictJsonValue } from '@happier-dev/protocol';
-import { I18nManager, Platform, Pressable, View, type ScrollView, type LayoutChangeEvent } from 'react-native';
+import { I18nManager, Platform, View, type ScrollView, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { EntityDragItemV1, EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
-import { resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
+import { describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { EntityDragGrip, EntityStagedMoveDock } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { EntityDragGripTrigger, EntityStagedMoveDock, useEntityStagedMoveHints, type EntityDragGripKeyEvent } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { EntityDropSettledFeedback, type EntityDropSettledMatch } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
+import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 import { createEntityDragGestureAdapter, useEntityDragDomBinding, useEntityDropDomBinding, useEntityDragDropRuntime, useEntityDragDropSnapshot, useEntityDragSourceState, useEntityDropTargetState, TreeDropIndicatorLine, TreeDropOutline, type EntityDragCarry, type EntityDropDestination, type EntityDropTarget, type WindowBounds } from '@/components/ui/treeDragDrop';
 import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
@@ -141,11 +143,11 @@ export function SessionSurfaceEntityDragHandle(props: Readonly<{ drag: SessionSu
         id: String(index), label: destination.label ?? t('entityDragDrop.organize.title'), group: destination.group,
         refusedReason: destination.admission.status === 'refused' ? destination.admission.reason.message : null,
     })), unavailableTitle: t('entityDragDrop.chooser.unavailable') });
-    const onKeyDown = (event: { key: string; repeat?: boolean; shiftKey?: boolean; preventDefault(): void; stopPropagation(): void }) => {
-        if (chooser.onMenuKeyDown(event)) return;
+    const onKeyDown = (event: EntityDragGripKeyEvent): boolean => {
+        if (chooser.onMenuKeyDown(event)) return true;
         const staged = runtime.getSnapshot().phase === 'carrying' && runtime.getSnapshot().sourceId === sourceId;
         const intent = resolveHappierStagedMoveKey({ key: event.key, repeat: event.repeat, staged, rtl: I18nManager.isRTL });
-        if (!intent) return;
+        if (!intent) return false;
         event.preventDefault(); event.stopPropagation();
         if (intent === 'pickUp') { carry.current = runtime.begin(sourceId, 'keyboard'); selected.current = null; }
         else if (intent === 'cancel') { runtime.cancel('keyboard-escape'); carry.current = null; selected.current = null; }
@@ -156,48 +158,48 @@ export function SessionSurfaceEntityDragHandle(props: Readonly<{ drag: SessionSu
             if (destination) carry.current?.choose(destination.targetId, destination.destination);
             else carry.current?.move(null);
         }
+        return true;
     };
     return <>
         <DropdownMenu open={open} onOpenChange={onOpenChange} selectedId={null} closeOnSelect={false}
             items={sections.flatMap(section => section.options.map(option => ({ id: option.id, title: option.label, subtitle: option.detail, disabled: option.disabled, category: section.title })))}
             onSelect={id => chooser.select(destinations[Number(id)])}
             trigger={({ toggle }) => {
-                const grip = <GestureDetector gesture={props.drag.gesture}><Pressable testID={props.testID}
-                accessibilityRole="button" accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })}
-                onPress={toggle} {...(Platform.OS === 'web' ? { onKeyDown, tabIndex: 0, 'aria-grabbed': state.active } : {})}>
-                <EntityDragGrip active={state.active} accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })} />
-                </Pressable></GestureDetector>;
+                const grip = <GestureDetector gesture={props.drag.gesture}><EntityDragGripTrigger testID={props.testID}
+                    accessibilityLabel={t('entityDragDrop.organize.grip', { item: props.title })}
+                    accessibilityHint={t('entityDragDrop.keyboard.hintsA11y')}
+                    onPress={toggle} onKeyDown={onKeyDown} active={state.active} expanded={open} /></GestureDetector>;
                 return props.renderTrigger ? props.renderTrigger({ toggle, grip }) : grip;
             }} />
     </>;
 }
 
-export function SessionSurfaceEntityFeedback(props: Readonly<{ kind: 'session-board-item' | 'companion-item' | 'home-section' | 'widget-area-instance'; scope: EntityDragScopeV1 | null; address: import('@/sync/domains/session/sessionAddress').SessionAddress | null; widgetSurface?: import('@happier-dev/protocol/widgets').WidgetSurfaceRefV1; testID: string }>) {
+function surfaceFeedbackMatches(item: EntityDragItemV1 | null, props: Readonly<{ kind: SurfaceFeedbackKind; scope: EntityDragScopeV1 | null; address: import('@/sync/domains/session/sessionAddress').SessionAddress | null; widgetSurface?: import('@happier-dev/protocol/widgets').WidgetSurfaceRefV1 }>): boolean {
+    if (!item || item.kind !== props.kind || !props.scope || item.scope.serverId !== props.scope.serverId || item.scope.accountId !== props.scope.accountId) return false;
+    if (item.kind === 'widget-area-instance') return !!props.widgetSurface && sameStrictJsonValue(item.ref.surface, props.widgetSurface);
+    return item.kind === 'home-section' || ('address' in item && !!props.address && item.address.sessionId === props.address.sessionId);
+}
+
+type SurfaceFeedbackKind = 'session-board-item' | 'companion-item' | 'home-section' | 'widget-area-instance';
+
+/**
+ * The surface's staged keyboard preview (KS) and, after a dispatched move its owner refused or could
+ * not confirm, the lasting line (ST4) in the same place. Both come from the one outcome presenter.
+ */
+export function SessionSurfaceEntityFeedback(props: Readonly<{ kind: SurfaceFeedbackKind; scope: EntityDragScopeV1 | null; address: import('@/sync/domains/session/sessionAddress').SessionAddress | null; widgetSurface?: import('@happier-dev/protocol/widgets').WidgetSurfaceRefV1; testID: string }>) {
     const runtime = useEntityDragDropRuntime();
     // Leaf-only semantic subscription: neither the Board nor the rail subscribes to pointer frames.
     const snapshot = useEntityDragDropSnapshot(runtime);
-    if ((snapshot.phase !== 'carrying' && snapshot.phase !== 'pending' && snapshot.phase !== 'settled')
-        || snapshot.item?.kind !== props.kind || !props.scope
-        || snapshot.item.scope.serverId !== props.scope.serverId || snapshot.item.scope.accountId !== props.scope.accountId
-        || (snapshot.item.kind === 'widget-area-instance'
-        ? !props.widgetSurface || !sameStrictJsonValue(snapshot.item.ref.surface, props.widgetSurface)
-            : snapshot.item.kind !== 'home-section' && (!('address' in snapshot.item) || !props.address || snapshot.item.address.sessionId !== props.address.sessionId))
-        || runtime.getPointer() !== null || !snapshot.admission) return null;
-    const admission = snapshot.admission;
-    const copy = admission.status === 'allowed' && admission.effect.actionId === 'session.presentation.apply'
-        && CurrentSessionPresentationActionInputV1Schema.safeParse(admission.effect.input).data?.intent.kind === 'companion.item.add';
-    const outcome = snapshot.phase === 'pending'
-        ? { tone: 'pending' as const, title: admission.status === 'allowed' ? admission.effect.preview.verb : t('entityDragDrop.organize.title'), detail: t('entityDragDrop.preview.pendingDetail') }
-        : snapshot.outcome?.status === 'unknown'
-        ? { tone: 'pending' as const, title: t('entityDragDrop.preview.unknownTitle'), detail: t('entityDragDrop.preview.unknownDetail') }
-        : snapshot.outcome?.status === 'refused' ? { tone: 'refused' as const, glyph: 'refused' as const, title: t('entityDragDrop.preview.cantMoveHere'), detail: snapshot.outcome.reason?.message }
-        : admission.status === 'allowed'
-        ? { tone: 'allowed' as const, glyph: copy ? 'copy' as const : 'above' as const, title: admission.effect.preview.verb, detail: admission.effect.preview.consequence ?? admission.effect.preview.target }
-        : { tone: 'refused' as const, glyph: 'refused' as const, title: t('entityDragDrop.preview.cantMoveHere'), detail: [admission.preview?.target, admission.reason.message].filter(Boolean).join(' · ') };
-    return <View>
-        <EntityStagedMoveDock outcome={outcome} hints={[{ keys: ['↵'], label: t('entityDragDrop.keyboard.drop') }, { keys: [t('entityDragDrop.keyboard.escapeKey')], label: t('entityDragDrop.keyboard.cancel') }]} testID={`${props.testID}-preview`} />
-        <PoliteAccessibilityStatus announcement={[outcome.title, outcome.detail].filter(Boolean).join(' · ')} transitionKey={JSON.stringify(admission)} statusTestID={`${props.testID}-live-region`} />
-    </View>;
+    const hints = useEntityStagedMoveHints();
+    const latest = React.useRef(props); latest.current = props;
+    const settledMatch = React.useMemo<EntityDropSettledMatch>(() => ({ item: item => surfaceFeedbackMatches(item, latest.current) }), []);
+    const staged = (snapshot.phase === 'carrying' || snapshot.phase === 'pending') && surfaceFeedbackMatches(snapshot.item, props)
+        && runtime.getPointer() === null;
+    const outcome = staged ? describeEntityDropOutcome(snapshot) : null;
+    return <EntityDropSettledFeedback runtime={runtime} match={settledMatch} testID={props.testID}>
+        {outcome ? <EntityStagedMoveDock outcome={outcome} hints={hints} testID={`${props.testID}-preview`} /> : null}
+        <PoliteAccessibilityStatus announcement={describeHappierDropAnnouncement(outcome)} transitionKey={JSON.stringify(snapshot.admission)} statusTestID={`${props.testID}-live-region`} />
+    </EntityDropSettledFeedback>;
 }
 
 /** Target feedback is a leaf; pointer frames never rerender the card or list owner. */

@@ -4,8 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
 import type { SelectionListStep } from '@/components/ui/selectionList/_types';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -30,16 +29,13 @@ import { describeSessionListDropReason } from '@/components/sessions/shell/dropP
  * current lead. The server's fence and compare-and-set decide; a refusal is said in words.
  */
 
-const stylesheet = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create(() => ({
     body: {
         minHeight: 320,
         maxHeight: 520,
     },
-    error: {
-        ...Typography.default(),
-        fontSize: 13,
-        lineHeight: 18,
-        color: theme.colors.state.danger.foreground,
+    // The refusal sits under the list, so nothing above it moves when it appears.
+    status: {
         paddingHorizontal: 16,
         paddingBottom: 12,
     },
@@ -57,7 +53,9 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
     onCloseRef.current = onClose;
     const close = React.useCallback(() => onCloseRef.current(), []);
     const [error, setError] = React.useState<string | null>(null);
-    const [busy, setBusy] = React.useState(false);
+    // The lead being asked for, shown pending on its own row until the Home answers.
+    const [pendingId, setPendingId] = React.useState<string | null>(null);
+    const busy = pendingId !== null;
     // A snapshot taken when the sheet opens: the choice is made against what the person saw.
     const [snapshot] = React.useState(() => {
         const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
@@ -129,11 +127,12 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
                     id: option.id,
                     label: option.label,
                     ...(option.detail ? { subtitle: option.detail } : {}),
-                    ...(option.disabled ? { disabled: true } : {}),
+                    ...(option.disabled || (pendingId !== null && pendingId !== option.id) ? { disabled: true } : {}),
+                    ...(pendingId === option.id ? { loading: true } : {}),
                 })),
             })),
         };
-    }, [facts, props.sessionId, snapshot.sessions]);
+    }, [facts, pendingId, props.sessionId, snapshot.sessions]);
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
@@ -168,7 +167,7 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             onClose();
             return;
         }
-        setBusy(true);
+        setPendingId(optionId);
         setError(null);
         void setSessionReportsTo({
             sessionId: props.sessionId,
@@ -181,34 +180,47 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
                 onClose();
                 return;
             }
-            setBusy(false);
+            setPendingId(null);
             setError(describeReportsToRefusal(result.errorCode));
         }, () => {
-            setBusy(false);
+            setPendingId(null);
             setError(describeReportsToRefusal(undefined));
         });
     }, [busy, facts, onClose, props.serverId, props.sessionId, snapshot]);
 
+    // Lab K1c: the sheet names what it moves ("Put Review #2481 under…").
+    const title = React.useMemo(() => {
+        const self = snapshot.sessions[props.sessionId];
+        return self ? t('entityDragDrop.chooser.putUnderTitle', { item: getSessionName(self, self.serverId ?? null) }) : t('sessionWork.putUnder.title');
+    }, [props.sessionId, snapshot.sessions]);
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
-        title: t('sessionWork.putUnder.title'),
+        title,
         testID: 'session-put-under-modal',
         dimensions: { width: 420, maxHeightRatio: 0.8, size: 'dialog' as const },
-    }), []);
+    }), [title]);
     useModalCardChrome(props.setChrome, chrome);
 
     return (
         <View style={styles.body}>
-            {error ? <Text testID="session-put-under-error" style={styles.error}>{error}</Text> : null}
             <SelectionList
                 rootStep={step}
                 selectedOptionId={snapshot.currentLeadId}
-                listAccessibilityLabel={t('sessionWork.putUnder.title')}
+                listAccessibilityLabel={title}
                 fillAvailableSpace
                 onSelect={onSelect}
                 onRequestClose={onClose}
                 testID="session-put-under-list"
+                // While the Home is asked for the relation facts, say so instead of an empty list.
+                {...(facts === undefined ? { contentState: (
+                    <SurfaceStateCard testID="session-put-under-loading" kind="loading" size="line" title={t('entityDragDrop.chooser.checking')} />
+                ) } : {})}
             />
+            {error ? (
+                <View style={styles.status}>
+                    <SurfaceStateCard testID="session-put-under-error" kind="error" size="line" title={error} accessibilitySemantics="alert" />
+                </View>
+            ) : null}
         </View>
     );
 }

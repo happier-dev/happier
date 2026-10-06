@@ -1,6 +1,5 @@
 import {
     resolveHappierCarriedPreviewPlacement,
-    type HappierReleaseOutcome,
     type HappierReleasePreviewIdentity,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
@@ -12,11 +11,12 @@ import { useOverlayPortal } from '@/components/ui/popover/OverlayPortal';
 import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from '@/components/ui/popover/portal';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { t } from '@/text';
-
 import { installEntityDragCancellation } from '../entityDragCancellation';
 import { useEntityDragDropSnapshot, useEntityDragPointer } from '../entityDragDropHooks';
-import type { EntityDragDropRuntime, EntityDragDropSnapshot } from '../entityDragDropTypes';
+import type { EntityDragDropRuntime } from '../entityDragDropTypes';
+import { useEntityDropSettledNotices } from './EntityDropSettledFeedback';
+import { useEntityDragFeel } from './entityDragFeel';
+import { describeEntityDropOutcome } from './entityDropOutcome';
 import { EntityReleasePreviewCard } from './EntityReleasePreview';
 
 /**
@@ -30,8 +30,6 @@ import { EntityReleasePreviewCard } from './EntityReleasePreview';
  */
 export type EntityDragCarriedPreviewProps = Readonly<{
     runtime: EntityDragDropRuntime;
-    /** The owner's verdict in words; `null` while nothing under the pointer takes the item. */
-    describeOutcome: (snapshot: EntityDragDropSnapshot) => HappierReleaseOutcome | null;
     /** `touch` draws the phone Organize card across the list at the finger. */
     density?: 'pointer' | 'touch';
     testID?: string;
@@ -53,9 +51,8 @@ function CarriedCardContent(props: EntityDragCarriedPreviewProps & Readonly<{ si
     return (
         <EntityReleasePreviewCard
             identity={identity}
-            outcome={snapshot.outcome?.status === 'refused' ? {
-                tone: 'refused', title: t('entityDragDrop.preview.cantMoveHere'), detail: snapshot.outcome.reason.message,
-            } : props.describeOutcome(snapshot)}
+            // The one outcome presenter: a late refusal returns with the words its source line keeps.
+            outcome={describeEntityDropOutcome(snapshot, description.title)}
             density={props.density}
             side={props.side}
             testID={props.testID}
@@ -149,6 +146,9 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
 
 export function EntityDragCarriedPreview(props: EntityDragCarriedPreviewProps): React.ReactElement | null {
     const overlayPortal = useOverlayPortal();
+    // The realm keeps late outcomes for its source rows and owns the carry's feel (haptics, cursor).
+    useEntityDropSettledNotices(props.runtime);
+    useEntityDragFeel(props.runtime);
     // The feedback host owns the realm's one cancellation boundary (Escape, lost capture, leaving the
     // window, blur), so a carry never outlives the gesture that started it.
     React.useEffect(() => {

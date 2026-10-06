@@ -38,7 +38,7 @@ export function resolveWorkBoardAdd(ref: unknown, context: WorkBoardEntityContex
     }
     return { status: 'allowed', effect: { actionId: 'boards.apply',
         input: { intent: { kind: 'add_items', boardId: context.board.id, refs: [parsed.data] } },
-        preview: { verb: t('boards.header.add'), target: context.board.name } } };
+        preview: { glyph: 'board', verb: t('boards.header.add'), target: context.board.name } } };
 }
 
 /** Current domain admission, shared by pointer, staged keyboard and chooser. */
@@ -54,7 +54,7 @@ export function resolveWorkBoardEntityDrop(input: Readonly<{
     if (configuredRef && (item.kind !== 'work-board-widget' || item.boardId !== context.board.id)) {
         return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref: configuredRef,
             to: { surface: workBoardWidgetSurface(context.scope, context.board.id), index: resolveWorkBoardItemOrderV1(context.board).length } },
-            preview: { verb: t('entityDragDrop.organize.title'), target: context.board.name } } };
+            preview: { glyph: 'move', verb: t('entityDragDrop.organize.title'), target: context.board.name } } };
     }
     if (item.kind === 'session') {
         return resolveWorkBoardAdd({ kind: 'session', qualifiedId: { serverId: item.address.serverId, id: item.address.sessionId } }, context);
@@ -79,7 +79,7 @@ export function resolveWorkBoardEntityDrop(input: Readonly<{
     positions[key] = point.data;
     return { status: 'allowed', effect: { actionId: 'boards.apply',
         input: { intent: { kind: 'set_positions', boardId: context.board.id, positionsByItemRef: positions } },
-        preview: { verb: t('entityDragDrop.organize.title'), target: context.board.name,
+        preview: { glyph: 'move', verb: t('entityDragDrop.organize.title'), target: context.board.name,
             consequence: t('boards.card.moved', { x: Math.round(point.data.x / BOARD_CANVAS_METRICS.gridStepPx), y: Math.round(point.data.y / BOARD_CANVAS_METRICS.gridStepPx) }) } } };
 }
 

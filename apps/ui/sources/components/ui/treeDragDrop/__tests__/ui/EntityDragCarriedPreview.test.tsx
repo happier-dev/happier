@@ -61,8 +61,7 @@ describe('EntityDragCarriedPreview refusal settlement', () => {
         const execute = vi.fn(async () => new Promise<EntityDropOutcomeV1>(resolve => { finish = resolve; }));
         runtime.registerTarget({ id: 'target', scope, acceptedKinds: ['session'],
             getBounds: () => ({ x: 200, y: 200, width: 100, height: 100 }), resolve: () => admission, execute });
-        const screen = await renderScreen(<EntityDragCarriedPreview runtime={runtime} testID="carried-card"
-            describeOutcome={snapshot => ({ tone: snapshot.phase === 'pending' ? 'pending' : 'allowed', title: 'Put under Lead' })} />);
+        const screen = await renderScreen(<EntityDragCarriedPreview runtime={runtime} testID="carried-card" />);
         let carry!: NonNullable<ReturnType<typeof runtime.begin>>;
         let release!: Promise<EntityDropOutcomeV1 | null>;
         await act(async () => { carry = runtime.begin('source')!; carry.move({ x: 250, y: 250 }); release = carry.release(); });

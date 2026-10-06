@@ -254,7 +254,7 @@ describe('composer presentation targets', () => {
             resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: { dragSources: { family: 'dragSources', entriesById: { [source.id]: source } } } };
         const reference = { entryRef: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
             sourceInstance: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
-            lastKnownLocator: { v: 1, displayPath: 'example/repository #42' }, title: 'Attached title', subtitle: 'example/repository' };
+            lastKnownLocator: { v: 1 as const, displayPath: 'example/repository #42' }, title: 'Attached title', subtitle: 'example/repository' };
         const item = { kind: 'plugin', scope, contribution: { pluginId, localId: 'entry-reference' }, reference } as const;
         const context: ComposerEntityDropContext = { scope, ref: document.readCurrent().ref, snapshot: document.readCurrent(), sessions: [], workspace: null,
             referenceHost: { projection, machineId: 'machine-a', serverId: scope.serverId, isCurrent: () => true },

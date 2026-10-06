@@ -5,16 +5,163 @@ import { renderHook } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createEntityDragDropRuntime } from '../entityDragDropRuntime';
 import { useEntityDragDomBinding, useEntityDropDomBinding } from '../useEntityDragDomBinding';
+import { installEntityDragCancellation } from '../entityDragCancellation';
 
 installPanelCommonModuleMocks();
 
-function dragEvent(type: string) {
+function dragEvent(type: string, x = 50) {
     const event = new Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperties(event, { clientX: { value: 50 }, clientY: { value: 50 } });
+    Object.defineProperties(event, { clientX: { value: x }, clientY: { value: 50 } });
     return event;
 }
 
 describe('entity DOM carry boundary', () => {
+    it('keeps a refused hover alive across a transient ref detach, then applies an admitted drop', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'source', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'destination', scope, href: '/inbox' }) });
+        let opened: unknown = null;
+        runtime.registerTarget({ id: 'rail', scope, acceptedKinds: ['destination'],
+            getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+            resolve: ({ pointer }) => pointer && pointer.x > 60
+                ? { status: 'allowed', effect: { actionId: 'workspace.tabs.open', input: { href: '/inbox' }, preview: { verb: 'Open', target: 'Inbox' } } }
+                : { status: 'refused', reason: { code: 'no-change', message: 'Already here' } },
+            execute: async effect => { opened = effect.input; return { status: 'applied' }; },
+        });
+        const sourceHook = await renderHook(() => useEntityDragDomBinding({ runtime, sourceId: 'source', enabled: true }));
+        const targetHook = await renderHook(() => useEntityDropDomBinding(runtime));
+        const source = document.createElement('div');
+        const target = document.createElement('div');
+        document.body.append(source, target);
+        const stop = installEntityDragCancellation(runtime, window);
+        act(() => { sourceHook.getCurrent()(source); targetHook.getCurrent()(target); });
+        try {
+            const refused = dragEvent('dragover');
+            act(() => {
+                source.dispatchEvent(dragEvent('dragstart'));
+                target.dispatchEvent(refused);
+                // React/RN Web can detach and reattach the same connected host during
+                // the carry-feedback commit; this is not source retirement.
+                sourceHook.getCurrent()(null);
+                sourceHook.getCurrent()(source);
+            });
+            expect(refused.defaultPrevented).toBe(false);
+            expect(runtime.getSnapshot()).toMatchObject({ phase: 'carrying', admission: { status: 'refused' } });
+            await act(async () => { await Promise.resolve(); });
+            expect(runtime.getSnapshot().phase).toBe('carrying');
+            const admitted = dragEvent('dragover', 75);
+            act(() => { target.dispatchEvent(admitted); });
+            expect(admitted.defaultPrevented).toBe(true);
+            // An allowed preview can also rerender the source host.
+            act(() => { sourceHook.getCurrent()(null); sourceHook.getCurrent()(source); });
+            await act(async () => { target.dispatchEvent(dragEvent('drop', 75)); });
+            expect(opened).toEqual({ href: '/inbox' });
+            expect(runtime.getSnapshot().outcome).toEqual({ status: 'applied' });
+        } finally {
+            stop(); source.remove(); target.remove();
+            await sourceHook.unmount(); await targetHook.unmount();
+        }
+    });
+
+    it('retires a detached source after the commit and cancels immediately when its host is replaced', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'source', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'destination', scope, href: '/inbox' }) });
+        const hook = await renderHook(() => useEntityDragDomBinding({ runtime, sourceId: 'source', enabled: true }));
+        const source = document.createElement('div');
+        const replacement = document.createElement('div');
+        document.body.append(source, replacement);
+        try {
+            act(() => { hook.getCurrent()(source); source.dispatchEvent(dragEvent('dragstart')); });
+            await act(async () => { hook.getCurrent()(null); await Promise.resolve(); });
+            expect(runtime.getSnapshot().phase).toBe('idle');
+            act(() => { hook.getCurrent()(source); source.dispatchEvent(dragEvent('dragstart')); hook.getCurrent()(replacement); });
+            expect(runtime.getSnapshot().phase).toBe('idle');
+            act(() => { replacement.dispatchEvent(dragEvent('dragstart')); });
+            expect(runtime.getSnapshot().phase).toBe('carrying');
+            await hook.unmount();
+            expect(runtime.getSnapshot().phase).toBe('idle');
+        } finally {
+            source.remove(); replacement.remove(); await hook.unmount();
+        }
+    });
+
+    it('keeps browser drag delivery alive when the browser retires its pointer stream', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'source', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'destination', scope, href: '/inbox' }) });
+        let opened: unknown = null;
+        runtime.registerTarget({ id: 'rail', scope, acceptedKinds: ['destination'],
+            getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+            resolve: () => ({ status: 'allowed', effect: { actionId: 'workspace.tabs.open', input: { href: '/inbox' }, preview: { verb: 'Open', target: 'Inbox' } } }),
+            execute: async effect => { opened = effect.input; return { status: 'applied' }; },
+        });
+        const sourceHook = await renderHook(() => useEntityDragDomBinding({ runtime, sourceId: 'source', enabled: true }));
+        const targetHook = await renderHook(() => useEntityDropDomBinding(runtime));
+        const source = document.createElement('div');
+        const target = document.createElement('div');
+        document.body.append(source, target);
+        const stop = installEntityDragCancellation(runtime, window);
+        act(() => { sourceHook.getCurrent()(source); targetHook.getCurrent()(target); });
+        try {
+            act(() => {
+                source.dispatchEvent(dragEvent('dragstart'));
+                source.dispatchEvent(new Event('pointercancel', { bubbles: true }));
+                source.dispatchEvent(new Event('lostpointercapture', { bubbles: true }));
+            });
+            expect(runtime.getSnapshot().phase).toBe('carrying');
+            const over = dragEvent('dragover');
+            act(() => { target.dispatchEvent(over); });
+            expect(over.defaultPrevented).toBe(true);
+            await act(async () => { target.dispatchEvent(dragEvent('drop')); });
+            expect(opened).toEqual({ href: '/inbox' });
+            act(() => { source.dispatchEvent(dragEvent('dragend')); });
+            runtime.begin('source');
+            window.dispatchEvent(new Event('pointercancel'));
+            expect(runtime.getSnapshot().phase).toBe('idle');
+            // Genuine cancel signals still terminate HTML delivery, and a prevented
+            // dragstart cannot suppress the next ordinary pointer cancellation.
+            for (const event of [new KeyboardEvent('keydown', { key: 'Escape' }), new Event('blur'),
+                new MouseEvent('pointerleave', { relatedTarget: null })]) {
+                source.dispatchEvent(dragEvent('dragstart'));
+                window.dispatchEvent(event);
+                expect(runtime.getSnapshot().phase).toBe('idle');
+            }
+            const prevented = dragEvent('dragstart');
+            prevented.preventDefault();
+            source.dispatchEvent(prevented);
+            window.dispatchEvent(new Event('pointercancel'));
+            expect(runtime.getSnapshot().phase).toBe('idle');
+        } finally {
+            stop(); source.remove(); target.remove();
+            await sourceHook.unmount(); await targetHook.unmount();
+        }
+    });
+    it('cancels dragover only for an admitted target, leaving invalid Sessions/tree destinations unaccepted', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home', accountId: 'account' };
+        runtime.registerSource({ id: 'session', scope, isCurrent: () => true,
+            getItem: () => ({ kind: 'session', scope, address: { serverId: 'home', sessionId: 's1' } }) });
+        runtime.registerTarget({ id: 'tree', scope, acceptedKinds: ['session'],
+            getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+            resolve: () => ({ status: 'refused', reason: { code: 'no-change', message: 'Already here' } }),
+            execute: async () => { throw new Error('Refused target must not write'); },
+        });
+        const hook = await renderHook(() => useEntityDropDomBinding(runtime));
+        const target = document.createElement('div');
+        act(() => { hook.getCurrent()(target); runtime.begin('session'); });
+        const over = dragEvent('dragover');
+        target.dispatchEvent(over);
+        expect(over.defaultPrevented).toBe(false);
+        const drop = dragEvent('drop');
+        await act(async () => { target.dispatchEvent(drop); });
+        expect(drop.defaultPrevented).toBe(false);
+        expect(runtime.getSnapshot().phase).toBe('carrying');
+        runtime.cancel(); await hook.unmount();
+    });
     it('a Session binding wrapper owns refused app input before a child editor, while Files stay with the child', async () => {
         const runtime = createEntityDragDropRuntime();
         const scope = { serverId: 'home', accountId: 'account' };
