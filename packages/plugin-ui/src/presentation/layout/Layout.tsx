@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import {
   ScrollView,
   View,
@@ -14,7 +14,8 @@ import type {
   HappierScrollEvent,
   HappierStyleProp,
 } from '../portableTypes.js';
-import { PluginUiPopoverScrollSourceProvider } from '../../presentationHost/context.js';
+import { PluginUiPopoverScrollSourceProvider, useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
+import { PluginUiScrollActivityProvider } from '../../presentationHost/scrollActivity.js';
 
 // The semantic gap vocabulary is owned by the RN-free shared module so the
 // public adapter and the host declarative renderer cannot disagree about it.
@@ -137,6 +138,10 @@ export function HappierScrollArea({
   ...scrollProps
 }: HappierScrollAreaProps) {
   const scrollSourceRef = useRef<ScrollView | null>(null);
+  const host = useOptionalPluginUiPresentationHost();
+  const createTracker = host?.createScrollActivityTracker;
+  const tracker = useMemo(() => createTracker?.(scrollSourceRef, scrollProps.horizontal === true) ?? null,
+    [createTracker, scrollProps.horizontal]);
   const insetStyle: ViewStyle | undefined = safeAreaInsets
     ? {
         paddingTop: safeAreaInsets.top,
@@ -147,9 +152,13 @@ export function HappierScrollArea({
     : undefined;
   return (
     <PluginUiPopoverScrollSourceProvider scrollSourceRef={scrollSourceRef}>
+      <PluginUiScrollActivityProvider tracker={tracker}>
       <ScrollView
         ref={scrollSourceRef}
         {...scrollProps}
+        onScroll={event => { tracker?.onScroll(event); scrollProps.onScroll?.(event); }}
+        onLayout={event => { tracker?.onLayout(event); scrollProps.onLayout?.(event); }}
+        onContentSizeChange={tracker?.onContentSizeChange}
         testID={testID}
         accessibilityLabel={accessibilityLabel}
         style={style}
@@ -158,6 +167,7 @@ export function HappierScrollArea({
       >
         {children}
       </ScrollView>
+      </PluginUiScrollActivityProvider>
     </PluginUiPopoverScrollSourceProvider>
   );
 }

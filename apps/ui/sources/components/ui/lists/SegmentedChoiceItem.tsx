@@ -29,6 +29,7 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
     onChange: (next: T) => void;
     /** Prefix for per-option test ids (`${testIDPrefix}:${id}`). */
     testIDPrefix?: string;
+    accessoryLayout?: ItemProps['accessoryLayout'];
 }>;
 
 /**
@@ -39,7 +40,7 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
  * the one segmented control, whose default tab semantics belong to view switches.
  */
 export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItemProps<T>) {
-    const { options, value, onChange, testIDPrefix, disabled, ...itemProps } = props;
+    const { options, value, onChange, testIDPrefix, disabled, accessoryLayout = 'adaptive', ...itemProps } = props;
     const tabs = React.useMemo(() => options.map((option) => ({
         id: option.id,
         label: option.label,
@@ -61,14 +62,14 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
             subtitle={subtitle}
             disabled={disabled}
             showChevron={false}
-            accessoryLayout="adaptive"
+            accessoryLayout={accessoryLayout}
             rightElement={
                 <SegmentedTabBar<T>
                     tabs={tabs}
                     activeTabId={value}
                     onSelectTab={onChange}
                     slidingThumb
-                    segmentSizing="content"
+                    segmentSizing={accessoryLayout === 'stacked' ? 'equal' : 'content'}
                     targetSize="platform"
                     disabled={disabled}
                     accessibilityLabel={title}
