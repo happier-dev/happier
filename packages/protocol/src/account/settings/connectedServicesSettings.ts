@@ -310,6 +310,23 @@ export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
   connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
   connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
 }> {
+  return writeConnectedAccountPurposeDefault({ settings: input.settings,
+    purpose: { consumer: input.consumer, purpose: input.purpose }, target: input.target,
+    teamResource: input.teamResource, legacyAgent: { agentId: input.agentId, declarations: input.declarations } });
+}
+
+/** One purpose-default writer for Resources, Providers and Agents; no parallel selection store. */
+export function writeConnectedAccountPurposeDefault(input: Readonly<{
+  settings: AgentConnectedAccountDefaultSettings;
+  purpose: QualifiedConnectedAccountPurposeV1;
+  target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
+  teamResource?: AgentConnectedAccountPurposeTeamResourceDefault | null;
+  /** Only Agents have the released service-keyed ingress to fold in and remove. */
+  legacyAgent?: Readonly<{ agentId: string; declarations: readonly AgentConnectedAccountPurposeDeclaration[] }>;
+}>): Readonly<{
+  connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
+  connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
+}> {
   if (input.target && input.teamResource) {
     throw new Error('A purpose default is either a personal target or a Team resource');
   }
@@ -317,13 +334,11 @@ export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
     target: input.target,
     teamResource: input.teamResource ?? null,
   };
-  const agentId = input.agentId.trim();
-  const current = resolveAgentConnectedAccountPurposeDefaults(input);
+  const agentId = input.legacyAgent?.agentId.trim();
+  const current = input.legacyAgent ? resolveAgentConnectedAccountPurposeDefaults({ settings: input.settings,
+    consumer: input.purpose.consumer, ...input.legacyAgent }) : [];
   const declaredKeys = new Set(current.map((entry) => qualifiedPurposeKey(entry.purpose)));
-  const changedKey = qualifiedPurposeKey({
-    consumer: { pluginId: input.consumer.pluginId, localId: input.consumer.localId },
-    purpose: input.purpose,
-  });
+  const changedKey = qualifiedPurposeKey(input.purpose);
   const durable = readDurablePurposeBindings(input.settings.connectedAccountPurposeBindingsV1);
   const retainedKey = (purpose: QualifiedConnectedAccountPurposeV1) => (
     !declaredKeys.has(qualifiedPurposeKey(purpose)) && qualifiedPurposeKey(purpose) !== changedKey
@@ -343,10 +358,7 @@ export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
     push(entry.purpose, key === changedKey ? changedValue : entry);
   }
   if (!wroteChanged) {
-    push({
-      consumer: { pluginId: input.consumer.pluginId, localId: input.consumer.localId },
-      purpose: input.purpose,
-    }, changedValue);
+    push(input.purpose, changedValue);
   }
   const legacy = readLegacyDefaultAuth(input.settings.connectedServicesDefaultAuthByAgentIdV1);
   const remainingLegacyAgents = Object.fromEntries(

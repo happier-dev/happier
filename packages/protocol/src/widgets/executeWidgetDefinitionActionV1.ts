@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { WidgetDefinitionActionInputSchemasV1, WidgetDefinitionActionOutputSchemasV1,
     type WidgetDefinitionActionDepsV1, type WidgetDefinitionActionIdV1 } from './definitionActionsV1.js';
 import { WidgetDefinitionV1Schema } from './widgetDefinitionV1.js';
+import { projectWidgetDefinitionPromotionBindingsV1 } from './widgetDefinitionPromotionV1.js';
 import { admitWidgetActionSurfaceV1 } from './widgetActionScopeV1.js';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
@@ -57,9 +58,7 @@ export async function executeWidgetDefinitionActionV1(deps: WidgetDefinitionActi
                 if ('ok' in source) return source;
                 // Promotion copies the current admitted declaration. Its Session
                 // field is configurable rather than a hard-coded execution target.
-                const sessionPath = source.definition.sessionInputPath;
-                const suggestedBindings = { ...source.bindings };
-                if (sessionPath) suggestedBindings[sessionPath] = { kind: 'context', slot: 'session' };
+                const suggestedBindings = projectWidgetDefinitionPromotionBindingsV1(source.definition, source.bindings);
                 const definition = await port.create(WidgetDefinitionV1Schema.parse({ v: 1, id: args.artifactId, ...source.definition,
                     ...(args.name ? { name: args.name } : {}), provenance: { source: { kind: 'session', ...args.session, itemId: args.itemId } } }), context.signal);
                 return accept({ definition, suggestedBindings });

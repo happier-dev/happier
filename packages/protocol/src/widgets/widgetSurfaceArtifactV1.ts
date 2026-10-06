@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { sha1 } from '@noble/hashes/sha1';
 import { bytesToHex } from '@noble/hashes/utils';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -13,6 +14,7 @@ export const WidgetAreaLayoutV1Schema = z.object({
     instances: z.array(z.object({ instance: WidgetInstanceV1Schema, width: z.enum(['half', 'full']).optional(), frameStyle: z.enum(['card', 'plain']).optional() }).strict()),
 }).strict().refine(layout => new Set(layout.instances.map(entry => entry.instance.id)).size === layout.instances.length, 'Duplicate instance');
 export type WidgetAreaLayoutV1 = z.infer<typeof WidgetAreaLayoutV1Schema>;
+export const WidgetAreaLayoutV1StoredSchema = createStoredReadSchema(WidgetAreaLayoutV1Schema);
 const instanceId = WidgetInstanceV1Schema.shape.id;
 const index = z.number().int().nonnegative().safe();
 export const WidgetAreaLayoutIntentV1Schema = z.discriminatedUnion('kind', [
@@ -96,7 +98,7 @@ export function createWidgetSurfaceArtifactPortV1(transport: HomeHubArtifactTran
         if (!row) return { v: 1, surface, instances: [] };
         if (row.header.kind !== WIDGET_SURFACE_ARTIFACT_KIND_V1 || row.header.v !== 1 || typeof row.body !== 'string') throw new WidgetAreaMutationErrorV1('invalid_widget_area_record');
         let parsed: ReturnType<typeof WidgetAreaLayoutV1Schema.safeParse>;
-        try { parsed = WidgetAreaLayoutV1Schema.safeParse(JSON.parse(row.body)); } catch { throw new WidgetAreaMutationErrorV1('invalid_widget_area_record'); }
+        try { parsed = WidgetAreaLayoutV1StoredSchema.safeParse(JSON.parse(row.body)); } catch { throw new WidgetAreaMutationErrorV1('invalid_widget_area_record'); }
         if (!parsed.success || !sameStrictJsonValue(parsed.data.surface, surface)) throw new WidgetAreaMutationErrorV1('invalid_widget_area_record');
         return parsed.data;
     };

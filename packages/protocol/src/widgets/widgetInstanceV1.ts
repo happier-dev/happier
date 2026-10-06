@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { normalizeStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -46,6 +47,12 @@ export const WidgetSurfaceRefV1Schema = z.object({
 export type WidgetSurfaceRefV1 = z.infer<typeof WidgetSurfaceRefV1Schema>;
 export const WidgetInstanceRefV1Schema = z.object({ surface: WidgetSurfaceRefV1Schema, instanceId: id }).strict();
 export type WidgetInstanceRefV1 = z.infer<typeof WidgetInstanceRefV1Schema>;
+export const WidgetDefinitionRefV1StoredSchema = createStoredReadSchema(WidgetDefinitionRefV1Schema);
+export const WidgetInputBindingV1StoredSchema = createStoredReadSchema(WidgetInputBindingV1Schema);
+export const WidgetInputBindingsV1StoredSchema = createStoredReadSchema(WidgetInputBindingsV1Schema);
+export const WidgetInstanceV1StoredSchema = createStoredReadSchema(WidgetInstanceV1Schema);
+export const WidgetSurfaceRefV1StoredSchema = createStoredReadSchema(WidgetSurfaceRefV1Schema);
+export const WidgetInstanceRefV1StoredSchema = createStoredReadSchema(WidgetInstanceRefV1Schema);
 
 export type WidgetInputIssueV1 = Readonly<{
   path: string; status: 'selection_required' | 'invalid' | 'unavailable' | 'denied'; reasonCode: string;
@@ -64,9 +71,9 @@ export type WidgetBindingResolutionInputV1 = Readonly<{
   }>;
 }>;
 
-/** Resolve intent, never credentials or authority. Host admission runs again for every effect. */
-export function resolveWidgetBindingsV1(options: WidgetBindingResolutionInputV1): WidgetBindingResolutionV1 {
-  const instance = WidgetInstanceV1Schema.parse(options.instance);
+function projectWidgetBindingsV1(options: Pick<WidgetBindingResolutionInputV1, 'instance' | 'fields' | 'context' | 'viewerValues'> &
+  Partial<Pick<WidgetBindingResolutionInputV1, 'validateValue' | 'resolvePaths'>>) {
+  const instance = WidgetInstanceV1StoredSchema.parse(options.instance);
   const paths = options.resolvePaths ? new Set(options.resolvePaths) : null;
   const fields = paths ? options.fields.filter(field => paths.has(field.path)) : options.fields;
   let input: Record<string, unknown> = {};
@@ -99,9 +106,20 @@ export function resolveWidgetBindingsV1(options: WidgetBindingResolutionInputV1)
     values.set(field.path, value);
     input = writeInputPath(input, field.path, value);
     // Visibility controls the form, not admission of values forwarded to execution.
-    const validation = options.validateValue(field, value);
-    if (validation.status !== 'valid') issues.push({ path: field.path, ...validation });
+    const validation = options.validateValue?.(field, value);
+    if (validation && validation.status !== 'valid') issues.push({ path: field.path, ...validation });
   }
+  return { instance, paths, fields, input, values, unresolved, issues, declared };
+}
+
+/** Readable declared draft values only; this projection does not admit a read or effect. */
+export function projectWidgetBindingInputV1(options: Pick<WidgetBindingResolutionInputV1, 'instance' | 'fields' | 'context' | 'viewerValues'>): Readonly<Record<string, JsonValue>> {
+  return normalizeStrictJsonValue(projectWidgetBindingsV1(options).input) as Readonly<Record<string, JsonValue>>;
+}
+
+/** Resolve intent, never credentials or authority. Host admission runs again for every effect. */
+export function resolveWidgetBindingsV1(options: WidgetBindingResolutionInputV1): WidgetBindingResolutionV1 {
+  const { instance, paths, fields, input, values, unresolved, issues, declared } = projectWidgetBindingsV1(options);
   for (const field of resolveEffectiveInputFields({ inputHints: { fields: [...fields] } }, input)) {
     const binding = instance.bindings[field.path];
     if (field.widget === 'secret' && binding) continue;
