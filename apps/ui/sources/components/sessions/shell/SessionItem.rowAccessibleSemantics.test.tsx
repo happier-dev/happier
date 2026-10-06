@@ -71,15 +71,12 @@ installSessionShellCommonModuleMocks({
             translate: (key: string) => ROW_STATUS_COPY[key] ?? key,
         });
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useHasUnreadMessages: () => false,
-                useSession: () => null,
-                useLocalSetting: ((_key: string) => null) as never,
-            },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useHasUnreadMessages: () => false,
+            useSession: () => null,
+            useLocalSetting: ((_key: string) => null) as never,
         });
     },
 });

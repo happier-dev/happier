@@ -492,6 +492,43 @@ describe('buildSessionViewShellSessionSignature', () => {
 });
 
 describe('useSessionViewShellSession', () => {
+    it('suppresses transcript-only notifications while publishing shell-visible changes', async () => {
+        const previousState = storage.getState();
+        const base = createSession({ id: 'session-1', seq: 25 });
+        const render = vi.fn(() => useSessionViewShellSession('session-1'));
+        try {
+            storage.setState({ sessions: { 'session-1': base } });
+            const hook = await renderHook(render);
+            render.mockClear();
+
+            await act(async () => {
+                storage.setState({ sessions: { 'session-1': {
+                    ...base,
+                    seq: 26,
+                    pendingVersion: 2,
+                    pendingCount: 1,
+                } } });
+            });
+            expect(render).not.toHaveBeenCalled();
+            expect(hook.getCurrent()).toBe(base);
+
+            await act(async () => {
+                storage.setState({ sessions: { 'session-1': {
+                    ...base,
+                    metadata: {
+                        ...base.metadata!,
+                        summary: { text: 'Updated title', updatedAt: 200 },
+                    },
+                } } });
+            });
+            expect(render).toHaveBeenCalled();
+            expect(hook.getCurrent()?.metadata?.summary?.text).toBe('Updated title');
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not reuse Account A detail after the same Home is cleared and Account B publishes the same session id', () => {
         const accountA = {
             ...createSession({

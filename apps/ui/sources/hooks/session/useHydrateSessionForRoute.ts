@@ -130,13 +130,14 @@ function resolveHydratedServerIdForRouteResult(
 export function useHydrateSessionForRoute(
     sessionId: string,
     tag: string,
-    options?: Readonly<{ serverId?: string; forceRefresh?: boolean }>,
+    options?: Readonly<{ serverId?: string; forceRefresh?: boolean; hydrateMessages?: boolean }>,
 ): SessionRouteHydrationState {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedServerId = String(options?.serverId ?? '').trim();
     const routeServerId = normalizedServerId || undefined;
     const routeKey = `${routeServerId ?? ''}\n${normalizedSessionId}`;
     const forceRefresh = options?.forceRefresh === true;
+    const hydrateMessages = options?.hydrateMessages;
     const hasHydratedSession = React.useSyncExternalStore(
         storage.subscribe,
         () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId),
@@ -176,10 +177,11 @@ export function useHydrateSessionForRoute(
             const hydrationOptions = {
                 ...(forceRefresh ? { forceRefresh: true } : {}),
                 ...(routeServerId ? { serverId: routeServerId } : {}),
+                ...(hydrateMessages !== undefined ? { hydrateMessages } : {}),
             };
             const promise = (sync.ensureSessionVisibleForMessageRoute as (
                 sessionId: string,
-                options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
+                options?: Readonly<{ forceRefresh?: boolean; serverId?: string; hydrateMessages?: boolean }>,
             ) => Promise<EnsureSessionVisibleForRouteResult>)(normalizedSessionId, Object.keys(hydrationOptions).length > 0 ? hydrationOptions : undefined);
             fireAndForget(promise, { tag });
 
@@ -251,7 +253,7 @@ export function useHydrateSessionForRoute(
                 clearTimeout(retryTimeoutId);
             }
         };
-    }, [forceRefresh, hasHydratedSession, normalizedSessionId, routeKey, routeServerId, tag]);
+    }, [forceRefresh, hasHydratedSession, hydrateMessages, normalizedSessionId, routeKey, routeServerId, tag]);
 
     const routeState = routeStateRecord.routeKey === routeKey
         ? routeStateRecord.state

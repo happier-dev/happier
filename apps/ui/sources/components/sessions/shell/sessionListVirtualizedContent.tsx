@@ -13,9 +13,11 @@ import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 import { SessionListViewEmptyState } from './SessionListViewEmptyState';
 import type { SessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 import type { SessionListViewContext, SessionListViewFilters } from './search/sessionListViewFilters';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;
+    headerKind?: Extract<SessionListIndexItem, { type: 'header' }>['headerKind'];
     rowViewModel?: SessionListRowViewModel | null;
     isGroupTail?: boolean;
 }>;
@@ -94,15 +96,8 @@ export function SessionListFilteredNoResultsMessage(props: Readonly<{
     );
 }
 
-function readSessionListHeaderKindFromNodeId(nodeId: string): string | null {
-    if (!nodeId.startsWith('header:')) return null;
-    const remaining = nodeId.slice('header:'.length);
-    const separatorIndex = remaining.search(/[:|]/);
-    return separatorIndex >= 0 ? remaining.slice(0, separatorIndex) : remaining;
-}
-
 function isPrioritySessionListHeaderNode(node: SessionListVirtualizedNode): boolean {
-    const headerKind = readSessionListHeaderKindFromNodeId(node.id);
+    const headerKind = node.headerKind;
     return headerKind === 'attention'
         || headerKind === 'working'
         || headerKind === 'pinned'
@@ -110,7 +105,7 @@ function isPrioritySessionListHeaderNode(node: SessionListVirtualizedNode): bool
 }
 
 function isInactiveSessionListHeaderNode(node: SessionListVirtualizedNode): boolean {
-    return readSessionListHeaderKindFromNodeId(node.id) === 'inactive';
+    return node.headerKind === 'inactive';
 }
 
 function resolveWebListInitialNumToRender(nodes: ReadonlyArray<SessionListVirtualizedNode>): number {
@@ -160,21 +155,7 @@ function getSessionListNodeType(node: SessionListVirtualizedNode, rowDensity: Se
             : 'body';
         return `session:${rowDensity}:${heightClass}`;
     }
-    if (typeof nodeId === 'string' && nodeId.startsWith('header:')) {
-        const parts = nodeId.split(':');
-        const explicit = parts[1] ?? '';
-        if (explicit && explicit !== 'server') {
-            return `header:${explicit}`;
-        }
-        if (explicit === 'server' && parts.length <= 3) {
-            return 'header:server';
-        }
-        if (nodeId.includes(':project:')) return 'header:project';
-        if (nodeId.includes(':day:') || nodeId.includes(':date:')) return 'header:date';
-        if (nodeId.includes(':pinned')) return 'header:pinned';
-        if (nodeId.endsWith(':active') || nodeId.includes(':active:')) return 'header:active';
-        if (nodeId.endsWith(':inactive') || nodeId.includes(':inactive:')) return 'header:inactive';
-    }
+    if (node.headerKind) return `header:${node.headerKind}`;
     return 'header';
 }
 

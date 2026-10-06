@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -30,8 +31,10 @@ import type {
 import type { ComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
 
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -229,6 +232,7 @@ let syncErrorState: {
 } | null = null;
 let sessionState: any = {
     id: 's1',
+    serverId: 'server-1',
     seq: 1,
     presence: 'online',
     active: true,
@@ -307,6 +311,8 @@ installSessionShellCommonModuleMocks({
                         sessionPending: {},
                         settings: {},
                         profile: profileState,
+                        settingsScope: { serverId: 'server-1', accountId: 'account-1' },
+                        profileScope: { serverId: 'server-1', accountId: 'account-1' },
                         sessionListIndexByServerId: {},
                     };
                     return typeof selector === 'function' ? selector(snapshot) : snapshot;
@@ -318,6 +324,8 @@ installSessionShellCommonModuleMocks({
                         sessionPending: {},
                         settings: {},
                         profile: profileState,
+                        settingsScope: { serverId: 'server-1', accountId: 'account-1' },
+                        profileScope: { serverId: 'server-1', accountId: 'account-1' },
                         sessionListIndexByServerId: {},
                     }),
                     getInitialState: () => ({
@@ -326,6 +334,8 @@ installSessionShellCommonModuleMocks({
                         sessionPending: {},
                         settings: {},
                         profile: profileState,
+                        settingsScope: { serverId: 'server-1', accountId: 'account-1' },
+                        profileScope: { serverId: 'server-1', accountId: 'account-1' },
                         sessionListIndexByServerId: {},
                     }),
                     setState: () => undefined,
@@ -511,6 +521,7 @@ vi.mock('@/sync/sync', async () => {
             refreshSessions: async () => {},
             onSessionVisible: () => {},
             onSessionViewportChange: () => {},
+            getSessionAttachmentTransferContext: () => undefined,
             sendMessage: sessionSendMessageMock,
             enqueuePendingMessage: sessionEnqueuePendingMessageMock,
             wakeSessionAfterSend: async () => null,
@@ -522,6 +533,14 @@ vi.mock('@/sync/sync', async () => {
 const sessionViewModulePromise = import('./SessionView');
 // Fixture collection owns cold module loading, not the behavior test's execution budget.
 await sessionViewModulePromise;
+
+async function waitForCurrentComposerAccount(): Promise<void> {
+    await vi.waitFor(() => {
+        const presentation = composerScopePluginPresentationSpy.mock.lastCall?.[0] as
+            Parameters<typeof import('@/components/sessions/presentation/useComposerScopePluginPresentation').useComposerScopePluginPresentation>[0] | undefined;
+        expect(presentation?.accountLifetime?.isCurrent()).toBe(true);
+    });
+}
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
@@ -536,6 +555,8 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 
 describe('SessionView (data ready gating)', () => {
+    beforeEach(activateSessionShellStorageBoundary);
+
     it.each([
         'encrypted_access_pending',
         'recipient_encryption_setup_required',
@@ -552,7 +573,7 @@ describe('SessionView (data ready gating)', () => {
             <AppPaneProvider>
                 {/* The mobile cockpit reaches every Session surface through this same override
                     slot, so a blocked Session must settle ahead of it rather than beside it. */}
-                <SessionView
+                <SessionView routeServerId="server-1"
                     id="s1"
                     contentOverride={React.createElement('View', { testID: 'session-sensitive-override' })}
                 />
@@ -572,7 +593,7 @@ describe('SessionView (data ready gating)', () => {
         const { SessionView } = await sessionViewModulePromise;
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView
+                <SessionView routeServerId="server-1"
                     id="s1"
                     routeHydrationState={{ kind: 'missing', sessionId: 's1', cause: 'forbidden' }}
                     contentOverride={React.createElement('View', { testID: 'session-sensitive-override' })}
@@ -587,7 +608,8 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.getTextContent()).not.toContain('errors.sessionDeleted');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
         routerPushSpy.mockClear();
         endpointConnectivityStatus = 'online';
         syncErrorState = null;
@@ -595,6 +617,7 @@ describe('SessionView (data ready gating)', () => {
         daemonMergedProjectionState.value = { inputs: null, phase: 'idle' };
         sessionState = {
             id: 's1',
+            serverId: 'server-1',
             seq: 1,
             presence: 'online',
             active: true,
@@ -608,7 +631,6 @@ describe('SessionView (data ready gating)', () => {
         deviceTypeState.value = 'tablet';
         safeAreaState.bottom = 0;
         resetSessionDraftValueCachesForTests();
-        standardCleanup();
         chatListPropsSpy.mockReset();
         composerChipFactorySpy.mockReset();
         currentSessionPresentationPropsSpy.mockReset();
@@ -626,7 +648,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -639,11 +661,12 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
         const ref = { kind: 'session' as const, sessionId: 's1' };
+        await waitForCurrentComposerAccount();
         const snapshot = readComposerPresentationSnapshot(ref);
         expect(snapshot).not.toBeNull();
         if (!snapshot) throw new Error('expected mounted session composer target');
@@ -687,9 +710,12 @@ describe('SessionView (data ready gating)', () => {
             disabled?: boolean;
             isSendDisabled?: boolean;
         }>;
-        expect(agentInputProps.composerDecorations).toEqual([
-            expect.objectContaining({ key: 'analysis' }),
-        ]);
+        await vi.waitFor(() => {
+            agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as typeof agentInputProps;
+            expect(agentInputProps.composerDecorations).toEqual([
+                expect.objectContaining({ key: 'analysis' }),
+            ]);
+        });
 
         await act(async () => {
             expect(handlers.acquireComposerInputLock!(request('acquireComposerInputLock', {
@@ -698,10 +724,12 @@ describe('SessionView (data ready gating)', () => {
                 request: { reason: 'Review required', mode: 'editAndSubmit' },
             }))).toBeNull();
         });
-        agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as typeof agentInputProps;
-        expect(agentInputProps.composerInputLock).toEqual({
-            mode: 'editAndSubmit',
-            reasons: ['Review required'],
+        await vi.waitFor(() => {
+            agentInputProps = agentInputPropsSpy.mock.lastCall?.[0] as typeof agentInputProps;
+            expect(agentInputProps.composerInputLock).toEqual({
+                mode: 'editAndSubmit',
+                reasons: ['Review required'],
+            });
         });
         expect(agentInputProps.disabled).toBe(true);
         expect(agentInputProps.isSendDisabled).toBe(true);
@@ -724,7 +752,7 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -797,7 +825,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -889,7 +917,7 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -923,6 +951,12 @@ describe('SessionView (data ready gating)', () => {
     });
 
     it('reads the current Composer presentation snapshot at semantic Action click time', async () => {
+        const projectedAction = PluginProjectedActionV2Schema.parse({
+            id: 'refresh-context', pluginId: 'acme.compose', occurrenceId: 'compose-generation-7',
+            title: 'Refresh context', scopes: ['session'], surfaces: ['ui'],
+            execution: { target: 'daemon' }, placementBindings: ['composer.primary'],
+            inputHints: { fields: [] }, priority: 0, dangerLevel: 'safe', available: true,
+        });
         daemonMergedProjectionState.value = {
             phase: 'ready',
             inputs: {
@@ -942,6 +976,7 @@ describe('SessionView (data ready gating)', () => {
                         editableSettingsGroups: [],
                         actions: [{
                             id: 'refresh-context',
+                            occurrenceId: projectedAction.occurrenceId,
                             title: 'Refresh context',
                             description: null,
                             icon: null,
@@ -963,7 +998,7 @@ describe('SessionView (data ready gating)', () => {
                     generation: 7,
                     installedPackagesById: {},
                     agentsById: {},
-                    actionsById: {},
+                    actionsById: { 'acme.compose/refresh-context': projectedAction },
                     toolsById: {},
                     commandsById: {},
                     resourcesById: {},
@@ -982,12 +1017,14 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
+        await waitForCurrentComposerAccount();
         const controller = composerChipFactorySpy.mock.calls
             .map(([input]) => (input as { controller?: PluginContributedActionController }).controller)
+            .reverse()
             .find((candidate): candidate is PluginContributedActionController => candidate !== undefined);
         if (!controller) throw new Error('expected the Composer Action controller');
         const [action] = controller.list({ placement: 'composer.primary', scope: 'session' });
@@ -1004,7 +1041,8 @@ describe('SessionView (data ready gating)', () => {
             },
         })).toEqual({ status: 'applied', revision: initial.revision + 1 });
 
-        await controller.open(action);
+        const outcome = await controller.open(action);
+        expect(outcome).toMatchObject({ kind: 'direct', outcome: { ok: true } });
 
         expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledWith('m1', expect.objectContaining({
             qualifiedActionId: 'acme.compose/refresh-context',
@@ -1019,10 +1057,19 @@ describe('SessionView (data ready gating)', () => {
     });
 
     it('serializes direct contributed Actions and sends through the Session composer reservation', async () => {
+        const { Modal } = await import('@/modal');
+        const projectedAction = PluginProjectedActionV2Schema.parse({
+            id: 'refresh-context', pluginId: 'acme.compose', occurrenceId: 'compose-generation-7',
+            title: 'Refresh context', scopes: ['session'], surfaces: ['ui'],
+            execution: { target: 'daemon' }, placementBindings: ['composer.primary'],
+            inputHints: { fields: [] }, priority: 0, dangerLevel: 'safe', available: true,
+        });
         sessionState = {
             ...sessionState,
             pendingVersion: 2,
             agentStateVersion: 1,
+            encryptionMode: 'plain',
+            metadata: { ...sessionState.metadata, version: MINIMUM_CLI_PENDING_QUEUE_V2_VERSION },
         };
         daemonMergedProjectionState.value = {
             phase: 'ready',
@@ -1043,6 +1090,7 @@ describe('SessionView (data ready gating)', () => {
                         editableSettingsGroups: [],
                         actions: [{
                             id: 'refresh-context',
+                            occurrenceId: projectedAction.occurrenceId,
                             title: 'Refresh context',
                             description: null,
                             icon: null,
@@ -1064,7 +1112,7 @@ describe('SessionView (data ready gating)', () => {
                     generation: 7,
                     installedPackagesById: {},
                     agentsById: {},
-                    actionsById: {},
+                    actionsById: { 'acme.compose/refresh-context': projectedAction },
                     toolsById: {},
                     commandsById: {},
                     resourcesById: {},
@@ -1104,12 +1152,14 @@ describe('SessionView (data ready gating)', () => {
         const { SessionView } = await sessionViewModulePromise;
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
+        await waitForCurrentComposerAccount();
         const controller = composerChipFactorySpy.mock.calls
             .map(([input]) => (input as { controller?: PluginContributedActionController }).controller)
+            .reverse()
             .find((candidate): candidate is PluginContributedActionController => candidate !== undefined);
         if (!controller) throw new Error('expected the Composer Action controller');
         const [action] = controller.list({ placement: 'composer.primary', scope: 'session' });
@@ -1119,9 +1169,10 @@ describe('SessionView (data ready gating)', () => {
             onContributedActionSuggestionSelect?: (
                 action: PluginContributedActionDescriptor,
             ) => Promise<PluginContributedActionOpenOutcome> | PluginContributedActionOpenOutcome;
-            onSend?: (options?: Readonly<{ inputTextOverride?: string }>) => void;
+            onChangeText?: (text: string) => void;
+            onSend?: () => void;
         }>;
-        if (!agentInputProps.onContributedActionSuggestionSelect || !agentInputProps.onSend) {
+        if (!agentInputProps.onContributedActionSuggestionSelect || !agentInputProps.onChangeText || !agentInputProps.onSend) {
             throw new Error('expected Session composer dispatch callbacks');
         }
 
@@ -1133,7 +1184,8 @@ describe('SessionView (data ready gating)', () => {
             });
 
             await act(async () => {
-                agentInputProps.onSend?.({ inputTextOverride: 'send while Action dispatch is pending' });
+                agentInputProps.onChangeText?.('send while Action dispatch is pending');
+                agentInputProps.onSend?.();
                 await Promise.resolve();
             });
             expect(outboundDispatchCount).toBe(0);
@@ -1142,14 +1194,17 @@ describe('SessionView (data ready gating)', () => {
             await expect(actionOpening).resolves.toMatchObject({ kind: 'direct', outcome: { ok: true } });
 
             await act(async () => {
-                agentInputProps.onSend?.({ inputTextOverride: 'retry after Action dispatch settles' });
+                agentInputProps.onChangeText?.('retry after Action dispatch settles');
+                agentInputProps.onSend?.();
             });
             await vi.waitFor(() => {
+                expect(Modal.alert).not.toHaveBeenCalled();
                 expect(outboundDispatchCount).toBe(1);
             });
 
             await act(async () => {
-                agentInputProps.onSend?.({ inputTextOverride: 'send before Action dispatch' });
+                agentInputProps.onChangeText?.('send before Action dispatch');
+                agentInputProps.onSend?.();
             });
             await vi.waitFor(() => {
                 expect(outboundDispatchCount).toBe(2);
@@ -1299,19 +1354,22 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
         const composerControlHost = composerChipFactorySpy.mock.calls
             .map(([input]) => input as { composerControlHost?: { renderSurfaceContent?: (input: unknown) => React.ReactNode } })
+            .reverse()
             .find((input) => input.composerControlHost !== undefined)
             ?.composerControlHost;
         const beforeProps = currentSessionPresentationPropsSpy.mock.calls
             .map(([props]) => props as { placement?: unknown; renderComposerRegion?: (region: unknown) => React.ReactNode })
+            .reverse()
             .find((props) => props.placement === 'beforeComposer');
         const afterProps = currentSessionPresentationPropsSpy.mock.calls
             .map(([props]) => props as { placement?: unknown; renderComposerRegion?: (region: unknown) => React.ReactNode })
+            .reverse()
             .find((props) => props.placement === 'afterComposer');
         if (!composerControlHost?.renderSurfaceContent || !beforeProps?.renderComposerRegion || !afterProps?.renderComposerRegion) {
             throw new Error('expected SessionView to expose the admitted Composer physical-mount callbacks');
@@ -1397,7 +1455,7 @@ describe('SessionView (data ready gating)', () => {
             value: { issueId: 42 },
             presentation: { label: 'Issue #42', typeLabel: 'Issue', icon: 'file' },
         };
-        writeSessionDraftValue(null, 's1', 'structuredInput.composerAttachments', [attachment]);
+        writeSessionDraftValue({ serverId: 'server-1', accountId: 'account-1' }, 's1', 'structuredInput.composerAttachments', [attachment]);
         const attachmentEntry = {
             id: 'acme.issues/issue',
             pluginId: attachment.attachment.pluginId,
@@ -1512,7 +1570,7 @@ describe('SessionView (data ready gating)', () => {
 
         await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -1634,7 +1692,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" chatBottomSpacing="none" />
+                <SessionView routeServerId="server-1" id="s1" chatBottomSpacing="none" />
             </AppPaneProvider>,
         );
 
@@ -1655,7 +1713,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -1676,10 +1734,14 @@ describe('SessionView (data ready gating)', () => {
             at: 123,
         };
         const { SessionView } = await sessionViewModulePromise;
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <DestinationInstanceHost tabId="session-test" ref={{ kind: 'session', params: { id: 's1', serverId: 'server-1' } }}
+                    pathname="/session/s1" focused visible navigation={{ push: routerPushSpy, replace: vi.fn(), back: vi.fn() }}>
+                <SessionView routeServerId="server-1" id="s1" />
+                </DestinationInstanceHost>
             </AppPaneProvider>,
         );
 
@@ -1722,7 +1784,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -1738,7 +1800,7 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView id="s1" />
+                <SessionView routeServerId="server-1" id="s1" />
             </AppPaneProvider>,
         );
 
@@ -1779,9 +1841,10 @@ describe('SessionView (data ready gating)', () => {
 
         const screen = await renderScreen(
             <AppPaneProvider>
-                <SessionView
+                <SessionView routeServerId="server-1"
                     id="s1"
                     routeHydrationState={{ kind: 'loading', sessionId: 's1', reason: 'store-miss' }}
+                    routeAnchorOverride
                 />
             </AppPaneProvider>,
         );
@@ -1831,6 +1894,7 @@ describe('SessionView (data ready gating)', () => {
                 <SessionView
                     id="s1"
                     routeHydrationState={{ kind: 'missing', sessionId: 's1', cause: 'not_found' }}
+                    routeServerId="server-1"
                 />
             </AppPaneProvider>,
         );
@@ -1848,6 +1912,7 @@ describe('SessionView (data ready gating)', () => {
                 <SessionView
                     id="s1"
                     routeHydrationState={{ kind: 'retrying', sessionId: 's1', cause: 'network' }}
+                    routeServerId="server-1"
                 />
             </AppPaneProvider>,
         );

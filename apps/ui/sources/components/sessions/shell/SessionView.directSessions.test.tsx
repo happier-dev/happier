@@ -485,16 +485,29 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', as
   };
 });
 
-vi.mock('@/hooks/server/connectedServices/useProviderAccountUsageSnapshots', () => ({
-  useProviderAccountUsageSnapshots: (recordIds: readonly string[]) => {
-    providerAccountUsageSnapshotsState.requestedRecordIds = recordIds;
-    return {
-      snapshotsByRecordId: providerAccountUsageSnapshotsState.current,
-      loadingByRecordId: {},
-      stateByRecordId: {},
-    };
-  },
-}));
+vi.mock('@/hooks/server/connectedServices/useProviderAccountUsageSnapshots', async () => {
+  const { resolveProviderAccountUsageSnapshotState } = await import(
+    '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors'
+  );
+  return {
+    useProviderAccountUsageSnapshots: (recordIds: readonly string[]) => {
+      providerAccountUsageSnapshotsState.requestedRecordIds = recordIds;
+      return {
+        snapshotsByRecordId: providerAccountUsageSnapshotsState.current,
+        loadingByRecordId: {},
+        stateByRecordId: Object.fromEntries(recordIds.map((recordId) => [
+          recordId,
+          resolveProviderAccountUsageSnapshotState({
+            snapshot: providerAccountUsageSnapshotsState.current[recordId] ?? null,
+            loading: false,
+            hadError: false,
+            nowMs: Date.now(),
+          }),
+        ])),
+      };
+    },
+  };
+});
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
   AgentContentView: (props: any) =>
@@ -521,7 +534,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     closeDetailsTab: vi.fn(),
     setActiveDetailsTab: vi.fn(),
     setRightTabState: vi.fn(),
-    scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
+    scopeState: { bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} }, right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
   }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
@@ -670,6 +683,7 @@ vi.mock('@/voice/session/voiceSession', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
+    getSessionAttachmentTransferContext: () => null,
     markSessionViewed: async () => {},
     fetchPendingMessages: async () => {},
     publishSessionPermissionModeToMetadata: async () => {},
@@ -2676,6 +2690,42 @@ describe('SessionView (direct sessions)', () => {
           memberProfileIds: ['active-profile'],
         }],
       }],
+      connectedAccountGroupsV4: [{
+        v: 1,
+        ref: {
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          groupId: 'happier',
+        },
+        incarnation: 'happier:1',
+        displayName: 'Happier pool',
+        policy: {
+          v: 1,
+          strategy: 'least_limited',
+          autoSwitch: true,
+          quotaLimitSelection: { mode: 'all' },
+          switchOn: {
+            usageLimit: true,
+            authExpired: true,
+            accountChanged: false,
+            refreshFailure: true,
+          },
+        },
+        activeConnectedAccountId: 'active-profile',
+        generation: 7,
+        runtimeStateRevision: 1,
+        state: { status: 'ready' },
+        createdAt: 0,
+        updatedAt: 0,
+        members: [{
+          v: 1,
+          connectedAccountId: 'active-profile',
+          priority: 100,
+          enabled: true,
+          state: {},
+          createdAt: 0,
+          updatedAt: 0,
+        }],
+      }],
     };
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
@@ -2879,6 +2929,50 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(findProviderUsageRecoveryAction(screen)).toBeUndefined();
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
+  });
+
+  it('combines global windows with the active connected account favorites', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    installConnectedServiceWorkProfileRecoveryCreditSession();
+    const snapshot = buildOpenAiCodexWorkQuotaSnapshot({ fetchedAt: 2_000, used: 82 });
+    quotaSnapshotsState.current = {
+      'openai-codex/work': { ...snapshot, meters: [
+        ...snapshot.meters,
+        { ...snapshot.meters[0]!, meterId: 'five_hour', label: '5-hour', windowDurationMs: 18_000_000, used: 30 },
+        { ...snapshot.meters[0]!, meterId: 'daily', label: 'Daily', windowDurationMs: 86_400_000, used: 95 },
+      ] },
+    };
+
+    settingByKeyState.current.connectedServicesQuotaPinnedMeterIdsByKey = { 'openai-codex/work': ['daily'] };
+    settingByKeyState.current.sessionProviderUsageGaugeWindowModes = ['weekly', 'session'];
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    expect(findProviderUsageGauge(screen)?.usageRings
+      .map((ring: { meterId: string; ringValueLabel: string }) => [ring.meterId, ring.ringValueLabel]))
+      .toEqual([['weekly', '18'], ['five_hour', '70'], ['daily', '5']]);
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      lastRuntimeIssue: {
+        v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit',
+        source: 'usage_limit', occurredAt: 10_000, provider: 'codex',
+        usageLimit: {
+          v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'switch_account',
+          quotaSnapshotRef: { serviceId: 'openai-codex', profileId: 'backup-profile', fetchedAtMs: 10_000 },
+          allWindows: [
+            { meterId: 'weekly', scope: 'Weekly', remainingPct: 42 },
+            { meterId: 'five_hour', scope: '5-hour', remainingPct: 70 },
+            { meterId: 'backup_daily', scope: 'Daily', remainingPct: 55 },
+          ],
+        },
+      },
+    };
+    settingByKeyState.current.connectedServicesQuotaPinnedMeterIdsByKey = {
+      'openai-codex/work': ['daily'], 'openai-codex/backup-profile': ['backup_daily'],
+    };
+    await updateSessionViewAndSettle(screen, { routeServerId: 'server-route-refreshed' });
+    expect(findProviderUsageGauge(screen)?.usageRings.map((ring: { meterId: string }) => ring.meterId))
+      .toEqual(['weekly', 'five_hour', 'backup_daily']);
+
   });
 
   it('uses connected-service reset-credit consumption from the connected-service quota view for connected-service-bound account usage', async () => {

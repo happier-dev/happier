@@ -1,14 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen as renderUnscopedScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { UserTextMessage } from "@happier-dev/session-core/messages";
 import {
     formatVoiceToolResultsFollowUp,
+    readSessionMessageProvenance,
     VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX,
 } from '@happier-dev/protocol';
 
@@ -91,9 +91,9 @@ installMessageViewCommonModuleMocks({
             useRouter: () => ({ push: structuredRouterState.push }),
         };
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useSession: () => ({
                 accessLevel: null,
                 canApprovePermissions: true,
@@ -136,30 +136,6 @@ vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
 vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({
     shouldShowTranscriptRowActions: () => false,
     shouldShowTranscriptRowPinAction: () => false,
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentBehavior: () => ({ permissions: { footer: {} } }),
-    getAgentCore: () => ({
-        permissions: { promptProtocol: 'codexDecision' },
-        toolRendering: { hideUnknownToolsByDefault: false },
-    }),
-    resolveAgentIdFromFlavor: () => 'codex',
-}));
-
-vi.mock('@/agents/catalog/resolve', () => ({
-    resolveAgentIdForPermissionUi: () => 'codex',
-}));
-
-vi.mock('@/agents/catalog/permissionUiCopy', () => ({
-    getPermissionFooterCopy: () => ({
-        protocol: 'codexDecision',
-        yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
-        yesForSessionKey: 'codex.permissions.yesForSession',
-        stopKey: 'codex.permissions.stop',
-    }),
 }));
 
 const modalShowSpy = vi.fn();
@@ -213,6 +189,18 @@ let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 let filesImagePreviewMaxBytes: number | null = null;
 let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
+let restoreRouterBoundary: (() => void) | undefined;
+
+beforeEach(async () => {
+    // Expo may be imported by an app provider before the common mock options are installed.
+    // Capture each render's router at the platform boundary, preserving commit-time ownership.
+    const expoRouter = await import('expo-router');
+    const routerBoundary = vi.spyOn(expoRouter, 'useRouter').mockImplementation(() => ({
+        ...expoRouter.router,
+        push: structuredRouterState.push,
+    }));
+    restoreRouterBoundary = () => routerBoundary.mockRestore();
+});
 
 afterEach(() => {
     structuredRouterState.push = routerPushSpy;
@@ -222,6 +210,8 @@ afterEach(() => {
     filesImagePreviewMaxBytes = null;
     toolViewTimelineChromeMode = null;
     standardCleanup();
+    restoreRouterBoundary?.();
+    restoreRouterBoundary = undefined;
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -278,6 +268,17 @@ const viewOnlyInteraction = deriveTranscriptInteraction({
     access: VIEW_ONLY_SESSION_ACCESS,
     isSessionActive: true,
 });
+
+async function renderScreen(element: React.ReactElement, serverId: string | null = null) {
+    const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
+    return renderUnscopedScreen(element, {
+        wrapper: ({ children }) => (
+            <AppSessionTranscriptSourceProvider sessionId="s1" serverId={serverId} interaction={sessionInteraction}>
+                {children}
+            </AppSessionTranscriptSourceProvider>
+        ),
+    });
+}
 
 function createStructuredToolMessage(
     kind: 'plan_output.v1' | 'review_findings.v1' | 'review_findings.v2',
@@ -420,6 +421,14 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             contributionLocalId: 'inbound',
             surface: 'unspecified',
         } as const;
+        const malformedProvenance = readSessionMessageProvenance({
+            happierProvenanceV1: {
+                v: 1,
+                kind: 'pluginSession',
+                pluginId: 'acme.preview',
+            },
+        });
+        expect(malformedProvenance).toBeNull();
         const messages = [
             {
                 kind: 'user-text',
@@ -480,11 +489,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 createdAt: 0,
                 text: 'Malformed input',
                 meta: {
-                    happierProvenanceV1: {
-                        v: 1,
-                        kind: 'pluginSession',
-                        pluginId: 'acme.preview',
-                    },
+                    happierProvenanceV1: malformedProvenance ?? undefined,
                 },
             },
             {
@@ -624,6 +629,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-media-1',
             text: 'Generated image',
             meta: {
@@ -694,6 +701,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-media-video-1',
             text: 'Browser recording',
             meta: {
@@ -728,6 +737,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             displayText: 'Review comments (1)',
@@ -768,6 +779,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         'renders persisted file and session references beside a structured-only %s message',
         async (kind) => {
             const { MessageView } = await import('./MessageView');
+            const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
             const message: any = {
                 kind,
                 id: `structured-references-${kind}`,
@@ -831,6 +843,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             displayText: 'Review comments (1)',
@@ -865,9 +879,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const screen = await renderScreen(renderMessage());
         const firstJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
 
-        await act(async () => {
-            screen.tree.update(renderMessage());
-        });
+        await screen.update(renderMessage());
 
         const secondJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
         expect(secondJumpHandler).toBe(firstJumpHandler);
@@ -875,6 +887,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
     it('keeps the committed router authoritative through an abandoned same-session structured-row render', async () => {
         const { MessageView } = await import('./MessageView');
+        const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
         const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
         const interaction = deriveTranscriptInteraction({
             kind: 'session',
@@ -918,13 +931,15 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         };
         const renderMessage = (messageValue: typeof message, shouldSuspend = false) => (
             <React.Suspense fallback={null}>
-                <MessageView
-                    message={messageValue}
-                    metadata={null}
-                    sessionId="s1"
-                    interaction={interaction}
-                />
-                <SuspendAfterRow shouldSuspend={shouldSuspend} />
+                <AppSessionTranscriptSourceProvider sessionId="s1" interaction={interaction}>
+                    <MessageView
+                        message={messageValue}
+                        metadata={null}
+                        sessionId="s1"
+                        interaction={interaction}
+                    />
+                    <SuspendAfterRow shouldSuspend={shouldSuspend} />
+                </AppSessionTranscriptSourceProvider>
             </React.Suspense>
         );
         let tree!: renderer.ReactTestRenderer;
@@ -974,6 +989,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: '@happier/review.comments ...',
             displayText: 'Review comments (1)',
@@ -1008,6 +1025,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: '@happier/review.comments ...',
             displayText: 'Review comments (1)',
@@ -1048,6 +1067,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: [
                 'hello',
@@ -1085,6 +1106,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-svg-1',
             text: [
                 'hello',
@@ -1120,6 +1143,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt\n\n[attachments block]',
             displayText: 'Review comments (1)\n\n[attachments block]',
@@ -1163,6 +1188,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-voice-1',
             text: [
                 'At the start of your reply, include a short friendly greeting (one sentence).',
@@ -1195,6 +1222,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-voice-2',
             text: [
                 formatVoiceToolResultsFollowUp({ toolResults: [{ t: 'sendSessionMessage' }] }),
@@ -1244,6 +1273,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const path = '.happier/uploads/messages/m2/file.png';
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: [
                 'hello',
@@ -1280,6 +1311,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const secondPath = '.happier/uploads/messages/m3/two.png';
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: [
                 'hello',
@@ -1333,6 +1366,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'local-1',
             text: 'review prompt',
             displayText: 'Review comments (1)',
@@ -1371,6 +1406,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const { MessageView } = await import('./MessageView');
         const message: any = {
             kind: 'user-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: 'public-review',
             text: 'review prompt',
             displayText: 'Review comments (1)',
@@ -1802,6 +1839,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: null,
             text: '**Title**\n\n- first\n- second',
             isThinking: true,
@@ -1827,6 +1866,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: null,
             text: '*Thinking...*\n\n*Hello*',
             isThinking: true,
@@ -1873,6 +1914,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: null,
             text: '**Title**\n\nHello',
             isThinking: true,
@@ -1896,6 +1939,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         const message: any = {
             kind: 'agent-text',
+            id: 'structured-message-1',
+            createdAt: 0,
             localId: null,
             text: 'Hello',
             isThinking: true,
@@ -1956,6 +2001,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            'home-b',
         );
         const markdownView = screen.findByType('MarkdownView' as any);
 
@@ -1980,6 +2026,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            'home-b',
         );
         const markdownView = screen.findByType('MarkdownView' as any);
 
@@ -2014,6 +2061,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            'home-b',
         );
 
         const row = screen.findByTestId('message-attachments-row');
@@ -2065,6 +2113,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            'home-b',
         );
 
         await screen.pressByTestIdAsync('message-session-media-inline-video:.happier/uploads/generated/session-1/message-1/generated.webm');
@@ -2118,6 +2167,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            'home-b',
         );
 
         await screen.pressByTestIdAsync('message-session-media-inline-video:.happier/uploads/tools/t1/screenshot-recording.webm');

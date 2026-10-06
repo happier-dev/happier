@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
@@ -37,25 +37,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-}));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -144,7 +125,7 @@ installSessionShellCommonModuleMocks({
                 useSessionListMeaningfulActivityAt: () => null,
                 useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
-                    return false;
+                    return undefined;
                 } }),
             },
         });
@@ -153,7 +134,9 @@ installSessionShellCommonModuleMocks({
 
 async function importSessionItem() {
     const { SessionItem } = await import('./SessionItem');
-    return createModelBackedSessionItemTestComponent(SessionItem);
+    return createModelBackedSessionItemTestComponent(SessionItem, {
+        resolveRowViewModelOverrides: () => ({ hideInactiveSessions }),
+    });
 }
 
 describe('SessionItem server-scoped mutations', () => {
@@ -170,7 +153,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_1',
             seq: 1,
             createdAt: 1,
@@ -184,7 +167,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -234,7 +217,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_2',
             seq: 1,
             createdAt: 1,
@@ -247,8 +230,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -305,7 +288,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_stale_inactive',
             seq: 1,
             createdAt: 1,
@@ -318,8 +301,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -371,7 +354,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_3',
             seq: 1,
             createdAt: 1,
@@ -385,7 +368,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -436,7 +419,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_active_archive',
             seq: 1,
             createdAt: 1,
@@ -450,7 +433,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -502,7 +485,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_4',
             seq: 1,
             createdAt: 1,
@@ -516,7 +499,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -563,7 +546,7 @@ describe('SessionItem server-scoped mutations', () => {
         readStateSpy.mockClear();
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_read',
             seq: 3,
             lastViewedSessionSeq: 3,
@@ -578,8 +561,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -611,7 +594,7 @@ describe('SessionItem server-scoped mutations', () => {
     it('does not offer read-state actions in the context menu from non-terminal raw seq', async () => {
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_raw_seq',
             seq: 5,
             lastViewedSessionSeq: 4,
@@ -627,7 +610,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -665,7 +648,7 @@ describe('SessionItem server-scoped mutations', () => {
         };
         const FolderAwareSessionItem = SessionItem as React.ComponentType<FolderAwareSessionItemProps>;
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_folder_move',
             seq: 1,
             createdAt: 1,
@@ -678,8 +661,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <FolderAwareSessionItem
@@ -770,7 +753,7 @@ describe('SessionItem server-scoped mutations', () => {
         const onMoveDown = vi.fn();
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_accessible_move',
             seq: 1,
             createdAt: 1,
@@ -783,8 +766,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -850,7 +833,7 @@ describe('SessionItem server-scoped mutations', () => {
     it('hides manual read-state actions for archived sessions', async () => {
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_archived_read',
             seq: 3,
             lastViewedSessionSeq: 3,
@@ -865,8 +848,8 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
-        } as any;
+            presence: 0,
+        });
 
         const screen = await renderScreen(
             <SessionItem

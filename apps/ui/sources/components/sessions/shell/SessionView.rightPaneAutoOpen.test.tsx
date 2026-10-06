@@ -12,7 +12,8 @@ import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -112,6 +113,7 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const session: any = {
             id: 's1',
+        serverId: 'server-1',
             seq: 1,
             presence: 'online',
             active: true,
@@ -285,6 +287,7 @@ vi.mock('@/sync/sync', async () => {
     const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
     return {
         sync: {
+        getSessionAttachmentTransferContext: () => undefined,
             ...createAcceptedExternalSessionTailCursorSyncBoundary(),
             markSessionViewed: async () => {},
             fetchPendingMessages: (sessionId: string) => fetchPendingMessagesSpy(sessionId),
@@ -370,6 +373,7 @@ describe('SessionView (right pane auto-open)', () => {
         sessionsRightPaneDefaultOpen = false;
         rightScopeState = {
             right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null },
         };
         authCredentials = { token: 't', secret: 's' };
@@ -393,6 +397,8 @@ describe('SessionView (right pane auto-open)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
 
+    beforeEach(activateSessionShellStorageBoundary);
+
     it('opens right pane on first visit when sessionsRightPaneDefaultOpen is enabled and no prior tab state exists', async () => {
         sessionsRightPaneDefaultOpen = true;
 
@@ -407,6 +413,7 @@ describe('SessionView (right pane auto-open)', () => {
         sessionsRightPaneDefaultOpen = true;
         rightScopeState = {
             right: { isOpen: false, activeTabId: 'git', tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null },
         };
 

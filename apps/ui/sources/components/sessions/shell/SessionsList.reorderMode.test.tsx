@@ -2,7 +2,6 @@ import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createPartialStorageModuleMock,
-    createStorageStoreMock,
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
@@ -15,6 +14,16 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
 import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { buildSessionFolderGroupKey } from '@/sync/domains/session/folders';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol';
+
+installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,6 +58,11 @@ const sessionStoreFixture = vi.hoisted(() => {
             },
         },
     };
+});
+
+vi.mock('@/sync/domains/state/browserRecordStorage', async () => {
+    const { createBrowserRecordStorageModuleMock } = await import('@/dev/testkit/mocks/browserRecordStorage');
+    return createBrowserRecordStorageModuleMock();
 });
 
 vi.mock('react-native-gesture-handler', async () => {
@@ -94,17 +108,13 @@ const applySettings = vi.hoisted(() => vi.fn());
 const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const markSessionListScrollActivitySpy = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({ token: 'folder-token', secret: 'folder-secret' })));
-const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(async (serverId: string) => ({
-    ok: true as const,
-    scope: {
-        credentials: { token: 'folder-token', secret: 'folder-secret' },
-        serverId,
-        serverIdAliases: [] as string[],
-        serverUrl: 'https://server-a.example.test',
-    },
-})));
-const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
+const folderCredentials = { token: createAccountTokenForTests('u1') };
+const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn());
+const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionFolderAssignment>());
+vi.mock('@/sync/api/session/sessionOrganizationApi', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/api/session/sessionOrganizationApi')>();
+    return { ...actual, setSessionFolderAssignment: setSessionFolderAssignmentSpy };
+});
 
 vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
     useUniversalSearchRuntime: () => ({
@@ -290,7 +300,6 @@ installSessionShellCommonModuleMocks({
             if (key === 'sessionFoldersV1') return [sessionFoldersV1, setSessionFoldersV1];
             return [null, vi.fn()];
         },
-        storage: createStorageStoreMock(sessionStoreFixture.state),
     }),
 });
 
@@ -348,30 +357,14 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     return {
         ...actual,
         getActiveServerSnapshot: () => ({
-            activeServerId: 'server_a',
-            profiles: [serverProfile],
+            serverId: serverProfile.id,
+            serverUrl: serverProfile.serverUrl,
+            generation: 0,
         }),
         listServerProfiles: () => [serverProfile],
         getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
     };
 });
-
-vi.mock('@/sync/ops/sessionOrganization', () => ({
-    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
-    requireSessionOrganizationMutationScope: async (serverId: string) => {
-        const result = await resolveSessionOrganizationMutationScopeSpy(serverId);
-        if (result.ok) return result.scope;
-        const { HappyError } = await import('@/utils/errors/errors');
-        throw new HappyError(`homeGovernance.unavailableTitle: ${serverId}`, true);
-    },
-    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
-    writeSessionOrganizationFolders: vi.fn(async () => undefined),
-    writeSessionOrganizationGroupOrder: vi.fn(async () => undefined),
-    writeSessionOrganizationPin: vi.fn(async () => undefined),
-    writeSessionOrganizationTagLabels: vi.fn(async () => undefined),
-    writeSessionOrganizationWorkspaceLabels: vi.fn(async () => undefined),
-    writeSessionOrganizationWorkspaceOrder: vi.fn(async () => undefined),
-}));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'sessions.folders',
@@ -445,10 +438,11 @@ const mockVisibleSessionListViewData: any[] = [
     { type: 'header', title: 'Inactive', headerKind: 'inactive', groupKey: inactiveGroupKey, serverId: 'server_a', serverName: 'Server A' },
     { type: 'session', session: sessionB, groupKey: inactiveGroupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
 ];
-const mockVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData);
-if (mockVisibleSessionListIndex?.[1]?.type === 'session') {
-    (mockVisibleSessionListIndex[1] as any).workspace = workspaceA;
+const defaultVisibleSessionListIndex = buildSessionListIndexFromViewData(mockVisibleSessionListViewData) ?? [];
+if (defaultVisibleSessionListIndex?.[1]?.type === 'session') {
+    (defaultVisibleSessionListIndex[1] as any).workspace = workspaceA;
 }
+let mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
     useVisibleSessionListPaneState: () => ({
@@ -472,10 +466,16 @@ vi.mock('./SessionItem', () => ({
     SessionItem: (props: any) => React.createElement('SessionItem', props),
 }));
 
+const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+await prepareSessionDraftPersistenceStorage();
 const { SessionsList } = await import('./SessionsList');
 
 describe('SessionsList (inline reorder)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        getStorage().setState({ ...sessionStoreFixture.state, settings: settingsDefaults, settingsScope: sessionStoreFixture.state.profileScope });
+        mockVisibleSessionListIndex = defaultVisibleSessionListIndex;
         sessionListOrderingModeV1 = 'custom';
         sessionListFolderSortModeV1 = 'foldersFirst';
         sessionListSectionModeV1 = 'activity';
@@ -501,8 +501,9 @@ describe('SessionsList (inline reorder)', () => {
         setSessionListSectionModeV1.mockClear();
         setSessionFoldersV1.mockClear();
         getCredentialsForServerUrlSpy.mockClear();
-        resolveSessionOrganizationMutationScopeSpy.mockClear();
+        getCredentialsForServerUrlSpy.mockResolvedValue(null);
         setSessionFolderAssignmentSpy.mockClear();
+        setSessionFolderAssignmentSpy.mockImplementation(async ({ sessionId, request }) => ({ sessionId, folderId: request.folderId }));
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
     });
@@ -674,48 +675,88 @@ describe('SessionsList (inline reorder)', () => {
     });
 
     it('moves a session to a folder through the row menu with server-scoped credentials', async () => {
-        sessionFoldersV1 = {
-            v: 1,
-            folders: [{
-                id: 'folder-a',
-                workspace: workspaceA,
-                parentId: null,
-                name: 'Planning',
-                createdAt: 1,
-                updatedAt: 1,
-            }, {
-                id: 'folder-a-child',
-                workspace: workspaceA,
-                parentId: 'folder-a',
-                name: 'Review',
-                createdAt: 2,
-                updatedAt: 2,
-            }],
-        };
-
-        const screen = await renderScreen(<SessionsList />);
-        const items = screen.findAll((node) => String(node.type) === 'SessionItem');
-        expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
-            expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
-            expect.objectContaining({ folderId: 'folder-a', title: 'Planning' }),
-            expect.objectContaining({ folderId: 'folder-a-child', title: 'Review', depth: 1 }),
-        ]));
-
-        await act(async () => {
-            await items[0].props.onMoveToSessionFolder('folder-a');
+        await loadSyncSingletonForTests();
+        const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        getCredentialsForServerUrlSpy.mockResolvedValue(folderCredentials);
+        setRuntimeFetch(async url => {
+            const requestUrl = new URL(String(url));
+            expect(requestUrl.origin).toBe('https://server-a.example.test');
+            const path = requestUrl.pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'u1' });
+            if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json({ rows: [] });
+            if (path === '/v1/artifacts') return Response.json([]);
+            return Response.json({});
         });
+        try {
+            await restoreConnectionToActiveServer(folderCredentials);
+            const { getStorage } = await import('@/sync/domains/state/storage');
+            getStorage().setState(sessionStoreFixture.state);
+            sessionFoldersV1 = {
+                v: 1,
+                folders: [{
+                    id: 'folder-a',
+                    workspace: workspaceA,
+                    parentId: null,
+                    name: 'Planning',
+                    createdAt: 1,
+                    updatedAt: 1,
+                }, {
+                    id: 'folder-a-child',
+                    workspace: workspaceA,
+                    parentId: 'folder-a',
+                    name: 'Review',
+                    createdAt: 2,
+                    updatedAt: 2,
+                }],
+            };
 
-        expect(resolveSessionOrganizationMutationScopeSpy).toHaveBeenCalledWith('server_a');
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
-            scope: {
-                credentials: { token: 'folder-token', secret: 'folder-secret' },
-                serverId: 'server_a',
-                serverIdAliases: [],
-                serverUrl: 'https://server-a.example.test',
-            },
-            sessionId: 'sess_a',
-            folderId: 'folder-a',
-        });
+            // The pane projection mounts empty folder destinations as well as the source row.
+            mockVisibleSessionListIndex = [
+                { type: 'header', title: 'Project', headerKind: 'project', groupKey,
+                    workspace: workspaceA, workspaceKey: groupKey, serverId: 'server_a' },
+                ...sessionFoldersV1.folders.map((folder): SessionListIndexItem => ({
+                    type: 'header', title: folder.name, headerKind: 'folder', folderId: folder.id,
+                    folderDepth: folder.parentId ? 1 : 0, workspace: workspaceA, serverId: 'server_a',
+                    groupKey: buildSessionFolderGroupKey({ serverId: 'server_a', workspace: workspaceA, folderId: folder.id }),
+                })),
+                ...defaultVisibleSessionListIndex.filter((item) => item.type === 'session'),
+            ];
+
+            const screen = await renderScreen(<SessionsList />);
+            try {
+                const items = screen.findAll((node) => String(node.type) === 'SessionItem');
+                expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
+                    expect.objectContaining({ folderId: 'folder-a', title: 'Planning' }),
+                    expect.objectContaining({ folderId: 'folder-a-child', title: 'Review', depth: 1 }),
+                ]));
+
+                await act(async () => {
+                    items[0].props.onMoveToSessionFolder('folder-a');
+                    await vi.waitFor(() => {
+                        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith(expect.objectContaining({
+                            credentials: folderCredentials,
+                            serverUrl: 'https://server-a.example.test',
+                            sessionId: 'sess_a',
+                            request: { folderId: 'folder-a' },
+                        }));
+                        expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+                            sessionAddressKey({ serverId: 'server_a', sessionId: 'sess_a' })
+                        ]).toEqual({ sessionId: 'sess_a', folderId: 'folder-a' });
+                    });
+                });
+                expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'server_a' });
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            await disconnectActiveServerConnection();
+            resetRuntimeFetch();
+        }
     });
 
     it('renders one View options trigger in search chrome and keeps stopPropagation bound', async () => {

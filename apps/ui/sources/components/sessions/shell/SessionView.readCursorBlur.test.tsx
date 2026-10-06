@@ -4,7 +4,9 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,6 +17,7 @@ const scheduledInteractionCallbacks = vi.hoisted<(() => void)[]>(() => []);
 const sessionState = vi.hoisted(() => ({
     current: {
         id: 's1',
+        serverId: 'server-1',
         seq: 2,
         presence: 'online',
         active: true,
@@ -66,7 +69,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
         closeDetailsTab: vi.fn(),
         setActiveDetailsTab: vi.fn(),
         setRightTabState: vi.fn(),
-        scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
+        scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, bottom: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
     }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
@@ -134,6 +137,7 @@ vi.mock('@/sync/sync', async () => {
     const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
     return {
         sync: {
+        getSessionAttachmentTransferContext: () => undefined,
             ...createAcceptedExternalSessionTailCursorSyncBoundary(),
             markSessionViewed: markSessionViewedSpy,
             fetchPendingMessages: vi.fn(async () => {}),
@@ -205,7 +209,7 @@ installSessionShellCommonModuleMocks({
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
-            useSetting: () => null,
+            useSetting: <K extends keyof typeof settingsDefaults>(key: K) => settingsDefaults[key],
             useSettings: () => ({ experiments: true, featureToggles: {} }),
             useLocalSetting: (key: string) => {
                 if (key === 'acknowledgedCliVersions') return {};
@@ -276,7 +280,8 @@ vi.mock('@/utils/platform/platform', () => ({
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid',
 }));
-vi.mock('@/utils/sessions/sessionUtils', () => ({
+vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/sessions/sessionUtils')>(),
     isUntitledSessionName: (name: string) => name === 'session.untitled',
     formatPathRelativeToHome: () => '/tmp',
     getSessionAvatarId: () => 'avatar',
@@ -337,7 +342,8 @@ vi.mock('@/hooks/session/useSessionSubagents', () => ({
 vi.mock('@/agents/registry/sessionSubagentUiBehavior', () => ({
     hasSessionSubagentLaunchCards: () => false,
 }));
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+vi.mock('@/sync/ops/sessionExecutionRuns', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/sessionExecutionRuns')>(),
     isExecutionRunNotRunningSendError: () => false,
     sessionExecutionRunSend: vi.fn(),
 }));
@@ -383,6 +389,8 @@ describe('SessionView read cursor on blur', () => {
         markSessionViewedSpy.mockClear();
         scheduledInteractionCallbacks.length = 0;
     });
+
+    beforeEach(activateSessionShellStorageBoundary);
 
     it('bounds the blur read mark to the seq visible when leaving the session', async () => {
         const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');

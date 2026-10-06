@@ -3,9 +3,14 @@ import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNaviga
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ApprovalRequestV1Schema,
+  buildApprovalRequestArtifactHeaderV1,
   buildProviderAccountUsageRecordId,
   buildSystemSessionMetadataV1,
   ExternalSessionOperationSharedPresentationV1Schema,
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+  PluginProjectionV2Schema,
+  ParticipantRecipientV1Schema,
   StrictJsonValueSchema,
 } from '@happier-dev/protocol';
 
@@ -16,12 +21,14 @@ import {
 import { readComposerPresentationSnapshot } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPendingMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { StoreApi, UseBoundStore } from 'zustand';
 import {
   deleteSessionDraft,
@@ -30,12 +37,8 @@ import {
   writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-  const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-  return emptyBundledPluginUiAssetsModule;
-});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -224,6 +227,7 @@ const storageState = vi.hoisted(() => ({
 const shellStorageStoreState = vi.hoisted(() => ({
   current: null as UseBoundStore<StoreApi<StorageState>> | null,
 }));
+const pendingMessagesState = vi.hoisted(() => ({ current: [] as PendingMessage[] }));
 const recipientStateState = vi.hoisted(() => ({
   current: {
     recipient: null as any,
@@ -358,7 +362,7 @@ installSessionShellCommonModuleMocks({
         useIsDataReady: () => true,
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
         useSessionTranscriptIds: () => sessionTranscriptRenderState.current,
-        useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+        useSessionPendingMessages: () => ({ messages: pendingMessagesState.current, discarded: [], isLoaded: true }),
         useArtifacts: () => Object.values(storageState.artifacts),
         useOpenApprovalArtifactsForSession: (target: { serverId: string; sessionId: string } | string | null | undefined) => target
           ? listOpenApprovalArtifactsForSession(Object.values(storageState.artifacts), target, {
@@ -429,7 +433,7 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     closeDetailsTab: vi.fn(),
     setActiveDetailsTab: vi.fn(),
     setRightTabState: vi.fn(),
-    scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
+    scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, bottom: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
   }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
@@ -488,16 +492,30 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', as
     },
   };
 });
-vi.mock('@/hooks/server/connectedServices/useProviderAccountUsageSnapshots', () => ({
+vi.mock('@/hooks/server/connectedServices/useProviderAccountUsageSnapshots', async () => {
+  const { resolveProviderAccountUsageSnapshotState } = await import(
+    '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors'
+  );
+  const { ProviderAccountUsageSnapshotV1Schema } = await import('@happier-dev/protocol');
+  return {
   useProviderAccountUsageSnapshots: (recordIds: unknown) => {
     useProviderAccountUsageSnapshotsSpy(recordIds);
     return {
       snapshotsByRecordId: providerAccountUsageSnapshotsState.current,
       loadingByRecordId: {},
-      stateByRecordId: {},
+      stateByRecordId: Object.fromEntries(Object.entries(providerAccountUsageSnapshotsState.current).map(([recordId, value]) => [
+        recordId,
+        resolveProviderAccountUsageSnapshotState({
+          snapshot: ProviderAccountUsageSnapshotV1Schema.parse(value),
+          loading: false,
+          hadError: false,
+          nowMs: Date.now(),
+        }),
+      ])),
     };
   },
-}));
+  };
+});
 vi.mock('@/utils/platform/responsive', () => ({
   getDeviceType: () => 'tablet',
   useDeviceType: () => 'tablet',
@@ -551,8 +569,10 @@ vi.mock('@/voice/session/voiceSession', () => ({
 
 vi.mock('@/sync/sync', () => ({
   sync: {
+        getSessionAttachmentTransferContext: () => undefined,
     markSessionViewed: async () => {},
     fetchPendingMessages: async () => {},
+    patchSessionMetadataWithRetry: async () => {},
     publishSessionPermissionModeToMetadata: async () => {},
     publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
     publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
@@ -587,7 +607,8 @@ vi.mock('@/sync/ops/machineExternalSessions', () => ({
   machineExternalSessionTakeoverStart: machineExternalSessionTakeoverSpy,
   machineExternalSessionTakeoverPersist: machineExternalSessionTakeoverPersistSpy,
 }));
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+vi.mock('@/sync/ops/sessionExecutionRuns', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/sessionExecutionRuns')>(),
   isExecutionRunNotRunningSendError: () => false,
   sessionExecutionRunSend: sessionExecutionRunSendSpy,
 }));
@@ -648,7 +669,7 @@ vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
   useWorkspaceScopeForSession: () => ({ serverId: 'server-canonical', machineId: 'machine-1', rootPath: '/tmp' }),
 }));
 
-const { SessionView, projectPendingMessageComposerMentions } = await import('./SessionView');
+const { SessionView } = await import('./SessionView');
 
 function syncShellStorageStore() {
   const shellStorageStore = shellStorageStoreState.current;
@@ -657,13 +678,21 @@ function syncShellStorageStore() {
   shellStorageStore.setState({
     ...shellStorageStore.getState(),
     ...storageState,
+    settings: { ...settingsDefaults, ...storageState.settings, ...settingByKeyState.current },
     machines: {},
   } as unknown as StorageState, true);
 }
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { NavigationContext, useNavigation } = await import('@react-navigation/native');
 
 describe('SessionView (direct sessions)', () => {
+  const SessionNavigationBoundary = ({ children }: { children?: React.ReactNode }) => {
+    const navigation = useNavigation<NonNullable<React.ContextType<typeof NavigationContext>>>();
+    return <NavigationContext.Provider value={navigation}>
+      <AppPaneProvider>{children}</AppPaneProvider>
+    </NavigationContext.Provider>;
+  };
   const canonicalDraftScope: ServerAccountScope = {
     serverId: 'server-canonical',
     accountId: 'account-canonical',
@@ -671,6 +700,34 @@ describe('SessionView (direct sessions)', () => {
 
   function useCanonicalDraftScope() {
     activeServerAccountScopeState.current = canonicalDraftScope;
+  }
+
+  function publishUsageRecoveryAgentFixture(agentId: string, pluginId: string) {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: {
+        pluginProjectionById: {},
+        pluginProjectionV2: PluginProjectionV2Schema.parse({
+          v: 2,
+          generation: 42,
+          familiesById: {},
+          agentsById: {
+            [agentId]: {
+              id: agentId,
+              identity: { pluginId, localId: agentId },
+              capabilities: {
+                sessions: {
+                  open: ['resume'],
+                  delivery: ['newTurn'],
+                  cancel: true,
+                  usageLimitRecovery: { active: ['checkNow'] },
+                },
+              },
+            },
+          },
+        }),
+      },
+    };
   }
 
   function writeCanonicalSessionDraft(input: Readonly<{
@@ -732,10 +789,10 @@ describe('SessionView (direct sessions)', () => {
   }
 
   async function renderSessionView() {
+    syncShellStorageStore();
     return renderScreen(
-      <AppPaneProvider>
-        <SessionView id="s1" />
-      </AppPaneProvider>,
+      <SessionView id="s1" />,
+      { wrapper: SessionNavigationBoundary },
     );
   }
 
@@ -765,6 +822,20 @@ describe('SessionView (direct sessions)', () => {
       onLocalPendingProjectionCreated: expect.any(Function),
       profileId: undefined,
     });
+  }
+
+  function expectCanonicalExternalOperationOptions() {
+    return {
+      serverId: 'server-canonical',
+      accountLifetime: expect.objectContaining({
+        scope: canonicalDraftScope,
+        serverId: 'server-canonical',
+        accountId: 'account-canonical',
+        isCurrent: expect.any(Function),
+        onRetire: expect.any(Function),
+        revision: expect.any(Number),
+      }),
+    };
   }
 
   function findWarningActionBannerProps(testID: string) {
@@ -836,6 +907,7 @@ describe('SessionView (direct sessions)', () => {
     resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
     sessionMessagesState.current = [];
+    pendingMessagesState.current = [];
     sessionTranscriptRenderState.current = { ids: ['m1'], isLoaded: true };
     storageState.sessionTranscriptLoadIssues = {};
     windowDimensionsState.current = { width: 1200, height: 800 };
@@ -921,6 +993,8 @@ describe('SessionView (direct sessions)', () => {
     vi.useRealTimers();
     vi.clearAllMocks();
   });
+
+  beforeEach(activateSessionShellStorageBoundary);
 
   it('keeps external control footer status conservative and exposes one explicit takeover preflight', async () => {
     await renderSessionView();
@@ -1082,17 +1156,33 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('places pending-message references into the editable composer document', async () => {
-    expect(projectPendingMessageComposerMentions({
+    const message = createPendingMessageFixture({
+      id: 'pending-reference', localId: 'pending-reference', createdAt: 1, updatedAt: 1,
+      source: 'server_pending', messageRole: 'user', pendingDeliveryStatus: 'server_queued',
       text: 'inspect @src/a.ts',
-      references: [{
-        kind: 'file',
-        ref: 'src/a.ts',
-        token: '@src/a.ts',
-      }],
-    })).toEqual([{
-      kind: 'file',
-      ref: 'src/a.ts',
-      tokenText: '@src/a.ts',
+      rawRecord: {
+        role: 'user', content: { type: 'text', text: 'inspect @src/a.ts' },
+        meta: {
+          [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
+            v: 1, mentions: [{ kind: 'happier.file', ref: 'file:src/a.ts', token: '@src/a.ts' }],
+          },
+        },
+      },
+    });
+    pendingMessagesState.current = [message];
+    await renderSessionViewAndSettle();
+    const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+    await act(async () => {
+      await chatListProps.onEditPendingMessage({
+      id: 'pending-reference',
+      text: 'inspect @src/a.ts',
+      message,
+      });
+    });
+    expect(readComposerPresentationSnapshot({ kind: 'pendingMessage', sessionId: 's1', localId: 'pending-reference' })?.references).toEqual([{
+      kind: 'happier.file',
+      ref: 'file:src/a.ts',
+      token: '@src/a.ts',
       start: 8,
       end: 17,
     }]);
@@ -1435,19 +1525,23 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('passes session-scoped open approval artifacts to AgentInput', async () => {
+    const matchingApproval = ApprovalRequestV1Schema.parse({
+      v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent', sessionId: 's1' },
+      requestedSurface: 'agent', actionId: 'session.list', actionArgs: {}, summary: 'List sessions',
+    });
+    const otherApproval = ApprovalRequestV1Schema.parse({
+      v: 1, status: 'open', createdAtMs: 2, updatedAtMs: 2,
+      createdBy: { surface: 'agent', sessionId: 's2' },
+      requestedSurface: 'agent', actionId: 'session.status.get', actionArgs: {}, summary: 'Read status',
+    });
     storageState.artifacts = {
       'approval-1': {
         id: 'approval-1',
-        header: {
-          v: 1,
-          kind: 'approval_request.v1',
-          title: 'Approve',
-          approvalStatus: 'open',
-          sessionId: 's1',
-          actionId: 'session.list',
-          approvalSummary: 'List sessions',
-        },
-        title: 'Approve',
+        header: buildApprovalRequestArtifactHeaderV1(matchingApproval, { legacyServerId: 'server-canonical' }),
+        title: 'List sessions',
+        body: JSON.stringify(matchingApproval),
+        bodyVersion: 1,
         headerVersion: 1,
         seq: 1,
         createdAt: 1,
@@ -1456,16 +1550,10 @@ describe('SessionView (direct sessions)', () => {
       },
       'approval-other': {
         id: 'approval-other',
-        header: {
-          v: 1,
-          kind: 'approval_request.v1',
-          title: 'Approve',
-          approvalStatus: 'open',
-          sessionId: 's2',
-          actionId: 'session.status.get',
-          approvalSummary: 'Read status',
-        },
-        title: 'Approve',
+        header: buildApprovalRequestArtifactHeaderV1(otherApproval, { legacyServerId: 'server-canonical' }),
+        title: 'Read status',
+        body: JSON.stringify(otherApproval),
+        bodyVersion: 1,
         headerVersion: 1,
         seq: 2,
         createdAt: 2,
@@ -1524,7 +1612,7 @@ describe('SessionView (direct sessions)', () => {
     const agentInput = findAgentInput(screen);
     expect(agentInput.props.agentType).toBe('codex');
     expect(agentInput.props.agentPickerOptions).toBeUndefined();
-    expect(agentInput.props.agentPickerSelectedOptionId).toBeUndefined();
+    expect(agentInput.props.agentPickerSelectedOptionId).toBeNull();
     expect(agentInput.props.agentPickerApplyLabel).toBeUndefined();
     expect(agentInput.props.metadata).toEqual(session.metadata);
     expect(typeof agentInput.props.onModelModeChange).toBe('function');
@@ -1621,9 +1709,7 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     const agentInput = findAgentInput(screen);
-    // Configured ACP backends are represented as backend targets; the UI keeps the built-in
-    // agent placeholder while surfacing the configured backend title on the chip.
-    expect(agentInput.props.agentType).toBe('claude');
+    expect(agentInput.props.agentType).toBe('customAcp');
     expect(agentInput.props.agentLabel).toBe('Review Bot');
     expect(resolveSessionViewRuntimeDisplayStateSpy).toHaveBeenCalledWith(expect.objectContaining({
       providerName: 'Review Bot',
@@ -1734,7 +1820,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(connectedServiceQuotaRecoveryCreditConsumeSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      serverId: 'server-1',
+      serverId: 'server-canonical',
       serviceId: 'openai-codex',
       profileId: 'work',
       sourceSnapshotFetchedAtMs: 1,
@@ -1742,6 +1828,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('applies connected-service reset credits from the usage-limit recovery banner', async () => {
+    publishUsageRecoveryAgentFixture('codex', 'happier.agent.codex');
     (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'] = true;
     (featureEnabledState as Record<string, boolean>)['sessions.usageLimitRecovery'] = true;
     storageState.sessions.s1.metadata = {
@@ -1824,7 +1911,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(connectedServiceQuotaRecoveryCreditConsumeSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      serverId: 'server-1',
+      serverId: 'server-canonical',
       serviceId: 'openai-codex',
       profileId: 'work',
       sourceSnapshotFetchedAtMs: 1000,
@@ -1865,29 +1952,7 @@ describe('SessionView (direct sessions)', () => {
         },
       },
     };
-    daemonMergedProjectionState.current = {
-      phase: 'ready',
-      inputs: {
-        pluginProjectionById: {},
-        pluginProjectionV2: {
-          generation: 42,
-          agentsById: {
-            'acme-lifecycle': {
-              id: 'acme-lifecycle',
-              identity: { pluginId: 'acme.lifecycle', localId: 'acme-lifecycle' },
-              capabilities: {
-                sessions: {
-                  open: ['resume'],
-                  delivery: ['newTurn'],
-                  cancel: true,
-                  usageLimitRecovery: { active: ['checkNow'] },
-                },
-              },
-            },
-          },
-        },
-      },
-    } as any;
+    publishUsageRecoveryAgentFixture('acme-lifecycle', 'acme.lifecycle');
 
     await renderSessionViewAndSettle();
 
@@ -1983,7 +2048,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(connectedServiceQuotaRecoveryCreditConsumeSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
-      serverId: 'server-1',
+      serverId: 'server-canonical',
       serviceId: 'openai-codex',
       profileId: 'work',
       sourceSnapshotFetchedAtMs: 2000,
@@ -2308,7 +2373,7 @@ describe('SessionView (direct sessions)', () => {
           unit: 'count',
           utilizationPct: null,
           resetsAt: null,
-          status: 'warning',
+          status: 'ok',
           details: {},
         }],
       },
@@ -2334,6 +2399,29 @@ describe('SessionView (direct sessions)', () => {
           activeProfileId: 'active-profile',
           memberProfileIds: ['active-profile', 'backup-profile'],
         }],
+      }],
+      connectedAccountGroupsV4: [{
+        v: 1,
+        ref: {
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          groupId: 'happier',
+        },
+        incarnation: 'happier:1',
+        displayName: 'Happier pool',
+        policy: {
+          v: 1, strategy: 'least_limited', autoSwitch: true,
+          quotaLimitSelection: { mode: 'all' },
+          switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true },
+        },
+        activeConnectedAccountId: 'active-profile',
+        generation: 7,
+        runtimeStateRevision: 1,
+        state: { status: 'ready' },
+        createdAt: 0,
+        updatedAt: 0,
+        members: ['active-profile', 'backup-profile'].map((connectedAccountId) => ({
+          v: 1, connectedAccountId, priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0,
+        })),
       }],
     };
     storageState.sessions.s1.metadata = {
@@ -2584,8 +2672,13 @@ describe('SessionView (direct sessions)', () => {
 	    expect(linkFileChip?.collapsedContentPopover).toBeTruthy();
 	  });
 
-  it('does not surface delivery controls when live participant routing data is absent', async () => {
+  it('offers only Lead recovery for a retained recipient while live participant routing data is absent', async () => {
     participantTargetsState.current = [];
+    const emptyScreen = await renderSessionViewAndSettle();
+    const emptyInput = findAgentInput(emptyScreen);
+    expect((emptyInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('participants-recipient');
+    expect((emptyInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-requested-action');
+    await act(async () => { emptyScreen.unmount(); });
     recipientStateState.current = {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       setManualRecipient: vi.fn(),
@@ -2597,8 +2690,37 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle();
 
     const agentInput = findAgentInput(screen);
-    expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('participants-recipient');
-    expect((agentInput.props.extraActionChips ?? []).map((chip: { key: string }) => chip.key)).not.toContain('execution-run-requested-action');
+    const deliveryChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'execution-run-requested-action');
+    expect(deliveryChip?.collapsedOptionsPopover?.selectedOptionId).toBe('send_now');
+    const deliverySection = deliveryChip?.collapsedOptionsPopover?.rootStep?.sections[0];
+    expect(deliverySection?.kind).toBe('static');
+    expect(deliverySection?.options.map((option: { id: string }) => option.id)).toEqual([
+      'enqueue', 'steer_if_active', 'send_now',
+    ]);
+    const renderedDelivery = deliveryChip.render({
+      chipStyle: () => null,
+      showLabel: true,
+      iconColor: 'chip-tint',
+      textStyle: null,
+      countTextStyle: null,
+      popoverAnchorRef: React.createRef(),
+    });
+    if (!React.isValidElement<{ recipient: unknown; requestedAction: unknown }>(renderedDelivery)) {
+      throw new Error('Expected the selected Run delivery control');
+    }
+    expect(renderedDelivery.props.recipient).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(renderedDelivery.props.requestedAction).toEqual({ v: 1, kind: 'send_now' });
+    const { resolveParticipantRoutingDescriptor } = await import('@/sync/domains/input/participants/resolveParticipantRoutedSend');
+    expect(resolveParticipantRoutingDescriptor({
+      targets: participantTargetsState.current,
+      recipient: ParticipantRecipientV1Schema.parse(renderedDelivery.props.recipient),
+    })).toEqual({ type: 'session_message', recipient: { kind: 'execution_run', runId: 'run-1' } });
+    const recipientChip = (agentInput.props.extraActionChips ?? []).find((chip: { key: string }) => chip.key === 'participants-recipient');
+    const section = recipientChip?.collapsedOptionsPopover?.rootStep?.sections[0];
+    expect(section?.kind).toBe('static');
+    expect(section?.options.map((option: { id: string }) => option.id)).toEqual(['lead']);
+    await act(async () => { section.options[0].onSelect(); });
+    expect(recipientStateState.current.setManualRecipient).toHaveBeenCalledWith(null);
   });
 
   it('surfaces delivery controls when live participant routing data resolves to an execution run', async () => {
@@ -2883,7 +3005,7 @@ describe('SessionView (direct sessions)', () => {
         targetDirectory: selectedLocalDirectory,
         targetRuntimeMode: 'terminal',
       },
-    }, { serverId: 'server-canonical' });
+    }, expectCanonicalExternalOperationOptions());
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
     expect(findAgentInput(screen).props.value).toBe('continue this session');
     expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
@@ -3088,7 +3210,12 @@ describe('SessionView (direct sessions)', () => {
       end: 29,
       name: 'restored',
     };
-    let rejectSubmit!: (error: Error) => void;
+    const submitStarted = createDeferred<void>();
+    const submitResult = createDeferred<void>();
+    const sendErrorShown = createDeferred<void>();
+    modalAlertSpy.mockImplementation((_title: string, message: string) => {
+      if (message === 'direct send rejected') sendErrorShown.resolve();
+    });
 
     useCanonicalDraftScope();
     clearCanonicalSessionDraft();
@@ -3103,9 +3230,8 @@ describe('SessionView (direct sessions)', () => {
         | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
         | undefined;
       options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
-      return new Promise<void>((_resolve, reject) => {
-        rejectSubmit = reject;
-      });
+      submitStarted.resolve();
+      return submitResult.promise;
     });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -3124,9 +3250,9 @@ describe('SessionView (direct sessions)', () => {
         agentInput.props.onChangeText('restore this prompt $restored');
       });
 
-      let sendPromise: Promise<void> | undefined;
       await act(async () => {
-        sendPromise = agentInput.props.onSend();
+        agentInput.props.onSend();
+        await submitStarted.promise;
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -3135,8 +3261,8 @@ describe('SessionView (direct sessions)', () => {
       expect(readCanonicalDraftMentions()).toBeUndefined();
 
       await act(async () => {
-        rejectSubmit(new Error('direct send rejected'));
-        await sendPromise;
+        submitResult.reject(new Error('direct send rejected'));
+        await sendErrorShown.promise;
       });
       await settleExternalSessionView();
 
@@ -3147,8 +3273,12 @@ describe('SessionView (direct sessions)', () => {
       expect(readCanonicalDraftMentions()).toEqual([mention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      clearCanonicalSessionDraft();
-      resetSessionDraftRepositoryForTests();
+      await act(async () => {
+        submitResult.reject(new Error('direct send rejected'));
+        await sendErrorShown.promise;
+        clearCanonicalSessionDraft();
+        resetSessionDraftRepositoryForTests();
+      });
     }
   });
 
@@ -3171,7 +3301,12 @@ describe('SessionView (direct sessions)', () => {
       end: 12,
       name: 'new',
     };
-    let rejectSubmit!: (error: Error) => void;
+    const submitStarted = createDeferred<void>();
+    const submitResult = createDeferred<void>();
+    const sendErrorShown = createDeferred<void>();
+    modalAlertSpy.mockImplementation((_title: string, message: string) => {
+      if (message === 'direct send rejected') sendErrorShown.resolve();
+    });
 
     useCanonicalDraftScope();
     clearCanonicalSessionDraft();
@@ -3186,9 +3321,8 @@ describe('SessionView (direct sessions)', () => {
         | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
         | undefined;
       options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
-      return new Promise<void>((_resolve, reject) => {
-        rejectSubmit = reject;
-      });
+      submitStarted.resolve();
+      return submitResult.promise;
     });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -3207,9 +3341,9 @@ describe('SessionView (direct sessions)', () => {
         agentInput.props.onChangeText('send to $old target');
       });
 
-      let sendPromise: Promise<void> | undefined;
       await act(async () => {
-        sendPromise = agentInput.props.onSend();
+        agentInput.props.onSend();
+        await submitStarted.promise;
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -3232,8 +3366,8 @@ describe('SessionView (direct sessions)', () => {
       });
 
       await act(async () => {
-        rejectSubmit(new Error('direct send rejected'));
-        await sendPromise;
+        submitResult.reject(new Error('direct send rejected'));
+        await sendErrorShown.promise;
       });
       await settleExternalSessionView();
 
@@ -3244,8 +3378,12 @@ describe('SessionView (direct sessions)', () => {
       expect(readCanonicalDraftMentions()).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      clearCanonicalSessionDraft();
-      resetSessionDraftRepositoryForTests();
+      await act(async () => {
+        submitResult.reject(new Error('direct send rejected'));
+        await sendErrorShown.promise;
+        clearCanonicalSessionDraft();
+        resetSessionDraftRepositoryForTests();
+      });
     }
   });
 
@@ -3330,7 +3468,7 @@ describe('SessionView (direct sessions)', () => {
         targetDirectory: '/tmp',
         targetRuntimeMode: 'terminal',
       },
-    }, { serverId: 'server-canonical' });
+    }, expectCanonicalExternalOperationOptions());
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
     expect(findAgentInput(screen).props.value).toBe('persist this');
 

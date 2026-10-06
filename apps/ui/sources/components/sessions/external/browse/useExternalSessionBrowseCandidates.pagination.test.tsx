@@ -108,6 +108,25 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         expect(candidatesListSpy.mock.calls[1][0]).toMatchObject({ cursor: 'content-next', searchTarget: 'content' });
     });
 
+    it('keeps Search more available after an empty partial content scan and appends its later hit', async () => {
+        const match = { snippet: 'Budget needle', sourceItemId: 'message-later', messageIndex: 1 };
+        candidatesListSpy.mockResolvedValueOnce({ ...page([], 'file-boundary'), contentCoverage: 'partial' })
+            .mockResolvedValueOnce({ ...page([{ remoteSessionId: 'later', updatedAtMs: 1, match }], null), contentCoverage: 'complete' });
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params, searchTerm: 'Budget needle', searchTarget: 'content', contentSearchSupported: true,
+        }));
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().contentCoverage).toBe('partial');
+        expect(hook.getCurrent().nextCursor).toBe('file-boundary');
+        expect(hook.getCurrent().candidates).toEqual([]);
+        await act(async () => { await hook.getCurrent().loadMore(); });
+        expect(candidatesListSpy.mock.calls[1][0]).toMatchObject({ cursor: 'file-boundary', searchTarget: 'content' });
+        expect(hook.getCurrent().candidates[0]?.match).toEqual(match);
+        expect(hook.getCurrent().nextCursor).toBeNull();
+        expect(hook.getCurrent().error).toBeNull();
+    });
+
     it('preserves the literal content phrase for its request and published Find query', async () => {
         const searchTerm = '  literal body  ';
         candidatesListSpy.mockResolvedValueOnce(page([{ remoteSessionId: 'literal-hit', updatedAtMs: 1,

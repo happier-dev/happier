@@ -275,15 +275,16 @@ function draft(
                 kind: 'newSession',
                 authoring: {
                     directory: { mutationId: 'm-dir', value: '/Users/alice/private-project' },
-                    executionTarget: {
+                    machineId: {
                         mutationId: 'm-machine',
-                        value: { serverId: 'server-a', machineId: 'machine-a' },
+                        value: 'machine-a',
                     },
-                    agentTarget: {
+                    agentId: { mutationId: 'm-agent-id', value: 'codex' },
+                    backendTarget: {
                         mutationId: 'm-agent',
                         value: {
-                            kind: 'agent',
-                            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                            kind: 'builtInAgent',
+                            agentId: 'codex',
                         },
                     },
                 },
@@ -729,18 +730,17 @@ describe('NewSessionDraftsSection', () => {
     });
 
     it('projects installed Agent identities from the canonical authoring target', () => {
-        const projection = draft();
-        if (projection.document.target.kind !== 'newSession') {
-            throw new Error('expected a new-session draft');
-        }
+        const projection = temporaryComputerDraft({ serverId: 'server-a' });
+        const document = projection.document;
+        assertCataloguedNewSessionDocument(document);
         const installedProjection: NewSessionDraftProjection = {
             ...projection,
             document: {
-                ...projection.document,
+                ...document,
                 target: {
-                    ...projection.document.target,
+                    ...document.target,
                     authoring: {
-                        ...projection.document.target.authoring,
+                        ...document.target.authoring,
                         agentTarget: {
                             mutationId: 'm-agent',
                             value: {

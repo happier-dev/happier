@@ -7,9 +7,13 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { clearSessionSurfaceVisibilityForServerScopeReset } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 /**
  * `installSessionShellCommonModuleMocks()` registers its React Native mock from
@@ -45,7 +49,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
-const shouldRenderChatTimelineForSessionMock = vi.fn((_args: any) => true);
+const shouldRenderChatTimelineForSessionMock = vi.fn();
 const realtimeStatusValue = vi.hoisted(() => ({ current: { status: 'connected' } as any }));
 const onSessionVisibleSpy = vi.hoisted(() => vi.fn());
 const markSessionLiveTailIntentSpy = vi.hoisted(() => vi.fn());
@@ -131,9 +135,12 @@ let transcriptLoadIssueState: any = null;
 let concurrentSessionListCacheByServerIdState: Record<string, any> = {};
 const committedMessagesListeners = new Set<() => void>();
 const storageListeners = new Set<() => void>();
+const defaultStorageState = createStorageStoreMock({}).getState();
+let realUseOpenApprovalArtifactsForSession: typeof import('@/sync/store/hooks')['useOpenApprovalArtifactsForSession'];
 
 function getStorageStateForTest() {
     return {
+        ...defaultStorageState,
         sessions: sessionState ? { [sessionState.id]: sessionState } : {},
         machines: {},
         sessionMessages: {},
@@ -144,6 +151,7 @@ function getStorageStateForTest() {
             ? { [sessionState?.id ?? 's1']: transcriptLoadIssueState }
             : {},
         settings: {
+            ...settingsDefaults,
             sessionMessageSendMode: 'agent_queue',
             sessionBusySteerSendPolicy: 'steer_immediately',
             sessionNonSteerableSendPrompt: 'on',
@@ -264,11 +272,9 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
                 useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
                 storage: Object.assign(
                     (selector?: (state: any) => unknown) => {
@@ -328,6 +334,8 @@ installSessionShellCommonModuleMocks({
                     return [];
                 },
                 useSessionReviewCommentsDrafts: () => [],
+                useOpenApprovalArtifactsForSession: (target: Parameters<typeof realUseOpenApprovalArtifactsForSession>[0]) =>
+                    realUseOpenApprovalArtifactsForSession(target),
                 useSessionUsage: () => null,
                 useLocalSetting: (key: string) => {
                     if (key === 'acknowledgedCliVersions') return {};
@@ -342,13 +350,10 @@ installSessionShellCommonModuleMocks({
                 useLocalSettingMutable: () => [null, vi.fn()],
                 // Collection-valued Account settings are always arrays for the
                 // real store, and the mounted shell maps over them directly.
-                useSetting: (key: string) => (
-                    key === 'workspaceRefsV1' || key === 'workspaceSyncRelationshipsV1' ? [] : null
-                ),
-                useSettings: () => ({ experiments: true, featureToggles: {} }),
+                useSetting: <K extends keyof typeof settingsDefaults>(key: K) => settingsDefaults[key],
+                useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
                 useAutomations: () => [],
                 useMachine: () => null,
-            } as any,
         });
     },
 });
@@ -377,13 +382,6 @@ vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
 }));
 vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'pane-scope-test',
-}));
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        openRight: vi.fn(),
-        setRightTab: vi.fn(),
-        scopeState: null,
-    }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
@@ -450,6 +448,7 @@ vi.mock('@/voice/session/voiceSession', () => ({
 }));
 vi.mock('@/sync/sync', () => ({
     sync: {
+        getSessionAttachmentTransferContext: () => undefined,
         markSessionViewed: markSessionViewedSpy,
         fetchPendingMessages: fetchPendingMessagesSpy,
         publishSessionPermissionModeToMetadata: async () => {},
@@ -471,7 +470,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 vi.mock('@/utils/system/fireAndForget', () => ({
     fireAndForget: (promise: Promise<unknown>, options?: Readonly<{ tag?: string }>) => {
-        if (options?.tag?.startsWith('SessionView.sendMessage.')) {
+        if (options?.tag?.startsWith('SessionView.sendMessage.') || options?.tag === 'SessionView.composer.dispatch') {
             pendingOutboundSendPromises.push(promise);
         }
     },
@@ -532,7 +531,8 @@ vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeOrContinueSessionWithOptions: () => true,
     getAgentVendorResumeId: () => '',
 }));
-vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
+vi.mock('@/hooks/server/useMachineCapabilitiesCache', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/hooks/server/useMachineCapabilitiesCache')>(),
     prefetchMachineCapabilities: async () => {},
     getMachineCapabilitiesSnapshot: () => null,
     useMachineCapabilitiesCache: () => ({ state: { status: 'idle' } }),
@@ -556,18 +556,20 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
         return false;
     },
 }));
-vi.mock('@/hooks/session/useSessionSubagents', () => ({
-    useSessionSubagents: (input: unknown) => {
+vi.mock('@/hooks/session/useSessionSubagents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/hooks/session/useSessionSubagents')>();
+    return { ...actual, useSessionSubagents: (input: Parameters<typeof actual.useSessionSubagents>[0]) => {
         sessionSubagentsHookSpy(input);
-        return { subagents: [], participantTargets: [], sidechainIds: [] };
-    },
-}));
-vi.mock('@/sync/domains/artifacts/approvalArtifacts', () => ({
-    listOpenApprovalArtifactsForSession: (...args: unknown[]) => {
+        return actual.useSessionSubagents(input);
+    } };
+});
+vi.mock('@/sync/domains/artifacts/approvalArtifacts', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/artifacts/approvalArtifacts')>();
+    return { ...actual, listOpenApprovalArtifactsForSession: (...args: Parameters<typeof actual.listOpenApprovalArtifactsForSession>) => {
         approvalArtifactsSpy(...args);
-        return [];
-    },
-}));
+        return actual.listOpenApprovalArtifactsForSession(...args);
+    } };
+});
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { run: async () => {}, invalidateFromAutoRefresh: () => {} },
 }));
@@ -583,25 +585,29 @@ vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
-vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/session/control/localControlSwitch')>(),
-    shouldRenderChatTimelineForSession: (args: any) => shouldRenderChatTimelineForSessionMock(args),
-}));
+vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/session/control/localControlSwitch')>();
+    return { ...actual, shouldRenderChatTimelineForSession: (args: Parameters<typeof actual.shouldRenderChatTimelineForSession>[0]) => {
+        shouldRenderChatTimelineForSessionMock(args);
+        return actual.shouldRenderChatTimelineForSession(args);
+    } };
+});
 vi.mock('@/sync/runtime/time', () => ({
     nowServerMs: () => 0,
 }));
-vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: any) => promise,
-}));
-
 const { SessionView } = await import('./SessionView');
+({ useOpenApprovalArtifactsForSession: realUseOpenApprovalArtifactsForSession } = await import('@/sync/store/hooks'));
 
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { NavigationContext, useNavigation } = await import('@react-navigation/native');
 
 describe('SessionView (transcript rendering for seq-only sessions)', () => {
-    const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
-        <AppPaneProvider>{children ?? null}</AppPaneProvider>
-    );
+    const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => {
+        const navigation = useNavigation<NonNullable<React.ContextType<typeof NavigationContext>>>();
+        return <NavigationContext.Provider value={navigation}>
+            <AppPaneProvider>{children ?? null}</AppPaneProvider>
+        </NavigationContext.Provider>;
+    };
 
     async function renderSessionView(props?: Partial<React.ComponentProps<typeof SessionView>>) {
         return renderScreen(
@@ -616,8 +622,9 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         authCredentials = { token: 't', secret: 's' };
         realtimeStatusValue.current = { status: 'connected' };
-        sessionState = {
+        sessionState = createSessionFixture({
             id: 's1',
+            serverId: 'server-1',
             seq: 25,
             updatedAt: 100,
             presence: 'online',
@@ -626,9 +633,9 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             accessLevel: 'edit',
             pendingVersion: 1,
             pendingCount: 0,
-            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
+            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp', host: 'tester.local' },
             agentState: {},
-        };
+        });
         committedMessagesState = [];
         pendingMessagesState = [];
         committedMessagesLoadedState = true;
@@ -672,6 +679,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
 
+    beforeEach(activateSessionShellStorageBoundary);
+
     it('renders ChatList when session.seq > 0 even if visible committed messages are empty', async () => {
         const screen = await renderSessionView();
 
@@ -694,6 +703,42 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
         await screen.unmount();
     });
+
+    it.each(['linked', 'converted_operation'] as const)(
+        'renders the empty external-session transcript surface for %s',
+        async (state) => {
+            sessionState = {
+                ...sessionState,
+                seq: 0,
+                metadata: {
+                    ...sessionState.metadata,
+                    ...(state === 'linked' ? {
+                        externalSessionV1: {
+                            v: 1,
+                            agentId: 'codex',
+                            machineId: 'm1',
+                            remoteSessionId: 'remote-1',
+                            source: { kind: 'codexHome', home: 'user' },
+                        },
+                    } : {
+                        externalSessionOperationPresentationV1: {
+                            v: 1,
+                            operationId: 'operation-1',
+                            revision: 4,
+                            kind: 'materialize',
+                            status: 'running',
+                            phase: 'importing',
+                        },
+                    }),
+                },
+            };
+            const screen = await renderSessionView();
+
+            expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+            await screen.unmount();
+        },
+    );
 
     it('reveals the exact hidden post-Voice session with its hydrated late-result transcript', async () => {
         const hiddenSessionId = 'global-voice-late-result';
@@ -1077,6 +1122,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
     it('keeps the transcript data key qualified and remounts when hydration resolves a different Home', async () => {
         const { SessionView } = await import('./SessionView');
+        sessionState = { ...sessionState, serverId: 'server-a' };
+        await activateSessionShellStorageBoundary();
         const screen = await renderScreen(
             <SessionView
                 id="s1"
@@ -1089,6 +1136,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             JSON.stringify(['server-a', 's1']),
         );
 
+        sessionState = { ...sessionState, serverId: 'server-b' };
+        await activateSessionShellStorageBoundary();
         await screen.update(
             <SessionView
                 id="s1"
@@ -1504,6 +1553,29 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(agentInputRenderSpy).not.toHaveBeenCalled();
         expect(chatListRenderSpy).not.toHaveBeenCalled();
 
+        await screen.unmount();
+    });
+
+    it('updates the shell header when the session title changes through storage', async () => {
+        const screen = await renderSessionView();
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        chatHeaderRenderSpy.mockClear();
+
+        await act(async () => {
+            sessionState = {
+                ...sessionState,
+                metadata: {
+                    ...sessionState.metadata,
+                    summary: { text: 'Updated session title', updatedAt: 200 },
+                },
+            };
+            emitStorageChangeForTest();
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        expect(chatHeaderRenderSpy).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Updated session title',
+        }));
         await screen.unmount();
     });
 
