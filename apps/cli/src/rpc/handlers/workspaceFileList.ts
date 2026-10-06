@@ -2,13 +2,9 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
-import {
-    DaemonWorkspaceFileListRequestSchema,
-    WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES,
-    WORKSPACE_FILE_LIST_MAX_RESULTS,
-    type DaemonWorkspaceFileListResponse,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonWorkspaceFileListRequestSchema, WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES, WORKSPACE_FILE_LIST_MAX_RESULTS } from '@happier-dev/protocol/machines/workspaceFiles';
+import type { DaemonWorkspaceFileListResponse } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
 
 
@@ -28,14 +24,17 @@ function buildWorkspaceFileListArguments(query: string | undefined, includeHidde
         '--no-config',
         '--files',
         ...(includeHidden ? ['--hidden'] : []),
-        ...workspaceFileExclusionArguments(),
         '--null',
     ];
     const trimmed = query?.trim();
     if (trimmed) {
         const needle = escapeRipgrepGlob(trimmed).replace(/\s+/g, '*');
-        args.push('--iglob', `*${needle}*`);
+        // A filename query also names directories. Include their descendants so
+        // the UI can project matching folders from the same canonical file list.
+        args.push('--iglob', `*${needle}*`, '--iglob', `**/*${needle}*/**`);
     }
+    // Keep exclusions authoritative after the positive query globs.
+    args.push(...workspaceFileExclusionArguments('--iglob'));
     return args;
 }
 
@@ -110,16 +109,21 @@ export function registerWorkspaceFileListHandler(
                 });
                 if (result.exitCode === 127) return { ok: false, errorCode: 'ripgrep_unavailable' };
                 const isEmptyResult = result.exitCode === 1 && result.stdout.length === 0;
+                const bounded = selectBoundedPaths({
+                    stdout: result.stdout,
+                    // Exit 2 includes traversal failures (for example an unreadable
+                    // sibling). Usable paths remain valid, but coverage is partial.
+                    stdoutTruncated: result.stdoutTruncated === true || result.exitCode === 2,
+                    limit: parsed.data.limit ?? WORKSPACE_FILE_LIST_MAX_RESULTS,
+                });
                 if (result.exitCode !== 0 && !isEmptyResult && !result.stdoutTruncated) {
-                    return { ok: false, errorCode: 'ripgrep_failed', exitCode: result.exitCode };
+                    if (result.exitCode !== 2 || bounded.paths.length === 0) {
+                        return { ok: false, errorCode: 'ripgrep_failed', exitCode: result.exitCode };
+                    }
                 }
                 return {
                     ok: true,
-                    ...selectBoundedPaths({
-                        stdout: result.stdout,
-                        stdoutTruncated: result.stdoutTruncated === true,
-                        limit: parsed.data.limit ?? WORKSPACE_FILE_LIST_MAX_RESULTS,
-                    }),
+                    ...bounded,
                 };
             } catch (error) {
                 if (context?.signal?.aborted || isAbortError(error)) throw error;

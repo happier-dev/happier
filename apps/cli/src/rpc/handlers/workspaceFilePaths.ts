@@ -1,6 +1,6 @@
 /** Shared admission and exclusions for the two workspace-file ripgrep operations. */
-export function workspaceFileExclusionArguments(): string[] {
-    return ['--glob', '!**/.git/**', '--glob', '!**/node_modules/**'];
+export function workspaceFileExclusionArguments(globFlag: '--glob' | '--iglob' = '--glob'): string[] {
+    return [globFlag, '!**/.git/**', globFlag, '!**/node_modules/**'];
 }
 
 export function isSafeRelativeWorkspacePath(value: string): boolean {
