@@ -45,6 +45,7 @@
     },
     "typecheck:finite": {
       "dependsOn": ["api:finite"],
+      "env": ["HAPPIER_TYPECHECK_DISPATCHED"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/scripts/workspaces/**"
@@ -53,6 +54,7 @@
     },
     "typecheck:source:finite": {
       "dependsOn": [],
+      "env": ["HAPPIER_TYPECHECK_DISPATCHED"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/scripts/workspaces/**",

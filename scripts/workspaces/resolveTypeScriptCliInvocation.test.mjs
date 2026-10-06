@@ -26,6 +26,10 @@ test('routes direct no-emit compilation through hstack but executes an admitted 
     env: { HAPPIER_HSTACK_EXECUTION: '1' },
   }), false);
   assert.equal(shouldRouteTypeScriptCliThroughHstack({
+    args: ['--noEmit'],
+    env: { HAPPIER_TYPECHECK_DISPATCHED: '1' },
+  }), false, 'a dispatched Turbo child must retain its selected host');
+  assert.equal(shouldRouteTypeScriptCliThroughHstack({
     args: ['-p', 'tsconfig.json', '--outDir', 'dist'],
     env: {},
   }), false);

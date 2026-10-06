@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { posix } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
@@ -24,6 +24,24 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   generator: '0', generatorCheck: '0', componentFromNative: '0',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
+// Available-memory envelopes, not process limits or fixed concurrency slots.
+// The native selection and admission paths consume this generated policy too.
+// 2026-10-05 Linux measurements: cli-common dist 1,853,332 KiB; Protocol
+// dist 4,682,608 KiB. Both fit beneath the existing 6 GiB compiler/suite
+// envelope. Unmeasured builds and full typechecks retain the 21 GiB envelope;
+// a failed dependency-incomplete typecheck is not evidence to lower it.
+// The successful full daemon worker request peaked at 16,442,992 KiB of
+// aggregate process-tree RSS on Linux x64 (2026-10-05). Preserve at least
+// Round 1's measured package headroom (6,291,456 - 4,682,608 = 1,608,848 KiB):
+// peak + headroom = 18,051,840 KiB, rounded up to 18 GiB. This does not
+// justify admitting a worker with only 15 GiB available.
+const HEAVYWEIGHT_MEMORY_KIB = Object.freeze({
+  validation: 6291456,
+  'dependency-install': 6291456,
+  'package-dist': 6291456,
+  'runtime-build': 18874368,
+  compilation: 22020096,
+});
 const COMMAND_RULES = [
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
@@ -37,6 +55,8 @@ const COMMAND_RULES = [
   { when: { command: ['tsc'] }, set: { kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { family: ['tsc', 'typecheck'] }, set: { kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { command: ['node', 'nodejs'], entry: ['runTypeScriptCli.mjs'] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native' } },
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs', 'build.mjs'] }, set: { ...validation, heavyClass: 'compilation' } },
+  { when: { command: ['node', 'nodejs'], entryPath: ['packages/cli-common/scripts/build.mjs'] }, set: { componentOverride: 'packages/cli-common' } },
   { when: { command: ['vitest'] }, set: { runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { command: ['node', 'nodejs', 'tsx'], entry: ['vitest.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { managerNode: ['1'], entry: ['run-vitest-with-heartbeat.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
@@ -56,6 +76,11 @@ const FINAL_COMMAND_RULES = [
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
   { when: { family: ['build'] }, set: { heavyClass: 'compilation' } },
   { when: { kind: ['typecheck'] }, set: { heavyClass: 'compilation' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { heavyClass: 'runtime-build' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { heavyClass: 'runtime-build' } },
+  { when: { script: ['build', 'build:finite', 'build:clean'], component: ['packages/cli-common', 'packages/protocol'] }, set: { heavyClass: 'package-dist' } },
+  { when: { command: ['node', 'nodejs'], entryPath: ['scripts/build.mjs', 'packages/cli-common/scripts/build.mjs'], component: ['packages/cli-common'] }, set: { heavyClass: 'package-dist' } },
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol'], project: ['tsconfig.json', './tsconfig.json'] }, set: { heavyClass: 'package-dist' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
 ];
 function commandBasename(value) {
@@ -127,6 +152,7 @@ function normalizeCommandArguments(commandArgs, cwd) {
     command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode,
     hasScript: script ? '1' : '0', nativeTest: args.includes('--test') ? '1' : '0',
     stripTypes, mode, config: normalizeCommandPath(config), resolverOverride,
+    workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
     component: normalizeCommandPath(slashCwd), managerCwd, project,
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
     nativeComponent: testComponents.length && testComponents.every(component => component === testComponents[0]) ? testComponents[0] : '',
@@ -176,6 +202,14 @@ export function renderNativeCommandPolicy() {
   return [
     '# Generated by native_execution_projection.mjs --write-command-policy.',
     '# Rule authority: remote_commands.mjs. Do not edit this projection.',
+    'heavyweight_memory_floor_kib() {',
+    '  case "$1" in',
+    ...Object.entries(HEAVYWEIGHT_MEMORY_KIB).map(([key, value]) => '    ' + key + ') printf ' + posixQuote(String(value)) + ' ;;'),
+    // Historical dispatch labels are validation, while unrecognized resource
+    // classes must not silently acquire a smaller compilation envelope.
+    '    targeted-validation|full-validation) printf ' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.validation)) + ' ;;',
+    '    *) printf ' + posixQuote(String(HEAVYWEIGHT_MEMORY_KIB.compilation)) + ' ;;',
+    '  esac', '}',
     'native_command_policy_base() {',
     ...Object.entries(DEFAULT_COMMAND_POLICY).map(([key, value]) => '  policy_' + key + '=' + posixQuote(value)),
     renderShellCommandRules(COMMAND_RULES), '}',
@@ -217,6 +251,7 @@ resolve_native_command_policy() {
   policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
+  policy_project=; policy_workerRequest=0
   native_cwd=\${invoked_cwd#"$repo_root"}
   native_cwd=\${native_cwd#/}
   [ "\${explicit_relative_cwd_set-0}" = 1 ] && native_cwd=$explicit_relative_cwd
@@ -237,6 +272,7 @@ resolve_native_command_policy() {
     esac
     case "$native_arg" in
       --test) policy_nativeTest=1 ;;
+      --worker-request=?*) policy_workerRequest=1 ;;
       --config|-c) native_pending=config; policy_config= ;;
       --config=*) policy_config=\${native_arg#--config=} ;;
       -c?*) policy_config=\${native_arg#-c} ;;
@@ -249,6 +285,7 @@ resolve_native_command_policy() {
     case "$native_arg" in apps/stack/*|./apps/stack/*|*/apps/stack/*) policy_stackScope=1 ;; esac
   done
   native_normalize_path "$policy_config"; policy_config=$native_result
+  policy_project=$native_project
   policy_nativeTestPath=; native_test_count=0; native_test_component=; native_test_component_mixed=0
   for native_arg in "$@"; do
     case "$native_arg" in -*) continue ;; *.mjs|*.cjs|*.js|*.ts|*.mts|*.cts) ;; *) continue ;; esac
@@ -375,7 +412,7 @@ function resolveRemoteExecutionPidFile(target, executionId) {
 
 export function buildRemoteExecCommand(
   target,
-  { executionId, cwd = '.', commandArgs, environment = {}, preparation = null, admissionClass = '' } = {},
+  { executionId, cwd = '.', commandArgs, environment = {}, preparation = null, admissionClass = '', admissionMode = 'wait', lifetimeStdin = false } = {},
 ) {
   let args = Array.isArray(commandArgs) ? commandArgs.map(String) : [];
   if (args.length === 0 || !args[0]) {
@@ -403,7 +440,7 @@ export function buildRemoteExecCommand(
     args = ['bash', '-c', body.join('; ')];
     if (admissionClass) {
       args = [`${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
-        `--class=${admissionClass}`, `--machine=${target.name}`, '--', ...args];
+        `--class=${admissionClass}`, `--machine=${target.name}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
     }
   }
   if (target.platform === 'windows') {
@@ -427,52 +464,14 @@ export function buildRemoteExecCommand(
       ].join('; '),
     );
   }
-  return wrapRemoteScript(
-    target,
-    [
+  const body = [
       'set -euo pipefail',
-      `execution_id=${posixQuote(normalizedExecutionId)}`,
-      `pid_file=${posixQuote(pidFile)}`,
-      'mkdir -p -- "$(dirname -- "$pid_file")"',
-      'printf \'%s\\n\' "$$" > "$pid_file"',
-      'cleanup_remote_exec_pid_file() { rm -f -- "$pid_file"; }',
-      'trap cleanup_remote_exec_pid_file EXIT',
-      'collect_remote_exec_descendants() { '
-        + 'for child_pid in $(ps -eo pid=,ppid= | awk -v parent="$1" \'$2 == parent { print $1 }\'); do '
-        + 'collect_remote_exec_descendants "$child_pid"; '
-        + 'done; '
-        + 'printf \'%s\\n\' "$1"; '
-        + '}',
-      'terminate_remote_exec_tree() { '
-        + '[ -n "${remote_child_pid-}" ] || return 0; '
-        + 'process_ids=$(collect_remote_exec_descendants "$remote_child_pid"); '
-        + 'for process_id in $process_ids; do kill -TERM "$process_id" 2>/dev/null || true; done; '
-        + 'attempt=0; '
-        + 'while [ "$attempt" -lt 20 ]; do '
-        + 'remaining=0; '
-        + 'for process_id in $process_ids; do kill -0 "$process_id" 2>/dev/null && remaining=1; done; '
-        + '[ "$remaining" -eq 0 ] && break; '
-        + 'sleep 0.1; '
-        + 'attempt=$((attempt + 1)); '
-        + 'done; '
-        + 'for process_id in $process_ids; do kill -KILL "$process_id" 2>/dev/null || true; done; '
-        + '}',
-      'handle_remote_exec_signal() { '
-        + 'trap - HUP INT TERM; '
-        + 'terminate_remote_exec_tree; '
-        + 'exit 130; '
-        + '}',
-      'trap handle_remote_exec_signal HUP INT TERM',
       `cd -- ${posixQuote(workingDirectory)}`,
       ...environmentEntries.map(([key, value]) => `export ${key}=${posixQuote(value)}`),
-      'set +e',
-      `${args.map(posixQuote).join(' ')} <&0 & remote_child_pid=$!`,
-      'wait "$remote_child_pid"',
-      'command_status=$?',
-      'remote_child_pid=',
-      'exit "$command_status"',
-    ].join('; '),
-  );
+      `exec ${args.map(posixQuote).join(' ')}`,
+  ].join('; ');
+  const custody = `${requireRemoteRelativeWorkingDirectory(target, '.')}/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh`;
+  return wrapRemoteScript(target, `${lifetimeStdin ? 'HAPPIER_REMOTE_EXEC_LIFELINE=1 ' : ''}bash ${posixQuote(custody)} run ${posixQuote(pidFile)} ${posixQuote(normalizedExecutionId)} bash -c ${posixQuote(body)}`);
 }
 
 export function buildRemoteCancelCommand(target, { executionId } = {}) {
@@ -501,38 +500,8 @@ export function buildRemoteCancelCommand(target, { executionId } = {}) {
       ].join('; '),
     );
   }
-  return wrapRemoteScript(
-    target,
-    [
-      'set -u',
-      `execution_id=${posixQuote(normalizedExecutionId)}`,
-      `pid_file=${posixQuote(pidFile)}`,
-      '[ -f "$pid_file" ] || exit 0',
-      'remote_pid=$(sed -n \'1p\' "$pid_file" 2>/dev/null || true)',
-      'case "$remote_pid" in \'\'|*[!0-9]*) rm -f -- "$pid_file"; exit 0 ;; esac',
-      'remote_command=$(ps -p "$remote_pid" -o command= 2>/dev/null || true)',
-      'case "$remote_command" in *"$execution_id"*) ;; *) rm -f -- "$pid_file"; exit 0 ;; esac',
-      'collect_descendants() { '
-        + 'for child_pid in $(ps -eo pid=,ppid= | awk -v parent="$1" \'$2 == parent { print $1 }\'); do '
-        + 'collect_descendants "$child_pid"; '
-        + 'done; '
-        + 'printf \'%s\\n\' "$1"; '
-        + '}',
-      'process_ids=$(collect_descendants "$remote_pid")',
-      'for process_id in $process_ids; do kill -TERM "$process_id" 2>/dev/null || true; done',
-      'attempt=0',
-      'while [ "$attempt" -lt 20 ]; do '
-        + 'remaining=0; '
-        + 'for process_id in $process_ids; do kill -0 "$process_id" 2>/dev/null && remaining=1; done; '
-        + '[ "$remaining" -eq 0 ] && break; '
-        + 'sleep 0.1; '
-        + 'attempt=$((attempt + 1)); '
-        + 'done',
-      'for process_id in $process_ids; do kill -KILL "$process_id" 2>/dev/null || true; done',
-      'rm -f -- "$pid_file"',
-      'exit 0',
-    ].join('; '),
-  );
+  const custody = `${requireRemoteRelativeWorkingDirectory(target, '.')}/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh`;
+  return wrapRemoteScript(target, `bash ${posixQuote(custody)} cancel ${posixQuote(pidFile)} ${posixQuote(normalizedExecutionId)}`);
 }
 
 function wrapRemoteScript(target, script) {
@@ -559,7 +528,10 @@ function buildWindowsOrphanedMutagenCleanupScript() {
   ].join(' ');
 }
 
-export function buildRemoteEnsureDirectoriesCommand(target) {
+export function buildRemoteEnsureDirectoriesCommand(target, options = {}) {
+  const additional = options.runtimeMode === 'controlled'
+    ? (() => { const paths = resolveRemoteStackStatePaths(target, options); return [paths.stackBaseDir, paths.cliHomeDir, paths.workspaceDir]; })()
+    : [];
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
@@ -569,12 +541,13 @@ export function buildRemoteEnsureDirectoriesCommand(target) {
         buildWindowsOrphanedMutagenCleanupScript(),
         `New-Item -ItemType Directory -Force -Path ${powershellQuote(target.repoDir)} | Out-Null`,
         `New-Item -ItemType Directory -Force -Path ${powershellQuote(target.cliHomeDir)} | Out-Null`,
+        ...additional.map(path => `New-Item -ItemType Directory -Force -Path ${powershellQuote(path)} | Out-Null`),
       ].join('; '),
     );
   }
   return wrapRemoteScript(
     target,
-    `set -euo pipefail; mkdir -p -- ${posixQuote(target.repoDir)} ${posixQuote(target.cliHomeDir)}`,
+    `set -euo pipefail; mkdir -p -- ${[target.repoDir, target.cliHomeDir, ...additional].map(posixQuote).join(' ')}`,
   );
 }
 
@@ -646,6 +619,11 @@ function requireServicePort(value, label, { optional = false } = {}) {
 }
 
 const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
+  'HAPPIER_STACK_SHARED_DB_SOURCE_STACK',
+  'HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE',
+  'HAPPIER_SQLITE_AUTO_MIGRATE',
+  'HAPPIER_STACK_MIGRATE_MODE',
+  'METRICS_ENABLED',
   'HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY',
   // The application origin mailed links (verification, reset, invitations) are rendered on.
   'HAPPIER_WEBAPP_URL',
@@ -791,24 +769,34 @@ function resolveRemoteTargetStackName(target, { stackName } = {}) {
   return `dev-target-${targetToken}-${fingerprint}`;
 }
 
-export function resolveRemoteStackStatePaths(target, { stackName } = {}) {
-  const remoteStackName = resolveRemoteTargetStackName(target, { stackName });
+export function resolveRemoteStackStatePaths(target, { stackName, runtimeMode = 'source' } = {}) {
+  if (runtimeMode === 'controlled') {
+    const pathApi = target.platform === 'windows' ? win32 : posix;
+    const relativeHome = pathApi.relative(String(target.repoDir).replaceAll('\\', '/'), String(target.cliHomeDir).replaceAll('\\', '/'));
+    if (!pathApi.isAbsolute(relativeHome) && relativeHome !== '..' && !relativeHome.startsWith(`..${pathApi.sep}`)) {
+      throw new Error('[dev-targets] controlled CLI state and workspace must be outside the one-way source replica; configure an external target cli-home-dir');
+    }
+  }
+  const remoteStackName = runtimeMode === 'controlled' ? stackName : resolveRemoteTargetStackName(target, { stackName });
   const stackStorageDir = `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/stack-state`;
   const stackBaseDir = `${stackStorageDir}/${remoteStackName}`;
   return {
     activeServerId: buildStackStableScopeId({
-      stackName: remoteStackName,
+      stackName: runtimeMode === 'controlled' ? stackName : remoteStackName,
       cliIdentity: 'default',
     }),
     stackName: remoteStackName,
     stackStorageDir,
     stackBaseDir,
     stackEnvPath: `${stackBaseDir}/env`,
+    cliHomeDir: runtimeMode === 'controlled' ? `${stackBaseDir}/cli` : String(target.cliHomeDir).replace(/[\\/]+$/, ''),
+    workspaceDir: `${stackBaseDir}/workspace`,
+    serverLightDataDir: `${stackBaseDir}/server-light`,
   };
 }
 
-export function buildRemoteStackRetirementProbeCommand(target, { stackName } = {}) {
-  const { stackBaseDir } = resolveRemoteStackStatePaths(target, { stackName });
+export function buildRemoteStackRetirementProbeCommand(target, { stackName, runtimeMode = 'source' } = {}) {
+  const { stackBaseDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const runtimeStatePath = `${stackBaseDir}/stack.runtime.json`;
   if (target.platform === 'windows') {
     return wrapRemoteScript(
@@ -829,6 +817,23 @@ export function buildRemoteStackRetirementProbeCommand(target, { stackName } = {
   );
 }
 
+export function buildRemoteRuntimeSnapshotImportCommand(target, { stackName, archivePath, snapshotId, requiredComponents }) {
+  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
+  const args = ['./apps/stack/scripts/utils/dev_targets/runtime_artifact_transfer.mjs', `--archive=${archivePath}`, `--stack-base-dir=${paths.stackBaseDir}`, `--snapshot-id=${snapshotId}`,
+    ...(requiredComponents ? [`--required-components=${requiredComponents.join(',')}`] : [])];
+  const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
+  return wrapRemoteScript(target, target.platform === 'windows'
+    ? `$ErrorActionPreference = 'Stop'; Set-Location -LiteralPath ${quote(target.repoDir)}; node ${args.map(quote).join(' ')}; exit $LASTEXITCODE`
+    : `set -euo pipefail; cd -- ${quote(target.repoDir)}; exec node ${args.map(quote).join(' ')}`);
+}
+
+export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId }) {
+  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
+  const expression = `const fs=require('node:fs');const s=JSON.parse(fs.readFileSync(${JSON.stringify(paths.stackBaseDir + '/stack.runtime.json')},'utf8'));process.exit(s.runtimeSnapshotId===${JSON.stringify(snapshotId)}?0:1)`;
+  const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
+  return wrapRemoteScript(target, target.platform === 'windows' ? `node -e ${quote(expression)}; exit $LASTEXITCODE` : `exec node -e ${quote(expression)}`);
+}
+
 function resolveRemoteStackInvocation(target, {
   services,
   serverUrl,
@@ -845,6 +850,9 @@ function resolveRemoteStackInvocation(target, {
   remoteServerRuntimeConfig = null,
   deferDaemonStartUntilCredentials = false,
   attended = false,
+  runtimeMode = 'source',
+  runtimeSnapshotId = null,
+  borrowedExpoProducerStackName = '',
 }) {
   const normalizedServices = {
     server: services?.server === true,
@@ -881,12 +889,20 @@ function resolveRemoteStackInvocation(target, {
     stackStorageDir,
     stackBaseDir,
     stackEnvPath,
-  } = resolveRemoteStackStatePaths(target, { stackName });
+    cliHomeDir,
+    workspaceDir,
+  } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const stackServerComponent = serverRuntimeConfig?.serverComponentName ?? 'happier-server-light';
   const stackDbProvider = serverRuntimeConfig?.dbProvider ?? 'sqlite';
   const stackEnvLines = [
     `HAPPIER_STACK_REPO_DIR=${target.repoDir}`,
-    `HAPPIER_STACK_CLI_HOME_DIR=${target.cliHomeDir}`,
+    `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
+    ...(runtimeMode === 'controlled' ? [
+      'HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
+      'HAPPIER_STACK_UPDATE_CHECK=0',
+      `HAPPIER_STACK_INVOKED_CWD=${workspaceDir}`,
+      ...(borrowedExpoProducerStackName ? [`HAPPIER_STACK_EXPO_SOURCE_STACK=${borrowedExpoProducerStackName}`] : []),
+    ] : []),
     `HAPPIER_STACK_SERVER_COMPONENT=${stackServerComponent}`,
     `HAPPIER_DB_PROVIDER=${stackDbProvider}`,
     ...Object.entries(serverRuntimeConfig?.environment ?? {}).map(([key, value]) => `${key}=${value}`),
@@ -896,6 +912,7 @@ function resolveRemoteStackInvocation(target, {
       ? ['HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1']
       : []),
     ...(serverPort ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
+    ...(runtimeMode === 'controlled' && stablePublicServerUrl ? [`HAPPIER_PUBLIC_SERVER_URL=${stablePublicServerUrl}`] : []),
     ...(originCanonicalServerUrl ? [`HAPPIER_CANONICAL_SERVER_URL=${originCanonicalServerUrl}`] : []),
     ...(expoPort ? [
       `HAPPIER_STACK_EXPO_DEV_PORT=${expoPort}`,
@@ -905,7 +922,9 @@ function resolveRemoteStackInvocation(target, {
     ...(stablePublicExpoPort ? [`HAPPIER_STACK_EXPO_PUBLIC_PORT=${stablePublicExpoPort}`] : []),
     ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
-  const devArgs = buildRemoteDevArgs({
+  const devArgs = runtimeMode === 'controlled'
+    ? ['--runtime', '--no-dev-targets', '--no-browser', ...(!normalizedServices.daemon ? ['--no-daemon'] : []), ...(borrowedExpoProducerStackName ? ['--no-ui'] : [])]
+    : buildRemoteDevArgs({
     services: normalizedServices,
     serverUrl,
     publicServerUrl: stablePublicServerUrl,
@@ -914,6 +933,10 @@ function resolveRemoteStackInvocation(target, {
   return {
     activeServerId,
     attended: attended === true,
+    runtimeMode,
+    runtimeSnapshotId,
+    cliHomeDir,
+    workspaceDir,
     devArgs,
     stackBaseDir,
     stackEnvLines,
@@ -928,9 +951,9 @@ function resolveRemoteStackInvocation(target, {
 function buildWindowsRemoteStackPrelude(target, invocation) {
   return [
     '$ErrorActionPreference = "Stop"',
-    `$env:HAPPIER_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
+    `$env:HAPPIER_HOME_DIR = ${powershellQuote(invocation.cliHomeDir)}`,
     `$env:HAPPIER_STACK_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
-    `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(target.cliHomeDir)}`,
+    `$env:HAPPIER_STACK_CLI_HOME_DIR = ${powershellQuote(invocation.cliHomeDir)}`,
     `$env:HAPPIER_STACK_STORAGE_DIR = ${powershellQuote(invocation.stackStorageDir)}`,
     `$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = ${powershellQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
     `$env:HAPPIER_STACK_STACK = ${powershellQuote(invocation.stackName)}`,
@@ -938,15 +961,20 @@ function buildWindowsRemoteStackPrelude(target, invocation) {
     `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
     ...(invocation.attended ? ["$env:HAPPIER_STACK_TUI = '1'"] : []),
     `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
+    ...(invocation.runtimeMode === 'controlled' ? [
+      `New-Item -ItemType Directory -Force -Path ${powershellQuote(invocation.cliHomeDir)},${powershellQuote(invocation.workspaceDir)} | Out-Null`,
+      "$env:HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES = '0'",
+      "$env:HAPPIER_STACK_UPDATE_CHECK = '0'",
+    ] : []),
   ];
 }
 
 function buildPosixRemoteStackPrelude(target, invocation) {
   return [
     'set -euo pipefail',
-    `export HAPPIER_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
+    `export HAPPIER_HOME_DIR=${posixQuote(invocation.cliHomeDir)}`,
     `export HAPPIER_STACK_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
-    `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(target.cliHomeDir)}`,
+    `export HAPPIER_STACK_CLI_HOME_DIR=${posixQuote(invocation.cliHomeDir)}`,
     `export HAPPIER_STACK_STORAGE_DIR=${posixQuote(invocation.stackStorageDir)}`,
     `export HAPPIER_STACK_PM_CACHE_BASE_DIR=${posixQuote(`${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`,
     `export HAPPIER_STACK_STACK=${posixQuote(invocation.stackName)}`,
@@ -954,6 +982,11 @@ function buildPosixRemoteStackPrelude(target, invocation) {
     `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
     ...(invocation.attended ? ['export HAPPIER_STACK_TUI=1'] : []),
     `cd -- ${posixQuote(target.repoDir)}`,
+    ...(invocation.runtimeMode === 'controlled' ? [
+      `mkdir -p -- ${posixQuote(invocation.cliHomeDir)} ${posixQuote(invocation.workspaceDir)}`,
+      'export HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
+      'export HAPPIER_STACK_UPDATE_CHECK=0',
+    ] : []),
   ];
 }
 
@@ -1007,7 +1040,7 @@ export function buildRemoteStackCommand(target, options) {
           command,
           'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
         ]),
-        `corepack yarn workspace @happier-dev/stack stack dev ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
+        `corepack yarn workspace @happier-dev/stack stack ${invocation.runtimeMode === 'controlled' ? 'start' : 'dev'} ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -1017,7 +1050,7 @@ export function buildRemoteStackCommand(target, options) {
     [
       ...buildPosixRemoteStackPrelude(target, invocation),
       ...buildPosixRemoteStackInitializationCommands(target, invocation),
-      `exec corepack yarn workspace @happier-dev/stack stack dev ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
+      `exec corepack yarn workspace @happier-dev/stack stack ${invocation.runtimeMode === 'controlled' ? 'start' : 'dev'} ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
     ].join('; '),
   );
 }
@@ -1053,9 +1086,8 @@ export function buildRemoteForwardProbeCommand(target, { remoteServerPort }) {
   );
 }
 
-export function buildRemoteDaemonReadinessProbeCommand(target, { stackName }) {
-  const { activeServerId } = resolveRemoteStackStatePaths(target, { stackName });
-  const cliHomeDir = String(target.cliHomeDir).replace(/[\\/]+$/, '');
+export function buildRemoteDaemonReadinessProbeCommand(target, { stackName, runtimeMode = 'source' }) {
+  const { activeServerId, cliHomeDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const statePath = `${cliHomeDir}/servers/${String(activeServerId)}/daemon.state.json`;
   if (target.platform === 'windows') {
     return wrapRemoteScript(

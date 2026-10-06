@@ -174,6 +174,7 @@ async function ensureDevTargetSyncProjectUnlocked(
     requiredTargets = targets,
     ownerId,
     allowIndependentBorrow,
+    borrowOnly = false,
     env = process.env,
   },
   {
@@ -186,6 +187,16 @@ async function ensureDevTargetSyncProjectUnlocked(
     ...mutagenControlEnv
   } = env;
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env: mutagenControlEnv });
+  if (borrowOnly) {
+    const project = await readFile(runtime.projectFile, 'utf8').catch(() => null);
+    if (!project) throw new Error('[dev-targets] controlled runtime requires the producer synchronization; run hstack dev-targets sync-service start --detached');
+    const sshArgs = targets.some(target => target.sshConfigFile)
+      ? ['-F', join(runtime.opensshDir, 'config')]
+      : [];
+    const unhealthyTargets = await inspectBorrowedIndependentDevTargetSyncProject({ requiredTargets, mutagenRuntime: runtime }, { runProcess });
+    return { ...runtime, openSsh: { sshArgs, mutagenEnv: runtime.env }, ownership: 'borrowed',
+      unhealthyTargets, projectCreated: false, release: async () => {} };
+  }
   const openSsh = await prepareDevTargetOpenSsh({
     targets,
     mutagenDir: runtime.mutagenDir,

@@ -19,12 +19,12 @@ if [ "$repo_root" = "$script_dir" ]; then
 fi
 invoked_cwd=$(pwd -P) || exit 1
 
-heavyweight_memory_floor_kib() {
-  # The 2026-10-05 remote QA placement brief measured full UI typechecks at
-  # 10–21 GB. Interpret its upper peak conservatively as 21 GiB. Focused
-  # validation retains the prior measured compiler + suite 6 GiB floor.
-  case "$1" in compilation) printf '22020096' ;; *) printf '6291456' ;; esac
-}
+# Workload classes and memory requirements have one source owner. Load its
+# native projection before either direct admission or command placement.
+. "$script_dir/../scripts/utils/dev_targets/native_command_policy.sh" || exit 1
+. "$script_dir/../scripts/utils/proc/native_process_identity.sh" || exit 1
+. "$script_dir/../scripts/utils/proc/native_host_admission_state.sh" || exit 1
+native_policy_loaded=1
 
 score_load_sample() {
   # Exclude physically incapable machines, while capable busy machines remain
@@ -81,57 +81,10 @@ is_heavyweight_dispatch_class() {
 }
 
 resolve_heavyweight_admission_root() {
-  # The Stack CLI home is an explicit machine-state override. It must win over
-  # the shell's HOME, which can refer to the sandbox/controller rather than the
-  # Stack-managed CLI state for a locally dispatched heavyweight command.
-  heavyweight_admission_home=${HAPPIER_STACK_CLI_HOME_DIR-}
-  if [ -z "$heavyweight_admission_home" ]; then
-    heavyweight_admission_home=${HAPPIER_HOME_DIR-}
-  fi
-  if [ -z "$heavyweight_admission_home" ] && [ -n "${HOME-}" ]; then
-    heavyweight_admission_home="$HOME/.happier"
-  fi
-  [ -n "$heavyweight_admission_home" ] || return 1
-  heavyweight_admission_candidate="${heavyweight_admission_home%/}/heavyweight-admission-v1"
-  if mkdir -p -- "$heavyweight_admission_candidate" 2>/dev/null; then
-    heavyweight_admission_probe=$(mktemp "$heavyweight_admission_candidate/.write-probe.XXXXXX" 2>/dev/null || true)
-    if [ -n "$heavyweight_admission_probe" ]; then
-      rm -f -- "$heavyweight_admission_probe" 2>/dev/null || true
-      printf '%s' "$heavyweight_admission_candidate"
-      return 0
-    fi
-  fi
-
-  # A sandbox can intentionally expose the Stack-managed CLI home read-only.
-  # Admission records are disposable coordination state, so keep the local
-  # fallback runnable in a session-scoped private temporary directory.
-  heavyweight_admission_scope=${CODEX_SESSION_ID-${HAPPIER_SESSION_ID-}}
-  heavyweight_admission_identity=$(printf '%s\n%s' "$heavyweight_admission_home" "$heavyweight_admission_scope" | cksum | awk '{print $1}')
-  heavyweight_admission_candidate="${TMPDIR:-/tmp}/happier-heavyweight-admission-$(id -u)/$heavyweight_admission_identity"
-  mkdir -p -- "$heavyweight_admission_candidate" 2>/dev/null || return 1
-  printf '%s' "$heavyweight_admission_candidate"
-}
-
-heavyweight_process_token() {
-  heavyweight_token_pid=$1
-  if [ -r "/proc/$heavyweight_token_pid/stat" ]; then
-    heavyweight_token=$(awk '{print $22}' "/proc/$heavyweight_token_pid/stat" 2>/dev/null || true)
-    case "$heavyweight_token" in ''|*[!0-9]*) ;; *) printf '%s' "$heavyweight_token"; return 0 ;; esac
-  fi
-  printf '%s' '-'
-}
-
-heavyweight_process_is_current() {
-  heavyweight_current_pid=$1
-  heavyweight_current_token=$2
-  case "$heavyweight_current_pid" in ''|*[!0-9]*) return 1 ;; esac
-  if [ "$heavyweight_current_token" = - ]; then
-    kill -0 "$heavyweight_current_pid" 2>/dev/null
-    return
-  fi
-  [ -r "/proc/$heavyweight_current_pid/stat" ] || return 1
-  heavyweight_observed_token=$(awk '{print $22}' "/proc/$heavyweight_current_pid/stat" 2>/dev/null || true)
-  [ "$heavyweight_observed_token" = "$heavyweight_current_token" ]
+  # One worker-side filesystem authority, including private task mirrors. If
+  # its execution-account-owned state is unavailable, fail closed: a private
+  # queue would silently evade every other caller's resource reservations.
+  resolve_native_host_admission_root
 }
 
 heavyweight_try_reentrant_admission() {
@@ -139,8 +92,6 @@ heavyweight_try_reentrant_admission() {
   heavyweight_inherited_root=${HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT-}
   heavyweight_inherited_machine=${HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE-}
   [ -n "$heavyweight_inherited_token" ] || return 1
-  [ "$heavyweight_admission_root" = "$heavyweight_inherited_root" ] || return 1
-  [ "$heavyweight_admission_machine" = "$heavyweight_inherited_machine" ] || return 1
 
   # The inherited value identifies the original owner as PID plus Linux
   # process start token. An environment value alone is not authority: require
@@ -157,15 +108,135 @@ heavyweight_try_reentrant_admission() {
     ''|*[!0-9:]*|*:*:*) return 1 ;;
   esac
   [ "$heavyweight_owner_token" != 0 ] || return 1
-  heavyweight_owner_path="$heavyweight_admission_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
-  [ -d "$heavyweight_owner_path" ] || return 1
-  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token < "$heavyweight_owner_path/process" 2>/dev/null || return 1
+  case "$heavyweight_inherited_root" in /*) ;; *) return 1 ;; esac
+  heavyweight_inherited_owner_path="$heavyweight_inherited_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
+  [ -d "$heavyweight_inherited_owner_path" ] || return 1
+  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token < "$heavyweight_inherited_owner_path/process" 2>/dev/null || return 1
   [ "$heavyweight_recorded_pid" = "$heavyweight_owner_pid" ] || return 1
   [ "$heavyweight_recorded_token" = "$heavyweight_owner_token" ] || return 1
-  heavyweight_recorded_machine=$(sed -n '1p' "$heavyweight_owner_path/machine" 2>/dev/null || true)
-  [ "$heavyweight_recorded_machine" = "$heavyweight_admission_machine" ] || return 1
+  heavyweight_recorded_machine=$(sed -n '1p' "$heavyweight_inherited_owner_path/machine" 2>/dev/null || true)
+  [ "$heavyweight_recorded_machine" = "$heavyweight_inherited_machine" ] || return 1
   heavyweight_process_is_current "$heavyweight_owner_pid" "$heavyweight_owner_token" || return 1
+  # A token from a different live job is not a reusable envelope. This also
+  # anchors legacy private-root adoption to a real local ancestor, not a
+  # caller-created record for an unrelated process.
+  heavyweight_ancestor=$$
+  while [ "$heavyweight_ancestor" != "$heavyweight_owner_pid" ]; do
+    case "$heavyweight_ancestor" in ''|*[!0-9]*|0|1) return 1 ;; esac
+    heavyweight_ancestor=$(awk '/^PPid:/ {print $2; exit}' "/proc/$heavyweight_ancestor/status" 2>/dev/null || true)
+  done
+  heavyweight_owner_path="$heavyweight_admission_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
+  if [ "$heavyweight_admission_root" = "$heavyweight_inherited_root" ]; then
+    [ "$heavyweight_admission_machine" = "$heavyweight_inherited_machine" ] || return 1
+  else
+    # An already-admitted pre-cutover ancestor still owns its envelope. Adopt
+    # it into the one host queue so a nested current launcher does not wait
+    # behind that same reservation. Old private state is read, never mutated.
+    heavyweight_legacy_class=$(sed -n '1p' "$heavyweight_inherited_owner_path/class" 2>/dev/null || true)
+    case "$heavyweight_legacy_class" in ''|*[!a-z-]*) return 1 ;; esac
+    (umask 077; mkdir -p -- "$heavyweight_admission_root/owners") || return 1
+    exec 9>>"$heavyweight_admission_root/lock" || return 1
+    flock 9 || { exec 9>&-; return 1; }
+    if ! heavyweight_process_is_current "$heavyweight_owner_pid" "$heavyweight_owner_token"; then
+      flock -u 9; exec 9>&-; return 1
+    fi
+    mkdir -p -- "$heavyweight_owner_path" || { flock -u 9; exec 9>&-; return 1; }
+    heavyweight_current_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
+    if [ -n "$heavyweight_current_class" ] \
+      && [ "$(heavyweight_memory_floor_kib "$heavyweight_current_class")" -gt "$(heavyweight_memory_floor_kib "$heavyweight_legacy_class")" ]; then
+      heavyweight_legacy_class=$heavyweight_current_class
+    fi
+    printf '%s %s\n' "$heavyweight_owner_pid" "$heavyweight_owner_token" > "$heavyweight_owner_path/process"
+    printf '%s\n' "$heavyweight_legacy_class" > "$heavyweight_owner_path/class"
+    printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine"
+    flock -u 9
+    exec 9>&-
+    export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$heavyweight_admission_root"
+    export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$heavyweight_admission_machine"
+  fi
   return 0
+}
+
+read_host_memory_kib() {
+  host_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {if(total>0) print available, total}' /proc/meminfo 2>/dev/null || true)
+  if [ -z "$host_memory" ]; then
+    host_memory_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+    host_memory_free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
+    host_memory=$(awk -v bytes="${host_memory_total_bytes:-0}" -v ratio="${host_memory_free:-0}" 'BEGIN {if(bytes>0) printf "%.0f %.0f", (bytes/1024)*ratio, bytes/1024}')
+  fi
+  printf '%s\n' "$host_memory"
+}
+
+heavyweight_count_reserved_memory() {
+  heavyweight_reserved_memory=0
+  for heavyweight_reserved_entry in "$heavyweight_admission_root/owners"/*; do
+    [ -d "$heavyweight_reserved_entry" ] || continue
+    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token < "$heavyweight_reserved_entry/process" 2>/dev/null || continue
+    if ! heavyweight_process_is_current "$heavyweight_reserved_pid" "$heavyweight_reserved_token"; then
+      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" 2>/dev/null || true
+      rmdir -- "$heavyweight_reserved_entry" 2>/dev/null || true
+      continue
+    fi
+    # Escalation changes the original reservation, rather than reserving the
+    # inherited envelope a second time. Other jobs remain fully reserved until
+    # exit: current RSS is not evidence that their later compiler peak is free.
+    [ "$heavyweight_reserved_entry" != "${heavyweight_owner_path-}" ] || continue
+    heavyweight_reserved_class=$(sed -n '1p' "$heavyweight_reserved_entry/class" 2>/dev/null || true)
+    heavyweight_reserved_floor=$(heavyweight_memory_floor_kib "$heavyweight_reserved_class")
+    # A still-loaded legacy sibling can escalate its private record after
+    # migration. Merge the same incarnation's larger envelope, never add it
+    # twice or hide that later escalation behind the canonical directory.
+    while IFS=' ' read -r heavyweight_merge_kind heavyweight_merge_pid heavyweight_merge_token heavyweight_merge_class heavyweight_merge_tail; do
+      [ "$heavyweight_merge_kind" = legacy ] || continue
+      [ "$heavyweight_merge_pid:$heavyweight_merge_token" = "$heavyweight_reserved_pid:$heavyweight_reserved_token" ] || continue
+      heavyweight_merge_floor=$(heavyweight_memory_floor_kib "$heavyweight_merge_class")
+      if [ "$heavyweight_merge_floor" -gt "$heavyweight_reserved_floor" ]; then
+        heavyweight_reserved_floor=$heavyweight_merge_floor
+      fi
+    done <<EOF
+${heavyweight_worker_reservation_snapshot-}
+EOF
+    heavyweight_reserved_memory=$((heavyweight_reserved_memory + heavyweight_reserved_floor))
+  done
+  # Pre-cutover private mirrors may still have admitted live work. Observe
+  # their existing owner records through the same OS snapshot, without making
+  # any of those private roots a new queue or counting migrated owners twice.
+  while IFS=' ' read -r heavyweight_legacy_kind heavyweight_legacy_pid heavyweight_legacy_token heavyweight_legacy_class heavyweight_legacy_tail; do
+    [ "$heavyweight_legacy_kind" = legacy ] || continue
+    [ ! -d "$heavyweight_admission_root/owners/$heavyweight_legacy_pid-$heavyweight_legacy_token" ] || continue
+    heavyweight_process_is_current "$heavyweight_legacy_pid" "$heavyweight_legacy_token" || continue
+    heavyweight_legacy_floor=$(heavyweight_memory_floor_kib "$heavyweight_legacy_class")
+    heavyweight_reserved_memory=$((heavyweight_reserved_memory + heavyweight_legacy_floor))
+  done <<EOF
+${heavyweight_worker_reservation_snapshot-}
+EOF
+}
+
+heavyweight_read_worker_reservations() {
+  heavyweight_service_reserved_memory=
+  if ! heavyweight_worker_reservation_snapshot=$(node "$script_dir/../scripts/utils/proc/service_memory.mjs" "--admission-root=$heavyweight_admission_root"); then
+    heavyweight_resource_reason=worker-reservation-observation-unavailable
+    return 1
+  fi
+  while IFS=' ' read -r heavyweight_sample_kind heavyweight_sample_value heavyweight_sample_token heavyweight_sample_class heavyweight_sample_tail; do
+    case "$heavyweight_sample_kind" in
+      service)
+        case "$heavyweight_sample_value" in ''|*[!0-9]*) return 1 ;; esac
+        [ -z "$heavyweight_service_reserved_memory" ] && [ -z "$heavyweight_sample_token$heavyweight_sample_class$heavyweight_sample_tail" ] || return 1
+        heavyweight_service_reserved_memory=$heavyweight_sample_value
+        ;;
+      legacy)
+        case "$heavyweight_sample_value:$heavyweight_sample_token" in *[!0-9:]*|:*|*:) return 1 ;; esac
+        case "$heavyweight_sample_class" in ''|*[!a-z-]*) return 1 ;; esac
+        [ -z "$heavyweight_sample_tail" ] || return 1
+        ;;
+      '') ;;
+      *) return 1 ;;
+    esac
+  done <<EOF
+$heavyweight_worker_reservation_snapshot
+EOF
+  [ -n "$heavyweight_service_reserved_memory" ]
 }
 
 heavyweight_resource_is_ready() {
@@ -173,7 +244,7 @@ heavyweight_resource_is_ready() {
   heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
   heavyweight_run_queue=$(awk '{split($4, running, "/"); print running[1]}' /proc/loadavg 2>/dev/null || true)
   heavyweight_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
-  heavyweight_memory=$(awk '/MemTotal:/ {total=$2} /MemAvailable:/ {available=$2} END {print available, total}' /proc/meminfo 2>/dev/null || true)
+  heavyweight_memory=$(read_host_memory_kib)
   IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
 $heavyweight_memory
 EOF
@@ -182,14 +253,25 @@ EOF
     *[!0-9:]*|'':*) ;;
     *)
       heavyweight_memory_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
-      if [ "$heavyweight_admission_class" = compilation ] && [ "$heavyweight_mem_total" -lt "$heavyweight_memory_floor" ]; then
-        printf '[preferred-execution] insufficient memory capacity on %s for compilation (total=%s KiB, requires=%s KiB)\n' \
-          "$heavyweight_admission_machine" "$heavyweight_mem_total" "$heavyweight_memory_floor" >&2
+      heavyweight_resource_reason=worker-reservation-observation-unavailable
+      heavyweight_read_worker_reservations || return 1
+      heavyweight_physical_capacity=$((heavyweight_mem_total - heavyweight_service_reserved_memory))
+      if [ "$heavyweight_physical_capacity" -lt "$heavyweight_memory_floor" ]; then
+        printf '[preferred-execution] insufficient memory capacity on %s for %s (total=%s KiB, service-reserved-memory=%s KiB, requires=%s KiB); route remotely to a capable execution target\n' \
+          "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_mem_total" "$heavyweight_service_reserved_memory" "$heavyweight_memory_floor" >&2
         exit 1
       fi
+      heavyweight_count_reserved_memory
+      heavyweight_unreserved_memory=$((heavyweight_mem_available - heavyweight_reserved_memory))
+      # Resident service memory is already absent from MemAvailable. Reserve
+      # it against total capacity without subtracting that RSS a second time.
+      heavyweight_service_capacity=$((heavyweight_mem_total - heavyweight_service_reserved_memory - heavyweight_reserved_memory))
+      if [ "$heavyweight_unreserved_memory" -gt "$heavyweight_service_capacity" ]; then
+        heavyweight_unreserved_memory=$heavyweight_service_capacity
+      fi
       if [ "$heavyweight_mem_total" -gt 0 ] && awk -v available="$heavyweight_mem_available" -v total="$heavyweight_mem_total" \
-        -v floor="$heavyweight_memory_floor" 'BEGIN { exit !(available < floor || available / total < 0.1) }'; then
-        heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total"
+        -v unreserved="$heavyweight_unreserved_memory" -v floor="$heavyweight_memory_floor" 'BEGIN { exit !(unreserved < floor || available / total < 0.1) }'; then
+        heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total requires=$heavyweight_memory_floor KiB reserved-memory=$heavyweight_reserved_memory service-reserved-memory=$heavyweight_service_reserved_memory"
         return 1
       fi
       ;;
@@ -226,6 +308,94 @@ heavyweight_run_admitted_command() {
   exec "$@"
 }
 
+heavyweight_decline_before_dispatch() {
+  printf '[preferred-execution] heavyweight admission declined before dispatch\n' >&2
+  exit 75
+}
+
+heavyweight_find_queue_head() {
+  while :; do
+    heavyweight_head_path=
+    heavyweight_head_registered_at=
+    for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
+      [ -f "$heavyweight_entry" ] || continue
+      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token heavyweight_entry_registered_at heavyweight_entry_class heavyweight_entry_backfilled _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
+      case "$heavyweight_entry_registered_at" in ''|*[!0-9]*) heavyweight_entry_registered_at=0 ;; esac
+      if [ -z "$heavyweight_head_path" ] || [ "$heavyweight_entry_registered_at" -lt "$heavyweight_head_registered_at" ]; then
+        heavyweight_head_path=$heavyweight_entry
+        heavyweight_head_registered_at=$heavyweight_entry_registered_at
+        heavyweight_head_pid=$heavyweight_entry_pid
+        heavyweight_head_token=$heavyweight_entry_token
+        heavyweight_head_class=$heavyweight_entry_class
+        heavyweight_head_backfilled=${heavyweight_entry_backfilled:-0}
+      fi
+    done
+    [ -n "$heavyweight_head_path" ] || return 0
+    heavyweight_process_is_current "$heavyweight_head_pid" "$heavyweight_head_token" && return 0
+    rm -f -- "$heavyweight_head_path" 2>/dev/null || return 1
+  done
+}
+
+heavyweight_queue_is_eligible() {
+  heavyweight_backfill_head=
+  heavyweight_queue_reason=queue-ahead
+  heavyweight_find_queue_head || return 1
+  [ -n "$heavyweight_head_path" ] || return 0
+  [ "$heavyweight_head_path" != "${heavyweight_waiter_path-}" ] || return 0
+  [ -n "$heavyweight_head_class" ] || return 1
+  case "$heavyweight_head_backfilled" in ''|*[!0-9]*) return 1 ;; esac
+  heavyweight_head_floor=$(heavyweight_memory_floor_kib "$heavyweight_head_class")
+  heavyweight_candidate_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
+  # No admission deadline exists. Bound bypasses by the head's measured class
+  # envelope instead: 21 GiB permits at most three 6 GiB backfills. The charge
+  # survives a backfill's exit and disappears only with this waiting head.
+  if [ $((heavyweight_head_backfilled + heavyweight_candidate_floor)) -gt "$heavyweight_head_floor" ]; then
+    heavyweight_queue_reason="head-backfill-envelope-exhausted=$heavyweight_head_backfilled/$heavyweight_head_floor KiB"
+    return 1
+  fi
+  # Stop backfill once one candidate envelope would bridge the head's remaining
+  # capacity gap, so existing jobs can drain and the oldest request can start.
+  if [ $((heavyweight_unreserved_memory + heavyweight_candidate_floor)) -ge "$heavyweight_head_floor" ]; then
+    heavyweight_queue_reason="head-capacity-priority=$heavyweight_head_floor KiB"
+    return 1
+  fi
+  while :; do
+    heavyweight_fitting_path=
+    heavyweight_fitting_registered_at=
+    for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
+      [ -f "$heavyweight_entry" ] || continue
+      [ "$heavyweight_entry" != "$heavyweight_head_path" ] || continue
+      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token heavyweight_entry_registered_at heavyweight_entry_class heavyweight_entry_backfilled _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
+      [ -n "$heavyweight_entry_class" ] || continue
+      case "$heavyweight_entry_registered_at" in ''|*[!0-9]*) heavyweight_entry_registered_at=0 ;; esac
+      heavyweight_entry_floor=$(heavyweight_memory_floor_kib "$heavyweight_entry_class")
+      [ "$heavyweight_entry_floor" -le "$heavyweight_unreserved_memory" ] || continue
+      [ $((heavyweight_unreserved_memory + heavyweight_entry_floor)) -lt "$heavyweight_head_floor" ] || continue
+      [ $((heavyweight_head_backfilled + heavyweight_entry_floor)) -le "$heavyweight_head_floor" ] || continue
+      if [ -z "$heavyweight_fitting_path" ] || [ "$heavyweight_entry_registered_at" -lt "$heavyweight_fitting_registered_at" ]; then
+        heavyweight_fitting_path=$heavyweight_entry
+        heavyweight_fitting_registered_at=$heavyweight_entry_registered_at
+        heavyweight_fitting_pid=$heavyweight_entry_pid
+        heavyweight_fitting_token=$heavyweight_entry_token
+      fi
+    done
+    [ -n "$heavyweight_fitting_path" ] || break
+    heavyweight_process_is_current "$heavyweight_fitting_pid" "$heavyweight_fitting_token" && break
+    rm -f -- "$heavyweight_fitting_path" 2>/dev/null || return 1
+  done
+  if [ -n "$heavyweight_fitting_path" ] && [ "$heavyweight_fitting_path" != "${heavyweight_waiter_path-}" ]; then
+    return 1
+  fi
+  heavyweight_backfill_head=$heavyweight_head_path
+  return 0
+}
+
+heavyweight_charge_backfill() {
+  [ -n "$heavyweight_backfill_head" ] || return 0
+  heavyweight_backfilled=$((heavyweight_head_backfilled + heavyweight_candidate_floor))
+  printf '%s %s %s %s %s\n' "$heavyweight_head_pid" "$heavyweight_head_token" "$heavyweight_head_registered_at" "$heavyweight_head_class" "$heavyweight_backfilled" > "$heavyweight_backfill_head"
+}
+
 run_heavyweight_admission() {
   heavyweight_admission_root=$1
   heavyweight_admission_class=$2
@@ -254,7 +424,20 @@ run_heavyweight_admission() {
       # Escalate through the same resource owner while retaining its record;
       # descendants must never queue for a second owner behind their parent.
       heavyweight_last_wait_state=
-      while ! heavyweight_resource_is_ready; do
+      exec 9>>"$heavyweight_admission_root/lock" || exit 1
+      while :; do
+        if [ "${heavyweight_no_wait-0}" = 1 ]; then
+          flock -n 9 || heavyweight_decline_before_dispatch
+        else
+          flock 9 || exit 1
+        fi
+        if heavyweight_resource_is_ready; then
+          printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
+          flock -u 9
+          break
+        fi
+        flock -u 9
+        [ "${heavyweight_no_wait-0}" != 1 ] || heavyweight_decline_before_dispatch
         if [ "$heavyweight_resource_reason" != "$heavyweight_last_wait_state" ]; then
           printf '[preferred-execution] waiting for heavyweight admission on %s (class=%s, %s, inherited owner)\n' \
             "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_resource_reason" >&2
@@ -262,7 +445,7 @@ run_heavyweight_admission() {
         fi
         sleep "$heavyweight_pressure_retry_seconds"
       done
-      printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
+      exec 9>&-
     fi
     # This wrapper is a descendant of the owner and therefore must not create
     # a waiter, acquire the capacity lock, or release the owner's reservation.
@@ -302,7 +485,7 @@ run_heavyweight_admission() {
   heavyweight_fast_retry_seconds=$((2 + heavyweight_pid % 2))
   heavyweight_registered_at=$(date +%s 2>/dev/null || printf 0)
   case "$heavyweight_registered_at" in ''|*[!0-9]*) heavyweight_registered_at=0 ;; esac
-  printf '%s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$heavyweight_registered_at" > "$heavyweight_waiter_path" || {
+  printf '%s %s %s %s %s\n' "$heavyweight_pid" "$heavyweight_token" "$heavyweight_registered_at" "$heavyweight_admission_class" 0 > "$heavyweight_waiter_path" || {
     printf '[preferred-execution] could not register heavyweight admission wait on %s\n' "$heavyweight_admission_machine" >&2
     exit 1
   }
@@ -343,36 +526,10 @@ run_heavyweight_admission() {
     # work under pressure, while the next admission still reclaims crashes.
     for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
       [ -f "$heavyweight_entry" ] || continue
-      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token < "$heavyweight_entry" 2>/dev/null || true
+      IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || true
       if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
         rm -f -- "$heavyweight_entry" 2>/dev/null || true
       fi
-    done
-  }
-
-  heavyweight_waiter_is_head() {
-    while :; do
-      heavyweight_head_path=
-      heavyweight_head_registered_at=
-      for heavyweight_entry in "$heavyweight_waiters_dir"/*; do
-        [ -f "$heavyweight_entry" ] || continue
-        IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token heavyweight_entry_registered_at < "$heavyweight_entry" 2>/dev/null || true
-        # Records from an older launcher have no registration timestamp. Keep
-        # them ahead of newer records until their owning process exits.
-        case "$heavyweight_entry_registered_at" in ''|*[!0-9]*) heavyweight_entry_registered_at=0 ;; esac
-        if [ -z "$heavyweight_head_path" ] || [ "$heavyweight_entry_registered_at" -lt "$heavyweight_head_registered_at" ]; then
-          heavyweight_head_path=$heavyweight_entry
-          heavyweight_head_registered_at=$heavyweight_entry_registered_at
-          heavyweight_head_pid=$heavyweight_entry_pid
-          heavyweight_head_token=$heavyweight_entry_token
-        fi
-      done
-      [ -n "$heavyweight_head_path" ] || return 0
-      [ "$heavyweight_head_path" = "$heavyweight_waiter_path" ] && return 0
-      if heavyweight_process_is_current "$heavyweight_head_pid" "$heavyweight_head_token"; then
-        return 1
-      fi
-      rm -f -- "$heavyweight_head_path" 2>/dev/null || return 1
     done
   }
 
@@ -393,6 +550,7 @@ run_heavyweight_admission() {
         heavyweight_lock_held=1
         return 0
       fi
+      [ "${heavyweight_no_wait-0}" != 1 ] || heavyweight_decline_before_dispatch
       sleep "$heavyweight_fast_retry_seconds"
     done
   }
@@ -424,22 +582,22 @@ run_heavyweight_admission() {
     heavyweight_cleanup_owners "$heavyweight_check_owner_identity"
     heavyweight_count_entries
     heavyweight_is_head=0
-    if heavyweight_waiter_is_head; then
-      heavyweight_is_head=1
-    fi
     heavyweight_ready=0
     heavyweight_wait_delay_seconds=$heavyweight_fast_retry_seconds
-    if [ "$heavyweight_is_head" -eq 1 ]; then
-      if heavyweight_resource_is_ready; then
-        heavyweight_ready=1
-      else
-        heavyweight_wait_delay_seconds=$heavyweight_pressure_retry_seconds
-      fi
+    if heavyweight_resource_is_ready; then
+      heavyweight_ready=1
+      if heavyweight_queue_is_eligible; then heavyweight_is_head=1; fi
+    else
+      heavyweight_wait_delay_seconds=$heavyweight_pressure_retry_seconds
     fi
     if [ "$heavyweight_is_head" -eq 1 ] && [ "$heavyweight_ready" -eq 1 ] && mkdir "$heavyweight_owner_path" 2>/dev/null; then
       printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process"
       printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class"
       printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine"
+      if ! heavyweight_charge_backfill; then
+        printf '[preferred-execution] could not record heavyweight backfill on %s\n' "$heavyweight_admission_machine" >&2
+        exit 1
+      fi
       rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
       heavyweight_cleanup_waiters
       heavyweight_count_entries
@@ -451,15 +609,16 @@ run_heavyweight_admission() {
       fi
       break
     fi
-    if [ "$heavyweight_is_head" -eq 0 ]; then
-      heavyweight_wait_reason="queue-ahead"
-    elif [ "$heavyweight_ready" -eq 0 ]; then
+    if [ "$heavyweight_ready" -eq 0 ]; then
       heavyweight_wait_reason="$heavyweight_resource_reason"
+    elif [ "$heavyweight_is_head" -eq 0 ]; then
+      heavyweight_wait_reason="$heavyweight_queue_reason"
     else
       heavyweight_wait_reason="admission-race"
     fi
     heavyweight_wait_state="$heavyweight_wait_reason queue=$heavyweight_waiting_count"
     heavyweight_release_lock
+    [ "${heavyweight_no_wait-0}" != 1 ] || heavyweight_decline_before_dispatch
     if [ "$heavyweight_wait_state" != "$heavyweight_last_wait_state" ]; then
       printf '[preferred-execution] waiting for heavyweight admission on %s (class=%s, %s)\n' \
         "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_wait_state" >&2
@@ -478,16 +637,38 @@ run_heavyweight_admission() {
   exit "$heavyweight_status"
 }
 
-if [ "${1-}" = --heavyweight-admission ]; then
+check_heavyweight_admission() {
+  [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
+  mkdir -p -- "$heavyweight_admission_root/owners" "$heavyweight_admission_root/waiters" || return 1
+  exec 9>>"$heavyweight_admission_root/lock" || return 1
+  if ! flock -n 9; then
+    printf '[preferred-execution] heavyweight admission unavailable on %s (admission decision in progress)\n' "$heavyweight_admission_machine" >&2
+    return 1
+  fi
+  if ! heavyweight_resource_is_ready; then
+    printf '[preferred-execution] heavyweight admission unavailable on %s (class=%s, %s)\n' "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_resource_reason" >&2
+    return 1
+  fi
+  if ! heavyweight_queue_is_eligible; then
+    printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" "$heavyweight_queue_reason" >&2
+    return 1
+  fi
+}
+
+if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-check ]; then
+  heavyweight_check_only=0
+  [ "$1" != --heavyweight-admission-check ] || heavyweight_check_only=1
   shift
   heavyweight_admission_root=
   heavyweight_admission_class=validation
   heavyweight_admission_machine=local
+  heavyweight_no_wait=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
       --class=*) heavyweight_admission_class=${1#--class=} ;;
       --machine=*) heavyweight_admission_machine=${1#--machine=} ;;
+      --no-wait) heavyweight_no_wait=1 ;;
       --)
         shift
         break
@@ -499,15 +680,40 @@ if [ "${1-}" = --heavyweight-admission ]; then
     esac
     shift
   done
-  [ -n "$heavyweight_admission_root" ] || heavyweight_admission_root=$(resolve_heavyweight_admission_root) || {
-    printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
-    exit 1
-  }
+  heavyweight_requested_root=$heavyweight_admission_root
+  if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+    heavyweight_admission_root=$(resolve_heavyweight_admission_root) || {
+      printf '%s\n' '[preferred-execution] host-global heavyweight admission state is unavailable; private admission is not permitted' >&2
+      exit 1
+    }
+    if [ -n "$heavyweight_requested_root" ] && [ "$heavyweight_requested_root" != "$heavyweight_admission_root" ]; then
+      printf '[preferred-execution] caller admission root cannot override host-global state: %s\n' "$heavyweight_admission_root" >&2
+    fi
+    heavyweight_admission_machine=$(resolve_native_host_admission_machine) || {
+      printf '%s\n' '[preferred-execution] heavyweight admission cannot identify its worker host' >&2
+      exit 1
+    }
+  fi
+  if [ "$heavyweight_check_only" -eq 1 ]; then
+    check_heavyweight_admission
+    exit $?
+  fi
   run_heavyweight_admission "$heavyweight_admission_root" "$heavyweight_admission_class" "$heavyweight_admission_machine" "$@"
 fi
 
+mark_public_typecheck_dispatch() {
+  # Host selection alone does not authorize finite implementation tasks.
+  case "${policy_script-}" in
+    typecheck:local|typecheck:compiler:local|check:public-sdk:finite:local)
+      HAPPIER_TYPECHECK_DISPATCHED=1
+      export HAPPIER_TYPECHECK_DISPATCHED
+      ;;
+  esac
+}
+
 run_local() {
   resolve_command_policy "$@"
+  mark_public_typecheck_dispatch
   protected_dispatch_local_payload=${HAPPIER_HSTACK_DISPATCH_CONTROL-0}
   unset HAPPIER_HSTACK_DISPATCH_CONTROL
   HAPPIER_HSTACK_EXECUTION=1
@@ -697,6 +903,14 @@ restart_launcher_in_control_scope() {
 }
 
 explicit_target=
+if [ "${1-}" = --runtime-build-memory ]; then
+  # A local observation for the already-running build, not command placement
+  # or a second admission queue. Missing observations select sequential work.
+  read_host_memory_kib
+  heavyweight_memory_floor_kib runtime-build
+  printf '\n'
+  exit 0
+fi
 case "${1-}" in
   --target=*)
     explicit_target=${1#--target=}
@@ -1059,11 +1273,10 @@ relative_cwd=${relative_cwd#/}
 heavyweight_admission_required=0
 [ -n "$policy_heavyClass" ] && heavyweight_admission_required=1
 minimum_memory_capacity_kib=0
-if [ "$policy_heavyClass" = compilation ]; then
+if [ -n "$policy_heavyClass" ]; then
   minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$policy_heavyClass")
 fi
-heavyweight_remote_class=$command_class
-[ "$policy_heavyClass" != compilation ] || heavyweight_remote_class=$policy_heavyClass
+heavyweight_remote_class=$policy_heavyClass
 
 stack_dir=$(dirname -- "$config_path")
 cache_dir="$stack_dir/dev-target-command-load-native"
@@ -1305,8 +1518,8 @@ read_fresh_cache() {
 }
 
 report_insufficient_memory_capacity() {
-  printf '[preferred-execution] insufficient memory capacity on %s for compilation (requires=%s KiB total)\n' \
-    "$1" "$minimum_memory_capacity_kib" >&2
+  printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB total)\n' \
+    "$1" "$policy_heavyClass" "$minimum_memory_capacity_kib" >&2
 }
 
 probe_target() {
@@ -1458,11 +1671,7 @@ if [ "${include_local-0}" = 1 ] && [ -z "$explicit_target" ]; then
   free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
   [ -n "$free" ] || free=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}' /proc/meminfo 2>/dev/null)
   [ -n "$free" ] || free=1
-  local_memory=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a, t}' /proc/meminfo 2>/dev/null)
-  if [ -z "$local_memory" ]; then
-    local_mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
-    local_memory=$(awk -v bytes="${local_mem_total_bytes:-0}" -v ratio="$free" 'BEGIN {if(bytes>0) printf "%.0f %.0f", (bytes/1024)*ratio, bytes/1024}')
-  fi
+  local_memory=$(read_host_memory_kib)
   IFS=' ' read -r local_mem_available local_mem_total <<EOF
 $local_memory
 EOF
@@ -1554,20 +1763,23 @@ count_active_dispatches() {
     # An unlocked file is stale regardless of what its recorded PID resolves
     # to in this caller's namespace. Darwin retains the prior PID fallback.
     if command -v flock >/dev/null 2>&1 && flock -n "$reservation" -c : 2>/dev/null; then
-      rm -f -- "$reservation" 2>/dev/null || true
+      stale_execution_id=$(sed -n '3p' "$reservation" 2>/dev/null || true)
+      case "$stale_execution_id" in native-*) ;; *) rm -f -- "$reservation" 2>/dev/null || true ;; esac
       continue
     fi
     reservation_pid=$(sed -n '1p' "$reservation" 2>/dev/null || true)
     case "$reservation_pid" in
       ''|*[!0-9]*) rm -f -- "$reservation" 2>/dev/null || true ;;
       *)
-        if kill -0 "$reservation_pid" 2>/dev/null; then
+        reservation_process_token=$(sed -n '4p' "$reservation" 2>/dev/null || true)
+        if heavyweight_process_is_current "$reservation_pid" "${reservation_process_token:--}"; then
           active_count=$((active_count + 1))
           reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
           [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
           is_heavyweight_dispatch_class "$reservation_class" && active_heavyweight_count=$((active_heavyweight_count + 1))
         else
-          rm -f -- "$reservation" 2>/dev/null || true
+          stale_execution_id=$(sed -n '3p' "$reservation" 2>/dev/null || true)
+          case "$stale_execution_id" in native-*) ;; *) rm -f -- "$reservation" 2>/dev/null || true ;; esac
         fi
         ;;
     esac
@@ -1653,7 +1865,7 @@ if [ -n "$reservation_temporary" ] && command -v flock >/dev/null 2>&1; then
   fi
 fi
 if [ -z "$reservation_temporary" ] \
-    || ! printf '%s\n%s\n%s\n' "$$" "$command_class" "$execution_id" > "$reservation_temporary" \
+    || ! printf '%s\n%s\n%s\n%s\n' "$$" "$command_class" "$execution_id" "$(heavyweight_process_token "$$")" > "$reservation_temporary" \
     || ! mv -f -- "$reservation_temporary" "$reservation_path"; then
   if [ "$reservation_lock_held" -eq 1 ]; then
     flock -u 8 2>/dev/null || true
@@ -1826,7 +2038,7 @@ remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
 pid_file="$remote_home/remote-exec/$execution_id.pid"
-remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; export HAPPIER_DEV_TARGET_EXECUTION=1;"
+remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_setup_script=
 if [ "$requires_remote_dependencies" -eq 1 ]; then
@@ -1837,6 +2049,10 @@ if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
 fi
 remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
 remote_command_environment=
+mark_public_typecheck_dispatch
+if [ "${HAPPIER_TYPECHECK_DISPATCHED-}" = 1 ]; then
+  remote_command_environment=' export HAPPIER_TYPECHECK_DISPATCHED=1;'
+fi
 if [ "$resource_governor_priority" = background ]; then
   case "$nested_worker_tool" in
     vitest)
@@ -1920,7 +2136,41 @@ fi
 # strict setup/command execution, then disable errexit only after capturing the
 # command result so a host logout helper cannot replace that result.
 remote_script="$remote_script command_status=\$?; set +e; exit \"\$command_status\""
-remote_command="bash -lc $(quote_remote "$remote_script")"
+remote_custody="$remote_repo/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh"
+remote_command="bash $(quote_remote "$remote_custody") run $(quote_remote "$pid_file") $(quote_remote "$execution_id") bash -lc $(quote_remote "$remote_script")"
+if [ "$explicit_tty" != 1 ]; then
+  remote_command="HAPPIER_REMOTE_EXEC_LIFELINE=1 $remote_command"
+fi
+orphan_execution_ids=
+remote_orphan_cleanup=
+for orphan_reservation in "$cache_dir/$selected_name.active."*; do
+  [ -f "$orphan_reservation" ] || continue
+  [ "$orphan_reservation" != "$reservation_path" ] || continue
+  orphan_controller=$(sed -n '1p' "$orphan_reservation" 2>/dev/null || true)
+  orphan_token=$(sed -n '4p' "$orphan_reservation" 2>/dev/null || true)
+  orphan_is_gone=0
+  if command -v flock >/dev/null 2>&1 && flock -n "$orphan_reservation" -c : 2>/dev/null; then
+    orphan_is_gone=1
+  elif ! heavyweight_process_is_current "$orphan_controller" "${orphan_token:--}"; then
+    orphan_is_gone=1
+  fi
+  [ "$orphan_is_gone" = 1 ] || continue
+  orphan_id=$(sed -n '3p' "$orphan_reservation" 2>/dev/null || true)
+  case "$orphan_id" in native-*) ;; *) continue ;; esac
+  case "$orphan_id" in *[!A-Za-z0-9_-]*) continue ;; esac
+  orphan_execution_ids="$orphan_execution_ids $orphan_id"
+  remote_orphan_cleanup="$remote_orphan_cleanup printf '%s\\n' $(quote_remote "[preferred-execution] reaping remote execution $orphan_id whose controller is gone") >&2; bash $(quote_remote "$remote_custody") cancel $(quote_remote "$remote_home/remote-exec/$orphan_id.pid") $(quote_remote "$orphan_id");"
+done
+if [ -n "$remote_orphan_cleanup" ]; then
+  remote_command="bash -lc $(quote_remote "set -e;$remote_orphan_cleanup exec env $remote_command")"
+fi
+release_orphan_reservations() {
+  for orphan_reservation in "$cache_dir/$selected_name.active."*; do
+    [ -f "$orphan_reservation" ] || continue
+    orphan_id=$(sed -n '3p' "$orphan_reservation" 2>/dev/null || true)
+    case " $orphan_execution_ids " in *" $orphan_id "*) rm -f -- "$orphan_reservation" 2>/dev/null || true ;; esac
+  done
+}
 
 umask 077
 allocate_ssh_control_root() {
@@ -2122,32 +2372,53 @@ if ! open_selected_control; then
 fi
 
 run_selected_ssh() {
+  # This descriptor belongs only to the controller. If inherited by SSH, it
+  # would keep its own lifetime pipe open after controller SIGKILL.
+  exec 9>&-
+  [ "$explicit_tty" != 1 ] || exec 4<&-
   ssh_tty=-T
   [ "$explicit_tty" = 1 ] && ssh_tty=-tt
   if [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ] && [ -n "$authoritative_ssh_error_log" ]; then
-    ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ] && [ -n "$ssh_config" ]; then
-    ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ "$use_control_connection" -eq 0 ]; then
-    ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ] && [ -n "$ssh_config" ]; then
-    ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$authoritative_ssh_error_log" ]; then
-    ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh -E "$authoritative_ssh_error_log" -o LogLevel=ERROR "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   elif [ -n "$ssh_config" ]; then
-    ssh "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   else
-    ssh "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
+    exec ssh "$ssh_tty" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$remote_command"
   fi
 }
 
-run_selected_ssh &
+custody_pipe=
+custody_watcher_pid=
+custody_pipe=$(create_cache_temporary "$cache_dir/remote-custody" 2>/dev/null || true)
+if [ -z "$custody_pipe" ]; then release_reservation; exit 1; fi
+rm -f -- "$custody_pipe"
+if ! mkfifo "$custody_pipe"; then release_reservation; exit 1; fi
+exec 9<> "$custody_pipe"
+[ "$explicit_tty" != 1 ] || exec 4<&0
+run_selected_ssh_with_custody() {
+  if [ "$explicit_tty" = 1 ]; then run_selected_ssh <&4; else run_selected_ssh < "$custody_pipe"; fi
+}
+release_custody_pipe() {
+  [ -n "$custody_pipe" ] || return 0
+  exec 9>&-
+  rm -f -- "$custody_pipe"
+  [ -z "$custody_watcher_pid" ] || kill -TERM "$custody_watcher_pid" 2>/dev/null || true
+}
+trap release_custody_pipe EXIT
+run_selected_ssh_with_custody &
 ssh_pid=$!
 cancel_remote_execution() {
-  cancel_script="execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); [ -f \"\$pid_file\" ] || exit 0; pid=\$(sed -n '1p' \"\$pid_file\"); case \"\$pid\" in ''|*[!0-9]*) exit 0;; esac; command=\$(ps -p \"\$pid\" -o command= 2>/dev/null || true); case \"\$command\" in *\"\$execution_id\"*) ;; *) rm -f -- \"\$pid_file\"; exit 0;; esac; descendants() { for child in \$(ps -eo pid=,ppid= | awk -v p=\"\$1\" '\$2 == p {print \$1}'); do descendants \"\$child\"; done; printf '%s\\n' \"\$1\"; }; descendant_pids=\$(descendants \"\$pid\"); for child_pid in \$descendant_pids; do [ \"\$child_pid\" = \"\$pid\" ] || kill -TERM \"\$child_pid\" 2>/dev/null || true; done; grace_attempt=0; while [ \"\$grace_attempt\" -lt 20 ]; do survivors=; for child_pid in \$descendant_pids; do if [ \"\$child_pid\" != \"\$pid\" ] && kill -0 \"\$child_pid\" 2>/dev/null; then survivors=1; fi; done; [ -n \"\$survivors\" ] || break; sleep 0.1; grace_attempt=\$((grace_attempt + 1)); done; for child_pid in \$descendant_pids; do if [ \"\$child_pid\" != \"\$pid\" ] && kill -0 \"\$child_pid\" 2>/dev/null; then kill -KILL \"\$child_pid\" 2>/dev/null || true; fi; done; kill -TERM \"\$pid\" 2>/dev/null || true; rm -f -- \"\$pid_file\""
-  cancel_command="bash -lc $(quote_remote "$cancel_script")"
+  cancel_command="bash $(quote_remote "$remote_custody") cancel $(quote_remote "$pid_file") $(quote_remote "$execution_id")"
   # A failed authoritative channel may also mean its shared control master
   # died. Cancellation uses the same verified host config on an independent
   # connection, and the execution ID/PID guard prevents touching another job.
@@ -2157,12 +2428,23 @@ cancel_remote_execution() {
     ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
   fi
 }
+if [ "$explicit_tty" = 1 ]; then
+  (
+    exec 9>&-
+    while IFS= read -r custody_line; do :; done
+    cancel_remote_execution
+    custody_ssh_command=$(ps -p "$ssh_pid" -o command= 2>/dev/null || true)
+    case "$custody_ssh_command" in *"$execution_id"*) kill -TERM "$ssh_pid" 2>/dev/null || true ;; esac
+  ) < "$custody_pipe" &
+  custody_watcher_pid=$!
+fi
 cancel_remote() {
   cancel_remote_execution
   kill -TERM "$ssh_pid" 2>/dev/null || true
   [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
   close_selected_control
   release_reservation
+  release_custody_pipe
 }
 trap 'cancel_remote; exit 130' INT TERM
 trap 'cancel_remote; exit 129' HUP
@@ -2176,7 +2458,7 @@ if [ "$status" -eq 255 ] && [ "$authoritative_session_refused" -eq 1 ]; then
   [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
   authoritative_ssh_error_log=$(create_cache_temporary "$cache_dir/authoritative-ssh" 2>/dev/null || true)
   use_control_connection=0
-  run_selected_ssh &
+  run_selected_ssh_with_custody &
   ssh_pid=$!
   trap 'cancel_remote; exit 130' INT TERM
   trap 'cancel_remote; exit 129' HUP
@@ -2214,6 +2496,7 @@ fi
 [ -n "$authoritative_ssh_error_log" ] && rm -f -- "$authoritative_ssh_error_log" 2>/dev/null || true
 close_selected_control
 release_reservation
+[ "$status" = 255 ] || release_orphan_reservations
 completed_at_seconds=$(date +%s)
 completed_at=$((completed_at_seconds * 1000))
 duration_ms=$((completed_at - admitted_at))

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -135,13 +135,14 @@ async function fixture(t, { tree = false, route = false, windows = false, platfo
     root,
     fakeCompiler,
     start(args, options = {}) {
+      const { command = process.execPath, ...childOptions } = options;
       const env = { ...process.env, ...options.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
       if (route || windows) {
         delete env.HAPPIER_HSTACK_EXECUTION;
         delete env.HAPPIER_DEV_TARGET_EXECUTION;
       }
-      child = spawn(process.execPath, args, {
-        ...options,
+      child = spawn(command, args, {
+        ...childOptions,
         stdio: options.stdio ?? ['ignore', 'ignore', 'pipe'],
         cwd: root,
         env,
@@ -161,6 +162,74 @@ test('Windows compiler noEmit uses the local native compiler instead of the POSI
   assert.deepEqual(await once(child, 'exit'), [0, null], stderr());
   assert.ok(Number(await readFile(setup.pidFile, 'utf8')) > 0);
 });
+
+for (const env of [
+  { npm_lifecycle_event: 'typecheck:source:finite' },
+  { npm_lifecycle_event: 'typecheck:finite', CI: 'true' },
+  { npm_lifecycle_event: 'typecheck:tests:prepared' },
+  { npm_lifecycle_event: 'typecheck:tests:prepared', TURBO_TASK_ID: '@happier-dev/plugin-sdk#typecheck:finite' },
+  { npm_lifecycle_event: 'typecheck:source:finite', TURBO_TASK_ID: '@happier-dev/cli#test:finite' },
+]) {
+  test(`finite compiler refuses undispatched ${env.TURBO_TASK_ID ?? env.npm_lifecycle_event}`, async (t) => {
+    const setup = await fixture(t, { exitCode: 0 });
+    const { child, stderr } = setup.start([runner], { env: { ...env, HAPPIER_TYPECHECK_DISPATCHED: '' } });
+    assert.deepEqual(await once(child, 'exit'), [1, null], stderr());
+    assert.match(stderr(), /run `yarn typecheck` \(routed\) instead of `typecheck:(?:source:)?finite`/);
+    await assert.rejects(readFile(setup.pidFile), { code: 'ENOENT' });
+  });
+}
+
+test('finite compiler accepts explicit public-owner dispatch without changing compiler failure status', async (t) => {
+  const setup = await fixture(t, { exitCode: 7 });
+  const { child, stderr } = setup.start([runner], { env: {
+    npm_lifecycle_event: 'typecheck:source:finite', HAPPIER_TYPECHECK_DISPATCHED: '1',
+  } });
+  assert.deepEqual(await once(child, 'exit'), [7, null], stderr());
+  assert.ok(Number(await readFile(setup.pidFile, 'utf8')) > 0);
+});
+
+test('actual CLI and Plugin SDK direct finite Yarn entries refuse before compilation', () => {
+  for (const [workspace, task] of [['apps/cli', 'typecheck:source:finite'], ['packages/plugin-sdk', 'typecheck:finite']]) {
+    const yarn = resolveYarnCommandInvocation(['--cwd', fileURLToPath(new URL(`../../${workspace}/`, import.meta.url)), '-s', task]);
+    const result = spawnSync(yarn.command, yarn.args, {
+      encoding: 'utf8',
+      env: { ...process.env, HAPPIER_TYPECHECK_DISPATCHED: '', TURBO_TASK_ID: '' },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, 1, result.stderr);
+    assert.ok(result.stderr.includes(`run \`yarn typecheck\` (routed) instead of \`${task}\``), result.stderr);
+  }
+});
+
+for (const explicitLocal of [false, true]) {
+  test(`public Yarn typecheck reaches its finite compiler (${explicitLocal ? '--local' : 'already routed'})`, { skip: process.platform === 'win32' }, async (t) => {
+    const setup = await fixture(t, { exitCode: 0 });
+    const launcher = fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url));
+    const cliPackage = JSON.parse(await readFile(new URL('../../apps/cli/package.json', import.meta.url), 'utf8'));
+    const binDir = join(setup.root, 'bin');
+    await mkdir(binDir);
+    // The compiler is substituted; avoid admitting its tiny OS-boundary fixture
+    // as a full compilation on a worker below the real compiler memory floor.
+    await writeFile(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
+    await chmod(join(binDir, 'uname'), 0o755);
+    await writeFile(join(setup.root, 'package.json'), JSON.stringify({
+      name: 'finite-dispatch-fixture',
+      packageManager: 'yarn@1.22.22',
+      scripts: {
+        typecheck: cliPackage.scripts.typecheck.replace('../stack/bin/hstack-exec', `${JSON.stringify(launcher)}${explicitLocal ? ' --local' : ''}`),
+        'typecheck:local': cliPackage.scripts['typecheck:local'],
+        'typecheck:source:finite': cliPackage.scripts['typecheck:source:finite'].replace('../../scripts/workspaces/runTypeScriptCli.mjs', JSON.stringify(runner)),
+      },
+    }));
+    const yarn = resolveYarnCommandInvocation(['-s', 'typecheck']);
+    const { child, stderr } = setup.start(yarn.args, { command: yarn.command, env: {
+      HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_TYPECHECK_DISPATCHED: '',
+      PATH: `${binDir}:${process.env.PATH}`,
+    } });
+    assert.deepEqual(await once(child, 'exit'), [0, null], stderr());
+    assert.ok(Number(await readFile(setup.pidFile, 'utf8')) > 0);
+  });
+}
 
 for (const windows of [false, true]) {
   test(`compiler can bootstrap workspace dist (${windows ? 'Windows' : 'POSIX'} boundary)`, async (t) => {

@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 
 import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import {
@@ -51,24 +52,65 @@ const windows = {
 
 const execFileAsync = promisify(execFile);
 
+function installRemoteCustody(repoDir) {
+  const directory = join(repoDir, 'apps/stack/scripts/utils/dev_targets');
+  mkdirSync(directory, { recursive: true });
+  copyFileSync(fileURLToPath(new URL('./remote_execution_custody.sh', import.meta.url)), join(directory, 'remote_execution_custody.sh'));
+  mkdirSync(join(repoDir, 'apps/stack/scripts/utils/proc'), { recursive: true });
+  copyFileSync(fileURLToPath(new URL('../proc/native_process_identity.sh', import.meta.url)), join(repoDir, 'apps/stack/scripts/utils/proc/native_process_identity.sh'));
+  const hostState = join(repoDir, 'apps/stack/scripts/utils/proc/native_host_admission_state.sh');
+  if (!existsSync(hostState)) copyFileSync(fileURLToPath(new URL('../proc/native_host_admission_state.sh', import.meta.url)), hostState);
+}
+
+test('controlled remote stacks isolate CLI state and scratch and start the selected runtime without watch', () => {
+  const options = {
+    stackName: 'agent-qa', runtimeMode: 'controlled', runtimeSnapshotId: 'snapshot-x64',
+    services: { server: true, expo: false, daemon: true }, remoteServerPort: 43001,
+    serverUrl: 'http://127.0.0.1:43001', publicServerUrl: 'http://127.0.0.1:3005',
+    canonicalServerUrl: 'http://happier-agent-qa.localhost:3005',
+    remoteServerRuntimeConfig: { serverComponentName: 'happier-server-light', dbProvider: 'sqlite', environment: {} },
+  };
+  const paths = resolveRemoteStackStatePaths(posix, options);
+  assert.equal(paths.cliHomeDir, `${paths.stackBaseDir}/cli`);
+  assert.equal(paths.workspaceDir, `${paths.stackBaseDir}/workspace`);
+  assert.equal(paths.activeServerId, buildStackStableScopeId({ stackName: 'agent-qa', cliIdentity: 'default' }));
+  const command = buildRemoteStackCommand(posix, options);
+  assert.match(command, /stack start .*--runtime/);
+  assert.match(command, /--no-dev-targets/);
+  assert.doesNotMatch(command, /stack dev|--watch/);
+  assert.ok(command.includes(paths.cliHomeDir));
+  assert.ok(command.includes(paths.workspaceDir));
+  assert.match(command, /HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0/);
+  assert.match(command, /HAPPIER_PUBLIC_SERVER_URL=http:\/\/127\.0\.0\.1:3005/);
+  assert.match(command, /mkdir -p -- .*workspace/);
+});
+
+test('controlled writable state rejects the one-way source replica and accepts sibling paths on both platforms', () => {
+  for (const target of [
+    { ...posix, repoDir: '/remote/repo', cliHomeDir: '/remote/repo/.happier' },
+    { ...windows, repoDir: 'C:/Remote/Repo', cliHomeDir: 'c:\\remote\\repo\\state' },
+  ]) assert.throws(() => resolveRemoteStackStatePaths(target, { stackName: 'qa', runtimeMode: 'controlled' }), /outside.*source replica/);
+  assert.ok(resolveRemoteStackStatePaths({ ...posix, repoDir: '/remote/repo', cliHomeDir: '/remote/repo-state' }, { stackName: 'qa', runtimeMode: 'controlled' }).workspaceDir);
+});
+
 test('whole-operation admission covers preparation children, preserves cwd/env and stops on preparation failure', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-whole-operation-' });
+  const { launcher } = await installNativeAdmissionFixture({ root });
+  const checkout = join(root, 'native-owner');
+  installRemoteCustody(checkout);
   const bin = join(root, 'bin');
-  const native = join(root, 'apps/stack/bin/hstack-exec');
   mkdirSync(bin, { recursive: true });
-  mkdirSync(join(root, 'apps/stack/bin'), { recursive: true });
-  mkdirSync(join(root, 'apps/cli'), { recursive: true });
-  copyFileSync(fileURLToPath(new URL('../../../bin/hstack-exec', import.meta.url)), native);
-  chmodSync(native, 0o755);
+  mkdirSync(join(checkout, 'apps/cli'), { recursive: true });
+  chmodSync(launcher, 0o755);
   const executable = (name, body) => { writeFileSync(join(bin, name), '#!/bin/sh\n' + body + '\n'); chmodSync(join(bin, name), 0o755); };
   // Mock only OS tool/resource boundaries. The native admission logic is real.
   executable('uname', 'printf "Linux\\n"');
   executable('getconf', 'printf "8\\n"');
   executable('systemctl', 'exit 1');
   executable('awk', 'case "$*" in */proc/meminfo*) printf "25480397 28311552\\n" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac');
-  executable('node', '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage=prepare ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "$FAIL_STAGE" != "$stage" ] || exit 42');
+  executable('node', 'case "$*" in *service_memory.mjs*) printf "service 0\\n"; exit 0 ;; esac\n[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\ncase "$*" in *remote_dependency_bootstrap*) stage=bootstrap ;; *) stage=prepare ;; esac\nprintf "%s\\n" "$stage" >> "$TRACE"\n[ "$FAIL_STAGE" != "$stage" ] || exit 42');
   executable('probe-command', '[ -n "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" ] || exit 99\nprintf "payload:%s:%s\\n" "$PWD" "$VALUE" >> "$TRACE"');
-  const localTarget = { ...posix, repoDir: root, cliHomeDir: join(root, 'cli-home'), remotePath: [bin, '/usr/bin', '/bin'] };
+  const localTarget = { ...posix, repoDir: checkout, cliHomeDir: join(root, 'cli-home'), remotePath: [bin, '/usr/bin', '/bin'] };
   const trace = join(root, 'trace');
   const request = failStage => buildRemoteExecCommand(localTarget, {
     executionId, cwd: 'apps/cli', commandArgs: ['probe-command'], admissionClass: 'targeted-validation',
@@ -76,7 +118,7 @@ test('whole-operation admission covers preparation children, preserves cwd/env a
     environment: { HOME: root, HAPPIER_STACK_CLI_HOME_DIR: join(root, 'admission-home'), TRACE: trace, VALUE: "literal '$value'", FAIL_STAGE: failStage },
   });
   await execFileAsync('/bin/bash', ['-c', request('')]);
-  assert.equal(readFileSync(trace, 'utf8'), `bootstrap\nprepare\npayload:${root}/apps/cli:literal '$value'\n`);
+  assert.equal(readFileSync(trace, 'utf8'), `bootstrap\nprepare\npayload:${checkout}/apps/cli:literal '$value'\n`);
   writeFileSync(trace, '');
   await assert.rejects(execFileAsync('/bin/bash', ['-c', request('bootstrap')]), error => error.code === 42);
   assert.equal(readFileSync(trace, 'utf8'), 'bootstrap\n');
@@ -344,7 +386,7 @@ test('remote exec validates repo-relative cwd and preserves POSIX argument and e
   assert.match(command, /cd -- .*\/home\/dev\/Happier repo\/apps\/cli/);
   assert.match(command, /export CI=.*1/);
   assert.match(command, /export HAPPIER_TEST_LABEL=.*agent.*s run/);
-  assert.match(command, /set \+e; .*rg.*-n.*a.*b.*src.*command_status=\$\?/);
+  assert.match(command, /exec .*rg.*-n.*a.*b.*src/);
   assert.throws(
     () => buildRemoteExecCommand(target, { executionId, cwd: '../outside', commandArgs: ['pwd'] }),
     /working directory must stay inside the synchronized repository/i,
@@ -362,9 +404,11 @@ test('remote classification recognizes direct native TypeScript and nested launc
   );
 });
 
-test('remote exec POSIX shell layer preserves live native argument boundaries', async () => {
+test('remote exec POSIX shell layer preserves live native argument boundaries', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-remote-arguments-' });
+  installRemoteCustody(root);
   const command = buildRemoteExecCommand(
-    { ...posix, repoDir: '/tmp', cliHomeDir: '/tmp/happier-remote-command-test' },
+    { ...posix, repoDir: root, cliHomeDir: join(root, 'home') },
     {
       executionId,
       commandArgs: ['/usr/bin/printf', '<%s>\n', "a'b", 'two words', 'quote"double'],
@@ -389,15 +433,7 @@ test('remote exec preserves Windows argument and cwd boundaries', () => {
   assert.match(decodedPowerShell, /'say \\"hello\\"'/);
 });
 
-test('remote exec publishes an execution-scoped process identity and removes it on normal exit', () => {
-  const posixCommand = buildRemoteExecCommand(posix, {
-    executionId,
-    commandArgs: ['long-test'],
-  });
-  assert.match(posixCommand, new RegExp(`${executionId}\\.pid`));
-  assert.match(posixCommand, /printf .*\$\$.*pid/);
-  assert.match(posixCommand, /trap .*EXIT/);
-
+test('Windows remote exec publishes an execution-scoped process identity and removes it on normal exit', () => {
   const windowsCommand = buildRemoteExecCommand(windows, {
     executionId,
     commandArgs: ['long-test.exe'],
@@ -409,14 +445,7 @@ test('remote exec publishes an execution-scoped process identity and removes it 
   assert.match(decodedPowerShell, /finally .*Remove-Item/s);
 });
 
-test('remote cancellation targets only the recorded execution identity and its descendants', () => {
-  const posixCancel = buildRemoteCancelCommand(posix, { executionId });
-  assert.match(posixCancel, new RegExp(`${executionId}\\.pid`));
-  assert.match(posixCancel, /ps -p .*command=/);
-  assert.match(posixCancel, /collect_descendants/);
-  assert.match(posixCancel, /kill -TERM/);
-  assert.match(posixCancel, /kill -KILL/);
-
+test('Windows remote cancellation targets only the recorded execution identity and its descendants', () => {
   const windowsCancel = buildRemoteCancelCommand(windows, { executionId });
   const decodedPowerShell = Buffer.from(windowsCancel.split(' ').at(-1), 'base64').toString('utf16le');
   assert.match(decodedPowerShell, new RegExp(`${executionId}\\.pid`));
@@ -435,6 +464,7 @@ test('POSIX remote cancellation terminates the live execution tree and removes i
     throw error;
   }
   const root = mkdtempSync(join(tmpdir(), 'happier-remote-cancel-'));
+  installRemoteCustody(root);
   const liveTarget = {
     ...posix,
     repoDir: root,
@@ -495,6 +525,7 @@ test('POSIX remote execution forwards wrapper termination to its live command tr
     throw error;
   }
   const root = mkdtempSync(join(tmpdir(), 'happier-remote-signal-'));
+  installRemoteCustody(root);
   const liveTarget = {
     ...posix,
     repoDir: root,
@@ -521,7 +552,7 @@ test('POSIX remote execution forwards wrapper termination to its live command tr
     }
     assert.equal(existsSync(identityFile), true, 'remote wrapper must publish its identity');
     assert.equal(existsSync(childPidFile), true, 'remote child must be running before termination');
-    const wrapperPid = Number(readFileSync(identityFile, 'utf8').trim());
+    const wrapperPid = Number(readFileSync(identityFile, 'utf8').split('\n')[0]);
     commandPid = Number(readFileSync(childPidFile, 'utf8').trim());
 
     process.kill(wrapperPid, 'SIGTERM');
