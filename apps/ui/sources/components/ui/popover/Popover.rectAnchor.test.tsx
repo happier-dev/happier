@@ -20,6 +20,7 @@ installPopoverCommonModuleMocks({
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
             StyleSheet: {
                 absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+                flatten: flattenStyle,
             },
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),

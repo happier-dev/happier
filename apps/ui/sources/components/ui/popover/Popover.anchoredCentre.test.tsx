@@ -20,6 +20,7 @@ installPopoverCommonModuleMocks({
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
             StyleSheet: {
                 absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+                flatten: flattenStyle,
             },
             View: (props: any) => React.createElement('View', props, props.children),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
@@ -116,5 +117,17 @@ describe('Popover: content-sized and centred on its anchor (tooltips)', () => {
         // Bottom placement pins `top` below the anchor: 10 + 28 + 6.
         expect(readNumber(style, 'top') + Number(style.paddingTop ?? 0)).toBe(44);
         expect(style.bottom).toBeUndefined();
+    });
+
+    it('keeps explicit-side popovers reachable near the window edge by default', async () => {
+        const { style } = await renderCentredPopover({ left: 400, top: 10, width: 28, height: 28 }, { width: 64, height: 28 });
+        expect(readNumber(style, 'top') + Number(style.paddingTop ?? 0)).toBe(44);
+        expect(style.bottom).toBeUndefined();
+    });
+
+    it('honors a caller that explicitly retains its requested side', async () => {
+        const { style } = await renderCentredPopover({ left: 400, top: 10, width: 28, height: 28 }, { width: 64, height: 28 }, { flip: false });
+        expect(style.top).toBeUndefined();
+        expect(typeof style.bottom).toBe('number');
     });
 });

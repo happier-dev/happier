@@ -1,4 +1,4 @@
-import { act, useState, type ReactNode, type RefObject } from 'react';
+import { act, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb, mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
@@ -13,7 +13,7 @@ import { PluginUiProvider } from './PluginUiProvider.js';
 import { Button } from './Button.js';
 import { Text } from './Text.js';
 import { ScrollArea } from './Layout.js';
-import { ContextMenu, Dropdown, Menu, Popover, type MenuItem } from './Overlay.js';
+import { ContextMenu, Dropdown, HostedAnchoredMenu, Menu, Popover, type MenuItem } from './Overlay.js';
 
 // @ts-expect-error Checkbox menu rows must always publish a boolean checked state.
 const invalidUncheckedCheckbox: MenuItem = { id: 'unchecked', label: 'Unchecked', kind: 'checkbox' };
@@ -104,6 +104,50 @@ function hasProjectedSurfaceChrome(element: HTMLElement | null): boolean {
 }
 
 describe('controlled overlay presentation', () => {
+  it('keeps hosted anchored choices in the canonical menu focus, chrome and dismissal owner', async () => {
+    const methods = ['showModal', 'close'] as const;
+    const previous = methods.map(key => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, key));
+    // jsdom does not provide native dialog top-layer methods; menu logic and DOM focus stay real.
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: { configurable: true, value(this: HTMLDialogElement) { this.open = true; } },
+      close: { configurable: true, value(this: HTMLDialogElement) { this.open = false; } },
+    });
+    const selected: string[] = [];
+    function Choices() {
+      const anchor = useRef<HTMLButtonElement>(null);
+      const [open, setOpen] = useState(false);
+      return <><button ref={anchor} onClick={() => setOpen(true)}>Move</button>{open ? <HostedAnchoredMenu anchorRef={anchor} onOpenChange={setOpen} accessibilityLabel="Move to"
+        items={[{ id: 'first', label: 'First' }, { id: 'second', label: 'Second' }]}
+        groups={[{ id: 'unavailable', accessibilityLabel: 'Unavailable', items: [{ id: 'locked', label: 'Locked', subtitle: 'Read only', disabled: true }] }]}
+        onSelect={id => { selected.push(id); }} /> : null}</>;
+    }
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}><Choices /></PluginUiProvider>);
+    const key = async (value: string) => act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true })); });
+    try {
+      const anchor = mount.container.querySelector<HTMLButtonElement>('button')!;
+      await act(async () => anchor.click());
+      const rows = () => Array.from(mount.container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+      expect(document.activeElement).toBe(rows()[0]);
+      expect(hasProjectedSurfaceChrome(mount.container.querySelector('[role="menu"]'))).toBe(true);
+      expect(mount.container.querySelector('[role="group"][aria-label="Unavailable"]')?.textContent).toContain('Read only');
+      expect(mount.container.querySelector('[role="group"][aria-label="Unavailable"]')?.textContent).toContain('Unavailable');
+      expect(rows()[2]?.getAttribute('aria-disabled')).toBe('true');
+      await key('ArrowDown'); expect(document.activeElement).toBe(rows()[1]);
+      await key('ArrowDown'); expect(document.activeElement).toBe(rows()[1]);
+      await key('ArrowUp'); expect(document.activeElement).toBe(rows()[0]);
+      await key('Escape'); expect(mount.container.querySelector('dialog')).toBeNull(); expect(document.activeElement).toBe(anchor);
+      expect(selected).toEqual([]);
+      await act(async () => anchor.click()); await key('ArrowDown'); await key('Enter');
+      expect(selected).toEqual(['second']); expect(mount.container.querySelector('dialog')).toBeNull(); expect(document.activeElement).toBe(anchor);
+      await act(async () => anchor.click());
+      await act(async () => mount.container.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })));
+      expect(mount.container.querySelector('dialog')).toBeNull(); expect(document.activeElement).toBe(anchor);
+    } finally {
+      mount.unmount();
+      methods.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, key, descriptor); else Reflect.deleteProperty(HTMLDialogElement.prototype, key); });
+    }
+  });
   it('keeps an icon menu trigger visibly focused for keyboard users', async () => {
     const context = createSurfaceContext({ contrast: 'high' });
     const mount = mountThroughReactNativeWeb(
