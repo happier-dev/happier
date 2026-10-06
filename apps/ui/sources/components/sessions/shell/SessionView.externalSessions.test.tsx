@@ -85,10 +85,18 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
 }));
 
 const machineExternalSessionStatusGetSpy = vi.hoisted(() => vi.fn());
-const machineExternalSessionAttachSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 })));
-const machineExternalSessionDetachSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, detached: true })));
-const machineExternalSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const machineExternalSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
+const machineExternalSessionAttachSpy = vi.hoisted(() => vi.fn<
+  (input: ReturnType<typeof ExternalSessionAttachRequestSchema.parse>) => Promise<ReturnType<typeof ExternalSessionAttachResponseSchema.parse>>
+>(async () => ({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 })));
+const machineExternalSessionDetachSpy = vi.hoisted(() => vi.fn<
+  (input: ReturnType<typeof ExternalSessionDetachRequestSchema.parse>) => Promise<ReturnType<typeof ExternalSessionDetachResponseSchema.parse>>
+>(async () => ({ ok: true, detached: true })));
+const machineExternalSessionTakeoverSpy = vi.hoisted(() => vi.fn<
+  (input: ReturnType<typeof ExternalSessionTakeoverStartInputV1Schema.parse>) => Promise<ReturnType<typeof ExternalSessionOperationActionResponseV1Schema.parse>>
+>());
+const machineExternalSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn<
+  (input: ReturnType<typeof ExternalSessionTakeoverStartInputV1Schema.parse>) => Promise<ReturnType<typeof ExternalSessionOperationActionResponseV1Schema.parse>>
+>());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const outboundMessageAckSpy = vi.hoisted(() => vi.fn<(event: string, payload: unknown) => Promise<unknown>>());
 const pendingHttpSpy = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<Response>>());
@@ -888,7 +896,7 @@ describe('SessionView (direct sessions)', () => {
     modalAlertSpy.mockReset();
     machineExternalSessionTakeoverSpy.mockReset();
     machineExternalSessionTakeoverPersistSpy.mockReset();
-    const acceptedTakeover = (input: ReturnType<typeof ExternalSessionTakeoverStartInputV1Schema.parse>) => {
+    const acceptedTakeover = async (input: ReturnType<typeof ExternalSessionTakeoverStartInputV1Schema.parse>): Promise<ReturnType<typeof ExternalSessionOperationActionResponseV1Schema.parse>> => {
       const request = input.request;
       return {
       ok: true,

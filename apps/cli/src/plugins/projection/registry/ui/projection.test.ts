@@ -168,15 +168,19 @@ describe('plugin UI projection family', () => {
             pluginVersion: '1.2.3',
             identity: createPluginContributionIdentity({ pluginId, localId: id }),
             manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
-            definition: {
+            definition: PluginUiViewV2Schema.parse(container === 'widget' ? {
                 id,
-                container,
-                target: { kind: container === 'widget' ? 'session' as const : 'app' as const },
+                container: 'widget',
+                target: { kind: 'session' },
                 renderer: 'renderer',
                 title: id,
-            },
+                inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true }] },
+                inputSchema: { type: 'object', properties: { session: { type: 'object' } }, required: ['session'], additionalProperties: false },
+                sessionInputPath: 'session',
+            } : {
+                id, container: 'appPage', target: { kind: 'app' }, renderer: 'renderer', title: id,
+            }),
         });
-        // The loaded predecessor widget lacks the exact typed Session inputs required by the current wire contract.
         const uiViewsV2 = [
             view(channelsPluginId, 'session-conversations-widget', 'widget'),
             view(channelsPluginId, 'channels', 'appPage'),
@@ -202,6 +206,13 @@ describe('plugin UI projection family', () => {
             })),
         };
 
+        const admittedProjection = buildPluginProjectionV2({ registry, generation: 7 });
+        expect(admittedProjection.familiesById.pluginUi?.entriesById['surfacePlacement:happier.channels:session-conversations-widget'])
+            .toMatchObject({ inputs: { fields: [{ path: 'session', required: true }] }, sessionInputPath: 'session' });
+        const widget = uiViewsV2[0].definition;
+        if (!('sessionInputPath' in widget)) throw new Error('Expected a Session widget fixture');
+        // Isolate malformed routing from the real, consumed Session input declaration.
+        widget.sessionInputPath = 'undeclared-session';
         const projection = buildPluginProjectionV2({ registry, generation: 7 });
 
         expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);

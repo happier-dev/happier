@@ -15,7 +15,6 @@ import {
     type JsonValue,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -268,13 +267,13 @@ function historyGapResetActionManifest() {
         },
         required: ['service', 'accountId'],
         additionalProperties: false,
-    } satisfies PluginJsonSchema;
+    } satisfies Parameters<typeof createPluginEventAutomationSetupResultV1JsonSchema>[1];
     const sourceConfigSchema = {
         type: 'object',
         properties: { credentialRef: sourceCredentialRefSchema },
         required: ['credentialRef'],
         additionalProperties: false,
-    } satisfies PluginJsonSchema;
+    } satisfies Parameters<typeof createPluginEventAutomationSetupResultV1JsonSchema>[1];
     const value = readCanonicalPluginManifest(createPluginManifestV2Fixture({
         id: 'acme.alpha',
         version: '1.2.3',

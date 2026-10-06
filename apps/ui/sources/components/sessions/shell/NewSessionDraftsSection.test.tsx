@@ -728,10 +728,11 @@ describe('NewSessionDraftsSection', () => {
         const installedProjection: NewSessionDraftProjection = {
             ...projection,
             document: {
-                ...projection.document,
                 v: 2,
+                composer: projection.document.composer,
+                extensions: {},
                 target: {
-                    ...projection.document.target,
+                    kind: 'newSession',
                     authoring: {
                         directory: projection.document.target.authoring.directory,
                         agentTarget: {

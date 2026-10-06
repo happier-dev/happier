@@ -146,7 +146,8 @@ function projectFixture(wire: PluginProjectionV2) {
     const family = wire.familiesById.pluginUi;
     const entries = Object.values(family?.entriesById ?? {});
     const renderers = entries.filter(entry => entry.contributionKind === 'surfacePlacement').map(entry => {
-        const renderer = entry.renderer as { contributionId: string };
+        if (!('renderer' in entry) || !entry.renderer) throw new Error('A fixture surface placement must declare its renderer');
+        const renderer = entry.renderer;
         const artifactId = `${entry.pluginId}-widget`;
         const digest = `sha256:${'a'.repeat(64)}`;
         const relativePath = `react-native/${artifactId}/entry.cjs.bundle`;
@@ -171,7 +172,9 @@ function publicAuthoringProjection() {
     const manifest = readCanonicalPluginManifest(publicAuthoringManifest);
     if (!manifest) throw new Error('the maintained public-authoring manifest must remain canonical');
     const view = manifest.contributes.ui.views.find((candidate) => candidate.id === 'review-status-widget');
-    if (!view) throw new Error('the maintained public-authoring example must emit review-status-widget');
+    if (!view || view.container !== 'widget') {
+        throw new Error('the maintained public-authoring example must emit review-status-widget as a widget');
+    }
     const rendererIds = manifest.contributes.ui.renderers.map((candidate) => candidate.id);
     const binding = normalizePluginUiInlineSurfaceBindingV1({
         pluginId: manifest.id,

@@ -29,7 +29,7 @@ import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { fetchJson } from '../../src/testkit/http';
 import { readVoiceFixture } from '../../src/testkit/voice/voiceFixture';
 
-import { createEncryptedTransferChunkEnvelope } from '../../../../apps/cli/src/machines/transfer/transferChunkEncryption';
+import { createEncryptedTransferChunkEnvelope } from '../../../../packages/transfers/src/node';
 
 const run = createRunDirs({ runLabel: 'core' });
 
