@@ -170,7 +170,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
         if (actionId === 'settings.set') {
             if (!access.writable) return refuse('setting_read_only');
             const requested = SettingsDeclarationActionInputSchemasV1['settings.set'].parse(input);
-            if (binding.allowedValues && !binding.allowedValues.includes(requested.value)) return refuse('invalid_setting_value');
+            if (binding.allowedValues && !binding.allowedValues.some(allowed => allowed === requested.value)) return refuse('invalid_setting_value');
             if (binding.invertBoolean && typeof requested.value !== 'boolean') return refuse('invalid_setting_value');
             const storedValue = binding.invertBoolean ? !requested.value : requested.value;
             if (!('key' in binding)) {

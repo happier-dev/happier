@@ -4,6 +4,8 @@ import {
     type BuiltinAppShellColumnId,
     type CompactAppDestination,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { t } from '@/text';
+import type { NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
 
 /**
  * The desktop app shell (lab `xrail-R1`, user ruling 2026-09-27): a rail of destinations, a column that
@@ -61,27 +63,39 @@ export type AppRailEntries = Readonly<{
     account: readonly AppRailEntry[];
 }>;
 
-/** The rail's entries, per region, in catalog order. Column destinations and hidden ones stay off. */
-export function buildAppRailEntries(catalog: readonly CompactAppDestination[]): AppRailEntries {
-    return {
-        app: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'app' }),
-        plugins: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'plugins' }),
-        account: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'account' }),
-    };
+export type AppRailFooterItemId = 'app-rail-usage' | 'app-rail-machines' | 'app-rail-updates' | 'app-rail-account';
+export type AppRailPlacementItem = Readonly<{
+    id: string;
+    title: string;
+    icon: AppRailEntry['icon'];
+    group: 'app' | 'plugins' | 'account';
+    defaultPlacement: NavigationPlacement;
+}> & (Readonly<{ kind: 'destination'; entry: AppRailEntry }> | Readonly<{ kind: 'footer'; id: AppRailFooterItemId }>);
+
+/** All customizable controls, including the anchored footer's canonical actions. */
+export function buildAppRailPlacementItems(entries: AppRailEntries, updatesVisible: boolean): readonly AppRailPlacementItem[] {
+    const destinations = (items: readonly AppRailEntry[], group: AppRailPlacementItem['group']): AppRailPlacementItem[] =>
+        items.map(entry => ({ kind: 'destination', id: entry.id, title: entry.title, icon: entry.icon, group,
+            defaultPlacement: entry.visibility === 'hidden' ? 'hidden' : 'pinned', entry }));
+    const footer = (id: AppRailFooterItemId, title: string, icon: AppRailEntry['icon']): AppRailPlacementItem =>
+        ({ kind: 'footer', id, title, icon, group: 'account', defaultPlacement: 'pinned' });
+    return [
+        ...destinations(entries.app, 'app'), ...destinations(entries.plugins, 'plugins'),
+        footer('app-rail-usage', t('settings.usage'), 'speedometer'),
+        footer('app-rail-machines', t('settings.machines'), 'desktop'),
+        ...(updatesVisible ? [footer('app-rail-updates', t('updates.title'), 'hard-drive-download')] : []),
+        ...destinations(entries.account, 'account'),
+        footer('app-rail-account', t('settings.account'), 'user-circle'),
+    ];
 }
 
-/**
- * Which plugin entries fit in the rail's measured room (`slots` entry heights) and which go into
- * "More". "More" takes the last slot, so it appears only when something does not fit, and the
- * Plugins page (the region's first entry) is the last to give way. Unmeasured: everything shows.
- */
-export function splitAppRailOverflow(
-    entries: readonly AppRailEntry[],
-    slots: number | null,
-): Readonly<{ shown: readonly AppRailEntry[]; overflow: readonly AppRailEntry[] }> {
-    if (slots === null || !Number.isFinite(slots) || entries.length <= slots) return { shown: entries, overflow: [] };
-    const keep = Math.max(0, Math.floor(slots) - 1);
-    return { shown: entries.slice(0, keep), overflow: entries.slice(keep) };
+/** The rail's entries, per region, in catalog order. Column destinations and hidden ones stay off. */
+export function buildAppRailEntries(catalog: readonly CompactAppDestination[], options?: Readonly<{ includeHidden?: boolean }>): AppRailEntries {
+    return {
+        app: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'app' }, options),
+        plugins: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'plugins' }, options),
+        account: selectAppDestinationsInPlacement(catalog, { kind: 'rail', region: 'account' }, options),
+    };
 }
 
 /** The column a destination stands beside its own page (a peek from its rail icon shows it); `null` for a full page. */

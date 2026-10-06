@@ -17,6 +17,7 @@ import {
 } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { useSetting } from '@/sync/domains/state/storage';
+import { navigationPlacementsFromLegacyPins } from '@/sync/domains/settings/mobileSurfacePinning';
 import { t } from '@/text';
 
 /**
@@ -63,7 +64,7 @@ function PinnedBar(props: Readonly<{ alwaysSwipe: boolean; pinned: readonly stri
     const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }), []);
     const visibility = resolveSessionCockpitMobileTabVisibility({
         catalog,
-        barSurfaceIds: props.pinned,
+        preferences: navigationPlacementsFromLegacyPins(props.pinned),
         slotCount: resolveFloatingTabBarSlotCount({ windowWidth, maxWidth: layout.maxWidth, tabMinWidth }),
         alwaysSwipe: props.alwaysSwipe,
     });

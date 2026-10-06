@@ -706,5 +706,5 @@ export const SessionActionRail = React.memo(() => {
             badge: terminal.active ? undefined : <SessionTerminalRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId ?? null} />,
         });
     }
-    return <RightSidebarActionRail actions={actions} testID="session-action-rail" testIDPrefix="session-action-rail" />;
+    return <RightSidebarActionRail surfaceId="sessionRail" actions={actions} testID="session-action-rail" testIDPrefix="session-action-rail" />;
 });

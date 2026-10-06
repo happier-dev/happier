@@ -33,7 +33,6 @@ import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionR
 import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
 import {
     createSessionCommitDetailsTab,
-    createSessionDetailsTerminalTab,
     createSessionFileDetailsTab,
     createSessionScmReviewDetailsTab,
     createSessionScmStashDetailsTab,
@@ -525,7 +524,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     }, [surfaceNavigation]);
 
     const openDetailsRoute = React.useCallback((
-        target: SessionPaneUrlDetailsTarget,
+        target: Extract<SessionPaneUrlDetailsTarget, { kind: 'file' | 'commit' | 'scmReview' }>,
         intent?: { intent: 'pinned' },
     ) => {
         deferOnWeb(() => {
@@ -540,14 +539,6 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
                 if (!tab) return;
 
                 pane.openDetailsTab(tab, intent);
-                openDetailsSurface();
-                return;
-            }
-
-            if (target.kind === 'terminal') {
-                pane.openDetailsTab(createSessionDetailsTerminalTab({
-                    terminalInstanceId: target.terminalInstanceId,
-                }), intent);
                 openDetailsSurface();
                 return;
             }

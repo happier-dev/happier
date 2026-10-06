@@ -274,6 +274,7 @@ export function ProjectRightSidebarRail(): React.ReactElement | null {
     if (!model) return null;
     return (
         <RightSidebarActionRail
+            surfaceId="workspaceRail"
             testID="project-right-sidebar-action-rail"
             testIDPrefix="project-rightpanel-action"
             actions={model.rightPanelTabs.map((tab) => ({

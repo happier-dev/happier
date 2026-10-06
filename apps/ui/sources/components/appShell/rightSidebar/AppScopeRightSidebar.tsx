@@ -297,7 +297,7 @@ export function AppScopeRightSidebarActionRail(props: Readonly<{ scopeId: string
         scope: 'app',
     });
     const selectTab = useAppRightSidebarTabChooser(props.scopeId, tabs);
-    return <RightSidebarActionRail testID="app-scope-right-sidebar-action-rail" testIDPrefix="app-scope-right-sidebar-rail" actions={tabs.map((tab) => ({
+    return <RightSidebarActionRail surfaceId="workspaceRail" testID="app-scope-right-sidebar-action-rail" testIDPrefix="app-scope-right-sidebar-rail" actions={tabs.map((tab) => ({
         id: tab.id,
         label: getRightSidebarTabLabel(tab),
         icon: tab.icon,

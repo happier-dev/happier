@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { resolveOverlayMotionPreset, useOverlayPanelMotion, useOverlayPresence } from '@/components/ui/overlays/motion/overlayMotion';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useHoverPreviewPopover, type HoverPreviewHandlers } from '@/components/ui/popover/useHoverPreviewPopover';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import type { AppShellShownColumn } from './appRailModel';
 import { appShellColumnSurface } from './appShellColumnSurface';
@@ -137,7 +138,10 @@ export function AppShellPeekLayer(props: Readonly<{
                 pointerEvents.webStyle,
             ]}
         >
-            {column ? props.renderColumn(column) : null}
+            <PluginSurfaceFocusEligibilityProvider active={focusReady}
+                presentationActive={peek !== null && columnKind === peek.kind} currentUiContextActive={false}>
+                {column ? props.renderColumn(column) : null}
+            </PluginSurfaceFocusEligibilityProvider>
         </Animated.View>
     );
 }

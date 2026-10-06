@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen } from '@/dev/testkit';
+import { AppShellPeekProvider, useAppShellPeek } from '@/components/navigation/shell/appRail/AppShellPeek';
+import { usePluginSurfaceCurrentUiContextEligibility, usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { AppShellPluginUiProjectionValueProvider } from './AppShellPluginUiProjection';
+import { PluginAppPageColumn } from './PluginAppPageColumn';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
@@ -25,7 +29,7 @@ vi.mock('@/text', async () => {
 vi.mock('@/components/plugins/surfaces', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/components/plugins/surfaces')>()),
     PluginSurfacePlacementHost: (props: Record<string, unknown>) => {
-        mountedHosts.push(props);
+        mountedHosts.push({ ...props, focusEligible: usePluginSurfaceFocusEligibility(), currentUiContextEligible: usePluginSurfaceCurrentUiContextEligibility() });
         return React.createElement('PluginSurfacePlacementHost', props);
     },
 }));
@@ -64,8 +68,6 @@ function projectionWith(placement: PluginUiSurfacePlacementProjection): PluginUi
 }
 
 async function renderColumn(model: PluginUiProjectionModel) {
-    const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
-    const { PluginAppPageColumn } = await import('./PluginAppPageColumn');
     mountedHosts.length = 0;
     return renderScreen(
         <AppShellPluginUiProjectionValueProvider
@@ -82,15 +84,29 @@ async function renderColumn(model: PluginUiProjectionModel) {
                 reloadConnectedAccountProjection: () => {},
             }}
         >
-            <PluginAppPageColumn destinationId="plugin:acme.triage:triage" />
+            <AppShellPeekProvider enabled currentId="plugin:acme.triage:triage" columnShown>
+                <PluginAppPageColumn destinationId="plugin:acme.triage:triage" />
+                <ColumnPeekTrigger />
+            </AppShellPeekProvider>
         </AppShellPluginUiProjectionValueProvider>,
     );
 }
 
+function ColumnPeekTrigger() {
+    const peek = useAppShellPeek();
+    return React.createElement('ColumnPeekTrigger', { testID: 'peek-trigger', onPress: () => peek?.openFocused('settings') });
+}
+
+const COLUMN_BINDING = normalizePluginUiDestinationBindingV1({
+    pluginId: 'acme.triage', destinationId: 'triage', rendererId: 'views-column',
+    container: 'appPage', target: { kind: 'app' },
+});
+if (!COLUMN_BINDING) throw new Error('fixture must admit the column renderer binding');
 const COLUMN = {
+    binding: COLUMN_BINDING,
     renderer: { kind: 'reactNative', contributionId: 'views-column' },
     availability: { state: 'available', reason: 'available', diagnostics: [] },
-} as const;
+} as const satisfies NonNullable<PluginUiSurfacePlacementProjection['column']>;
 
 describe('PluginAppPageColumn', () => {
     it("mounts the page's column renderer with the page's current location", async () => {
@@ -102,6 +118,15 @@ describe('PluginAppPageColumn', () => {
         expect(mount.subPath).toBe('views/mine');
         expect((mount.placement as PluginUiSurfacePlacementProjection).renderer).toEqual(COLUMN.renderer);
         expect(mount.machineId).toBe('machine-1');
+        expect(mount.focusEligible).toBe(true);
+        expect(mount.currentUiContextEligible).toBe(false);
+    });
+
+    it('withdraws column focus while another column covers it without publishing semantic current', async () => {
+        const screen = await renderColumn(projectionWith(pagePlacement(COLUMN)));
+        await screen.pressByTestIdAsync('peek-trigger');
+        expect(mountedHosts.at(-1)?.focusEligible).toBe(false);
+        expect(mountedHosts.at(-1)?.currentUiContextEligible).toBe(false);
     });
 
     it('receives the page root as an empty location', async () => {

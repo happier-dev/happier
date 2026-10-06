@@ -6,6 +6,7 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 
 import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionMobileSurface } from './sessionCockpitState';
 
@@ -116,11 +117,15 @@ vi.mock('expo-router', async () => {
     }).module;
 });
 
-vi.mock('@react-navigation/native', () => ({
-    NavigationContainer: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
-    NavigationIndependentTree: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
-    useIsFocused: () => React.useContext(CockpitNavigatorFocusContext),
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        NavigationContainer: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
+        NavigationIndependentTree: ({ children }: React.PropsWithChildren) => React.createElement(React.Fragment, null, children),
+        useIsFocused: () => React.useContext(CockpitNavigatorFocusContext),
+    };
+});
 
 vi.mock('@react-navigation/bottom-tabs', () => ({
     createBottomTabNavigator: () => ({
@@ -319,7 +324,6 @@ vi.mock('@/sync/store/hooks', async () => {
     },
     };
 });
-vi.mock('@/sync/sync', () => ({ sync: { prefetchForkedTranscriptContext: async () => undefined } }));
 vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     useUserMessageHistoryRemoteEntries: () => ({
         rows: [],
@@ -500,6 +504,7 @@ async function primeSessionBoardFeature(enabled: boolean): Promise<void> {
 
 describe('SessionCockpitSurfaceScreen navigation surface', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         standardCleanup();
         persistedStorage.clear();
         seedTranscript();
