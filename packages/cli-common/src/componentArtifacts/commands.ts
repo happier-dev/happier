@@ -239,6 +239,7 @@ export async function compileBunBinary({
   buildRunnerEntrypoint,
   autoloadDotenv,
   autoloadBunfig,
+  defines = {},
 }: {
   entrypoint: string;
   bunTarget: string;
@@ -251,6 +252,7 @@ export async function compileBunBinary({
   buildRunnerEntrypoint?: string;
   autoloadDotenv?: boolean;
   autoloadBunfig?: boolean;
+  defines?: Readonly<Record<string, string>>;
 }): Promise<void> {
   const resolvedBunCommand = (() => {
     const candidate = String(bunCommand ?? '').trim();
@@ -267,6 +269,10 @@ export async function compileBunBinary({
         `--outfile=${outfile}`,
       ]
     : ['build', '--compile', '--no-cache', `--target=${bunTarget}`, entrypoint, '--outfile', outfile];
+  if (Object.keys(defines).length > 0 && buildRunnerEntrypoint) {
+    throw new Error('[component-artifacts] compile definitions are unsupported by the custom Bun build runner');
+  }
+  for (const [name, value] of Object.entries(defines)) args.push(`--define=${name}=${value}`);
   const appendCompileAutoloadOption = (name: 'dotenv' | 'bunfig', enabled: boolean | undefined): void => {
     if (enabled === undefined) return;
     if (buildRunnerEntrypoint) {

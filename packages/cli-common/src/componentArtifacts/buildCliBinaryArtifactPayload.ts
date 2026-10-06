@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
 import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
+import { getCliBinaryArtifactSupportTargetUnavailableReason } from '../../componentArtifactTarget.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH as BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../bundledPluginPublicationPolicy.mjs';
 import {
   assertResolvedRuntimeDependencyMatchesDeclaration,
@@ -40,6 +41,9 @@ import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
+import { stageCliTargetRuntimeDependencies } from './stageCliTargetRuntimeDependencies.js';
+
+export { getCliBinaryArtifactSupportTargetUnavailableReason } from '../../componentArtifactTarget.mjs';
 
 export const CLI_RUNTIME_EXTERNAL_PACKAGES = [
   '@huggingface/transformers',
@@ -95,6 +99,7 @@ export type CliBinaryArtifactCodePayload = Readonly<{
   entrypoint: string;
   workspaceRuntimeIdentity: string;
   runtimeAssetRelativePath: string;
+  stalePackages?: NonNullable<ReturnType<typeof cliDistBuildManifest.buildCliDistManifest>['stalePackages']>;
 }>;
 
 type CliBinaryArtifactWorkspacePublication = Readonly<{
@@ -119,19 +124,9 @@ function workspacePublicationMatches(
     && isExactStringList(publication.workspaceRuntimePackages, workspaceRuntime.packageNames);
 }
 
-function normalizeNodePlatform(platform: string): string {
-  return platform === 'win32' ? 'windows' : platform;
-}
-
-function assertCliNativeRuntimeTargetMatchesHost(target: BinaryTarget): void {
-  const hostOs = normalizeNodePlatform(process.platform);
-  const hostArch = process.arch;
-  if (hostOs === target.os && hostArch === target.arch) {
-    return;
-  }
-  throw new Error(
-    `[component-artifacts] host-native runtime packages require a matching host target (host ${hostOs}-${hostArch}, target ${target.os}-${target.arch})`,
-  );
+function assertCliNativeRuntimeTargetMatchesHost(target: BinaryTarget, commandProbe = commandExists): void {
+  const reason = getCliBinaryArtifactSupportTargetUnavailableReason({ target, commandProbe });
+  if (reason) throw new Error(reason);
 }
 
 function compareSupportIdentityPathNames(left: string, right: string): number {
@@ -328,7 +323,6 @@ export function readCliBinaryArtifactSupportIdentity({
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
 }>): CliBinaryArtifactSupportIdentity {
-  assertCliNativeRuntimeTargetMatchesHost(target);
   const normalizedGoVersion = String(goVersion ?? '').trim();
   if (!normalizedGoVersion) {
     throw new Error('[component-artifacts] daemon support identity requires a Go toolchain version');
@@ -460,6 +454,7 @@ export function readCliBinaryArtifactSupportIdentity({
   // than giving a component consumer a second closure decision.
   for (const relativePath of [
     'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts',
+    'packages/cli-common/src/componentArtifacts/stageCliTargetRuntimeDependencies.ts',
     'packages/cli-common/src/componentArtifacts/copyCliNodeRuntimePayload.ts',
     'packages/cli-common/src/componentArtifacts/finalizeRuntimeArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/targets.ts',
@@ -469,6 +464,7 @@ export function readCliBinaryArtifactSupportIdentity({
     'packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
     'packages/cli-common/src/workspaces/index.ts',
     'packages/cli-common/workspaceRuntimeDependencies.mjs',
+    'packages/cli-common/componentArtifactTarget.mjs',
   ]) {
     hashRequiredSupportInputPath({
       hash,
@@ -577,6 +573,7 @@ async function prepareCliDistSnapshot({
   requiredCliDistInputFingerprint,
   preparedWorkspacePublication,
   commandProbe,
+  env,
 }: Readonly<{
   repoRoot: string;
   runCommand: RunCommand;
@@ -584,6 +581,7 @@ async function prepareCliDistSnapshot({
   requiredCliDistInputFingerprint?: string;
   preparedWorkspacePublication?: CliBinaryArtifactWorkspacePublication;
   commandProbe: (cmd: string) => boolean;
+  env: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{
   snapshotDistDir: string;
   workspaceRuntimeIdentity: string;
@@ -611,7 +609,7 @@ async function prepareCliDistSnapshot({
         ...options,
         env: createWorkspaceChildBuildEnv({
           env: {
-            ...process.env,
+            ...env,
             ...(options.env ?? {}),
           },
           heldLockValue,
@@ -634,6 +632,7 @@ async function prepareCliDistSnapshot({
       const reuseExistingDistSnapshot = await shouldReuseCliDistSnapshot({
         distEntrypointPath: entrypoint,
         requiredInputFingerprint: requiredCliDistInputFingerprint,
+        env,
       })
         && currentDistManifest.manifest?.workspaceRuntimeIdentity
           === workspaceRuntimeBeforeBuild.fingerprint
@@ -685,6 +684,7 @@ export async function buildCliBinaryArtifactCodePayload({
   ensureWorkspacePackagesBuiltByName,
   requiredCliDistInputFingerprint,
   preparedWorkspacePublication,
+  env = process.env,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -696,13 +696,12 @@ export async function buildCliBinaryArtifactCodePayload({
   ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
   requiredCliDistInputFingerprint?: string;
   preparedWorkspacePublication?: CliBinaryArtifactWorkspacePublication;
+  env?: NodeJS.ProcessEnv;
 }): Promise<CliBinaryArtifactCodePayload> {
   const bunCommand = resolveBunCommand({ commandProbe });
   if (!bunCommand) {
     throw new Error('[component-artifacts] bun is required to build CLI binary artifacts');
   }
-  assertCliNativeRuntimeTargetMatchesHost(target);
-
   const prepared = await prepareCliDistSnapshot({
     repoRoot,
     runCommand,
@@ -710,6 +709,7 @@ export async function buildCliBinaryArtifactCodePayload({
     requiredCliDistInputFingerprint,
     preparedWorkspacePublication,
     commandProbe,
+    env,
   });
   const snapshotEntrypoint = join(prepared.snapshotDistDir, 'index.mjs');
   const snapshotManifest = cliDistBuildManifest.readCliDistBuildManifest(snapshotEntrypoint);
@@ -769,6 +769,7 @@ export async function buildCliBinaryArtifactCodePayload({
       executableName,
       entrypoint: executableName,
       workspaceRuntimeIdentity: recordedWorkspaceRuntimeIdentity,
+      ...(snapshotManifest.manifest?.stalePackages?.length ? { stalePackages: snapshotManifest.manifest.stalePackages } : {}),
       runtimeAssetRelativePath: `${CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH}${target.exeExt}`.replaceAll('\\', '/'),
     };
   } finally {
@@ -809,7 +810,7 @@ async function stageCliBinaryArtifactSupportPayload({
   workspaceRuntimeIdentity: string;
   runtimeAssetRelativePath: string;
 }>> {
-  assertCliNativeRuntimeTargetMatchesHost(target);
+  assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
   const expectedSupportFingerprint = String(supportArtifactFingerprint ?? '').trim();
   const normalizedGoVersion = String(goVersion ?? '').trim();
   if (expectedSupportFingerprint && !normalizedGoVersion) {
@@ -847,6 +848,7 @@ async function stageCliBinaryArtifactSupportPayload({
     excludeRootDependencies: CLI_OPTIONAL_RUNTIME_PACKAGES,
   });
   await copyCliRuntimeSidecars(repoRoot, payloadDir);
+  await stageCliTargetRuntimeDependencies({ repoRoot, payloadDir, target, runCommand, commandProbe });
   const bundledPluginFailuresSource = join(repoRoot, 'apps', 'cli', BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
   const bundledPluginFailuresTarget = join(payloadDir, BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
   const publicationFailures = existsSync(bundledPluginFailuresSource)
@@ -1007,6 +1009,7 @@ export async function buildCliBinaryArtifactPayload({
   requiredCliDistInputFingerprint?: string;
   includeIrohNativeReleaseEvidence?: boolean;
 }): Promise<{ executableName: string; entrypoint: string }> {
+  assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
   const publicationFailuresPath = join(repoRoot, 'apps', 'cli', BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
   if (existsSync(publicationFailuresPath)
     && parseBundledPluginPublicationFailures(readFileSync(publicationFailuresPath, 'utf8')).length > 0) {

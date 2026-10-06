@@ -89,6 +89,26 @@ describe('finalizeRuntimeArtifactPayload', () => {
         }
     });
 
+    it('projects esbuild executables and Iroh addons onto the selected target', async () => {
+        const root = await createTempDir();
+        const put = async (path: string) => {
+            await mkdir(join(root, path, '..'), { recursive: true });
+            await writeFile(join(root, path), path);
+        };
+        for (const platform of ['linux', 'darwin', 'win32']) for (const arch of ['x64', 'arm64']) {
+            await put(`node_modules/@esbuild/${platform}-${arch}/bin/esbuild`);
+            await put(`node_modules/@happier-dev/iroh-native/native/happier-iroh-native-lifecycle.${platform}-${arch}.node`);
+            await put(`node_modules/bare-url/node_modules/bare-path/prebuilds/${platform}-${arch}/bare-path.bare`);
+        }
+        await finalizeRuntimeArtifactPayload(root, { os: 'linux', arch: 'arm64', exeExt: '', bunTarget: 'bun-linux-arm64' });
+        await expect(stat(join(root, 'node_modules/@esbuild/linux-x64'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(join(root, 'node_modules/@esbuild/linux-arm64/bin/esbuild'))).resolves.toBeDefined();
+        await expect(stat(join(root, 'node_modules/@happier-dev/iroh-native/native/happier-iroh-native-lifecycle.linux-x64.node'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(join(root, 'node_modules/@happier-dev/iroh-native/native/happier-iroh-native-lifecycle.linux-arm64.node'))).resolves.toBeDefined();
+        await expect(stat(join(root, 'node_modules/bare-url/node_modules/bare-path/prebuilds/linux-x64'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(stat(join(root, 'node_modules/bare-url/node_modules/bare-path/prebuilds/linux-arm64/bare-path.bare'))).resolves.toBeDefined();
+    });
+
     it.each(CLI_BINARY_TARGETS)('projects native packages for $os-$arch without pruning SDK or sidecar formats', async (target) => {
         const root = await createTempDir();
         const platform = target.os === 'windows' ? 'win32' : target.os;

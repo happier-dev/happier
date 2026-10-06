@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { lstat, readFile, readdir, readlink, stat } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, readlink, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { commandExists, execOrThrow, resolveYarnCommand, type RunCommand } from './commands.js';
@@ -44,6 +44,7 @@ export function resolveServerRuntimeSupportBuildDbProviders({
 
 type PackageJson = {
   name?: string;
+  version?: string;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   os?: string[];
@@ -205,6 +206,51 @@ function requiredSharpRuntimePackages(target: BinaryTarget): string[] {
   return target.os === 'windows'
     ? [`@img/sharp-${suffix}`]
     : [`@img/sharp-${suffix}`, `@img/sharp-libvips-${suffix}`];
+}
+
+async function resolveSharpRuntimePackageRoot({
+  repoRoot,
+  target,
+  env,
+  runCommand,
+  commandProbe,
+}: {
+  repoRoot: string;
+  target: BinaryTarget;
+  env: NodeJS.ProcessEnv;
+  runCommand: RunCommand;
+  commandProbe: (cmd: string) => boolean;
+}): Promise<string> {
+  const platform = target.os === 'windows' ? 'win32' : target.os;
+  if (platform === process.platform && target.arch === process.arch) return repoRoot;
+  if (!commandProbe('npm')) {
+    throw new Error('[component-artifacts] cross-target server support requires npm with --cpu/--os selection');
+  }
+  const sharp = await readPackageJson(join(repoRoot, 'node_modules', 'sharp', 'package.json'));
+  if (!sharp.version) throw new Error('[component-artifacts] installed Sharp has no version');
+  const packageRoot = join(repoRoot, '.project', 'tmp', 'server-native-dependencies', `${target.os}-${target.arch}`);
+  await mkdir(packageRoot, { recursive: true });
+  await writeFile(join(packageRoot, 'package.json'), `${JSON.stringify({
+    name: 'happier-server-native-dependencies',
+    private: true,
+    dependencies: { sharp: sharp.version },
+  })}\n`);
+  // npm's CPU/OS selection acquires Sharp's matching optional native packages.
+  // No lifecycle scripts execute: Sharp publishes its addon and libvips in
+  // those packages. Host build tools keep their original dependency tree.
+  // Contract: https://docs.npmjs.com/cli/v10/commands/npm-install/#cpu
+  await runCommand('npm', [
+    'install',
+    `--cpu=${target.arch}`,
+    `--os=${platform}`,
+    ...(target.os === 'linux' ? ['--libc=glibc'] : []),
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+    '--package-lock=false',
+    '--workspaces=false',
+  ], { cwd: packageRoot, env });
+  return packageRoot;
 }
 
 function resolveIrohNodeAddonTarget(target: BinaryTarget): string {
@@ -487,9 +533,10 @@ export async function resolveServerRuntimeSupportEntries({
       target,
       requireNativeAddon: String(env.HAPPIER_SERVER_REQUIRE_IROH_NATIVE ?? '').trim() === '1',
     }));
+    const sharpPackageRoot = await resolveSharpRuntimePackageRoot({ repoRoot, target, env, runCommand, commandProbe });
     const sharpVisited = new Set<string>();
     entries.push(...await collectInstalledPackageSidecars({
-      repoRoot,
+      repoRoot: sharpPackageRoot,
       packageName: 'sharp',
       target,
       optional: false,
@@ -497,7 +544,7 @@ export async function resolveServerRuntimeSupportEntries({
     }));
     for (const packageName of requiredSharpRuntimePackages(target)) {
       entries.push(...await collectInstalledPackageSidecars({
-        repoRoot,
+        repoRoot: sharpPackageRoot,
         packageName,
         target,
         optional: false,
