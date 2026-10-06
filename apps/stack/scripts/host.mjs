@@ -62,6 +62,9 @@ import {
   inspectExecutionHostRecovery,
   removeExecutionHostRecovery,
   runExecutionHostRecovery,
+  installExecutionHostGhopsBroker,
+  inspectExecutionHostGhopsBroker,
+  removeExecutionHostGhopsBroker,
 } from './utils/execution_host/recovery.mjs';
 import {
   startDetachedExecutionHostSkillsSync,
@@ -147,6 +150,7 @@ function plainStatus(result) {
     ...(result.backup ? [`[dev-vm] backup schedule: ${result.backup.health?.code ?? 'unknown'} (${result.backup.stacks?.length ?? 0} configured Stack${result.backup.stacks?.length === 1 ? '' : 's'})`] : []),
     ...(result.serviceTunnels ? [`[dev-vm] service forwards: ${result.serviceTunnels.map((tunnel) => tunnel.status).join(', ') || 'none'}`] : []),
     ...(result.candidateRetirement ? [`[dev-vm] candidate mirror retirement: ${result.candidateRetirement.state}`] : []),
+    ...(result.ghopsBroker ? [`[dev-vm] ghops broker: installed=${result.ghopsBroker.installed}, loaded=${result.ghopsBroker.launchAgent.loaded}, socket-live=${result.ghopsBroker.socketLive}; fix on Mac: ${result.ghopsBroker.fixCommand}`] : []),
   ].join('\n');
 }
 
@@ -308,9 +312,10 @@ async function main() {
       } : {}),
     };
     const saved = await writeCandidateExecutionHostProfile(profile, process.env);
+    const ghopsBroker = process.platform === 'darwin' ? await installExecutionHostGhopsBroker() : null;
     return printResult({
       json,
-      data: { profilePath: resolveExecutionHostProfilePath(process.env), profile: saved, runtime },
+      data: { profilePath: resolveExecutionHostProfilePath(process.env), profile: saved, runtime, ghopsBroker },
       text: `[dev-vm] candidate configured at ${resolveExecutionHostProfilePath(process.env)}\n[dev-vm] macOS remains authoritative`,
     });
   }
@@ -350,6 +355,7 @@ async function main() {
       : [null, null, null];
     const result = {
       ...inspected,
+      ...(profile && process.platform === 'darwin' ? { ghopsBroker: await inspectExecutionHostGhopsBroker() } : {}),
       ...(forwardingRepair ? { forwardingRepair } : {}),
       ...(candidateRepository ? { candidateRepository } : {}),
       ...(candidateRetirement ? { candidateRetirement } : {}),
@@ -362,6 +368,7 @@ async function main() {
       result.doctor?.ok !== true || result.mount?.health?.ok !== true || result.backup?.health?.ok !== true
       || result.serviceTunnels?.some((tunnel) => tunnel.healthy !== true)
       || result.candidateRetirement?.state === 'attention-required'
+      || result.ghopsBroker?.health.ok === false
     )) process.exitCode = 1;
     return;
   }
@@ -430,10 +437,11 @@ async function main() {
     });
   }
   if (command === 'activate') {
+    const ghopsBroker = process.platform === 'darwin' ? await installExecutionHostGhopsBroker() : null;
     const result = await activateExecutionHostProfile(process.env);
     return printResult({
       json,
-      data: result,
+      data: { ...result, ghopsBroker },
       text: `[dev-vm] execution host activated; candidate mirrors retired: ${result.retiredCandidateMirrors.length}`,
     });
   }
@@ -473,6 +481,9 @@ async function main() {
         : recoveryAction === 'run'
           ? await runExecutionHostRecovery({ profile, executor, env: process.env })
           : await inspectExecutionHostRecovery({ profile, env: process.env });
+    if (recoveryAction === 'enable') result.ghopsBroker = await installExecutionHostGhopsBroker();
+    if (recoveryAction === 'disable') result.ghopsBroker = await removeExecutionHostGhopsBroker();
+    if (recoveryAction === 'status') result.ghopsBroker = await inspectExecutionHostGhopsBroker();
     const logs = result.paths
       ? `\n[dev-vm] logs: ${result.paths.stdoutPath} (stdout), ${result.paths.stderrPath} (stderr)`
       : '';

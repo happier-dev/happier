@@ -1,7 +1,8 @@
 import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
-import { runCapture } from './utils/proc/proc.mjs';
+import { runCapture, runCaptureResult } from './utils/proc/proc.mjs';
+import { fileURLToPath } from 'node:url';
 import { resolveCommandPath } from './utils/proc/commands.mjs';
 import {
   getComponentDir,
@@ -40,6 +41,9 @@ import { expandHome } from './utils/paths/canonical_home.mjs';
 import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 import { isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
+import { readExecutionHostProfile } from './utils/execution_host/config.mjs';
+import { GHOPS_BROKER_FIX_COMMAND, inspectExecutionHostGhopsBroker } from './utils/execution_host/recovery.mjs';
+import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
 
 /**
  * Doctor script for common happy-stacks failure modes.
@@ -236,6 +240,23 @@ async function main() {
   if (!(await pathExists(serverDir))) {
     report.checks.serverDir = { ok: false, missing: serverDir };
     if (!json) console.log(`${red('x')} missing component: ${serverDir}`);
+  }
+  let broker = null;
+  if (process.platform === 'darwin' && readExecutionHostProfile(process.env)) {
+    broker = await inspectExecutionHostGhopsBroker();
+  } else if (process.platform !== 'win32') {
+    const { config, path } = await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+    if (config.targets.some((target) => target.name === 'mac-host' && target.platform === 'posix')) {
+      const result = await runCaptureResult(fileURLToPath(new URL('../bin/hstack-exec', import.meta.url)), [
+        '--target=mac-host', '--', 'node', 'apps/stack/scripts/ghops_credential_broker.mjs', '--status',
+      ], { env: { ...process.env, HAPPIER_EXEC_CONFIG_PATH: path } });
+      if (result.exitCode === 0) broker = JSON.parse(result.out);
+      else broker = { health: { ok: false }, status: 'unavailable', fixCommand: GHOPS_BROKER_FIX_COMMAND };
+    }
+  }
+  if (broker) {
+    report.checks.executionHostGhopsBroker = { ...broker, ok: broker.health.ok };
+    if (!json) console.log(`${broker.health.ok ? green('✓') : red('x')} execution-host ghops broker: ${broker.status ?? `installed=${broker.installed}, loaded=${broker.launchAgent.loaded}, socket-live=${broker.socketLive}`} → ${cmd(broker.fixCommand)} (on Mac)`);
   }
   if (!(await pathExists(cliDir))) {
     report.checks.cliDir = { ok: false, missing: cliDir };

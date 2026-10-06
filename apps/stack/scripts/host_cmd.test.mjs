@@ -9,6 +9,48 @@ import { runCommandCapture, runNodeCapture } from './testkit/core/run_node_captu
 const script = new URL('./host.mjs', import.meta.url).pathname;
 const launcher = new URL('../bin/hstack.mjs', import.meta.url).pathname;
 
+test('ghops LaunchAgent installs, updates, diagnoses and removes through the recovery owner', async (t) => {
+  const owner = await import('./utils/execution_host/recovery.mjs');
+  assert.equal(typeof owner.installExecutionHostGhopsBroker, 'function');
+  const fixture = await createTempFixture(t, { prefix: 'g-la-', parentDir: '/tmp' });
+  const calls = [];
+  let loaded = false;
+  const boundary = { capture: async (command, args) => {
+    assert.equal(command, 'launchctl');
+    calls.push(args);
+    if (args[0] === 'bootstrap') loaded = true;
+    if (args[0] === 'bootout') loaded = false;
+    return { exitCode: args[0] === 'print' && !loaded ? 113 : 0, out: '', err: '' };
+  } };
+  const options = { env: { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home'),
+    HAPPIER_GITHUB_BOT_TOKEN: 'must-not-be-persisted' }, homeDir: fixture.path('home'),
+  platform: 'darwin', uid: process.getuid(), boundary, rootDirectory: fixture.root };
+  const missing = await owner.inspectExecutionHostGhopsBroker(options);
+  assert.equal(missing.installed, false);
+  const installed = await owner.installExecutionHostGhopsBroker({ ...options, programArgs: ['/pinned/node', '/repo/broker.mjs'] });
+  const plist = await readFile(installed.paths.plistPath, 'utf8');
+  assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  assert.match(plist, /<key>KeepAlive<\/key>/);
+  assert.doesNotMatch(plist, /must-not-be-persisted|HAPPIER_GITHUB_BOT_TOKEN/);
+  assert.equal(installed.launchAgent.loaded, true);
+  assert.equal(calls.some((args) => args[0] === 'bootstrap'), true);
+  await owner.installExecutionHostGhopsBroker({ ...options, programArgs: ['/updated/node', '/repo/broker.mjs'] });
+  assert.match(await readFile(installed.paths.plistPath, 'utf8'), /\/updated\/node/);
+  const { startGhopsCredentialBroker } = await import('./utils/execution_host/ghops_credential_broker.mjs');
+  const broker = await startGhopsCredentialBroker({ rootDirectory: options.rootDirectory, readCredential: () => ({}) });
+  t.after(() => broker.close());
+  const status = await owner.inspectExecutionHostGhopsBroker(options);
+  assert.equal(status.installed, true);
+  assert.equal(status.launchAgent.loaded, true);
+  assert.equal(status.socketLive, true);
+  await broker.close();
+  assert.equal((await owner.inspectExecutionHostGhopsBroker(options)).socketLive, false);
+  await owner.removeExecutionHostGhopsBroker(options);
+  assert.equal((await owner.inspectExecutionHostGhopsBroker(options)).installed, false);
+  await assert.rejects(owner.installExecutionHostGhopsBroker({ ...options, programArgs: ['/node', '/broker.mjs'],
+    boundary: { capture: async () => ({ exitCode: 1, err: 'no GUI session' }) } }), /no GUI session/);
+});
+
 test('host status reports an absent candidate without creating or starting a VM', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-host-status-' });
   const result = await runNodeCapture([script, 'status', '--json'], {
@@ -1193,6 +1235,9 @@ test('dev-vm recovery enable installs a next-login LaunchAgent without touching 
   assert.equal(enabled.launchAgent.label, 'dev.happier.stack.dev-vm-recovery');
   assert.equal(enabled.launchAgent.loaded, false);
   assert.equal(enabled.launchAgent.nextLogin, true);
+  const brokerPlist = join(home, 'Library', 'LaunchAgents', 'dev.happier.stack.ghops-credential-broker.plist');
+  assert.equal(enabled.ghopsBroker.launchAgent.loaded, true);
+  assert.match(await readFile(brokerPlist, 'utf8'), /ghops_credential_broker\.mjs/);
   const plist = await readFile(join(home, 'Library', 'LaunchAgents', 'dev.happier.stack.dev-vm-recovery.plist'), 'utf8');
   assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.match(plist, /recovery<\/string>\s*<string>run<\/string>/);
@@ -1207,6 +1252,7 @@ test('dev-vm recovery enable installs a next-login LaunchAgent without touching 
   assert.equal(disabled.code, 0, disabled.stderr);
   assert.equal(JSON.parse(disabled.stdout).removed, true);
   await assert.rejects(readFile(join(home, 'Library', 'LaunchAgents', 'dev.happier.stack.dev-vm-recovery.plist'), 'utf8'));
+  await assert.rejects(readFile(brokerPlist, 'utf8'), { code: 'ENOENT' });
   assert.match(await readFile(launchctlLog, 'utf8'), /print gui\/\d+\/dev\.happier\.stack\.dev-vm-recovery/);
   assert.match(await readFile(launchctlLog, 'utf8'), /bootout gui\/\d+\/dev\.happier\.stack\.dev-vm-recovery/);
 });
