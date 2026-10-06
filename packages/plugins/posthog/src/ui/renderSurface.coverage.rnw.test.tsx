@@ -2,6 +2,7 @@
 import React, { act } from 'react';
 import { defineUiSurface, Tabs, Text } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -687,7 +688,30 @@ describe('the mounted PostHog selected-evidence control', () => {
 });
 
 describe('the mounted PostHog sensitive code-variable control', () => {
-    it('requires confirmation and discards every revealed byte when the panel is left', async () => {
+    it('keeps reveal available after the host confirmation is cancelled', async () => {
+        let attempts = 0;
+        const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {
+            readCodeVariables: async () => {
+                attempts += 1;
+                if (attempts === 1) throw new PluginError({ code: 'denied', diagnostics: [
+                    { code: 'plugin_action_current_intent_rejected', severity: 'error' },
+                ] });
+                return { kind: 'revealed', variablesText: 'admitted-second-attempt' };
+            },
+        });
+        await selectTab(page, 'Stack trace');
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+        });
+        await expect(page.getByText('Captured variables are unavailable')).rejects.toBeDefined();
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+        });
+        await expect(page.getByText('admitted-second-attempt')).resolves.toBeDefined();
+        expect(attempts).toBe(2);
+    });
+
+    it('delegates reveal consent to the host Action and discards every revealed byte when the panel is left', async () => {
         let revealReads = 0;
         const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {
             onExecute: (localId) => {
@@ -695,15 +719,6 @@ describe('the mounted PostHog sensitive code-variable control', () => {
             },
         });
         await selectTab(page, 'Stack trace');
-
-        await act(async () => {
-            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        await expect(page.getByText('Reveal sensitive captured variables?')).resolves.toBeDefined();
-        await expect(page.getByText('{ "token": "captured-secret" }')).rejects.toBeDefined();
-        expect(revealReads).toBe(0);
 
         await act(async () => {
             await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
@@ -734,9 +749,6 @@ describe('the mounted PostHog sensitive code-variable control', () => {
             },
         });
         await selectTab(page, 'Stack trace');
-        await act(async () => {
-            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
-        });
         await act(async () => {
             await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
         });

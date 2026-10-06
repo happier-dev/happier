@@ -1,4 +1,4 @@
-/** Active-Stack-panel ownership for warning-confirmed Tier-3 code variables. */
+/** Active-Stack-panel ownership for host-admitted Tier-3 code variables. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
@@ -12,7 +12,6 @@ import type { PosthogOccurrenceControllerV1 } from './occurrenceController.js';
 
 export type PosthogCodeVariablesStateV1 =
     | Readonly<{ kind: 'idle' }>
-    | Readonly<{ kind: 'confirming' }>
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'revealed'; variablesText: string; truncated: boolean }>
     | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
@@ -23,8 +22,6 @@ export type PosthogCodeVariablesControllerV1 = Readonly<{
     available: boolean;
     state: PosthogCodeVariablesStateV1;
     requestReveal: () => void;
-    cancel: () => void;
-    confirm: () => void;
 }>;
 
 export function usePosthogCodeVariablesController(
@@ -63,16 +60,8 @@ export function usePosthogCodeVariablesController(
     ]);
 
     const requestReveal = useCallback(() => {
-        if (available) setState({ kind: 'confirming' });
-    }, [available]);
-    const cancel = useCallback(() => {
-        generation.current += 1;
-        pending.current = false;
-        setState(IDLE);
-    }, []);
-    const confirm = useCallback(() => {
         if (!available || selected === undefined || frozenRequest === undefined
-            || selectedOffset === undefined || state.kind !== 'confirming' || pending.current) return;
+            || selectedOffset === undefined || pending.current) return;
         const token = generation.current + 1;
         generation.current = token;
         pending.current = true;
@@ -92,6 +81,11 @@ export function usePosthogCodeVariablesController(
             }, { signal: activeSignal });
             if (activeSignal.aborted || token !== generation.current) return;
             pending.current = false;
+            // The mounted host projects a declined confirmation as denied.
+            if (execution.status === 'error' && execution.code === 'denied') {
+                setState(IDLE);
+                return;
+            }
             if (execution.status !== 'success') {
                 setState({
                     kind: 'unavailable',
@@ -132,14 +126,11 @@ export function usePosthogCodeVariablesController(
         input.observation.entryRef,
         selected,
         selectedOffset,
-        state.kind,
     ]);
 
     return useMemo(() => ({
         available,
         state,
         requestReveal,
-        cancel,
-        confirm,
-    }), [available, cancel, confirm, requestReveal, state]);
+    }), [available, requestReveal, state]);
 }
