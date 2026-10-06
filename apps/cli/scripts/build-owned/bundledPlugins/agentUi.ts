@@ -549,6 +549,11 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
   }
   lines.push('});');
   lines.push('');
+  for (const source of sources) {
+    if (!source.predecessorMessageMetaWriter) continue;
+    lines.push(`const ${toAgentConstPrefix(source.agentId)}_PREDECESSOR_MESSAGE_META_DEFAULTS = ${renderJsonLiteral(source.predecessorMessageMetaWriter.defaults)} as const;`);
+    lines.push('');
+  }
   lines.push('export type BundledAgentPredecessorMessageMetaWriter = Readonly<{');
   lines.push('    buildPredecessorMessageMeta(settings: Readonly<Record<string, unknown>>):');
   lines.push('        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;');
@@ -560,7 +565,7 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
   for (const source of sources) {
     if (!source.predecessorMessageMetaWriter) continue;
     lines.push(`    ${source.agentId}: {`);
-    lines.push(`        buildPredecessorMessageMeta: (settings) => ${source.predecessorMessageMetaWriter.importName}(settings, ${renderJsonLiteral(source.predecessorMessageMetaWriter.defaults)}),`);
+    lines.push(`        buildPredecessorMessageMeta: (settings) => ${source.predecessorMessageMetaWriter.importName}(settings, ${toAgentConstPrefix(source.agentId)}_PREDECESSOR_MESSAGE_META_DEFAULTS),`);
     lines.push('    },');
   }
   lines.push('});');
@@ -569,14 +574,10 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
 }
 
 export function renderBundledPluginTranslationsTs(translations: JsonObject): string {
-  const localeTypes = Object.entries(translations).sort(([a], [b]) => a.localeCompare(b)).map(([locale, bundle]) => {
-    const keys = Object.keys(readRequiredRecord(bundle, `translations.${locale}`)).sort((a, b) => a.localeCompare(b));
-    return [
-      `    ${renderTsStringLiteral(locale)}: Readonly<{`,
-      ...keys.map((key) => `        ${renderTsStringLiteral(key)}: string;`),
-      '    }>;',
-    ].join('\n');
-  });
+  const locales = Object.keys(translations).sort();
+  const keys = [...new Set(Object.values(translations).flatMap((bundle) =>
+    Object.keys(readRequiredRecord(bundle, 'bundled plugin translation bundle')),
+  ))].sort();
   return [
     '/**',
     ' * GENERATED FILE CONTRACT (G5-bundled-plugin-translations)',
@@ -585,15 +586,15 @@ export function renderBundledPluginTranslationsTs(translations: JsonObject): str
     ' * - `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`',
     ' */',
     '',
-    'type BundledPluginTranslations = Readonly<{',
-    ...localeTypes,
-    '}>;',
+    `type BundledPluginTranslationLocale = ${locales.map(renderTsStringLiteral).join(' | ') || 'never'};`,
+    'export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<',
+    '    BundledPluginTranslationLocale, Readonly<Record<BundledPluginTranslationKey, string>>',
+    `>> = Object.freeze(${renderJsonLiteral(translations)});`,
     '',
-    `export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.freeze(${renderJsonLiteral(translations)} as const);`,
-    '',
-    'type KeysOfUnion<T> = T extends T ? keyof T : never;',
-    'type BundledPluginTranslationBundle = (typeof BUNDLED_PLUGIN_TRANSLATIONS)[keyof typeof BUNDLED_PLUGIN_TRANSLATIONS];',
-    'export type BundledPluginTranslationKey = KeysOfUnion<BundledPluginTranslationBundle> & string;',
+    'export type BundledPluginTranslationKey =',
+    ...(keys.length === 0 ? ['    never;'] : keys.map((key, index) =>
+      `    ${index === 0 ? '' : '| '}${renderTsStringLiteral(key)}${index === keys.length - 1 ? ';' : ''}`,
+    )),
     '',
   ].join('\n');
 }

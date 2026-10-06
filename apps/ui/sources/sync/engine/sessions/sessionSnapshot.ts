@@ -245,6 +245,9 @@ function buildHydratedSessionFromRowState(params: {
     const { row, cachedEntry } = params;
     const {
         ownerMetadata: _ownerMetadataEnvelope,
+        // This title is produced only by the in-process Session store after an authorized read.
+        // The HTTP schema preserves additive fields, but a plaintext wire value is not provenance.
+        lockedDisplayTitle: _wireLockedDisplayTitle,
         ...sessionRow
     } = row;
     const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
@@ -477,6 +480,9 @@ function buildRenderableFromRowAndCache(
             agentState: null,
             encryptedContentAvailability: knownContentAvailability,
         }) as Session,
+        // The Home-qualified applied row may retain the store's safe title even with no metadata.
+        // Carry only that memory projection; buildHydratedSessionFromRowState stripped wire input.
+        lockedDisplayTitle: currentRenderable?.lockedDisplayTitle,
         metadataUndecided: true,
     };
     return buildSessionListRenderableFromSession(undecidedSession, projectionSource ?? undefined);

@@ -1,7 +1,10 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { buildReviewCommentFixture, createTestSessionTranscriptSource, flushHookEffects, renderWithSessionTranscriptSource, storePlainReviewCommentFixture, wrapWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { loadReviewRunComments, resetReviewRunCommentsForTests } from '@/sync/domains/reviews/comments/reviewRunComments';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -138,17 +141,6 @@ vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => 
     shouldShowTranscriptRowPinAction: () => false,
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    getAgentBehavior: () => ({ permissions: { footer: {} } }),
-    getAgentCore: () => ({
-        permissions: { promptProtocol: 'codexDecision' },
-        toolRendering: { hideUnknownToolsByDefault: false },
-    }),
-    resolveAgentIdFromFlavor: () => 'codex',
-}));
-
 vi.mock('@/agents/catalog/resolve', () => ({
     resolveAgentIdForPermissionUi: () => 'codex',
 }));
@@ -213,6 +205,7 @@ let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
 let thinkingInlinePresentation: 'full' | 'summary' = 'full';
 let filesImagePreviewMaxBytes: number | null = null;
 let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
+let disposeReviewHome: (() => void) | null = null;
 
 afterEach(() => {
     structuredRouterState.push = routerPushSpy;
@@ -222,6 +215,10 @@ afterEach(() => {
     filesImagePreviewMaxBytes = null;
     toolViewTimelineChromeMode = null;
     standardCleanup();
+    disposeReviewHome?.();
+    disposeReviewHome = null;
+    resetReviewRunCommentsForTests();
+    invalidateAccountEncryptionModeCache();
 });
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -278,6 +275,20 @@ const viewOnlyInteraction = deriveTranscriptInteraction({
     access: VIEW_ONLY_SESSION_ACCESS,
     isSessionActive: true,
 });
+
+function createStructuredTranscriptSource(input: Parameters<typeof createTestSessionTranscriptSource>[0] = {}) {
+    return createTestSessionTranscriptSource({
+        sessionId: 's1',
+        reducerState: createReducer(),
+        interaction: sessionInteraction,
+        navigate: structuredRouterState.push,
+        ...input,
+    });
+}
+
+async function renderScreen(element: React.ReactElement, input: Parameters<typeof createTestSessionTranscriptSource>[0] = {}) {
+    return renderWithSessionTranscriptSource(element, createStructuredTranscriptSource(input));
+}
 
 function createStructuredToolMessage(
     kind: 'plan_output.v1' | 'review_findings.v1' | 'review_findings.v2',
@@ -353,6 +364,10 @@ function createReviewFindingsMessage(kind: 'review_findings.v1' | 'review_findin
     });
 }
 
+// Initialize the production module after the boundary factories are configured.
+// Its cold import belongs to collection, before any renderer/test lifetime starts.
+await import('./MessageView');
+
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('renders every persisted composer attachment as host-only transcript context', async () => {
         const { MessageView } = await import('./MessageView');
@@ -420,7 +435,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             contributionLocalId: 'inbound',
             surface: 'unspecified',
         } as const;
-        const messages = [
+        const messages: UserTextMessage[] = [
             {
                 kind: 'user-text',
                 id: 'plugin-ordinary',
@@ -480,6 +495,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 createdAt: 0,
                 text: 'Malformed input',
                 meta: {
+                    // @ts-expect-error Persisted malformed metadata must fail attribution closed at the reader boundary.
                     happierProvenanceV1: {
                         v: 1,
                         kind: 'pluginSession',
@@ -495,7 +511,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 text: 'Voice input',
                 meta: { happierProvenanceV1: { v: 1, kind: 'voice' } },
             },
-        ] satisfies UserTextMessage[];
+        ];
 
         const screen = await renderScreen(
             <>
@@ -625,6 +641,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-media-1',
+            id: 'message-media-1',
+            createdAt: 1,
             text: 'Generated image',
             meta: {
                 happierMedia: {
@@ -695,6 +713,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-media-video-1',
+            id: 'message-media-video-1',
+            createdAt: 1,
             text: 'Browser recording',
             meta: {
                 happierMedia: {
@@ -730,6 +750,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: 'review prompt',
+            id: 'message-review-1',
+            createdAt: 1,
             displayText: 'Review comments (1)',
             meta: {
                 happier: {
@@ -833,6 +855,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: 'review prompt',
+            id: 'message-review-1',
+            createdAt: 1,
             displayText: 'Review comments (1)',
             meta: {
                 happier: {
@@ -865,9 +889,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const screen = await renderScreen(renderMessage());
         const firstJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
 
-        await act(async () => {
-            screen.tree.update(renderMessage());
-        });
+        await screen.update(renderMessage());
 
         const secondJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
         expect(secondJumpHandler).toBe(firstJumpHandler);
@@ -916,7 +938,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             if (props.shouldSuspend) throw neverSettles;
             return null;
         };
-        const renderMessage = (messageValue: typeof message, shouldSuspend = false) => (
+        const renderMessage = (messageValue: typeof message, shouldSuspend = false) => wrapWithSessionTranscriptSource(
             <React.Suspense fallback={null}>
                 <MessageView
                     message={messageValue}
@@ -925,7 +947,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                     interaction={interaction}
                 />
                 <SuspendAfterRow shouldSuspend={shouldSuspend} />
-            </React.Suspense>
+            </React.Suspense>,
+            createStructuredTranscriptSource({ interaction, navigate: structuredRouterState.push }),
         );
         let tree!: renderer.ReactTestRenderer;
 
@@ -976,6 +999,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: '@happier/review.comments ...',
+            id: 'message-review-1',
+            createdAt: 1,
             displayText: 'Review comments (1)',
             meta: {
                 happier: {
@@ -1010,6 +1035,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: '@happier/review.comments ...',
+            id: 'message-review-1',
+            createdAt: 1,
             displayText: 'Review comments (1)',
             meta: {
                 happier: {
@@ -1049,6 +1076,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-1',
+            id: 'message-attachments-1',
+            createdAt: 1,
             text: [
                 'hello',
                 '',
@@ -1086,6 +1115,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-svg-1',
+            id: 'message-svg-1',
+            createdAt: 1,
             text: [
                 'hello',
                 '',
@@ -1122,6 +1153,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: 'review prompt\n\n[attachments block]',
+            id: 'message-review-attachments-1',
+            createdAt: 1,
             displayText: 'Review comments (1)\n\n[attachments block]',
             meta: {
                 happier: {
@@ -1164,6 +1197,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-voice-1',
+            id: 'message-voice-1',
+            createdAt: 1,
             text: [
                 'At the start of your reply, include a short friendly greeting (one sentence).',
                 'Then continue with your response.',
@@ -1196,6 +1231,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-voice-2',
+            id: 'message-voice-2',
+            createdAt: 1,
             text: [
                 formatVoiceToolResultsFollowUp({ toolResults: [{ t: 'sendSessionMessage' }] }),
                 `${VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX} All actions succeeded. Summarize the completed outcome accurately.`,
@@ -1245,6 +1282,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-1',
+            id: 'message-attachments-preview-1',
+            createdAt: 1,
             text: [
                 'hello',
                 '',
@@ -1281,6 +1320,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'local-1',
+            id: 'message-attachments-modal-1',
+            createdAt: 1,
             text: [
                 'hello',
                 '',
@@ -1335,6 +1376,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'user-text',
             localId: 'local-1',
             text: 'review prompt',
+            id: 'message-review-jump-1',
+            createdAt: 1,
             displayText: 'Review comments (1)',
             meta: {
                 happier: {
@@ -1372,6 +1415,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         const message: any = {
             kind: 'user-text',
             localId: 'public-review',
+            id: 'message-public-review',
+            createdAt: 1,
             text: 'review prompt',
             displayText: 'Review comments (1)',
             meta: {
@@ -1401,6 +1446,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 sessionId="s1"
                 interaction={deriveTranscriptInteraction({ kind: 'public' })}
             />,
+            { interaction: publicInteraction, navigate: null },
         );
 
         expect(screen.findByTestId('review-comments-jump:public-comment')).toBeNull();
@@ -1671,6 +1717,21 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     it('can apply accepted findings by sending a structured user message to the parent session', async () => {
         submitMessageSpy.mockClear();
         const { MessageView } = await import('./MessageView');
+        const comment = {
+            ...buildReviewCommentFixture({
+                id: 'comment-f1', sessionId: 's1', runId: 'run_1', state: 'open', serverRevision: 7,
+            }),
+            findingId: 'f1',
+            reviewTriageStatus: 'accept' as const,
+        };
+        const served = await serveActionHomes({
+            homes: [{ key: 'review', serverUrl: 'https://structured-review.test', accountId: 'account-1' }],
+            route: (request) => request.path === '/v1/reviews/comments' && request.method === 'GET'
+                ? Response.json({ items: [storePlainReviewCommentFixture(comment)], cursor: null })
+                : undefined,
+        });
+        disposeReviewHome = served.dispose;
+        const scope = { serverId: served.homes.review!.id, accountId: 'account-1' };
 
         const message: any = {
             kind: 'tool-call',
@@ -1723,12 +1784,22 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 sessionId="s1"
                 interaction={sessionInteraction}
             />,
+            // This host has no review-page navigation, so mutations stay on the full card.
+            {
+                serverId: scope.serverId,
+                authorship: { viewerScope: scope, hasOtherNamedCollaborator: false },
+                navigate: null,
+            },
         );
-        expect(screen.findByTestId('review-findings-header:f1')).not.toBeNull();
-        await screen.pressByTestIdAsync('review-findings-header:f1');
+        await act(async () => {
+            await loadReviewRunComments({ scope, sessionId: 's1', runId: 'run_1' });
+        });
+        await flushHookEffects();
+        expect(screen.findByTestId('review-finding:f1')).not.toBeNull();
 
         expect(screen.findByTestId('review-findings-publish-accepted')).not.toBeNull();
         await screen.pressByTestIdAsync('review-findings-publish-accepted');
+        await flushHookEffects();
 
         expect(submitMessageSpy).toHaveBeenCalledTimes(1);
         const [sessionId, text, _displayText, metaOverrides] = submitMessageSpy.mock.calls[0] as any[];
@@ -1752,6 +1823,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 sessionId="s1"
                 interaction={interaction}
             />,
+            { interaction, navigate: null },
         );
         const adopt = screen.findByTestId('adopt-plan-button');
         if (adopt) {
@@ -1779,8 +1851,10 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                     sessionId="s1"
                     interaction={interaction}
                 />,
+                { interaction, navigate: null },
             );
-            await screen.pressByTestIdAsync('review-findings-header:f1');
+            expect(screen.findByTestId('review-finding:f1')).not.toBeNull();
+            expect(screen.findByTestId('review-finding-triage:f1:accept')).toBeNull();
 
             const publishAccepted = screen.findByTestId('review-findings-publish-accepted');
             if (publishAccepted) {
@@ -1804,6 +1878,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'agent-text',
             localId: null,
             text: '**Title**\n\n- first\n- second',
+            id: 'message-thinking-1',
+            createdAt: 1,
             isThinking: true,
             meta: {},
         };
@@ -1829,6 +1905,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'agent-text',
             localId: null,
             text: '*Thinking...*\n\n*Hello*',
+            id: 'message-thinking-legacy-1',
+            createdAt: 1,
             isThinking: true,
             meta: {},
         };
@@ -1875,6 +1953,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'agent-text',
             localId: null,
             text: '**Title**\n\nHello',
+            id: 'message-thinking-tool-1',
+            createdAt: 1,
             isThinking: true,
             meta: {},
         };
@@ -1898,6 +1978,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             kind: 'agent-text',
             localId: null,
             text: 'Hello',
+            id: 'message-thinking-hidden-1',
+            createdAt: 1,
             isThinking: true,
             meta: {},
         };
@@ -1956,6 +2038,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            { serverId: 'home-b' },
         );
         const markdownView = screen.findByType('MarkdownView' as any);
 
@@ -1980,6 +2063,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            { serverId: 'home-b' },
         );
         const markdownView = screen.findByType('MarkdownView' as any);
 
@@ -2014,6 +2098,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            { serverId: 'home-b' },
         );
 
         const row = screen.findByTestId('message-attachments-row');
@@ -2065,6 +2150,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            { serverId: 'home-b' },
         );
 
         await screen.pressByTestIdAsync('message-session-media-inline-video:.happier/uploads/generated/session-1/message-1/generated.webm');
@@ -2118,6 +2204,7 @@ describe('in-session file/media deep links carry the exact Home', () => {
         routerPushSpy.mockClear();
         const screen = await renderScreen(
             <MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+            { serverId: 'home-b' },
         );
 
         await screen.pressByTestIdAsync('message-session-media-inline-video:.happier/uploads/tools/t1/screenshot-recording.webm');

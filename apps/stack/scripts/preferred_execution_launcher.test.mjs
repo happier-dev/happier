@@ -124,6 +124,64 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 2831
   };
 }
 
+test('hosted CI public compiler scripts execute locally on a small host and preserve nested dispatch and failure', async (t) => {
+  const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 16373452 });
+  const binDir = invocation.env.PATH.split(':')[0];
+  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
+  await executable(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7, $8}\' "$STARVED_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(binDir, 'corepack'), [
+    '#!/bin/sh',
+    'printf "script:%s:routed=%s:ci=%s:argument=%s\\n" "$3" "${HAPPIER_HSTACK_EXECUTION-unset}" "${CI-unset}" "${4-}"',
+    'case "$3" in',
+    '  typecheck:compiler:local) exec /bin/sh "$TEST_LAUNCHER" --script=typecheck:local -- "literal argument" ;;',
+    '  typecheck:local) exit 23 ;;',
+    '  *) exit 97 ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  for (const configured of [true, false]) {
+    const env = {
+      ...invocation.env, CI: 'true', GITHUB_ACTIONS: 'true', TEST_LAUNCHER: launcher,
+      npm_node_execpath: '', npm_execpath: '',
+      ...(configured ? {} : {
+        HAPPIER_EXEC_CONFIG_PATH: '',
+        HAPPIER_STACK_STORAGE_DIR: join(invocation.env.HOME, 'unconfigured-stacks'),
+      }),
+    };
+    const result = spawnSync('/bin/sh', [launcher, '--script=typecheck:compiler:local'], { ...invocation, env, timeout: 10_000 });
+    assert.equal(result.status, 23, result.stderr);
+    assert.deepEqual(result.stdout.trim().split('\n'), [
+      'script:typecheck:compiler:local:routed=1:ci=true:argument=',
+      'script:typecheck:local:routed=1:ci=true:argument=literal argument',
+    ]);
+    assert.doesNotMatch(result.stderr, /heavyweight admission|memory capacity/);
+    await assert.rejects(readFile(invocation.env.FIXTURE_TRACE), { code: 'ENOENT' });
+    await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
+
+    const development = spawnSync('/bin/sh', [launcher, '--local', '--script=typecheck:compiler:local'], {
+      ...invocation, env: { ...env, CI: '', GITHUB_ACTIONS: '' }, timeout: 10_000,
+    });
+    assert.equal(development.status, 1, development.stderr);
+    assert.equal(development.stdout, '');
+    assert.match(development.stderr, /memory capacity.*compilation.*22020096/);
+
+    const explicitlyAdmitted = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--class=validation', '--machine=fixture', '--', '/bin/sh', launcher, '--script=typecheck:compiler:local'], {
+      ...invocation, env, timeout: 10_000,
+    });
+    assert.equal(explicitlyAdmitted.status, 1, explicitlyAdmitted.stderr);
+    assert.equal(explicitlyAdmitted.stdout, '');
+    assert.match(explicitlyAdmitted.stderr, /memory capacity.*compilation.*22020096/);
+
+    const placedWorker = spawnSync('/bin/sh', [launcher, '--script=typecheck:compiler:local'], {
+      ...invocation, env: { ...env, HAPPIER_DEV_TARGET_EXECUTION: '1' }, timeout: 10_000,
+    });
+    assert.equal(placedWorker.status, 1, placedWorker.stderr);
+    assert.equal(placedWorker.stdout, '');
+    assert.match(placedWorker.stderr, /memory capacity.*compilation.*22020096/);
+  }
+});
+
 test('native dispatch consumes the shared source-test, generator, compiler and admission decisions', async (t) => {
   const { invocation } = await memoryRoutingFixture(t);
   for (const { args, kind, component } of [
@@ -399,11 +457,13 @@ test('compilation capacity target admission rejects a physically undersized mach
   await executable(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7, $8}\' "$STARVED_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "unexpected-admission\\n"\n');
   const directArgs = [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=compilation', '--machine=fixture', '--', 'probe-command'];
-  for (const args of [directArgs, [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs]]) {
-    const result = spawnSync('/bin/sh', args, { ...invocation, timeout: 10_000 });
-    assert.equal(result.status, 1, result.stderr);
-    assert.equal(result.stdout, '');
-    assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
+  for (const ci of ['', 'true']) {
+    for (const args of [directArgs, [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs]]) {
+      const result = spawnSync('/bin/sh', args, { ...invocation, env: { ...invocation.env, CI: ci }, timeout: 10_000 });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
+    }
   }
 });
 
@@ -741,12 +801,14 @@ test('automatic dispatch protects control work while keeping a selected local pa
     '#!/bin/sh',
     'printf "%s\\n" "$*" >> "$SCOPE_LOG"',
     'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in --slice=*) export TEST_CURRENT_CGROUP=/user.slice/${1#--slice=}/fixture.scope ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
     'exec "$@"',
     '',
   ].join('\n'));
+  await executable(join(binDir, 'sed'), '#!/bin/sh\ncase "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac\n');
 
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
     cwd: repoRoot,
@@ -4724,12 +4786,14 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     '#!/bin/sh',
     'printf "%s\\n" "$*" >> "$SYSTEMD_SCOPE_MARKER"',
     'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in --slice=*) export TEST_CURRENT_CGROUP=/user.slice/${1#--slice=}/fixture.scope ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
     'exec "$@"',
     '',
   ].join('\n'));
+  await executable(join(binDir, 'sed'), '#!/bin/sh\ncase "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac\n');
   await executable(join(binDir, 'vitest'), [
     '#!/bin/sh',
     'case "$*" in',
@@ -5287,6 +5351,13 @@ test('native launcher reuses a validated parent heavyweight reservation only for
     '',
   ].join('\n'));
   await executable(join(binDir, 'vitest'), '#!/bin/sh\nprintf "%s\\n" "$HSTACK_TEST_SLICE" > "$NESTED_SLICE_MARKER"\n');
+  await executable(join(binDir, 'sed'), [
+    '#!/bin/sh',
+    // The systemd adapter above owns the simulated kernel placement. Do not
+    // borrow the enclosing runner's real jobs cgroup for this OS fixture.
+    'case "$*" in *"/proc/self/cgroup") printf "/user.slice/%s/fixture.scope\\n" "${HSTACK_TEST_SLICE-unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac',
+    '',
+  ].join('\n'));
   await executable(outerScript, [
     '#!/bin/sh',
     'set -eu',
@@ -5579,6 +5650,8 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
   const scopedMarker = join(root, 'scoped-command');
   const fallbackMarker = join(root, 'fallback-command');
   const scopedArguments = join(root, 'systemd-run-arguments');
+  const scopeInvocations = join(root, 'scope-invocations');
+  const scopeUnits = join(root, 'scope-units');
   const fallbackScopeAttempt = join(root, 'unexpected-systemd-run');
   t.after(async () => await rm(root, { recursive: true, force: true }));
 
@@ -5610,12 +5683,25 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
   await executable(join(readyBin, 'systemd-run'), [
     '#!/bin/sh',
     'printf "%s\\n" "$*" > "$SYSTEMD_RUN_ARGUMENTS"',
+    'unit=; slice=',
     'while [ "$#" -gt 0 ]; do',
-    '  case "$1" in --nice=*) if [ "${1#--nice=}" -lt "${TEST_INHERITED_NICE:-0}" ]; then printf "Failed to set nice level: Permission denied\\n" >&2; exit 1; fi ;; esac',
+    '  case "$1" in --unit=*) unit=${1#--unit=} ;; --slice=*) slice=${1#--slice=} ;; --nice=*) if [ "${1#--nice=}" -lt "${TEST_INHERITED_NICE:-0}" ]; then printf "Failed to set nice level: Permission denied\\n" >&2; exit 1; fi ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
+    // systemd 259 identifies a default scope by process identity and execs the
+    // payload in that process. Procfs and systemd are genuine OS boundaries.
+    'if [ -z "$unit" ]; then token=$(/usr/bin/awk \'{print $22}\' /proc/$$/stat); unit=run-p$$-i$token.scope; fi',
+    'mkdir -p -- "$SCOPE_UNITS"',
+    'if ! mkdir "$SCOPE_UNITS/$unit"; then printf "Failed to start transient scope unit: Unit %s was already loaded or has a fragment file.\\n" "$unit" >&2; exit 42; fi',
+    'printf "%s|%s\\n" "$unit" "$slice" >> "$SCOPE_INVOCATIONS"',
+    'export TEST_CURRENT_CGROUP=/user.slice/user-1000.slice/user@1000.service/happier.slice/$slice/$unit',
     'exec "$@"',
+    '',
+  ].join('\n'));
+  await executable(join(readyBin, 'sed'), [
+    '#!/bin/sh',
+    'case "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac',
     '',
   ].join('\n'));
   // OS boundary: systemd cannot raise an unprivileged child's inherited priority.
@@ -5635,7 +5721,7 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
     '',
   ].join('\n'));
 
-  const run = (binDir, home, marker, { inheritedNice = 0, protectedLocal = false } = {}) => spawnSync('/bin/sh', [
+  const run = (binDir, home, marker, { inheritedNice = 0, protectedLocal = false, command } = {}) => spawnSync('/bin/sh', [
     launcher,
     ...(protectedLocal ? ['--local'] : [
       '--heavyweight-admission',
@@ -5643,8 +5729,7 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
       '--machine=scope-profile',
     ]),
     '--',
-    'scoped-command',
-    marker === scopedMarker ? 'scoped' : 'fallback',
+    ...(command ?? ['scoped-command', marker === scopedMarker ? 'scoped' : 'fallback']),
   ], {
     cwd: repoRoot,
     env: {
@@ -5654,6 +5739,9 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
       ...(protectedLocal ? { HAPPIER_HSTACK_DISPATCH_CONTROL: '1' } : {}),
       SCOPED_MARKER: marker,
       SYSTEMD_RUN_ARGUMENTS: scopedArguments,
+      SCOPE_UNITS: scopeUnits,
+      SCOPE_INVOCATIONS: scopeInvocations,
+      TEST_LAUNCHER: launcher,
       FALLBACK_SCOPE_ATTEMPT: fallbackScopeAttempt,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
@@ -5682,6 +5770,22 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
     assert.equal(inherited.status, 0, inherited.stderr);
     assert.equal(await readFile(scopedMarker, 'utf8'), 'scoped\n');
     assert.match(await readFile(scopedArguments, 'utf8'), /--nice=19 -- scoped-command scoped/);
+  }
+
+  for (const throughCriticalScope of [false, true]) {
+    await writeFile(scopeInvocations, '');
+    const nestedCommand = '"$TEST_LAUNCHER" --heavyweight-admission --class=validation --machine=scope-profile -- scoped-command scoped';
+    const command = throughCriticalScope
+      ? `systemd-run --user --scope --quiet --slice=happier-critical.slice -- ${nestedCommand}; result=$?; exit "$result"`
+      : `exec ${nestedCommand}`;
+    const nested = run(readyBin, join(root, `nested-home-${throughCriticalScope}`), scopedMarker, {
+      command: ['/bin/sh', '-c', command],
+    });
+    assert.equal(nested.status, 0, `critical transition: ${throughCriticalScope}\n${nested.stderr}`);
+    assert.equal(await readFile(scopedMarker, 'utf8'), 'scoped\n');
+    const scopes = (await readFile(scopeInvocations, 'utf8')).trim().split('\n');
+    assert.equal(scopes.length, throughCriticalScope ? 3 : 1);
+    assert.equal(scopes.at(-1).split('|')[1], 'happier-jobs.slice');
   }
 });
 

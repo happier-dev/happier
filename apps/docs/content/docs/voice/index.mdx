@@ -32,7 +32,7 @@ Dictation has its own speech setup and remains available when conversations are 
   controls; a missing bit or diagnostic capability is not admission.
 - **Your client** enables **Settings → Features → Voice** by default, without
   Experiments. An explicit off choice still disables conversations.
-- **Individual modes** add their own gates: **Happier Voice** needs the server-side
+- **Individual services and billing choices** add their own gates: **Happier Voice** needs the server-side
   `voice.happierVoice` feature, and the daemon-backed **Local voice** agent needs
   **Settings → Features → Voice agent**, which remains experimental and off by
   default, with Experiments and its Execution runs prerequisite enabled.
@@ -46,20 +46,24 @@ gate; a direct link cannot bypass it. Dictation remains independent. See
 ## Conversation modes
 
 The provider list is built from what is installed, so it grows when a plugin
-contributes a voice provider. These ship with Happier:
+contributes a voice provider. The table keeps capability and channel statuses
+separate from the current development UI labels:
 
-| Mode, as the app labels it | What it is | Status |
+| Capability or billing setup | What it is | Status |
 | --- | --- | --- |
 | **Happier Voice** | Realtime ElevenLabs voice on Happier-managed credentials and server-side quotas. | Shipped, where the server advertises it |
-| **Use My ElevenLabs** | The same ElevenLabs provider billed to your own account and agent. | Shipped |
+| **My ElevenLabs account** | The same ElevenLabs provider billed to your own account and agent. | Shipped |
 | **Local voice** | A configurable speech pipeline: device, self-hosted, Google, or on-device neural speech. | Shipped; **Agent** mode needs the Voice agent feature |
 | **OpenAI Realtime** | WebRTC voice against the OpenAI Realtime API, authenticated by a saved key or a Connected Service. | Development only |
 | **Grok Voice · BYOK** | xAI's realtime voice through Happier's shared PCM conversation host. | Development only |
 | **Codex Realtime (Experimental)** | A realtime conversation attached to a Codex agent session. Settings and privacy copy call this feature **Codex Live**. | Experimental, development only |
 
-**Happier Voice** and **Use My ElevenLabs** are not two providers. They are two billing
-choices on one ElevenLabs provider, which is why they share a voice picker, a model
-list, and a tuning panel.
+**Happier Voice** and using your own ElevenLabs account are two billing choices
+on one ElevenLabs provider, which is why they share a voice picker, a model list,
+and a tuning panel. In the current **0.3 development UI**, select **ElevenLabs Voice**,
+then choose **Happier** or **My ElevenLabs account** under **Pay with** in its
+**Account** section. These are source UI labels, not a claim about the labels in
+an installed release.
 
 <Callout type="warn">
   "Development only" means the code is in the development source and not in a released
@@ -73,8 +77,8 @@ list, and a tuning panel.
 
 If you only need one rule of thumb:
 
-- choose **Happier Voice** for the simplest “just works” realtime voice experience
-- choose **Use My ElevenLabs** if you want full control over your own ElevenLabs account and agent
+- choose **ElevenLabs Voice** with **Pay with → Happier** for the simplest “just works” realtime voice experience
+- choose **ElevenLabs Voice** with **Pay with → My ElevenLabs account** if you want full control over your own ElevenLabs account and agent
 - choose **Local voice** if you want device speech, self-hosted endpoints, or on-device neural speech
 - in a development build, choose **OpenAI Realtime** for OpenAI WebRTC voice with an explicit saved-secret or Connected Service authentication source
 - in a development build, choose **Grok Voice · BYOK** for xAI's realtime conversation with host-owned microphone capture and playback
@@ -279,6 +283,9 @@ This gives you a neutral default for global voice use, while still letting sessi
 
 **Happier Voice** is the managed realtime option.
 
+In **Settings → Voice → Voice conversations**, select **ElevenLabs Voice**, then
+set **Pay with** to **Happier** in its **Account** section.
+
 Use it when you want:
 
 - the least setup
@@ -298,11 +305,11 @@ iOS Voice Live Activity and lock-screen Voice controls are deferred; the existin
 Focus Live Activity is a separate session-attention feature. The floating Island
 does not imply an iOS Live Activity.
 
-## Use My ElevenLabs
+## My ElevenLabs account
 
-**Use My ElevenLabs** runs the same realtime ElevenLabs provider as Happier Voice, billed to your own ElevenLabs account settings instead.
+**My ElevenLabs account** runs the same realtime ElevenLabs provider as Happier Voice, billed to your own ElevenLabs account settings instead.
 
-This mode is useful when you want:
+This billing choice is useful when you want:
 
 - your own ElevenLabs billing
 - your own ElevenLabs agent
@@ -310,7 +317,8 @@ This mode is useful when you want:
 
 ### What you configure
 
-In **Settings → Voice → Voice conversations → Use My ElevenLabs**, you can configure:
+In **Settings → Voice → Voice conversations**, select **ElevenLabs Voice**, then set
+**Pay with** to **My ElevenLabs account** in its **Account** section. You can configure:
 
 - **API key**
 - **Agent ID**
@@ -499,11 +507,11 @@ Answering a user-action request and approving a permission are not the same thin
 
 ### I want the simplest realtime voice setup
 
-Use **Happier Voice**.
+Select **ElevenLabs Voice**, then choose **Pay with → Happier**.
 
 ### I want ElevenLabs, but with my own billing and voices
 
-Use **Use My ElevenLabs**.
+Select **ElevenLabs Voice**, then choose **Pay with → My ElevenLabs account**.
 
 ### I want local or self-hosted speech services
 

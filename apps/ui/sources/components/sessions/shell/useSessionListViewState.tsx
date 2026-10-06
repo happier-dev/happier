@@ -1617,12 +1617,12 @@ export function useSessionListViewStateFromPaneState(
         const destination = runtime.getDestinations(source.sourceId).find(entry => {
             const value = entry.destination;
             return entry.targetId === rowInteractions.entityDragDrop.targetId && value && typeof value === 'object'
-                && !Array.isArray(value) && value.instructionKind === 'move-to-root';
+                && !Array.isArray(value) && 'instructionKind' in value && value.instructionKind === 'move-to-root';
         });
         if (!destination || destination.admission.status !== 'allowed') { source.dispose(); return; }
         void runtime.perform(source.sourceId, destination.targetId, destination.destination, 'chooser').then(outcome => {
             const value = destination.destination;
-            if (outcome?.status === 'applied' && value && typeof value === 'object' && !Array.isArray(value)
+            if (outcome?.status === 'applied' && value && typeof value === 'object' && !Array.isArray(value) && 'containerId' in value
                 && typeof value.containerId === 'string') sessionListA11y.announceDropResult({ label: sourceLabel,
                 destinationLabel: t('sessionsList.moveToWorkspaceRoot'), result: { instruction: { kind: 'move-to-root',
                     containerId: value.containerId, rootId: value.containerId, depth: 0 }, visual: { kind: 'none' } } });

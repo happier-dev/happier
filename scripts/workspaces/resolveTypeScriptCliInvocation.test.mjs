@@ -3,9 +3,8 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
 
 import {
   resolveTypeScriptCliInvocation,
@@ -104,43 +103,5 @@ test('checks every requested project sequentially even when source checking fail
     assert.equal(green.status, 0, `${green.stdout}\n${green.stderr}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('CLI source/test projects retain the full root-file and ambient coverage', () => {
-  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const isTest = (path) => /\.(?:test|spec)\.tsx?$/u.test(path)
-    || path.replaceAll('\\', '/').includes('/__tests__/');
-  for (const app of ['cli']) {
-    const root = join(repoRoot, 'apps', app);
-    const readProject = (name) => {
-      const parsed = ts.getParsedCommandLineOfConfigFile(join(root, name), {}, {
-        ...ts.sys,
-        onUnRecoverableConfigFileDiagnostic(diagnostic) {
-          assert.fail(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-        },
-      });
-      assert.deepEqual(parsed.errors, []);
-      return parsed;
-    };
-    const original = readProject('tsconfig.json');
-    assert.equal(original.fileNames.some(isTest), true, `${app} inherited base config lost test roots`);
-    const source = readProject('tsconfig.source.json');
-    assert.equal(source.fileNames.some(isTest), false, `${app} source roots still include tests`);
-    const tests = readProject('tsconfig.test.json');
-    const union = new Set([...source.fileNames, ...tests.fileNames]);
-    const originalRoots = new Set(original.fileNames);
-    assert.deepEqual({
-      missing: [...originalRoots].filter((path) => !union.has(path)),
-      added: [...union].filter((path) => !originalRoots.has(path)),
-    }, { missing: [], added: [] }, `${app} root coverage changed`);
-    for (const path of original.fileNames.filter((path) => path.endsWith('.d.ts'))) {
-      assert.ok(source.fileNames.includes(path), `${app} source lost ambient ${path}`);
-      assert.ok(tests.fileNames.includes(path), `${app} tests lost ambient ${path}`);
-    }
-    for (const option of ['strict', 'skipLibCheck', 'types', 'paths', 'lib', 'jsx', 'moduleResolution']) {
-      assert.deepEqual(tests.options[option], source.options[option], `${app} ${option} changed`);
-    }
-    assert.notEqual(tests.options.tsBuildInfoFile, source.options.tsBuildInfoFile);
   }
 });

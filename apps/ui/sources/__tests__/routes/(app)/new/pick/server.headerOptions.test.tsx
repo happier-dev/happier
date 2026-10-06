@@ -10,14 +10,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 
 installTokenStorageWebPlatformMocks();
 installDisconnectedServerSocketBoundary();
-const capture = vi.hoisted(() => {
-    let options: Record<string, unknown> | (() => Record<string, unknown>) | null = null;
-    return {
-        record(value: Record<string, unknown> | (() => Record<string, unknown>)) { options = value; },
-        reset() { options = null; },
-        getResolved() { return typeof options === 'function' ? options() : options; },
-    };
-});
+const capture = (await import('@/dev/testkit/mocks/router')).createStackOptionsCapture();
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
     params: { selectedId: '' },
     navigation: { getState: () => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] }), dispatch: vi.fn() },

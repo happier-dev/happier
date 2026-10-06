@@ -716,16 +716,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     }),
 });
 
-export type BundledAgentPredecessorMessageMetaWriter = Readonly<{
-    buildPredecessorMessageMeta(settings: Readonly<Record<string, unknown>>):
-        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;
-}>;
-
-export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<
-    Partial<Record<CanonicalAgentId, BundledAgentPredecessorMessageMetaWriter>>
-> = Object.freeze({
-    claude: {
-        buildPredecessorMessageMeta: (settings) => buildClaudePredecessorMessageMeta(settings, {
+const CLAUDE_PREDECESSOR_MESSAGE_META_DEFAULTS = {
   "claudeCodeExperimentalAgentTeamsEnabled": false,
   "claudeDynamicModelProbeEnabled": true,
   "claudeLocalPermissionBridgeEnabled": true,
@@ -750,6 +741,17 @@ export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<
   "claudeUnifiedTerminalHost": "auto",
   "claudeUnifiedTerminalResumeChoice": "ask_every_time",
   "claudeUnifiedTerminalWorkspaceTrust": "ask_every_time"
-}),
+} as const;
+
+export type BundledAgentPredecessorMessageMetaWriter = Readonly<{
+    buildPredecessorMessageMeta(settings: Readonly<Record<string, unknown>>):
+        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;
+}>;
+
+export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<
+    Partial<Record<CanonicalAgentId, BundledAgentPredecessorMessageMetaWriter>>
+> = Object.freeze({
+    claude: {
+        buildPredecessorMessageMeta: (settings) => buildClaudePredecessorMessageMeta(settings, CLAUDE_PREDECESSOR_MESSAGE_META_DEFAULTS),
     },
 });

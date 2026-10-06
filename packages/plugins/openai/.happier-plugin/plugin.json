@@ -43,9 +43,12 @@
       }
     ],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -249,6 +252,10 @@
         },
         "id": "realtime-openai",
         "kind": "conversation",
+        "mark": {
+          "kind": "connected_service",
+          "serviceId": "openai"
+        },
         "platforms": [
           "web",
           "ios",
@@ -475,6 +482,14 @@
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to OpenAI using WebRTC. When enabled or used, OpenAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the selected Saved Voice API key, OpenAI Connected Service, or experimental Codex OAuth account to mint short-lived client authentication; connected accounts are accessed through the selected machine. OpenAI processes the live conversation under the selected account and may retain received data according to that account’s settings and OpenAI’s terms. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.openai.privacyDisclosure"
+          },
+          "privacyFacts": {
+            "audioDestination": "OpenAI",
+            "processor": "OpenAI Realtime",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
           },
           "schemaVersion": 1
         },

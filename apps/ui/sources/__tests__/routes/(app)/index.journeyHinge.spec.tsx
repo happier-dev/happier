@@ -57,7 +57,6 @@ vi.mock('@/demoMode/seed/seedDemoWorld', async (importOriginal) => {
 const journeyRouteState = vi.hoisted(() => ({
     enabled: false,
     initialBeatId: 'S2' as JourneyBeatId,
-    initialAttentionChoice: undefined as undefined | 'promote_attention_and_working',
     mountIds: [] as number[],
     unmountIds: [] as number[],
     nextMountId: 1,
@@ -128,7 +127,6 @@ vi.mock('@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry', async ()
             surface: 'desktop',
             isDesktopShell: true,
             initialBeatId: journeyRouteState.initialBeatId,
-            initialAttentionChoice: journeyRouteState.initialAttentionChoice,
             preAuthController: createPreAuthController(),
             wizardSurfaceProps: createWizardSurfaceProps(),
             testID: 'route-journey',
@@ -174,10 +172,6 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
-
-vi.mock('@/text/i18n', () => ({
-    setPreferredLanguageFromSettings: vi.fn(),
-}));
 
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -278,12 +272,6 @@ vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
 }));
 
 
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: vi.fn(async () => ({ status: 'ready', features: { capabilities: { auth: { methods: [] } } } })),
-    primeServerFeaturesSnapshot: vi.fn(),
-    deleteServerFeaturesSnapshot: vi.fn(),
-}));
-
 const syncSingletonState = vi.hoisted(() => ({
     applySettings: vi.fn(),
 }));
@@ -347,7 +335,6 @@ describe('/ (welcome) journey hinge', () => {
         isAuthenticated = true;
         journeyRouteState.enabled = false;
         journeyRouteState.initialBeatId = 'S2';
-        journeyRouteState.initialAttentionChoice = undefined;
         journeyRouteState.mountIds = [];
         journeyRouteState.unmountIds = [];
         journeyRouteState.nextMountId = 1;
@@ -694,10 +681,13 @@ describe('/ (welcome) journey hinge', () => {
         expect(screen.findAllByType('DemoStage' as never)).toHaveLength(0);
     });
 
-    it('persists the A7 completion settings through the route-mounted journey host', async () => {
+    it('completes the route-mounted journey without overwriting saved personalization', async () => {
         journeyRouteState.enabled = true;
         journeyRouteState.initialBeatId = 'S5';
-        journeyRouteState.initialAttentionChoice = 'promote_attention_and_working';
+        storage.getState().applySettingsLocal({
+            sessionListAttentionPromotionModeV1: 'withinGroups',
+            sessionListWorkingPlacementModeV1: 'withinGroups',
+        });
         isAuthenticated = false;
 
         const Screen = (await import('@/app/(app)/index')).default;
@@ -714,10 +704,12 @@ describe('/ (welcome) journey hinge', () => {
         await screen.pressByTestIdAsync('route-journey-desktop-config-primary');
         await flushHookEffects({ cycles: 8, turns: 4, frames: 1 });
 
-        expect(syncSingletonState.applySettings).toHaveBeenCalledWith({
-            sessionListAttentionPromotionModeV1: 'global',
-            sessionListWorkingPlacementModeV1: 'global',
-        }, { expectedSettingsScope: null, source: 'ui' });
+        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
+        expect(applyLocalSettingsSpy).not.toHaveBeenCalled();
+        expect(storage.getState().settings).toMatchObject({
+            sessionListAttentionPromotionModeV1: 'withinGroups',
+            sessionListWorkingPlacementModeV1: 'withinGroups',
+        });
         expect(setPendingSetupIntentMock).toHaveBeenCalledWith({
             branch: 'thisComputer',
             phase: 'dismissed',
@@ -728,7 +720,6 @@ describe('/ (welcome) journey hinge', () => {
     it('completes a setup-entry journey without ever seeding, and still settles the exit', async () => {
         journeyRouteState.enabled = true;
         journeyRouteState.initialBeatId = 'S5';
-        journeyRouteState.initialAttentionChoice = 'promote_attention_and_working';
         isAuthenticated = false;
 
         const Screen = (await import('@/app/(app)/index')).default;
@@ -750,10 +741,7 @@ describe('/ (welcome) journey hinge', () => {
         expect(demoWorldState.clearCalls).toBe(1);
         expect(journeyRouteState.unmountIds).toEqual([1]);
         expect(screen.findAllByType('DemoStage' as never)).toHaveLength(0);
-        expect(syncSingletonState.applySettings).toHaveBeenCalledWith({
-            sessionListAttentionPromotionModeV1: 'global',
-            sessionListWorkingPlacementModeV1: 'global',
-        }, { expectedSettingsScope: null, source: 'ui' });
+        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
     });
 
     it('hands over auth on a setup-entry journey without any demo activity or legacy setup modal', async () => {

@@ -8,6 +8,14 @@
   "references": [
     { "path": "./tsconfig.source.json" }
   ],
+  "files": [
+    "../../packages/protocol/src/auth/tr46.d.ts",
+    "vitest.config.ts",
+    "vitest.integration.config.ts",
+    "vitest.legend-native.config.ts",
+    "vitest.legend-fabric.config.ts",
+    "sources/dev/testkit/fixtures/pluginWidgetProjectionFixtures.ts"
+  ],
   "include": [
     "**/*.test.ts",
     "**/*.test.tsx",
@@ -24,6 +32,7 @@
     "sources/types/react-native-webrtc-web-shim.d.ts",
     "sources/types/react-test-renderer-host-types.d.ts",
     "sources/types/stylesheets.d.ts",
+    "sources/types/unistyles.d.ts",
     ".expo/types/**/*.ts"
   ]
 }

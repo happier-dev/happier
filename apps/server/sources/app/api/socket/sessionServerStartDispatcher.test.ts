@@ -137,7 +137,7 @@ function ingressRecipe(machineId = "machine-2"): string {
             kind: "newSession",
             spawn: {
                 executionTarget: { serverId: "server-1", machineId },
-                directory: "/workspace",
+                directory: { kind: "path", path: "/workspace" },
                 agentTarget: {
                     kind: "agent",
                     identity: { pluginId: "happier.agent.codex", localId: "codex" },
@@ -168,7 +168,7 @@ function e2eeIngressRecipe(machineId = 'machine-2'): string {
             kind: 'newSession',
             spawn: {
                 executionTarget: { serverId: 'server-1', machineId },
-                directory: '/workspace',
+                directory: { kind: 'path', path: '/workspace' },
                 agentTarget: {
                     kind: 'agent',
                     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },

@@ -37,6 +37,14 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      // Packaging materializes another SDK copy under CLI node_modules. The
+      // authored workspace graph must use one prepared declaration identity.
+      "@happier-dev/plugin-sdk": [
+        "../../packages/plugin-sdk/dist/index.d.ts"
+      ],
+      "@happier-dev/plugin-sdk/*": [
+        "../../packages/plugin-sdk/dist/*/index.d.ts"
       ]
     }
   },

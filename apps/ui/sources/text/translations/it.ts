@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -842,7 +842,7 @@ function plural({
  * Italian translations for the Happier app
  * Must match the exact structure of the English translations
  */
-export const it: TranslationStructure = {
+const itValues = {
     homeDeviceApproval: homeDeviceApprovalTranslations.it,
     settingsOverview: settingsOverviewTranslations.it,
     homeSetup: homeSetupTranslations.it,
@@ -15374,6 +15374,8 @@ settingsSession: {
             skipToContent: "Vai al contenuto",
         },
   },} as const;
+
+export const it = defineTranslations(itValues);
 
 export type TranslationsIt = typeof it;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

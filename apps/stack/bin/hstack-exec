@@ -44,12 +44,22 @@ score_load_sample() {
 }
 
 exec_in_jobs_slice() {
+  # A scoped payload keeps its process identity across exec. Reentrant work
+  # already placed in jobs must reuse that scope, not create it a second time.
+  case "$(sed -n 's/^0:://p' /proc/self/cgroup 2>/dev/null)" in
+    *'/happier-jobs.slice/'*) exec "$@" ;;
+  esac
   # Scope execution inherits niceness. Raising a nested background job back to
   # 10 needs privileges, so retain any already-lower scheduling priority.
   jobs_slice_nice=$(ps -o ni= -p "$$") || return
   jobs_slice_nice=$((jobs_slice_nice))
   if [ "$jobs_slice_nice" -lt 10 ]; then jobs_slice_nice=10; fi
-  exec systemd-run --user --scope --quiet --slice=happier-jobs.slice "--nice=$jobs_slice_nice" -- "$@"
+  # A control-to-jobs exec retains the process identity used by systemd's
+  # default scope name. Keep the jobs placement distinct from that control
+  # scope, using the same PID/start-token identity as the admission owner.
+  jobs_slice_token=$(heavyweight_process_token "$$")
+  exec systemd-run "--unit=happier-jobs-$$-$jobs_slice_token.scope" \
+    --user --scope --quiet --slice=happier-jobs.slice "--nice=$jobs_slice_nice" -- "$@"
 }
 
 resolve_command_policy() {
@@ -534,7 +544,12 @@ run_local() {
   if [ -z "$heavyweight_local_class" ]; then
     heavyweight_local_class=$(heavyweight_command_class "$@" || true)
   fi
-  if [ -n "$heavyweight_local_class" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
+  # CI owns its local executor's capacity. Only automatic local CI execution
+  # skips development admission; placed workers and explicit admission
+  # descendants retain their existing resource guard and escalation.
+  if [ -n "$heavyweight_local_class" ] \
+    && { [ -z "${CI-}" ] || [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ -n "${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}" ]; } \
+    && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
     heavyweight_local_root=$(resolve_heavyweight_admission_root) || {
       printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
       exit 1

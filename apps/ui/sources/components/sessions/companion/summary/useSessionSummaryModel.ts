@@ -139,7 +139,7 @@ export function useSessionSummaryModel(input: Readonly<{
     // stable, without adding a Summary-owned timer or clock.
     const awarenessNowMs = useSessionListRelativeNowMs(true);
     // The Session shell hands every child a deliberately stabilised Session whose signature
-    // omits `activeAt`, `thinkingAt`, `runtimeActivity*` and `encryptedContentAvailability` —
+    // omits `activeAt`, `thinkingAt` and `runtimeActivity*` —
     // exactly the facts the awareness adapter consumes. Projecting from that object makes the
     // Summary age while heartbeats keep arriving, so this surface subscribes to the live row
     // itself. That is below the memoized shell, so the shell's own subscription locality and

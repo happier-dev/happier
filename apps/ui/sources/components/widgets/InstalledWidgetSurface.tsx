@@ -91,6 +91,7 @@ export type InstalledWidgetSurfaceProps = Readonly<{
 export function UnavailableInstalledWidget(props: Readonly<{
     unresolved: NonNullable<InstalledWidgetMount['unresolved']>;
     testID: string;
+    onManagePlugin?: () => void;
 }>): React.ReactElement {
     // One factual result, one centralized presentation projection. This adds no
     // widget-local availability enum and no widget-specific error copy.
@@ -115,6 +116,9 @@ export function UnavailableInstalledWidget(props: Readonly<{
             {...(card.reason === undefined ? {} : { reason: card.reason })}
             diagnosticCode={presentation.diagnosticCode}
             accessibilitySemantics={card.accessibilitySemantics}
+            {...(props.unresolved.state === 'unavailable' && props.onManagePlugin ? {
+                action: { label: t('sessionBoard.item.actions.managePlugin'), onPress: props.onManagePlugin },
+            } : {})}
         />
     );
 }
@@ -280,26 +284,28 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
     onRepairInputs?: (outcome: WidgetInputRepairOutcome) => void;
 }>): React.ReactElement {
     const { resolution, onRepairInputs } = props;
-        // Input repair reuses the host's editor. Missing runtime/plugin authority
-        // is not an input the person can fix by choosing another value.
-        const inputsNeedAttention = resolution.status === 'selection_required' || resolution.status === 'invalid'
-            || Boolean(resolution.fields?.length);
-        if (inputsNeedAttention && resolution.reasonCode !== 'widget_viewer_purpose_authority_unavailable') {
-            const title = resolution.status === 'selection_required' ? t('widgetAdd.previewWaiting')
-                : resolution.status === 'invalid' ? t('widgetAdd.inputsInvalid') : t('widgetAdd.inputsUnavailable');
-            return <SurfaceStateCard
-                testID={`${props.testID}-state`}
-                size="line"
-                kind={resolution.status === 'denied' ? 'denied' : 'warning'}
-                title={title}
-                diagnosticCode={resolution.reasonCode}
-                accessibilitySemantics="status"
-                {...(onRepairInputs ? { action: {
-                    label: t('widgetAdd.editInputs'),
-                    onPress: () => onRepairInputs(resolution),
-                    testID: `${props.testID}-inputs-repair`,
-                } } : {})}
-            />;
-        }
-        return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
+    if (resolution.status === 'loading') return <UnavailableInstalledWidget
+        unresolved={{ state: 'loading', reasonCode: resolution.reasonCode }} testID={props.testID} />;
+    // Input repair reuses the host's editor. Missing runtime/plugin authority
+    // is not an input the person can fix by choosing another value.
+    const inputsNeedAttention = resolution.status === 'selection_required' || resolution.status === 'invalid'
+        || Boolean(resolution.fields?.length);
+    if (inputsNeedAttention && resolution.reasonCode !== 'widget_viewer_purpose_authority_unavailable') {
+        const title = resolution.status === 'selection_required' ? t('widgetAdd.previewWaiting')
+            : resolution.status === 'invalid' ? t('widgetAdd.inputsInvalid') : t('widgetAdd.inputsUnavailable');
+        return <SurfaceStateCard
+            testID={`${props.testID}-state`}
+            size="line"
+            kind={resolution.status === 'denied' ? 'denied' : 'warning'}
+            title={title}
+            diagnosticCode={resolution.reasonCode}
+            accessibilitySemantics="status"
+            {...(onRepairInputs ? { action: {
+                label: t('widgetAdd.editInputs'),
+                onPress: () => onRepairInputs(resolution),
+                testID: `${props.testID}-inputs-repair`,
+            } } : {})}
+        />;
+    }
+    return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: resolution.reasonCode }} testID={props.testID} />;
 }

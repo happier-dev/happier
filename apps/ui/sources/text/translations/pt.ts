@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -893,7 +893,7 @@ function plural({
  * Portuguese (Brazilian) translations for the Happier app
  * Must match the exact structure of the English translations
  */
-export const pt: TranslationStructure = {
+const ptValues = {
     instrument: {
         contextGauge: {
             usedLabel: ({ percent }: { percent: number }) => `Contexto ${percent}% usado`,
@@ -15493,6 +15493,8 @@ settingsSession: {
             skipToContent: "Saltar para o conteúdo",
         },
   },} as const;
+
+export const pt = defineTranslations(ptValues);
 
 export type TranslationsPt = typeof pt;
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';

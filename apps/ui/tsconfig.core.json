@@ -1863,6 +1863,7 @@
     "sources/components/ui/text/Text.tsx",
     "sources/components/ui/treeDragDrop/ui/EntityFlatReorder.tsx",
     "sources/components/ui/treeDragDrop/ui/EntityReleasePreview.tsx",
+    "sources/components/ui/treeDragDrop/ui/ExternalFileDropOutcomePill.tsx",
     "sources/components/voice/attempt/resolveVoiceAttemptControl.ts",
     "sources/components/voice/attempt/resolveVoiceAttemptLightStop.ts",
     "sources/components/voice/attempt/useVoiceAttemptControl.ts",
@@ -1905,6 +1906,8 @@
     "sources/components/widgets/add/widgetAddSections.ts",
     "sources/components/widgets/area/PluginPageWidgetArea.tsx",
     "sources/components/widgets/area/WidgetArea.tsx",
+    "sources/components/widgets/area/useWidgetAreaLayout.ts",
+    "sources/components/widgets/area/widgetAreaEntityDrop.ts",
     "sources/components/widgets/boardWidgetProvenance.ts",
     "sources/components/widgets/definitions/SaveAsWidgetPanel.tsx",
     "sources/components/widgets/definitions/WidgetAboutPanel.tsx",
@@ -3103,7 +3106,18 @@
     "sources/voice/transcript/voiceTurnInterruption.ts"
   ],
   "include": [
-    "**/*.d.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts",
+    "sources/components/onboarding/tour/stage/react-native-view-shot-web.d.ts",
+    "sources/dev/jsdom.d.ts",
+    "sources/dev/why-is-node-running.d.ts",
+    "sources/types/expo-router-routes.d.ts",
+    "sources/types/react-native-svg.d.ts",
+    "sources/types/react-native-web.d.ts",
+    "sources/types/react-native-webrtc-web-shim.d.ts",
+    "sources/types/react-test-renderer-host-types.d.ts",
+    "sources/types/stylesheets.d.ts",
+    "sources/types/unistyles.d.ts",
     ".expo/types/**/*.d.ts"
   ],
   "exclude": [

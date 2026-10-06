@@ -70,6 +70,7 @@ export function areStoredSessionsEqual(
         && (previous.serverId ?? null) === (next.serverId ?? null)
         && previous.seq === next.seq
         && (previous.encryptionMode ?? null) === (next.encryptionMode ?? null)
+        && (previous.encryptedContentAvailability ?? null) === (next.encryptedContentAvailability ?? null)
         && previous.createdAt === next.createdAt
         && previous.updatedAt === next.updatedAt
         && (previous.meaningfulActivityAt ?? null) === (next.meaningfulActivityAt ?? null)

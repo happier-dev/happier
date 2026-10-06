@@ -70,6 +70,7 @@ async function main() {
       outfile: compiledPath,
       cwd: repoRoot,
       externals,
+      buildRunnerEntrypoint: join(repoRoot, 'apps', 'stack', 'scripts', 'build_bun_binary.mjs'),
     });
     const artifact = await packageTargetBinary({
       product: 'hstack',

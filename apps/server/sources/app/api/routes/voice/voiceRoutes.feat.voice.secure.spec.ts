@@ -16,6 +16,8 @@ vi.mock("@/storage/prisma", () => ({
 }));
 
 const dbMocks = createDbMocks({
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     voiceSessionLease: ["count", "create", "findMany", "delete", "deleteMany"],
     voiceConversation: ["aggregate", "findMany", "updateMany"],
 } as const);
@@ -38,17 +40,23 @@ installDbModuleMock(() => ({
     db: dbTransaction.wrapDb(dbMocks.db),
 }));
 
+// Install the database boundary before loading the real routes once. Environment
+// decisions are read at registration/request time, so cases only reset fixture state.
+const { voiceRoutes } = await import("./voiceRoutes");
+
 describe("voiceRoutes (secure)", () => {
     const resetVoiceEnv = createEnvReset();
     const originalFetch = globalThis.fetch;
 
     beforeEach(() => {
-        vi.resetModules();
         vi.useFakeTimers();
         vi.setSystemTime(new Date("2026-02-03T12:00:00.000Z"));
         vi.clearAllMocks();
         getDbProviderFromEnvSpy.mockReturnValue("sqlite");
         dbMocks.reset();
+        // No persisted Home override: exercise the real request overlay on deployment env.
+        dbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+        dbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         dbTransaction.transaction.mockClear();
         resetVoiceEnv({
             NODE_ENV: "production",
@@ -104,7 +112,6 @@ describe("voiceRoutes (secure)", () => {
             VOICE_MAX_SESSION_SECONDS: "600",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -131,7 +138,6 @@ describe("voiceRoutes (secure)", () => {
             VOICE_MAX_SESSION_SECONDS: "600",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -157,7 +163,6 @@ describe("voiceRoutes (secure)", () => {
             VOICE_MAX_SESSION_SECONDS: "600",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -185,7 +190,6 @@ describe("voiceRoutes (secure)", () => {
             .mockResolvedValueOnce(providerJsonResponse({ token: "private-provider-body", unexpected: true, tokenShape: 42 }))
             .mockResolvedValueOnce(providerJsonResponse({ token: 42, private: "private-provider-body" }));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -211,7 +215,6 @@ describe("voiceRoutes (secure)", () => {
             json: async () => ({ subscriber: { entitlements: { active: {} } } }),
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -246,7 +249,6 @@ describe("voiceRoutes (secure)", () => {
             json: async () => ({ subscriber: { entitlements: { active: {} } } }),
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -268,7 +270,6 @@ describe("voiceRoutes (secure)", () => {
             status: 503,
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -289,7 +290,6 @@ describe("voiceRoutes (secure)", () => {
         const rawFailure = "https://api.revenuecat.com/v1/subscribers/account-private-9f3b5df4?authorization=Bearer%20revenuecat-secret";
         (globalThis.fetch as any).mockRejectedValueOnce(rawFailure);
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -312,7 +312,6 @@ describe("voiceRoutes (secure)", () => {
             status: 401,
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -333,7 +332,6 @@ describe("voiceRoutes (secure)", () => {
             status: 403,
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -358,7 +356,6 @@ describe("voiceRoutes (secure)", () => {
             json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -393,7 +390,6 @@ describe("voiceRoutes (secure)", () => {
             })
             .mockResolvedValueOnce(providerJsonResponse({ token: "conv_token" }));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -425,7 +421,6 @@ describe("voiceRoutes (secure)", () => {
         postgresRawExecute.mockResolvedValue({});
         (globalThis.fetch as any).mockResolvedValueOnce(providerJsonResponse({ token: "conv_token" }));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -451,7 +446,6 @@ describe("voiceRoutes (secure)", () => {
             })
             .mockResolvedValueOnce(providerJsonResponse({ token: "conv_token" }));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/lease/mint",
@@ -481,7 +475,6 @@ describe("voiceRoutes (secure)", () => {
             })
             .mockResolvedValueOnce(providerJsonResponse({ token: "conv_token" }));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -519,7 +512,6 @@ describe("voiceRoutes (secure)", () => {
             json: async () => ({ token: "conv_token" }),
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -551,7 +543,6 @@ describe("voiceRoutes (secure)", () => {
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 0 } });
         leaseCount.mockImplementation(async (args: any) => args?.where?.conversation === null ? 1 : 0);
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",
@@ -587,7 +578,6 @@ describe("voiceRoutes (secure)", () => {
             json: async () => ({ subscriber: { entitlements: { active: {} } } }),
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/token",

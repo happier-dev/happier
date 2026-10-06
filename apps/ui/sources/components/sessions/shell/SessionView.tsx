@@ -8283,7 +8283,7 @@ function SessionViewLoadedContent({
             <SessionComposerAgentInput
                 composerRef={activeComposerRef}
                 composerReferenceHost={composerDropReferenceHost}
-                composerFileScope={resolveWorkspaceTargetForSession(companionAddress)}
+                composerFileScope={resolveWorkspaceTargetForSession(companionAddress ?? sessionId)}
                 textStore={composerTextStore}
                 pendingText={pendingComposerDocument?.text ?? null}
                 placeholder={isReadOnly

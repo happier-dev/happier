@@ -6,10 +6,11 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import { createScmCapabilities, type ScmLogEntry } from '@happier-dev/protocol';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -80,7 +81,7 @@ const scope = { serverId: 's1', machineId: 'm1', rootPath: '/repo' };
 const snapshot = {
     projectKey: 'project-layout', fetchedAt: 1,
     repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
-    capabilities: { ...EMPTY_SCM_CAPABILITIES, capabilityScope: 'local-backend', readLog: true, writeCommit: true },
+    capabilities: createScmCapabilities({ ...EMPTY_SCM_CAPABILITIES, capabilityScope: 'local-backend', readLog: true, writeCommit: true }),
     branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
     hasConflicts: false, entries: [],
     totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
@@ -88,6 +89,7 @@ const snapshot = {
 
 describe('project Git presentation', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         const { machineScmStatusSnapshot, machineScmRemoteAdd, machineScmBranchMerge, machineScmBranchRebase, machineScmBranchOperationSkip, machineScmCommitUndoLast } = await import('@/sync/ops/scm/machineScm');
         vi.mocked(machineScmStatusSnapshot).mockReset().mockResolvedValue({ success: false, error: 'offline' });
         vi.mocked(machineScmRemoteAdd).mockReset();

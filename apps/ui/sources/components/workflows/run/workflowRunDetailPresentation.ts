@@ -251,7 +251,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         canStartReviewedNewRun: workspaceUnavailable && !canRestoreWorkspace && !waitingForStop,
         canRunWithAnotherAgent: params.progress?.reason?.code === 'target_unavailable'
             && params.progress.blockKind === 'step'
-            && (invocation?.lifecycle === 'failed' || invocation?.lifecycle === 'blocked')
+            && invocation?.lifecycle === 'failed'
             && params.run.workflowCustodyState === 'settled',
         preparedRecovery: params.progress?.recovery ?? null,
         requiresUncertaintyAcknowledgement: requiresUncertainPriorEffectsAcknowledgement(params),

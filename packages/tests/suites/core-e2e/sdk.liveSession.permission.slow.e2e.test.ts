@@ -123,7 +123,9 @@ describe('core e2e: SDK live Session permissions and durable convergence', () =>
         const initial = await fetchSessionV2(baseUrl, auth.token, sessionId);
         let dataKey: Uint8Array | null = null;
         if (!plain) {
-          if (!initial.dataEncryptionKey) throw new Error('E2EE Session has no viewer DEK envelope');
+          if (typeof initial.dataEncryptionKey !== 'string' || !initial.dataEncryptionKey) {
+            throw new Error('E2EE Session has no viewer DEK envelope');
+          }
           dataKey = openEncryptedDataKeyEnvelopeV1({ envelope: Buffer.from(initial.dataEncryptionKey, 'base64'),
             recipientSecretKeyOrSeed: auth.accountMachineKey });
           if (!dataKey) throw new Error('Account content key could not open the Session DEK');

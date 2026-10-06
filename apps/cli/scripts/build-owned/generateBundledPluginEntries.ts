@@ -72,7 +72,7 @@ import {
   type WorkspaceBundleLockContext,
 } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { withGeneratorSingleFlight, withPreparedGeneratorPublication } from './bundledPlugins/publication.ts';
-import { readGeneratorAuthoringSourceFingerprint } from './bundledPlugins/authoringInputs.mjs';
+import { readGeneratorAuthoringSourceFingerprint, resolveGeneratorAuthoringWorkspaceNames } from './bundledPlugins/authoringInputs.mjs';
 export { readGeneratorAuthoringSourceFingerprint } from './bundledPlugins/authoringInputs.mjs';
 import { parseWorkspaceLockLeaseValue } from '../../../../packages/cli-common/workspaceLockLease.mjs';
 import { readWorkspaceBuildInputs, readWorkspaceBuildFileDigest, readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
@@ -544,12 +544,7 @@ async function synchronizeGeneratorAuthoringRuntimeClosure(
   await sync(false, GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']);
   // Finally materialize the non-plugin host/runtime dependencies used by
   // esbuild without letting that source-dev pass reconsider plugin builds.
-  const bundledWorkspaceNames = resolveCliBundledWorkspacePackageNames({
-    repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
-  });
-  const hostWorkspaceNames = bundledWorkspaceNames.filter(
-    (workspaceName) => !workspaceName.startsWith('plugins-'),
-  );
+  const hostWorkspaceNames = generatorPublicationDependencyNames();
   await sync(true, GENERATOR_STAGE_PREP_STAMP_PATH, hostWorkspaceNames);
   for (const [stampPath, workspaceNames] of [
     [GENERATOR_BUILD_PREP_STAMP_PATH, ['plugin-sdk']],
@@ -5024,8 +5019,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     publicationMode: process.env.HAPPIER_WORKSPACE_BUNDLE_PUBLICATION_MODE ?? 'live',
   });
   const workspaceNames = [...new Set([
-    'plugin-sdk',
-    ...resolveCliBundledWorkspacePackageNames({ repoRoot: options.rootDir }),
+    ...generatorPublicationDependencyNames(),
     ...bundledNames,
   ])].sort();
   const readPreparationFingerprint = () => JSON.stringify([
@@ -5205,8 +5199,7 @@ async function runGenerator(
         timing.phase('authoring-runtime-synchronization');
       } else {
         assertRuntimeCurrent = captureGeneratorDependencyCurrentness(
-          resolveCliBundledWorkspacePackageNames({ repoRoot: CANONICAL_GENERATOR_REPO_ROOT })
-            .filter((name) => !name.startsWith('plugins-')),
+          generatorPublicationDependencyNames(),
         );
       }
       return assertRuntimeCurrent;
@@ -5257,8 +5250,11 @@ async function runGenerator(
 }
 
 function generatorPublicationDependencyNames(): readonly string[] {
-  return [...new Set(['plugin-sdk', ...resolveCliBundledWorkspacePackageNames({ repoRoot: CANONICAL_GENERATOR_REPO_ROOT })
-    .filter((name) => !name.startsWith('plugins-'))])];
+  return resolveGeneratorAuthoringWorkspaceNames({
+    repoRoot: CANONICAL_GENERATOR_REPO_ROOT,
+    bundledWorkspaceNames: resolveCliBundledWorkspacePackageNames({ repoRoot: CANONICAL_GENERATOR_REPO_ROOT }),
+    canonicalWorkspacePackageNames: Object.keys(CANONICAL_WORKSPACE_PACKAGE_DIRS),
+  });
 }
 
 async function publishGeneratorEntries(

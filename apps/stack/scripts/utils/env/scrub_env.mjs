@@ -17,18 +17,24 @@ function resolveAgentFactsProjectionPath() {
 export function readBundledAgentNativeHomeEnvironmentKeys(projectionPath) {
   // Source preparation and full publication emit the same static Agent facts.
   // A missing/corrupt authority must not silently leak an inherited Agent home.
-  let literal;
-  try {
-    const source = readFileSync(projectionPath ?? resolveAgentFactsProjectionPath(), 'utf8');
-    literal = source.match(/^export const BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS[^=\n]*= Object\.freeze\((\[[\s\S]*?\])\);/mu)?.[1];
-  } catch (cause) {
-    throw new Error('Agent native-home projection is unavailable; run source Agent preparation', { cause });
-  }
   let keys;
-  try {
-    keys = JSON.parse(literal);
-  } catch {
-    keys = undefined;
+  if (projectionPath == null && typeof HAPPIER_STACK_BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS !== 'undefined') {
+    // The Stack binary builder embeds this same projection, not a runtime
+    // filesystem path that Bun's standalone executable cannot resolve.
+    keys = HAPPIER_STACK_BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS;
+  } else {
+    let literal;
+    try {
+      const source = readFileSync(projectionPath ?? resolveAgentFactsProjectionPath(), 'utf8');
+      literal = source.match(/^export const BUNDLED_AGENT_NATIVE_HOME_ENVIRONMENT_KEYS[^=\n]*= Object\.freeze\((\[[\s\S]*?\])\);/mu)?.[1];
+    } catch (cause) {
+      throw new Error('Agent native-home projection is unavailable; run source Agent preparation', { cause });
+    }
+    try {
+      keys = JSON.parse(literal);
+    } catch {
+      keys = undefined;
+    }
   }
   if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key))) {
     throw new Error('Agent native-home projection is malformed; run source Agent preparation');

@@ -100,6 +100,10 @@ describe('WorkflowFlowView accessibility structure', () => {
         }));
         expect(screen.findByTestId('flow-node-wait')?.props.disabled).toBe(true);
         expect(screen.root.findAllByType(HappierPressable).some((node) => node.props.testID === 'flow-node-wait-occurrence-held-2')).toBe(true);
+        const occurrences = screen.root.findAll((node) => typeof node.type === 'string'
+            && (node.props.testID === 'flow-node-wait-occurrence-held-1'
+                || node.props.testID === 'flow-node-wait-occurrence-held-2'));
+        expect(occurrences.map((node) => node.props['aria-current'])).toEqual(['page', undefined]);
         await screen.pressByTestIdAsync('flow-node-wait-occurrence-held-2');
         expect(onSelectOccurrence.mock.calls.at(-1)?.[0]).toBe('held-2');
     });

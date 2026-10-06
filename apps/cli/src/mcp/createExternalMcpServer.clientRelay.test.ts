@@ -68,6 +68,7 @@ describe('standalone MCP client Action admission', () => {
     const { executor } = createCliActionExecutorHarness({
       token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'mcp-home',
+      serverHttpBaseUrl: `http://127.0.0.1:${homeAddress.port}`,
       // A reviewed runtime with no Account approval carrier fails closed for
       // danger Actions, without reaching an external service in this test.
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({}) },

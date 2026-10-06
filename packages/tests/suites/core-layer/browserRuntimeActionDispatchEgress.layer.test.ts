@@ -1,25 +1,27 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   BrowserDiagnosticsSnapshotV1Schema,
   FeaturesResponseSchema,
   type BrowserDiagnosticEventV1,
-  type ExecutionRunPublicState,
 } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dispatchRuntimeActionE2E } from '../../src/testkit/liveQa/runtimeActionE2E';
 import type { RpcSocket } from '../../src/testkit/syntheticAgent/rpcClient';
 
-import { resolveExecutionRunPolicy } from '../../../../apps/cli/src/agent/executionRuns/policy/executionRunPolicy';
-import type { ExecutionRunHostBridgeContract } from '../../../../apps/cli/src/agent/runtime/bridges/executionRun/executionRunBridgeContract';
+import type { ExecutionRunHostBridge } from '../../../../apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunState } from '../../../../apps/cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
 import { RpcHandlerManager } from '../../../../apps/cli/src/api/rpc/RpcHandlerManager';
+import { reloadConfiguration } from '../../../../apps/cli/src/configuration';
+import { retainExecutionRunState } from '../../../../apps/cli/src/daemon/executionRunRegistry';
 import { createBrowserDiagnosticsActionRoutes } from '../../../../apps/cli/src/daemon/browser/diagnostics/actionRoutes';
 import { redactBrowserDiagnosticsSnapshotForViewer } from '../../../../apps/cli/src/daemon/browser/diagnostics/snapshotEgress';
 import { createBrowserDiagnosticsDaemonStore } from '../../../../apps/cli/src/daemon/browser/diagnostics/store';
 import type { CliServerFeaturesSnapshot } from '../../../../apps/cli/src/features/serverFeaturesClient';
-import { createExecutionRunRpcActionExecutor } from '../../../../apps/cli/src/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { registerExecutionRunRpcHandlers } from '../../../../apps/cli/src/rpc/handlers/executionRuns/registerExecutionRunRpcHandlers';
 
 /**
@@ -35,8 +37,9 @@ import { registerExecutionRunRpcHandlers } from '../../../../apps/cli/src/rpc/ha
  *
  * WHAT THIS DOES NOT PROVE — read this before citing it. The diagnostic event is HAND-AUTHORED
  * and injected straight into the daemon store; no collector, page, or browser produced it. The
- * "socket" is a fake whose `emitWithAck` calls `rpc.handleRequest` in the same process, and the
- * execution-run bridge is a stub whose non-read methods throw. So this closes the dispatch and
+ * "socket" is a fake whose `emitWithAck` calls `rpc.handleRequest` in the same process. A real
+ * execution-run bridge recovers a Session-owned terminal run from real device-local storage;
+ * no agent process is launched. So this closes the dispatch and
  * redaction half of BRW-F9 and says nothing about the producer half — that is
  * `suites/core-e2e/browserAutomationProducer.slow.e2e.test.ts`, which is still unimplemented.
  * The file was previously named `browserProducerBacked.l6LiveQa.slow.e2e.test.ts` and tiered as a
@@ -45,75 +48,33 @@ import { registerExecutionRunRpcHandlers } from '../../../../apps/cli/src/rpc/ha
 
 const SESSION_ID = 'session_browser_dispatch_layer';
 const RUN_ID = 'run_browser_dispatch_layer';
-const BROWSER_SESSION_ID = 'browser_session_dispatch_e2e';
+// Session runtime Actions address that Session's daemon browser workspace.
+const BROWSER_SESSION_ID = SESSION_ID;
 const VIEW_ID = 'browser_view_dispatch_e2e';
 
-function unusedExecutionRunBridgeMethod(): never {
-  throw new Error('browser runtime-action dispatch must not use execution-run profile actions');
-}
-
-function createExecutionRunBridgeWithRun(): ExecutionRunHostBridgeContract {
-  const run = {
+async function retainSessionOwnedRun(): Promise<void> {
+  // Runtime Actions require an authoritative Session-owned run, not a running agent process.
+  // Seed through the canonical retained-state writer, then let the real bridge recover it.
+  // This exercises the same recovery that executionRunAction performs before admitting dispatch.
+  const runState = {
     runId: RUN_ID,
     callId: 'call_browser_dispatch_e2e',
     sidechainId: 'sidechain_browser_dispatch_e2e',
+    sessionId: SESSION_ID,
+    depth: 0,
     intent: 'delegate',
     backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+    backendId: 'codex',
+    instructions: 'browser runtime-action dispatch layer coverage',
     permissionMode: 'default',
     retentionPolicy: 'ephemeral',
     runClass: 'bounded',
     ioMode: 'request_response',
-    status: 'running',
+    status: 'succeeded',
     startedAtMs: 1,
-  } satisfies ExecutionRunPublicState;
-
-  // `executionRunAction` admits the dispatch through `getRunInAuthoritativeScope`, which reads
-  // `manager.get(runId)` and requires `sessionId` to match the RPC scope; it then reads
-  // `permissionMode` off that state to build the runtime-action caller context. The predecessor
-  // file stubbed `get` as `() => null`, so every dispatch short-circuited to
-  // `execution_run_not_found` and the redaction assertions below were never reached.
-  const runState = {
-    runId: RUN_ID,
-    callId: run.callId,
-    sidechainId: run.sidechainId,
-    sessionId: SESSION_ID,
-    depth: 0,
-    intent: run.intent,
-    backendTarget: run.backendTarget,
-    backendId: 'codex',
-    instructions: 'browser runtime-action dispatch layer coverage',
-    permissionMode: run.permissionMode,
-    retentionPolicy: run.retentionPolicy,
-    runClass: run.runClass,
-    ioMode: run.ioMode,
-    status: run.status,
-    startedAtMs: run.startedAtMs,
+    finishedAtMs: 2,
   } satisfies ExecutionRunState;
-
-  return {
-    get: (runId: string) => (runId === RUN_ID ? runState : null),
-    getRunningCount: () => 0,
-    getStructuredMeta: () => null,
-    getLatestToolResult: () => null,
-    waitForTerminal: async () => unusedExecutionRunBridgeMethod(),
-    waitForInputTurn: async () => unusedExecutionRunBridgeMethod(),
-    getPublic: (runId: string) => (runId === RUN_ID ? run : null),
-    listPublic: () => [run],
-    listPublicForRequest: () => [run],
-    getDepthByRunId: () => null,
-    getDepthByCallId: () => null,
-    start: async () => unusedExecutionRunBridgeMethod(),
-    send: async () => unusedExecutionRunBridgeMethod(),
-    ensure: async () => unusedExecutionRunBridgeMethod(),
-    ensureOrStart: async () => unusedExecutionRunBridgeMethod(),
-    startTurnStream: async () => unusedExecutionRunBridgeMethod(),
-    readTurnStream: async () => unusedExecutionRunBridgeMethod(),
-    cancelTurnStream: async () => unusedExecutionRunBridgeMethod(),
-    stop: async () => unusedExecutionRunBridgeMethod(),
-    respondToPermissionRequest: async () => unusedExecutionRunBridgeMethod(),
-    completePermissionRequest: async () => unusedExecutionRunBridgeMethod(),
-    applyAction: async () => unusedExecutionRunBridgeMethod(),
-  };
+  await retainExecutionRunState(runState);
 }
 
 function readyServerFeatures(features: Record<string, unknown>): CliServerFeaturesSnapshot {
@@ -139,27 +100,9 @@ const BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED = readyServerFeatures({
 function createRuntimeActionSocket(params: Readonly<{
   secret: Uint8Array;
   diagnostics: ReturnType<typeof createBrowserDiagnosticsActionRoutes>;
+  cwd: string;
+  onManagerCreated: (manager: ExecutionRunHostBridge) => void;
 }>): RpcSocket {
-  const policy = resolveExecutionRunPolicy({
-    defaults: {
-      maxConcurrentRuns: null,
-      boundedTimeoutMs: null,
-      reviewBoundedTimeoutMs: null,
-      maxTurns: null,
-      maxDepth: 3,
-    },
-  });
-  const actionExecutor = createExecutionRunRpcActionExecutor({
-    manager: createExecutionRunBridgeWithRun(),
-    context: {
-      sessionId: SESSION_ID,
-      cwd: '/workspace',
-      browserDiagnostics: params.diagnostics,
-      getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED,
-    },
-    policy,
-    isExecutionRunsEnabled: () => true,
-  });
   const rpc = new RpcHandlerManager({
     scopePrefix: SESSION_ID,
     encryptionKey: params.secret,
@@ -168,11 +111,12 @@ function createRuntimeActionSocket(params: Readonly<{
   });
   registerExecutionRunRpcHandlers(rpc, {
     sessionId: SESSION_ID,
-    cwd: '/workspace',
+    cwd: params.cwd,
     parentProvider: 'codex',
     sendAcp: async () => undefined,
-    policy,
-    actionExecutor,
+    browserDiagnostics: params.diagnostics,
+    getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED,
+    onManagerCreated: params.onManagerCreated,
   });
 
   const ui = {
@@ -193,8 +137,22 @@ function createRuntimeActionSocket(params: Readonly<{
 }
 
 describe('core layer: browser runtime-action dispatch and agent-egress redaction', () => {
-  afterEach(() => {
-    delete process.env.HAPPIER_BROWSER_ENABLED;
+  let directory: string;
+  let manager: ExecutionRunHostBridge | undefined;
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), 'happier-browser-dispatch-layer-'));
+    vi.stubEnv('HAPPIER_HOME_DIR', directory);
+    vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+    reloadConfiguration();
+  });
+
+  afterEach(async () => {
+    await manager?.dispose();
+    manager = undefined;
+    vi.unstubAllEnvs();
+    reloadConfiguration();
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it('dispatches browser.diagnostics.snapshot through the encrypted execution-run RPC and redacts agent egress', async () => {
@@ -241,7 +199,11 @@ describe('core layer: browser runtime-action dispatch and agent-egress redaction
     expect(ownerSnapshot.events[0]?.redaction.level).toBe('none');
 
     const diagnostics = createBrowserDiagnosticsActionRoutes({ store });
-    const ui = createRuntimeActionSocket({ secret, diagnostics });
+    await retainSessionOwnedRun();
+    const ui = createRuntimeActionSocket({
+      secret, diagnostics, cwd: directory,
+      onManagerCreated: (created) => { manager = created; },
+    });
     const response = await dispatchRuntimeActionE2E(
       { ui, sessionId: SESSION_ID, runId: RUN_ID, secret, timeoutMs: 10_000 },
       'browser.diagnostics.snapshot',
@@ -268,5 +230,12 @@ describe('core layer: browser runtime-action dispatch and agent-egress redaction
     expect(agentSerialized).not.toContain(token);
     expect(agentSerialized).not.toContain(`/reset/${token}`);
     expect(agentSerialized).not.toContain(`token=${token}`);
+
+    // A valid view in another browser workspace cannot be read through this Session's Run.
+    await expect(dispatchRuntimeActionE2E(
+      { ui, sessionId: SESSION_ID, runId: RUN_ID, secret, timeoutMs: 10_000 },
+      'browser.diagnostics.snapshot',
+      { browserSessionId: 'another_session', viewId: VIEW_ID },
+    )).rejects.toThrow(/execution_run_invalid_action_input/);
   });
 });

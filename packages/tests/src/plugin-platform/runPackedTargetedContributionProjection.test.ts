@@ -69,6 +69,18 @@ function requireClientActionHandler(value: unknown): PluginClientActionHandler {
   return value as PluginClientActionHandler;
 }
 
+function createPackedTargetedClientApi(
+  registrations: Pick<PluginClientApi, 'actions' | 'voiceProviders'>,
+): PluginClientApi {
+  // This public plugin host boundary captures registrations while keeping the
+  // author module and its provider codec real. This fixture declares no drag/drop families.
+  return {
+    ...registrations,
+    dragSources: { register() { assert.fail('unexpected packed drag source registration'); } },
+    dropTargets: { register() { assert.fail('unexpected packed drop target registration'); } },
+  };
+}
+
 function mountedProjectionFixture() {
   const target = {
     pluginId: PACKED_TARGETED_CONTRIBUTION_FIXTURE.targetPluginId,
@@ -297,7 +309,7 @@ test('parses the packed contributor fixture manifest and validates its shared Ac
 test('activates the fixture client Actions and Voice together and forwards local navigation to the supplied UI port', async () => {
   const actionHandlers = new Map<string, unknown>();
   let voiceRuntime: VoiceProviderRuntime | undefined;
-  activatePackedTargetedClient({
+  activatePackedTargetedClient(createPackedTargetedClientApi({
     actions: {
       register(id, handler) {
         actionHandlers.set(id, handler);
@@ -309,7 +321,7 @@ test('activates the fixture client Actions and Voice together and forwards local
         voiceRuntime = runtime;
       },
     },
-  } as PluginClientApi);
+  }));
 
   assert.deepEqual([...actionHandlers.keys()].sort(), [
     PACKED_TARGETED_CONTRIBUTION_FIXTURE.clientActionId,
@@ -363,7 +375,7 @@ test('activates the fixture client Actions and Voice together and forwards local
 
 test('runs the packed Voice protocol with a React Native-compatible structural abort signal', async () => {
   let voiceRuntime: VoiceProviderRuntime | undefined;
-  activatePackedTargetedClient({
+  activatePackedTargetedClient(createPackedTargetedClientApi({
     actions: { register() {} },
     voiceProviders: {
       register(id, runtime) {
@@ -371,7 +383,7 @@ test('runs the packed Voice protocol with a React Native-compatible structural a
         voiceRuntime = runtime;
       },
     },
-  } as PluginClientApi);
+  }));
 
   assert.ok(voiceRuntime && voiceRuntime.kind === 'conversation');
   const runtime = voiceRuntime;
@@ -398,7 +410,7 @@ test('runs the packed Voice protocol with a React Native-compatible structural a
 test('settles the exact packed Voice invoke call from the canonical provider-redacted success', async () => {
   const actionHandlers = new Map<string, unknown>();
   let voiceRuntime: VoiceProviderRuntime | undefined;
-  activatePackedTargetedClient({
+  activatePackedTargetedClient(createPackedTargetedClientApi({
     actions: {
       register(id, handler) {
         actionHandlers.set(id, handler);
@@ -410,7 +422,7 @@ test('settles the exact packed Voice invoke call from the canonical provider-red
         voiceRuntime = runtime;
       },
     },
-  } as PluginClientApi);
+  }));
 
   assert.ok(voiceRuntime && voiceRuntime.kind === 'conversation');
   const runtime = voiceRuntime;
@@ -558,7 +570,7 @@ test('settles the exact packed Voice invoke call from the canonical provider-red
 
 test('round-trips a supplied context update through the fixture provider codec', async () => {
   let voiceRuntime: VoiceProviderRuntime | undefined;
-  activatePackedTargetedClient({
+  activatePackedTargetedClient(createPackedTargetedClientApi({
     actions: { register() {} },
     voiceProviders: {
       register(id, runtime) {
@@ -566,7 +578,7 @@ test('round-trips a supplied context update through the fixture provider codec',
         voiceRuntime = runtime;
       },
     },
-  } as PluginClientApi);
+  }));
 
   assert.ok(voiceRuntime && voiceRuntime.kind === 'conversation');
   const runtime = voiceRuntime;
@@ -615,7 +627,7 @@ test('round-trips a supplied context update through the fixture provider codec',
 
 test('aborts the fixture\'s deliberately delayed client Action before it settles', async () => {
   let registeredActionHandler: unknown;
-  activatePackedTargetedClient({
+  activatePackedTargetedClient(createPackedTargetedClientApi({
     actions: {
       register(id, handler) {
         if (id === PACKED_TARGETED_CONTRIBUTION_FIXTURE.clientActionId) {
@@ -624,7 +636,7 @@ test('aborts the fixture\'s deliberately delayed client Action before it settles
       },
     },
     voiceProviders: { register() {} },
-  } as PluginClientApi);
+  }));
 
   const actionHandler = requireClientActionHandler(registeredActionHandler);
   const controller = new AbortController();

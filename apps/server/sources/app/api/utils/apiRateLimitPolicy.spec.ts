@@ -12,7 +12,7 @@ import { auth } from "@/app/auth/auth";
 
 // Bearer keying is proven through the real auth owner (mint + verifyTokenForRoute).
 // Only the storage boundary is stubbed: createToken/verify read the account
-// token epoch through db.account.findUnique.
+// token epoch and active status through db.account.findUnique.
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", () => ({
     db: {
@@ -26,7 +26,7 @@ const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
 
 beforeAll(async () => {
     process.env.HANDY_MASTER_SECRET = "api-rate-limit-policy-spec-secret";
-    dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0 });
+    dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active" });
     await auth.init();
 });
 
@@ -99,6 +99,9 @@ describe("apiRateLimitPolicy", () => {
             kind: "account_directory",
             authority: "present_user",
         });
+        await expect(auth.verifyTokenForRoute(token)).resolves.toMatchObject({
+            userId: "rate-limit-directory-1", authTokenKind: "account_directory",
+        });
         const keyGen = createApiRateLimitKeyGenerator();
         const key = await keyGen({ headers: { authorization: `Bearer ${token}` }, ip: "203.0.113.9" });
 
@@ -149,17 +152,18 @@ describe("apiRateLimitPolicy", () => {
     });
 
     it("fails closed to the ip key when the verified user id is excessively large", async () => {
-        // Boundary fixture stub: only shapes the verified payload past the
-        // length guard; the real verifyTokenForRoute call chain stays live.
-        const verifySpy = vi.spyOn(auth, "verifyTokenForRoute").mockResolvedValue({
-            userId: "x".repeat(10_000),
-        } as Awaited<ReturnType<typeof auth.verifyTokenForRoute>>);
+        const userId = "x".repeat(129);
+        const token = await auth.createToken(userId, undefined, {
+            kind: "account", authority: "present_user",
+        });
+        // Reach the user-id guard, not the earlier bearer-size rejection.
+        expect(token.length).toBeLessThanOrEqual(2048);
+        await expect(auth.verifyTokenForRoute(token)).resolves.toMatchObject({ userId });
 
         const keyGen = createApiRateLimitKeyGenerator();
-        const key = await keyGen({ headers: { authorization: "Bearer valid-token" }, ip: "203.0.113.9" });
+        const key = await keyGen({ headers: { authorization: `Bearer ${token}` }, ip: "203.0.113.9" });
 
         expect(key).toBe("ip:203.0.113.9");
-        verifySpy.mockRestore();
     });
 
     it("can force ip-only keying strategy via env", async () => {

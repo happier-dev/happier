@@ -297,6 +297,17 @@ its host layout. Account-library definition edits affect their references;
 Duplicate creates independent content. Setup/edit UI and loaded-platform validation are still
 being completed in the widgets program.
 
+While the selected Session's detail is loading, a configured widget shows its
+loading state without asking the person to select the Session again. After the
+read settles, a missing or denied target shows the existing refusal; an
+available target still needs its normal access and runtime admission. This is
+the current 0.3 development behavior.
+
+An installed widget also stays loading while its plugin projection is being
+established. If the installed descriptor is missing after that settles, the
+widget keeps any plugin-management action supplied by its host. Loading does
+not offer that action.
+
 ```ts
 {
   id: 'review-status-widget',

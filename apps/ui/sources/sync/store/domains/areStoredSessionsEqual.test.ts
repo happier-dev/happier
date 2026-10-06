@@ -24,6 +24,28 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('areStoredSessionsEqual', () => {
+    it('propagates encrypted content authentication failure and recovery as stored session changes', () => {
+        const ready = makeSession({ encryptionMode: 'e2ee', encryptedContentAvailability: 'ready' });
+        const unavailable: Session = { ...ready, encryptedContentAvailability: 'encrypted_content_unavailable' };
+        const recovered: Session = { ...unavailable, encryptedContentAvailability: 'ready' };
+
+        expect(areStoredSessionsEqual(ready, unavailable)).toBe(false);
+        expect(areStoredSessionsEqual(unavailable, recovered)).toBe(false);
+        expect(areStoredSessionsEqual(makeSession({ encryptionMode: 'e2ee' }), ready)).toBe(false);
+    });
+
+    it('keeps equal encrypted content availability eligible for stored session reuse', () => {
+        for (const encryptedContentAvailability of ['ready', 'encrypted_content_unavailable', null, undefined] as const) {
+            const previous = makeSession({ encryptionMode: 'e2ee', encryptedContentAvailability });
+
+            expect(areStoredSessionsEqual(previous, { ...previous })).toBe(true);
+        }
+        expect(areStoredSessionsEqual(
+            makeSession({ encryptionMode: 'e2ee', encryptedContentAvailability: null }),
+            makeSession({ encryptionMode: 'e2ee' }),
+        )).toBe(true);
+    });
+
     it('treats a reportsTo edge or sub-session count change as a stored session change', () => {
         expect(areStoredSessionsEqual(
             makeSession({ reportsTo: { sessionId: 'lead-a' } }),

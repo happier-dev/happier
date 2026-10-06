@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { projectLegacySessionAccessCapabilitiesV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import 'fake-indexeddb/auto';
+
+installDisconnectedServerSocketBoundary();
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -30,13 +38,9 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                                            Platform: {
-                                                OS: 'web',
-                                            },
-                                            AppState: {
-                                                addEventListener: appStateAddListener as any,
-                                            },
-                                        }
+            Platform: { OS: 'web' },
+            AppState: { addEventListener: appStateAddListener },
+        }
     );
 });
 
@@ -44,67 +48,8 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
 const requestMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-const createEncryptionFromAuthCredentialsMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        // The prepared HTTP adapter shares this suite's transport boundary.
-        createRequestForPreparedTarget: () => requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-        invalidateRequests: vi.fn(),
-    },
-}));
-
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: runtimeFetchMock,
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<
-        typeof import('@/auth/storage/tokenStorage')
-    >();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-        },
-    };
-});
-
-vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
-    createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
-}));
 
 import { storage } from './domains/state/storage';
 import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
@@ -115,9 +60,6 @@ import type { AccountSettingsScope } from './domains/settings/scope/accountSetti
 import type { Session } from './domains/state/storageTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { Message } from "@happier-dev/session-core/messages";
-import type {
-    ServerAccountRequestAuthority,
-} from './runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import {
     markSessionSurfaceHidden,
     markSessionSurfaceVisible,
@@ -181,30 +123,65 @@ function expectRuntimeFetchWithBearer(url: string, token: string): void {
     expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
 }
 
-async function applySelectedHomeForSessionListTest(): Promise<void> {
-    const { switchConnectionToActiveServer, disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
-    // Row-only acquisition routes through the applied Home runtime. Apply the
-    // selected Home before each test supplies its HTTP credentials and responses.
-    getCredentialsForServerUrlMock.mockResolvedValue(null);
-    await switchConnectionToActiveServer();
-    const { sync } = await import('./syncEngine');
-    Reflect.set(sync, 'appliedServerTarget', getActiveServerSnapshot());
-    onTestFinished(disconnectActiveServerConnection);
-    onTestFinished(() => sync.disconnectServer());
+async function applySelectedHomeForSessionListTest(credentials?: import('@/auth/storage/tokenStorage').AuthCredentials): Promise<void> {
+    const { disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
+    const selected = getActiveServerSnapshot();
+    const appliedCredentials = credentials ?? { token: tokenForSub('account-a') };
+    await TokenStorage.setCredentialsForServerUrl(selected.serverUrl, { serverId: selected.serverId }, appliedCredentials);
+    const connection = await restoreServerAccountForTest({
+        serverUrl: selected.serverUrl,
+        credentials: appliedCredentials,
+        request: (url, init) => runtimeFetchMock(String(url), init),
+    });
+    vi.mocked(TokenStorage.getCredentialsForServerUrl).mockRestore();
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch((url, init) => runtimeFetchMock(String(url), init));
+    onTestFinished(connection.dispose);
+    const { sync } = await import('./sync');
+    // Bootstrap's settings queue precedes its Session queue. Join both real
+    // queues before a case installs a held response for an Account mutation.
+    const settingsQueue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
+    await settingsQueue.awaitQueue();
+    await sync.refreshSessions();
+    requestMock.mockClear();
+    runtimeFetchMock.mockClear();
+}
+
+async function createEncryptedSessionFixture(sessionId: string) {
+    const secret = new Uint8Array(32).fill(7);
+    const dataKey = new Uint8Array(32).fill(8);
+    const encryption = await Encryption.create(secret);
+    const writer = await Encryption.create(secret);
+    await writer.initializeSessions(new Map([[sessionId, dataKey]]));
+    const cipher = writer.getSessionEncryption(sessionId)!;
+    const metadataValue = { path: '/repo', host: 'host' };
+    const agentStateValue = { controlledByUser: true, requests: {}, completedRequests: {} };
+    const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+        dataKey, recipientPublicKey: encryption.contentDataKey,
+        randomBytes: (length) => new Uint8Array(length).fill(3),
+    }), 'base64');
+    return {
+        encryption, dataKey, credentials: { token: tokenForSub('account-a'), secret: encodeBase64(secret, 'base64url') },
+        row: {
+            id: sessionId, createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+            encryptionMode: 'e2ee' as const, dataEncryptionKey,
+            metadataVersion: 1, metadata: await cipher.encryptRaw(metadataValue),
+            agentStateVersion: 1, agentState: await cipher.encryptRaw(agentStateValue), share: null,
+        },
+    };
 }
 
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it.each(['current', 'retired'] as const)('upgrades offscreen legacy public-linked Sessions through the real tuple writer only for the %s Account lifetime', async (lifetime) => {
         const home = await upsertServerProfile({ serverUrl: 'https://owner-first-visit.example.test', name: 'First visit' });
         await setActiveServerId(home.id, { scope: 'device' });
-        await applySelectedHomeForSessionListTest();
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('owner-first-visit') });
         const { sync } = await import('./syncEngine');
         const credentials = { token: tokenForSub('owner-first-visit') };
         Reflect.set(sync, 'credentials', credentials);
         Reflect.set(sync, 'encryption', null);
         storage.setState({ profileScope: { serverId: home.id, accountId: 'owner-first-visit' } });
-        getCredentialsForServerUrlMock.mockResolvedValue(credentials);
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
         const legacyMetadata = { path: '/owner/private', host: 'owner-host', name: 'Retained session' };
         const patches: unknown[] = [];
         const discovery = createDeferred<Response>();
@@ -283,6 +260,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             serverUrl: 'https://secret-settlement.example.test', homeServerIdentityId: serverIdentityId,
         } });
         await setActiveServerId(profile.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const scope = { serverId: serverIdentityId, accountId: 'account-a' };
         const credentials = { token: tokenForSub(scope.accountId) };
         Reflect.set(sync, 'credentials', credentials);
@@ -300,8 +278,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             secret: { id: 'existing-plugin-secret', name: 'Existing token', kind: 'other',
                 encryptedValue: { _isSecretValue: true, value: 'old-secret-not-for-renderer' }, createdAt: 1, updatedAt: 1 },
         }).settings;
-        getCredentialsForServerUrlMock.mockResolvedValue(credentials);
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
         const { recordAccountStoredContentServerRequirements } = await import('@/sync/http/accountStoredContentCompatibility');
         recordAccountStoredContentServerRequirements({ serverUrl: profile.serverUrl, requirements: {
             v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
@@ -314,19 +290,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const cancellation = new AbortController();
         runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
             const path = new URL(url).pathname;
-            if (init?.method === 'POST') postPaths.push(path);
+            if (init?.method === 'POST' && (path === '/v2/account/settings' || path === PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1)) postPaths.push(path);
             if (path === '/v1/auth/ping') return Response.json({ success: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
             if (path === PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1) {
                 expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
                 issued.resolve();
-                return response.promise;
+                return response.promise.then((result) => result.clone());
             }
             if (path === '/v2/account/settings' && init?.method === 'POST') {
                 expect(new Headers(init.headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
                 if (isCancellation) return Response.json({ success: true, version: 6 });
                 issued.resolve();
-                return response.promise;
+                return response.promise.then((result) => result.clone());
             }
             if (path === '/v2/account/settings' && presentation === 'cancel-before-settings') {
                 issued.resolve();
@@ -340,7 +317,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 }
                 return new Response(null, { status: 404 });
             }
-            throw new Error(`Unexpected Settings request: ${path}`);
+            // A peripheral bootstrap route may be unsupported while this Home
+            // is reachable; throwing here would manufacture a network outage.
+            return new Response(null, { status: 404 });
         });
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         let secretProjection: import('./domains/plugins/settings/scopedPluginSettingsProjection').ScopedPluginSettingsProjection | null = null;
@@ -367,7 +346,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 },
             }));
             await waitForAssertion(() => expect(screen!.findByTestId(inputId)).not.toBeNull());
+            await waitForAssertion(() => expect(screen!.findByTestId(inputId)?.props.editable).not.toBe(false));
             await act(async () => { screen!.changeTextByTestId(inputId, 'secret-not-for-renderer'); });
+            await waitForAssertion(() => expect(screen!.findByTestId(saveId)?.props.disabled).toBe(false));
         }
         if (presentation === 'advanced-projection') {
             const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -481,6 +462,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { createDeferred } = await import('@/dev/testkit');
         const home = await upsertServerProfile({ serverUrl: 'https://hydration-instance.example.test', name: 'Hydration instance' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         const sessionId = 'hydration-instance';
         const secret = new Uint8Array(32).fill(7);
         const encryption = await Encryption.create(secret);
@@ -521,11 +503,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             const { createDeferred } = await import('@/dev/testkit');
             const home = await upsertServerProfile({ serverUrl: 'https://content-failure.example.test', name: 'Content failure' });
             await setActiveServerId(home.id, { scope: 'device' });
+            await applySelectedHomeForSessionListTest({ token: tokenForSub('reader'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
             const scope = { serverId: home.id, accountId: 'reader' };
             storage.setState({ profileScope: scope });
             const sessionId = 'content-failure';
             const secret = new Uint8Array(32).fill(7);
-            const encryption = await Encryption.create(secret);
+            const { captureServerRequestAuthorityForServerAccountScope } = await import('./runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+            const { apiSocket } = await import('./api/session/apiSocket');
+            const authority = await captureServerRequestAuthorityForServerAccountScope({
+                scope,
+                activeRequest: apiSocket.request,
+            });
+            onTestFinished(authority.release);
+            const encryption = authority.context.encryption;
+            if (!encryption) throw new Error('Expected the captured Account encryption fixture.');
             const wrongWriter = await Encryption.create(secret);
             await encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(8)]]));
             await wrongWriter.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(9)]]));
@@ -538,16 +529,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             const credentials = { token: tokenForSub('reader'), secret: encodeBase64(secret, 'base64') };
             const response = createDeferred<Response>();
             const requested = createDeferred<void>();
-            const authority: ServerAccountRequestAuthority = {
-                scope,
-                context: {
-                    scope: 'scoped', timeoutMs: 30_000,
-                    targetServerId: home.id, targetServerUrl: home.serverUrl, targetAccountId: 'reader',
-                    token: credentials.token, credentials, encryption,
-                },
-                request: async () => { requested.resolve(); return response.promise; },
-                release: async () => {},
-            };
+            const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+            runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+                const requestUrl = new URL(url);
+                if (requestUrl.origin === new URL(home.serverUrl).origin && requestUrl.pathname === `/v1/sessions/${sessionId}/messages`) {
+                    requested.resolve();
+                    return response.promise;
+                }
+                return defaultFetch(url, init);
+            });
             const { sync } = await import('./syncEngine');
             Reflect.set(sync, 'credentials', credentials);
             Reflect.set(sync, 'encryption', encryption);
@@ -563,6 +553,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             } else if (change === 'home_changed') {
                 const replacement = await upsertServerProfile({ serverUrl: 'https://replacement.example.test', name: 'Replacement' });
                 await setActiveServerId(replacement.id, { scope: 'device' });
+                // Selection alone stages a Home. Apply its real Account lifetime
+                // and current same-id shell before releasing the old Home's page.
+                await applySelectedHomeForSessionListTest({ token: tokenForSub('replacement'), secret: encodeBase64(secret, 'base64url') });
+                const replacementEncryption = Reflect.get(sync, 'encryption') as Encryption;
+                await replacementEncryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(10)]]));
+                storage.getState().applySessions([{
+                    ...createSession({ sessionId, serverId: replacement.id }),
+                    encryptedContentAvailability: 'ready',
+                }]);
             } else if (change === 'generation_changed') {
                 Reflect.set(sync, 'serverScopeGeneration', Number(Reflect.get(sync, 'serverScopeGeneration')) + 1);
             } else if (change === 'cipher_replaced') {
@@ -575,7 +574,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 id: 'valid-row', seq: 2, localId: null, createdAt: 2, updatedAt: 2,
                 content: { t: 'encrypted', c: validCiphertext },
             }] }));
-            await refresh;
+            if (change === 'current') {
+                await expect(refresh).rejects.toMatchObject({ name: 'SessionMessagePageDecryptionError' });
+            } else {
+                await refresh;
+            }
 
             expect(storage.getState().sessions[sessionId]?.encryptedContentAvailability).toBe(
                 change === 'current' ? 'encrypted_content_unavailable' : 'ready',
@@ -618,7 +621,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             index: storage.getState().sessionListIndexByServerId,
         };
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         requestMock.mockImplementation(async (_path, init) => {
             const requestBody = JSON.parse(String(init?.body ?? '{}')) as { cursor?: string; attentionCursor?: string };
             return new Response(JSON.stringify({
@@ -705,20 +708,20 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('Voice semantic discovery preserves metadata omissions through its marked awareness Action result', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://voice-awareness.example.test', name: 'Voice Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
-        await applySelectedHomeForSessionListTest();
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('awareness-account') });
         storage.setState((state) => ({ settings: { ...state.settings, experiments: true, featureToggles: { ...state.settings.featureToggles, voice: true } } }));
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('awareness-account'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         // Voice dispatches through the shared Action executor, which captures a real Home/Account
         // authority first. Supply that authority rather than relaxing it.
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('awareness-account'), secret: 'active-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
         runtimeFetchMock.mockImplementation(async (url: string) => {
             const path = new URL(url).pathname;
             if (path === '/v1/auth/ping') return Response.json({ success: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            throw new Error(`unexpected request: ${url}`);
+            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
+            if (path.startsWith('/v2/sessions')) return requestMock(path);
+            return new Response(null, { status: 404 });
         });
         requestMock.mockImplementation(async () => new Response(JSON.stringify({
             sessions: [{
@@ -753,7 +756,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await setActiveServerId(home.id, { scope: 'device' });
         await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         storage.setState((state) => ({
             settings: { ...state.settings, voice: { ...state.settings.voice, privacy: { ...state.settings.voice.privacy, shareRecentMessages: true } } },
             sessionMessages: { ...state.sessionMessages, 'query-summary': { messages: [{ id: 'm1', kind: 'user-text', text: 'Retained preview', createdAt: 10 }] } },
@@ -798,7 +801,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await setActiveServerId(home.id, { scope: 'device' });
         await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a') });
         let withheld = true;
         requestMock.mockImplementation(async (path: string) => Response.json({
             sessions: [], nextCursor: null, hasNext: false,
@@ -822,8 +825,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('serves uncached activity through exact Home acquisition without reading turns', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://awareness.example.test', name: 'Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         // Both reads acquire for themselves, so each needs its own response body: one shared
         // `Response` instance is consumed by the first read and fails the second as malformed.
         requestMock.mockImplementation(async () => new Response(JSON.stringify({ session: {
@@ -850,18 +854,19 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('returns the canonical marked awareness projection when activity explicitly requests it', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://activity-awareness-view.example.test', name: 'Activity Awareness View' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('awareness-account') });
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('awareness-account'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         // The shared Action executor captures a real Home/Account authority before it dispatches.
         // Supply that authority instead of relaxing it, so this exercises the production path.
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('awareness-account'), secret: 'active-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
         runtimeFetchMock.mockImplementation(async (url: string) => {
             const path = new URL(url).pathname;
             if (path === '/v1/auth/ping') return Response.json({ success: true });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            throw new Error(`unexpected request: ${url}`);
+            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
+            if (path.startsWith('/v2/sessions')) return requestMock(path);
+            return new Response(null, { status: 404 });
         });
         requestMock.mockResolvedValue(new Response(JSON.stringify({ session: {
             id: 'activity-awareness-view', createdAt: 1, updatedAt: 2, seq: 3,
@@ -893,6 +898,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const homeA = await upsertServerProfile({ serverUrl: 'https://activity-home-a.example.test', name: 'Activity Home A' });
         const homeB = await upsertServerProfile({ serverUrl: 'https://activity-home-b.example.test', name: 'Activity Home B' });
         await setActiveServerId(homeA.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         storage.setState(() => ({
             ordinarySessionListMembershipByServerId: {
                 [homeA.id]: ['shared-activity'],
@@ -912,8 +918,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('omits permission identities when exact-Home activity observes only pending counts', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://awareness-counts.example.test', name: 'Awareness Counts' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         storage.setState((state) => ({
             settings: { ...state.settings, voice: { ...state.settings.voice, privacy: {
                 ...state.settings.voice.privacy, sharePermissionRequests: true,
@@ -939,8 +946,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('keeps retained-window counts ancillary to acquired activity', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://retained-awareness.example.test', name: 'Retained Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         requestMock.mockImplementation(async () => new Response(JSON.stringify({ session: {
             id: 'retained-awareness', createdAt: 1, updatedAt: 2, seq: 3,
             active: false, activeAt: 2, encryptionMode: 'plain', dataEncryptionKey: null,
@@ -968,8 +976,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('bounds the retained-window counts by the requested activity window', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://windowed-awareness.example.test', name: 'Windowed Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         requestMock.mockImplementation(async () => new Response(JSON.stringify({ session: {
             id: 'windowed-awareness', createdAt: 1, updatedAt: 2, seq: 3,
             active: false, activeAt: 2, encryptionMode: 'plain', dataEncryptionKey: null,
@@ -1003,8 +1012,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('preserves malformed acquisition errors in the activity Action', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://awareness.example.test', name: 'Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         requestMock.mockImplementation(async () => new Response('{}', {
             status: 200, headers: { 'Content-Type': 'application/json' },
         }));
@@ -1016,8 +1026,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('settles caller cancellation while shared activity hydration remains pending', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://cancel-awareness.example.test', name: 'Cancel Awareness' });
         await setActiveServerId(home.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
-        Reflect.set(sync, 'credentials', { token: 'active-token', secret: 'active-secret' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         let finishRequest!: (response: Response) => void;
         requestMock.mockImplementation(() => new Promise<Response>((resolve) => { finishRequest = resolve; }));
         const { getSessionActivityForVoiceTool } = await import('@/voice/tools/actionImpl/sessionActivity');
@@ -1041,13 +1052,29 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         appStateAddListener.mockClear();
         requestMock.mockReset();
         runtimeFetchMock.mockReset();
-        getCredentialsForServerUrlMock.mockReset();
-        createEncryptionFromAuthCredentialsMock.mockReset();
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            const target = new URL(url);
+            if (target.pathname === '/v1/auth/ping') return Response.json({ success: true });
+            if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, updatedAt: 0, signingKeyFingerprint: null, contentKeyFingerprint: null,
+            });
+            if (target.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 0 });
+            // The route spy owns Session HTTP; unrelated real restore readers use
+            // the same network boundary without contaminating route assertions.
+            if (!/^\/v[12]\/sessions(?:\/|$)/.test(target.pathname)) return new Response('{}', { status: 404 });
+            const response = await requestMock(target.pathname + target.search, init);
+            if (response) return response;
+            if (target.pathname === '/v2/sessions' || target.pathname === '/v2/sessions/active') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (target.pathname === '/v2/sessions/metadata-upgrades') return Response.json({ sessionIds: [] });
+            return new Response('{}', { status: 404 });
+        });
         resetSessionSurfaceVisibilityForTests();
 
         await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
         sync.disconnectServer();
+        await applySelectedHomeForSessionListTest();
     });
 
     it('keeps a wake reconciliation open until its real message hydration completes', async () => {
@@ -1090,7 +1117,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('clears server-scoped session-list row/index caches on disconnect', async () => {
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
@@ -1176,16 +1204,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             },
         }));
 
-        const resetSessionMessagesSpy = vi.fn(storage.getState().resetSessionMessages);
-        storage.setState((state) => ({
-            ...state,
-            resetSessionMessages: resetSessionMessagesSpy,
-        }));
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).isForeground = true;
-        (sync as any).pauseController = { isPaused: () => false };
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).sessionMaterializedMaxSeqById = { [sessionId]: 1 };
@@ -1195,32 +1217,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             messageMaxIncrementalPagesOnResume: 1,
             messageForceSnapshotOfflineMs: 30 * 60 * 1000,
         };
-        (sync as any).encryption = {
-            getSessionEncryption: () => ({
-                decryptMessages: async (messages: Array<{ id: string; localId?: string | null; createdAt: number; seq?: number | null }>) =>
-                    messages.map((message) => ({
-                        id: message.id,
-                        localId: message.localId ?? null,
-                        createdAt: message.createdAt,
-                        seq: message.seq ?? null,
-                        content: {
-                            role: 'agent',
-                            content: {
-                                type: 'output',
-                                data: {
-                                    type: 'user',
-                                    uuid: 'uuid_fresh_1',
-                                    parentUuid: null,
-                                    isSidechain: false,
-                                    message: { role: 'user', content: 'fresh' },
-                                },
-                            },
-                            meta: { source: 'cli' },
-                        },
-                    })),
-            }),
-        };
-
+        const fixture = await createEncryptedSessionFixture(sessionId);
+        await fixture.encryption.initializeSessions(new Map([[sessionId, fixture.dataKey]]));
+        Reflect.set(sync, 'encryption', fixture.encryption);
+        const freshCiphertext = await fixture.encryption.getSessionEncryption(sessionId)!.encryptRaw({
+            role: 'agent', content: { type: 'output', data: {
+                type: 'user', uuid: 'uuid_fresh_1', parentUuid: null, isSidechain: false,
+                message: { role: 'user', content: 'fresh' },
+            } }, meta: { source: 'cli' },
+        });
         let resolveRequest!: (response: Response) => void;
         const requestPromise = new Promise<Response>((resolve) => {
             resolveRequest = resolve;
@@ -1230,7 +1235,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         markSessionSurfaceVisible(sessionId);
         const fetchPromise = (sync as any).fetchMessages(sessionId);
 
-        expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
         expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toEqual(['m-old']);
 
         resolveRequest(
@@ -1241,7 +1245,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                             id: 'm-new',
                             seq: 125,
                             localId: null,
-                            content: { t: 'encrypted', c: 'cipher' },
+                            content: { t: 'encrypted', c: freshCiphertext },
                             createdAt: 2,
                             updatedAt: 2,
                         },
@@ -1257,7 +1261,6 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         try {
             await fetchPromise;
 
-            expect(resetSessionMessagesSpy).not.toHaveBeenCalled();
             expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst).toHaveLength(2);
             expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst?.[0]).toBe('m-old');
         } finally {
@@ -1318,7 +1321,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('flushes old session materialization progress before activating a new account/server scope', async () => {
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(serverId).toBeTruthy();
 
@@ -1341,7 +1345,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('resets stale account settings sync status when activating a new account/server scope', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
 
@@ -1362,59 +1367,38 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('refuses an immutable account-settings mutation when the account changes during preflush', async () => {
         const { sync } = await import('./sync');
-        const syncInternals = sync as any;
-        const originalSyncSettings = syncInternals.syncSettings;
-        const originalCredentials = syncInternals.credentials;
-        const originalEncryption = syncInternals.encryption;
-        const originalScope = syncInternals.pendingSettingsScope;
-        const originalGeneration = syncInternals.serverScopeGeneration;
-        let releasePreflush!: () => void;
-        const preflush = new Promise<void>((resolve) => { releasePreflush = resolve; });
-        syncInternals.credentials = { token: 'account-a' };
-        syncInternals.encryption = {};
-        syncInternals.pendingSettingsScope = { serverId: 'server-a', accountId: 'account-a' };
-        syncInternals.serverScopeGeneration = 10;
-        syncInternals.syncSettings = vi.fn(async () => preflush);
-        try {
-            const operation = sync.applyAccountSettingsMutation({
-                operations: [{ op: 'set', key: 'analyticsOptOut', value: true }],
-            }, { serverId: 'server-a', accountId: 'account-a' });
-            syncInternals.pendingSettingsScope = { serverId: 'server-b', accountId: 'account-b' };
-            syncInternals.serverScopeGeneration = 11;
-            syncInternals.credentials = { token: 'account-b' };
-            releasePreflush();
-
-            await expect(operation).rejects.toThrow('Account settings scope changed while mutating settings');
-        } finally {
-            syncInternals.syncSettings = originalSyncSettings;
-            syncInternals.credentials = originalCredentials;
-            syncInternals.encryption = originalEncryption;
-            syncInternals.pendingSettingsScope = originalScope;
-            syncInternals.serverScopeGeneration = originalGeneration;
-        }
+        const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' };
+        const requested = createDeferred<void>();
+        const response = createDeferred<Response>();
+        Reflect.set(sync, 'pendingSettingsScope', scope);
+        runtimeFetchMock.mockImplementation(async (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/auth/ping') return Response.json({ success: true });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v2/account/settings') { requested.resolve(); return response.promise; }
+            return new Response('{}', { status: 404 });
+        });
+        const operation = sync.applyAccountSettingsMutation({
+            operations: [{ op: 'set', key: 'analyticsOptOut', value: true }],
+        }, scope);
+        await requested.promise;
+        await (sync as any).activateAccountSettingsScope('account-b');
+        response.resolve(Response.json({ content: { t: 'plain', v: {} }, version: 7 }));
+        await expect(operation).rejects.toThrow('Account settings scope changed while mutating settings');
+        expect(runtimeFetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
     });
 
     it('refuses a retained one-shot mutation before preflush when its rendered Account scope retired', async () => {
         const { sync } = await import('./sync');
-        const syncInternals = sync as any;
-        const originalSyncSettings = syncInternals.syncSettings;
-        const originalCredentials = syncInternals.credentials;
-        const originalScope = syncInternals.pendingSettingsScope;
-        syncInternals.credentials = { token: 'account-b' };
-        syncInternals.pendingSettingsScope = { serverId: 'server-b', accountId: 'account-b' };
-        syncInternals.syncSettings = vi.fn();
-        try {
-            await expect(sync.mutateAccountSettingsOnce({
-                expectedSettingsScope: { serverId: 'server-a', accountId: 'account-a' },
-                expectedSettingsVersion: 7,
-                mutate: (raw) => ({ settings: { ...raw, analyticsOptOut: true }, value: undefined }),
-            })).rejects.toThrow('Account settings scope changed before mutating settings');
-            expect(syncInternals.syncSettings).not.toHaveBeenCalled();
-        } finally {
-            syncInternals.syncSettings = originalSyncSettings;
-            syncInternals.credentials = originalCredentials;
-            syncInternals.pendingSettingsScope = originalScope;
-        }
+        const serverId = getActiveServerSnapshot().serverId;
+        await (sync as any).activateAccountSettingsScope('account-b');
+        runtimeFetchMock.mockClear();
+        await expect(sync.mutateAccountSettingsOnce({
+            expectedSettingsScope: { serverId, accountId: 'account-a' },
+            expectedSettingsVersion: 7,
+            mutate: (raw) => ({ settings: { ...raw, analyticsOptOut: true }, value: undefined }),
+        })).rejects.toThrow('Account settings scope changed before mutating settings');
+        expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 
     it('hydrates e2ee session encryption on deep link before sessions snapshot fetch', async () => {
@@ -1424,22 +1408,14 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
 
-        let ready = false;
-        const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
-        const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
 
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
-            initializeSessions: async () => {
-                ready = true;
-            },
-            getSessionEncryption: (_sessionId: string) =>
-                ready ? ({ decryptMetadata, decryptAgentState } as any) : null,
-        };
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        (sync as any).encryption = encryptedFixture.encryption;
+        (sync as any).credentials = encryptedFixture.credentials;
 
         requestMock.mockResolvedValue(
             new Response(
@@ -1452,11 +1428,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         active: true,
                         activeAt: 2,
                         encryptionMode: 'e2ee',
-                        dataEncryptionKey: 'dek',
+                        dataEncryptionKey: encryptedFixture.row.dataEncryptionKey,
                         metadataVersion: 1,
-                        metadata: 'enc-meta',
+                        metadata: encryptedFixture.row.metadata,
                         agentStateVersion: 1,
-                        agentState: 'enc-state',
+                        agentState: encryptedFixture.row.agentState,
                         share: null,
                     },
                 }),
@@ -1484,7 +1460,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const secret = new Uint8Array(32).fill(7);
         const encryption = await Encryption.create(secret);
         await encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(9)]]));
-        Reflect.set(sync, 'credentials', { token: 't', secret: encodeBase64(secret, 'base64url') });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a'), secret: encodeBase64(secret, 'base64url') });
         Reflect.set(sync, 'encryption', encryption);
         Reflect.set(sync, 'activeServerSessionIds', new Set<string>());
         requestMock.mockImplementation(async (path: string) => new Response(JSON.stringify(
@@ -1520,7 +1496,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const { sync } = await import('./sync');
         const { useHydrateSessionForRoute } = await import('@/hooks/session/useHydrateSessionForRoute');
         Reflect.set(sync, 'encryption', await Encryption.create(new Uint8Array(32).fill(7)));
-        Reflect.set(sync, 'credentials', { token: 't' });
+        Reflect.set(sync, 'credentials', { token: tokenForSub('account-a') });
         Reflect.set(sync, 'activeServerSessionIds', new Set([sessionId]));
         storage.getState().applySessions([{
             ...createSession({ sessionId }),
@@ -1550,9 +1526,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         (sync as any).credentials = null;
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            getSessionEncryption: () => null,
-        };
+        (sync as any).encryption = null;
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'retryable_failure',
@@ -1565,71 +1539,60 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('falls back to a session-list snapshot when socket new-session hydration cannot prove active-list visibility', async () => {
         const sessionId = 'socket_new_session_needs_snapshot_reconcile';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {});
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => {
-                throw new Error('socket payload decrypt failed');
-            }),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
-        requestMock.mockImplementation(async () => (
-            new Response('temporary session hydrate failure', { status: 503 })
-        ));
+        requestMock.mockImplementation(async (path: string) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)
+            ? Response.json({ sessions: [], nextCursor: null, hasNext: false })
+            : new Response('temporary session hydrate failure', { status: 503 }));
 
-        try {
-            await syncInternals.handleUpdate({
-                id: 'u_socket_new_session_reconcile',
-                seq: 10,
-                createdAt: 100,
-                body: {
-                    t: 'new-session',
-                    id: sessionId,
-                    seq: 1,
-                    metadata: 'encrypted-metadata',
-                    metadataVersion: 2,
-                    agentState: 'encrypted-agent-state',
-                    agentStateVersion: 3,
-                    dataEncryptionKey: 'encrypted-data-key',
-                    encryptionMode: 'e2ee',
-                    active: true,
-                    activeAt: 100,
-                    createdAt: 90,
-                    updatedAt: 100,
-                },
-            });
+        await syncInternals.handleUpdate({
+            id: 'u_socket_new_session_reconcile',
+            seq: 10,
+            createdAt: 100,
+            body: {
+                t: 'new-session',
+                id: sessionId,
+                seq: 1,
+                metadata: 'encrypted-metadata',
+                metadataVersion: 2,
+                agentState: 'encrypted-agent-state',
+                agentStateVersion: 3,
+                dataEncryptionKey: 'encrypted-data-key',
+                encryptionMode: 'e2ee',
+                active: true,
+                activeAt: 100,
+                createdAt: 90,
+                updatedAt: 100,
+            },
+        });
 
-            await waitForAssertion(() => {
-                expect(requestMock).toHaveBeenCalledWith(
-                    `/v2/sessions/${sessionId}`,
-                    expect.objectContaining({ method: 'GET' }),
-                );
-            });
-            await waitForAssertion(() => {
-                expect(fetchSessionsSpy).toHaveBeenCalledTimes(1);
-            });
-        } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
-        }
+        await waitForAssertion(() => {
+            expect(requestMock).toHaveBeenCalledWith(
+                `/v2/sessions/${sessionId}`,
+                expect.objectContaining({ method: 'GET' }),
+            );
+        });
+        await waitForAssertion(() => {
+            expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(true);
+        });
     });
 
     it('refreshes the active session-list snapshot after socket new-session hydration even when the by-id row is locally indexed', async () => {
         const sessionId = 'socket_new_session_indexed_but_visible_list_stale';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
@@ -1654,26 +1617,21 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {});
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${sessionId}`) {
-                return new Response(JSON.stringify({
+                return new Response(JSON.stringify({ session: {
                     id: sessionId,
                     seq: 2,
                     encryptionMode: 'plain',
-                    metadata: { path: '/tmp/socket-indexed', host: 'local' },
+                    dataEncryptionKey: null,
+                    share: null,
+                    metadata: JSON.stringify({ path: '/tmp/socket-indexed', host: 'local' }),
                     metadataVersion: 1,
                     agentState: null,
                     agentStateVersion: 1,
@@ -1681,36 +1639,36 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                     activeAt: 120,
                     createdAt: 100,
                     updatedAt: 120,
-                }), {
+                } }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
+            if (/^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)) return Response.json({
+                sessions: [], nextCursor: null, hasNext: false,
+            });
             return new Response('unexpected request', { status: 404 });
         });
 
-        try {
-            await syncInternals.hydrateSessionFromSocketUpdate(
-                sessionId,
-                'socket-new-session-reconcile',
-                activeServerId,
-            );
+        await syncInternals.hydrateSessionFromSocketUpdate(
+            sessionId,
+            'socket-new-session-reconcile',
+            activeServerId,
+        );
 
-            expect(requestMock).toHaveBeenCalledWith(
-                `/v2/sessions/${sessionId}`,
-                expect.objectContaining({ method: 'GET' }),
-            );
-            expect(fetchSessionsSpy).toHaveBeenCalledTimes(1);
-        } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
-        }
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(true);
     });
 
     it('keeps the exact socket-created active row visible when the reconcile list refresh omits it', async () => {
         const sessionId = 'socket_new_session_exact_row_retained_after_stale_refresh';
         const olderSessionId = 'socket_new_session_stale_refresh_older_row';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
@@ -1726,25 +1684,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {
-            const olderRenderable = Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[olderSessionId]).find(Boolean);
-            if (!olderRenderable) throw new Error('Expected older session row fixture.');
-            storage.getState().applyServerScopedSessionListRows(activeServerId, [olderRenderable], {
-                source: 'ordinary',
-                mode: 'replace',
-            });
-        });
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>([olderSessionId]);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${sessionId}`) {
@@ -1768,36 +1712,37 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
+            if (/^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)) return Response.json({
+                sessions: [{
+                    id: olderSessionId, seq: 1, createdAt: 100, updatedAt: 100, active: true, activeAt: 100,
+                    archivedAt: null, encryptionMode: 'plain', dataEncryptionKey: null,
+                    metadata: JSON.stringify({ path: '/tmp/older-row', host: 'local' }), metadataVersion: 1,
+                    agentState: null, agentStateVersion: 0, share: null,
+                }], nextCursor: null, hasNext: false,
+            });
             return new Response('unexpected request', { status: 404 });
         });
 
-        try {
-            await syncInternals.hydrateSessionFromSocketUpdate(
-                sessionId,
-                'socket-new-session-reconcile',
-                activeServerId,
-            );
+        await syncInternals.hydrateSessionFromSocketUpdate(
+            sessionId,
+            'socket-new-session-reconcile',
+            activeServerId,
+        );
 
-            expect(fetchSessionsSpy).toHaveBeenCalledWith(expect.objectContaining({
-                awaitSessionListHydration: true,
-                prioritizeSessionIds: [sessionId],
-                requiredHydrationSessionIds: [sessionId],
-            }));
-            expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[sessionId]).find(Boolean)?.metadata?.path).toBe('/tmp/exact-socket-row');
-            expect(
-                storage.getState().sessionListIndexByServerId?.[activeServerId]?.some((item) => (
-                    item.type === 'session' && item.sessionId === sessionId
-                )),
-            ).toBe(true);
-        } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
-        }
+        expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(true);
+        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows[sessionId]).find(Boolean)?.metadata?.path).toBe('/tmp/exact-socket-row');
+        expect(
+            storage.getState().sessionListIndexByServerId?.[activeServerId]?.some((item) => (
+                item.type === 'session' && item.sessionId === sessionId
+            )),
+        ).toBe(true);
     });
 
     it('keeps visible cached socket update hydration targeted instead of refreshing the active session-list snapshot', async () => {
         const sessionId = 'socket_visible_cached_update_targeted_hydration';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
@@ -1823,26 +1768,21 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {});
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>(['older-session']);
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${sessionId}`) {
-                return new Response(JSON.stringify({
+                return new Response(JSON.stringify({ session: {
                     id: sessionId,
                     seq: 2,
                     encryptionMode: 'plain',
-                    metadata: { path: '/tmp/visible-cached-update', host: 'local' },
+                    dataEncryptionKey: null,
+                    share: null,
+                    metadata: JSON.stringify({ path: '/tmp/visible-cached-update', host: 'local' }),
                     metadataVersion: 2,
                     agentState: null,
                     agentStateVersion: 1,
@@ -1850,11 +1790,14 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                     activeAt: 120,
                     createdAt: 100,
                     updatedAt: 120,
-                }), {
+                } }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 });
             }
+            if (/^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(path)) return Response.json({
+                sessions: [], nextCursor: null, hasNext: false,
+            });
             return new Response('unexpected request', { status: 404 });
         });
 
@@ -1869,9 +1812,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 `/v2/sessions/${sessionId}`,
                 expect.objectContaining({ method: 'GET' }),
             );
-            expect(fetchSessionsSpy).not.toHaveBeenCalled();
+            expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(false);
         } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
             markSessionSurfaceHidden(sessionId);
         }
     });
@@ -1879,24 +1821,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('keeps shared-session visibility hydration targeted instead of refreshing the active session-list snapshot', async () => {
         const sessionId = 'share_visibility_targeted_hydration_only';
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-        upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await upsertAndActivateServer({ serverUrl: 'https://active.example.test', scope: 'tab' });
+        await applySelectedHomeForSessionListTest();
         const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
         expect(activeServerId).toBeTruthy();
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {});
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>();
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockResolvedValue(new Response(JSON.stringify({
             session: {
@@ -1918,21 +1854,17 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             headers: { 'Content-Type': 'application/json' },
         }));
 
-        try {
-            await syncInternals.hydrateSessionFromSocketUpdate(
-                sessionId,
-                'share-visibility-change',
-                activeServerId,
-            );
+        await syncInternals.hydrateSessionFromSocketUpdate(
+            sessionId,
+            'share-visibility-change',
+            activeServerId,
+        );
 
-            expect(requestMock).toHaveBeenCalledWith(
-                `/v2/sessions/${sessionId}`,
-                expect.objectContaining({ method: 'GET' }),
-            );
-            expect(fetchSessionsSpy).not.toHaveBeenCalled();
-        } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
-        }
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({ method: 'GET' }),
+        );
+        expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(false);
     });
 
     it('does not refresh the active session-list snapshot after hydrating a non-active source-server socket update', async () => {
@@ -1941,29 +1873,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
 
         const { sync } = await import('./sync');
         const syncInternals = sync as any;
-        const originalFetchSessions = syncInternals.fetchSessions;
-        const fetchSessionsSpy = vi.fn(async () => {});
 
-        syncInternals.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncInternals.credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         syncInternals.activeServerSessionIds = new Set<string>();
         syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-        syncInternals.encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
-        syncInternals.fetchSessions = fetchSessionsSpy;
+        syncInternals.encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        });
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
         runtimeFetchMock.mockImplementation(async () => new Response(JSON.stringify({
             session: {
                 id: sessionId,
@@ -1984,22 +1905,18 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             headers: { 'Content-Type': 'application/json' },
         }));
 
-        try {
-            await syncInternals.hydrateSessionFromSocketUpdate(
-                sessionId,
-                'socket-new-session-reconcile',
-                ownerServer.id,
-            );
+        await syncInternals.hydrateSessionFromSocketUpdate(
+            sessionId,
+            'socket-new-session-reconcile',
+            ownerServer.id,
+        );
 
-            expect(requestMock).not.toHaveBeenCalled();
-            expectRuntimeFetchWithBearer(
-                `https://scoped.example/v2/sessions/${sessionId}`,
-                scopedToken,
-            );
-            expect(fetchSessionsSpy).not.toHaveBeenCalled();
-        } finally {
-            syncInternals.fetchSessions = originalFetchSessions;
-        }
+        expect(requestMock).not.toHaveBeenCalled();
+        expectRuntimeFetchWithBearer(
+            `https://scoped.example/v2/sessions/${sessionId}`,
+            scopedToken,
+        );
+        expect(requestMock.mock.calls.some(([path]) => /^\/v2\/sessions(?:\/active)?(?:\?|$)/.test(String(path)))).toBe(false);
     });
 
     it('fast-paths a known encrypted session with metadata, encryption, and null agent state', async () => {
@@ -2014,12 +1931,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        await (sync as any).encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(8)]]));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'available',
@@ -2042,12 +1958,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            getSessionEncryption: vi.fn(() => null),
-        };
+        (sync as any).encryption = null;
         requestMock.mockResolvedValue(new Response('missing', { status: 404 }));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
@@ -2077,12 +1991,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }]);
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            getSessionEncryption: vi.fn(() => null),
-        };
+        (sync as any).encryption = null;
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'available',
@@ -2096,14 +2008,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         const connectivityError = new Error('active server request timed out');
         connectivityError.name = 'ServerFetchConnectivityTimeoutError';
@@ -2121,14 +2029,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockResolvedValue(new Response('not found', { status: 404 }));
 
@@ -2143,201 +2047,80 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         'does not restore a cross-device-deleted %s session from an older in-flight by-id hydration',
         async (encryptionMode) => {
             const sessionId = `voice_history_deleted_during_${encryptionMode}_hydration`;
-            storage.getState().applySessions([{
-                ...createSession({ sessionId }),
-                encryptionMode,
-            }]);
-
+            const fixture = await createEncryptedSessionFixture(sessionId);
             const { sync } = await import('./sync');
-            const syncInternals = sync as any;
-            let resolveInitializationStarted!: () => void;
-            let releaseInitialization!: () => void;
-            const initializationStarted = new Promise<void>((resolve) => {
-                resolveInitializationStarted = resolve;
-            });
-            const initializationRelease = new Promise<void>((resolve) => {
-                releaseInitialization = resolve;
-            });
-            let sessionEncryptionInstalled = false;
-            const initializeSessions = vi.fn(async (
-                _keys: Map<string, Uint8Array | null>,
-                options?: Readonly<{ shouldContinue?: () => boolean }>,
-            ) => {
-                resolveInitializationStarted();
-                await initializationRelease;
-                if (options?.shouldContinue?.() === false) return;
-                sessionEncryptionInstalled = true;
-            });
-            const removeSessionEncryption = vi.fn(() => {
-                sessionEncryptionInstalled = false;
-            });
-            syncInternals.credentials = { token: 't', secret: 's' };
-            syncInternals.activeServerSessionIds = new Set<string>([sessionId]);
-            syncInternals.hasFetchedSessionsSnapshotForActiveServer = true;
-            syncInternals.sessionDataKeys = new Map([
-                [sessionId, new Uint8Array([9, 9, 9])],
-            ]);
-            syncInternals.sessionDataKeyEnvelopes = new Map([
-                [sessionId, 'stale-envelope'],
-            ]);
-            syncInternals.encryption = {
-                decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
-                initializeSessions,
-                getSessionEncryption: vi.fn(() => sessionEncryptionInstalled
-                    ? {
-                        decryptMetadata: vi.fn(async () => ({ readStateV1: null })),
-                        decryptAgentState: vi.fn(async () => ({ controlledByUser: true })),
-                    }
-                    : null),
-                removeSessionEncryption,
-            };
-
-            let resolveHydration!: (response: Response) => void;
-            requestMock.mockReturnValueOnce(new Promise<Response>((resolve) => {
-                resolveHydration = resolve;
-            }));
-            const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, {
-                forceRefresh: true,
-            });
-            await waitForAssertion(() => {
-                expect(requestMock).toHaveBeenCalledWith(
-                    `/v2/sessions/${sessionId}`,
-                    expect.objectContaining({ method: 'GET' }),
-                );
-            });
-
-            const staleResponse = new Response(JSON.stringify({
-                session: {
-                    id: sessionId,
-                    createdAt: 1,
-                    updatedAt: 2,
-                    seq: 3,
-                    active: false,
-                    activeAt: 2,
-                    encryptionMode,
-                    ...(encryptionMode === 'e2ee'
-                        ? { dataEncryptionKey: 'stale-envelope' }
-                        : {}),
-                    metadataVersion: 1,
-                    metadata: encryptionMode === 'plain'
-                        ? JSON.stringify({})
-                        : 'encrypted-metadata',
-                    agentStateVersion: 1,
-                    agentState: encryptionMode === 'plain'
-                        ? JSON.stringify({})
-                        : 'encrypted-agent-state',
-                    share: null,
-                },
-            }), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            Reflect.set(sync, 'credentials', fixture.credentials);
+            Reflect.set(sync, 'encryption', fixture.encryption);
+            Reflect.set(sync, 'activeServerSessionIds', new Set([sessionId]));
+            await fixture.encryption.initializeSessions(new Map([[sessionId, fixture.dataKey]]));
+            Reflect.set(sync, 'sessionDataKeys', new Map([[sessionId, fixture.dataKey]]));
+            Reflect.set(sync, 'sessionDataKeyEnvelopes', new Map([[sessionId, fixture.row.dataEncryptionKey]]));
+            storage.getState().applySessions([{ ...createSession({ sessionId }), encryptionMode }]);
+            const requested = createDeferred<void>();
+            const response = createDeferred<Response>();
+            const decrypting = createDeferred<void>();
+            const decryptRelease = createDeferred<void>();
             if (encryptionMode === 'e2ee') {
-                resolveHydration(staleResponse);
-                await initializationStarted;
+                const crypto = await import('rn-encryption');
+                const decrypt = crypto.decryptAsyncAES;
+                const boundary = vi.spyOn(crypto, 'decryptAsyncAES').mockImplementation(async (...args) => {
+                    decrypting.resolve();
+                    await decryptRelease.promise;
+                    return decrypt(...args);
+                });
+                onTestFinished(() => boundary.mockRestore());
             }
-            await syncInternals.handleUpdate({
-                id: `delete-${encryptionMode}`,
-                seq: 10,
-                createdAt: 10,
+            requestMock.mockImplementation(async () => { requested.resolve(); return response.promise; });
+            const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
+            await requested.promise;
+            const staleResponse = Response.json({ session: encryptionMode === 'e2ee' ? fixture.row : {
+                ...fixture.row, encryptionMode: 'plain', dataEncryptionKey: null,
+                metadata: JSON.stringify({ path: '/repo', host: 'host' }), agentState: JSON.stringify({ controlledByUser: true }),
+            } });
+            if (encryptionMode === 'e2ee') {
+                response.resolve(staleResponse);
+                await decrypting.promise;
+            }
+            await (sync as any).handleUpdate({
+                id: `delete-${encryptionMode}`, seq: 10, createdAt: 10,
                 body: { t: 'delete-session', sid: sessionId },
             });
             expect(storage.getState().sessions[sessionId]).toBeUndefined();
-            expect(removeSessionEncryption).toHaveBeenCalledWith(sessionId);
-
-            if (encryptionMode === 'plain') {
-                resolveHydration(staleResponse);
-            } else {
-                releaseInitialization();
-            }
-
-            await expect(hydration).resolves.toMatchObject({
-                kind: 'retryable_failure',
-                sessionId,
-            });
+            expect(fixture.encryption.getSessionEncryption(sessionId)).toBeNull();
+            if (encryptionMode === 'plain') response.resolve(staleResponse);
+            else decryptRelease.resolve();
+            await expect(hydration).resolves.toMatchObject({ kind: 'retryable_failure', sessionId });
             expect(storage.getState().sessions[sessionId]).toBeUndefined();
-            expect(syncInternals.sessionDataKeys.has(sessionId)).toBe(false);
-            expect(syncInternals.sessionDataKeyEnvelopes.has(sessionId)).toBe(false);
-            expect(sessionEncryptionInstalled).toBe(false);
-            expect(initializeSessions).toHaveBeenCalledTimes(
-                encryptionMode === 'e2ee' ? 1 : 0,
-            );
+            expect((sync as any).sessionDataKeys.has(sessionId)).toBe(false);
+            expect((sync as any).sessionDataKeyEnvelopes.has(sessionId)).toBe(false);
+            expect(fixture.encryption.getSessionEncryption(sessionId)).toBeNull();
         },
     );
 
     it('requires fresh hydration when encryption changes during metadata decryption', async () => {
         const sessionId = 'deep_link_session_swap';
-        storage.getState().applySessions([createSession({ sessionId })]);
-        storage.getState().resetSessionMessages(sessionId);
-
+        const fixture = await createEncryptedSessionFixture(sessionId);
+        const replacement = await Encryption.create(new Uint8Array(32).fill(7));
         const { sync } = await import('./sync');
-
-        (sync as any).credentials = { token: 't' };
-        (sync as any).activeServerSessionIds = new Set<string>();
-        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-
-        let encryption2Initialized = false;
-        const encryption2DecryptMetadata = vi.fn(async () => ({ readStateV1: null }));
-        const encryption2DecryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
-        const encryption2 = {
-            decryptEncryptionKey: async () => new Uint8Array([4, 5, 6]),
-            initializeSessions: async () => {
-                encryption2Initialized = true;
-            },
-            getSessionEncryption: (_sessionId: string) =>
-                encryption2Initialized ? ({ decryptMetadata: encryption2DecryptMetadata, decryptAgentState: encryption2DecryptAgentState } as any) : null,
-        };
-
-        let encryption1Initialized = false;
-        const encryption1 = {
-            decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
-            initializeSessions: async () => {
-                encryption1Initialized = true;
-            },
-            getSessionEncryption: (_sessionId: string) =>
-                encryption1Initialized
-                    ? ({
-                          decryptMetadata: async () => {
-                              (sync as any).encryption = encryption2 as any;
-                              return { readStateV1: null };
-                          },
-                          decryptAgentState: async () => ({ controlledByUser: true }),
-                      } as any)
-                    : null,
-        };
-
-        (sync as any).encryption = encryption1 as any;
-
-        requestMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({
-                    session: {
-                        id: sessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: true,
-                        activeAt: 2,
-                        encryptionMode: 'e2ee',
-                        dataEncryptionKey: 'dek',
-                        metadataVersion: 1,
-                        metadata: 'enc-meta',
-                        agentStateVersion: 1,
-                        agentState: 'enc-state',
-                        share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
-
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
-            kind: 'retryable_failure',
-            sessionId,
+        Reflect.set(sync, 'credentials', fixture.credentials);
+        Reflect.set(sync, 'encryption', fixture.encryption);
+        Reflect.set(sync, 'activeServerSessionIds', new Set<string>());
+        storage.getState().applySessions([createSession({ sessionId })]);
+        requestMock.mockImplementation(async () => Response.json({ session: fixture.row }));
+        // The third-party native crypto adapter is the asynchronous boundary.
+        // Keep its actual AES implementation while replacing Account presentation.
+        const crypto = await import('rn-encryption');
+        const decrypt = crypto.decryptAsyncAES;
+        const boundary = vi.spyOn(crypto, 'decryptAsyncAES').mockImplementation(async (...args) => {
+            Reflect.set(sync, 'encryption', replacement);
+            return decrypt(...args);
         });
-
-        expect((sync as any).encryption).toBe(encryption2);
-        expect(encryption2.getSessionEncryption(sessionId)).toBeNull();
+        onTestFinished(() => boundary.mockRestore());
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'retryable_failure', sessionId,
+        });
+        expect(Reflect.get(sync, 'encryption')).toBe(replacement);
+        expect(replacement.getSessionEncryption(sessionId)).toBeNull();
     });
 
     it('re-fetches a known session when forceRefresh is requested', async () => {
@@ -2347,14 +2130,12 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn((_sessionId: string) => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
-            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
-        };
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        (sync as any).encryption = encryptedFixture.encryption;
+        (sync as any).credentials = encryptedFixture.credentials;
 
         requestMock.mockResolvedValue(
             new Response(
@@ -2367,11 +2148,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         active: true,
                         activeAt: 2,
                         encryptionMode: 'e2ee',
-                        dataEncryptionKey: 'dek',
+                        dataEncryptionKey: encryptedFixture.row.dataEncryptionKey,
                         metadataVersion: 1,
-                        metadata: 'enc-meta',
+                        metadata: encryptedFixture.row.metadata,
                         agentStateVersion: 1,
-                        agentState: 'enc-state',
+                        agentState: encryptedFixture.row.agentState,
                         share: null,
                     },
                 }),
@@ -2394,7 +2175,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const sessionId = 'unqualified_applied_route';
         const appliedCredentials = {
             token: tokenForSub('applied-account'),
-            secret: 'applied-secret',
+            secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
         };
         const appliedSession = {
             id: sessionId,
@@ -2420,21 +2201,16 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             serverUrl: 'https://staged-route.example.test',
             name: 'Staged route',
         });
+        await setActiveServerId(appliedHome.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest(appliedCredentials);
         await setActiveServerId(stagedHome.id, { scope: 'device' });
 
         const { sync } = await import('./sync');
         (sync as any).credentials = appliedCredentials;
-        (sync as any).appliedServerTarget = {
-            serverId: appliedHome.id,
-            serverUrl: appliedHome.serverUrl,
-            generation: 1,
-        };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = null;
         requestMock.mockRejectedValue(new Error('the unavailable singleton must not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue(appliedCredentials);
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
         runtimeFetchMock.mockImplementation(async (url: string) => {
             const path = new URL(url).pathname;
             if (path === '/v1/auth/ping') {
@@ -2453,7 +2229,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 return Response.json({ sessions: [appliedSession], nextCursor: null, hasNext: false });
             }
             if (path !== `/v2/sessions/${sessionId}`) {
-                throw new Error(`Unexpected applied-route request: ${url}`);
+                return new Response(null, { status: 404 });
             }
             return Response.json({
                 session: appliedSession,
@@ -2504,18 +2280,13 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        const initializeSessions = vi.fn(async () => {});
-        const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
-        const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
 
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
-            initializeSessions,
-            getSessionEncryption: vi.fn(() => ({ decryptMetadata, decryptAgentState })),
-        };
+        const encryptedFixture = await createEncryptedSessionFixture(sessionId);
+        (sync as any).encryption = encryptedFixture.encryption;
+        (sync as any).credentials = encryptedFixture.credentials;
 
         requestMock.mockResolvedValue(
             new Response(
@@ -2528,11 +2299,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         active: true,
                         activeAt: 2,
                         encryptionMode: 'e2ee',
-                        dataEncryptionKey: 'dek',
+                        dataEncryptionKey: encryptedFixture.row.dataEncryptionKey,
                         metadataVersion: 1,
-                        metadata: 'enc-meta',
+                        metadata: encryptedFixture.row.metadata,
                         agentStateVersion: 1,
-                        agentState: 'enc-state',
+                        agentState: encryptedFixture.row.agentState,
                         share: null,
                     },
                 }),
@@ -2547,14 +2318,12 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         expect(requestMock).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}`,
-            expect.objectContaining({
-                method: 'GET',
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer t',
-                }),
-            }),
+            expect.objectContaining({ method: 'GET' }),
         );
-        expect(initializeSessions).toHaveBeenCalled();
+        const request = requestMock.mock.calls.find(([path]) => path === `/v2/sessions/${sessionId}`);
+        expect(new Headers(request?.[1]?.headers).get('Authorization')).toBe(`Bearer ${tokenForSub('account-a')}`);
+        expect(storage.getState().sessions[sessionId]?.metadata).toMatchObject({ path: '/repo', host: 'host' });
+        expect(encryptedFixture.encryption.getSessionEncryption(sessionId)).not.toBeNull();
     });
 
     it('keeps a fully hydrated known encrypted session on the fast path', async () => {
@@ -2580,14 +2349,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            decryptEncryptionKey: vi.fn(async () => new Uint8Array([1, 2, 3])),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        await (sync as any).encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(8)]]));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'available',
@@ -2620,22 +2386,17 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        const getSessionEncryption = vi.fn(() => null);
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption,
-        };
+        (sync as any).encryption = null;
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'available',
             sessionId,
         });
         expect(requestMock).not.toHaveBeenCalled();
-        expect(getSessionEncryption).not.toHaveBeenCalled();
+        expect((sync as any).encryption).toBeNull();
     });
 
     it('hydrates through the preferred owner server when local cache maps the session to a non-active server', async () => {
@@ -2644,10 +2405,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
 
         storage.getState().applySessions([
             {
-                ...createSession({ sessionId }),
+                ...createSession({ sessionId, serverId: ownerServer.id }),
                 encryptionMode: 'plain',
             },
         ]);
@@ -2661,24 +2423,14 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         const { sync } = await import('./sync');
 
-        const initializeSessions = vi.fn(async () => {});
-        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeSessions,
-            getSessionEncryption: vi.fn(() => null),
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
-            decryptEncryptionKey: async () => null,
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        });
-        runtimeFetchMock.mockResolvedValue(
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        runtimeFetchMock.mockImplementation(async () =>
             new Response(
                 JSON.stringify({
                     session: {
@@ -2722,7 +2474,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(storage.getState().sessionListRowsByServerId?.[ownerServer.id]?.[sessionId]).toBeDefined();
         expect(storage.getState().ordinarySessionListMembershipByServerId?.[ownerServer.id] ?? []).not.toContain(sessionId);
         expect((sync as any).activeServerSessionIds.has(sessionId)).toBe(false);
-        expect(initializeSessions).not.toHaveBeenCalled();
+        expect((sync as any).encryption.getSessionEncryption(sessionId)).toBeNull();
     });
 
     it('hydrates through an explicit serverId override even when the active server differs', async () => {
@@ -2731,6 +2483,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
 
         storage.getState().applySessions([
             {
@@ -2743,25 +2496,15 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
-        const initializeSessions = vi.fn(async () => {});
 
-        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeSessions,
-            getSessionEncryption: () => null,
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
-            decryptEncryptionKey: async () => null,
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        });
-        runtimeFetchMock.mockResolvedValue(
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        runtimeFetchMock.mockImplementation(async () =>
             new Response(
                 JSON.stringify({
                     session: {
@@ -2805,7 +2548,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(storage.getState().sessionListRowsByServerId?.[ownerServer.id]?.[sessionId]).toBeDefined();
         expect(storage.getState().ordinarySessionListMembershipByServerId?.[ownerServer.id] ?? []).not.toContain(sessionId);
         expect((sync as any).activeServerSessionIds.has(sessionId)).toBe(false);
-        expect(initializeSessions).not.toHaveBeenCalled();
+        expect((sync as any).encryption.getSessionEncryption(sessionId)).toBeNull();
     });
 
     it('keeps exact-Home System Record runtime authority independent from focus and reuses its hydrated Session', async () => {
@@ -2814,23 +2557,23 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active-system-record.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped-system-record.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('active-account') });
         storage.setState({ profileScope: { serverId: activeServer.id, accountId: 'active-account' } });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: tokenForSub('active-account'), secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('active-account'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = null;
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
         runtimeFetchMock.mockImplementation(async (url: string) => {
             if (new URL(url).pathname === '/v1/auth/ping') {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-system-record.example/v2/sessions/${sessionId}`) {
-                throw new Error(`unexpected request: ${url}`);
+                return new Response(null, { status: 404 });
             }
             return new Response(JSON.stringify({
                 session: {
@@ -2843,7 +2586,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                     encryptionMode: 'plain',
                     dataEncryptionKey: null,
                     metadataVersion: 0,
-                    metadata: 'null',
+                    metadata: JSON.stringify({ path: '/repo', host: 'owner' }),
                     agentStateVersion: 1,
                     agentState: null,
                     share: null,
@@ -2879,7 +2622,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-system-record.example/v2/sessions/${sessionId}`) {
-                throw new Error(`unexpected request: ${url}`);
+                return new Response(null, { status: 404 });
             }
             return await refresh.promise.then((response) => response.clone());
         });
@@ -2931,24 +2674,24 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active-reset.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped-reset.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('active-account') });
         storage.setState({ profileScope: { serverId: activeServer.id, accountId: 'active-account' } });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: tokenForSub('active-account'), secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('active-account'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = null;
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
         const response = createDeferred<Response>();
         runtimeFetchMock.mockImplementation(async (url: string) => {
             if (new URL(url).pathname === '/v1/auth/ping') {
                 return Response.json({ success: true });
             }
             if (url === `https://scoped-reset.example/v2/sessions/${sessionId}`) return await response.promise;
-            throw new Error(`unexpected request: ${url}`);
+            return new Response(null, { status: 404 });
         });
 
         const address = { serverId: ownerServer.id, sessionId };
@@ -2990,23 +2733,23 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active-repository-reset.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped-repository-reset.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest({ token: tokenForSub('active-account') });
         storage.setState({ profileScope: { serverId: activeServer.id, accountId: 'active-account' } });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: tokenForSub('active-account'), secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('active-account'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
         (sync as any).encryption = null;
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue(null);
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, { token: scopedToken });
         runtimeFetchMock.mockImplementation(async (url: string) => {
             if (new URL(url).pathname === '/v1/auth/ping') {
                 return Response.json({ success: true });
             }
             if (url !== `https://scoped-repository-reset.example/v2/sessions/${sessionId}`) {
-                throw new Error(`unexpected request: ${url}`);
+                return new Response(null, { status: 404 });
             }
             return new Response(JSON.stringify({
                 session: {
@@ -3053,55 +2796,53 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             name: 'Same server',
         });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        const { disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
         const scope = {
             serverId: activeServer.id,
             accountId: 'account-a',
         };
         storage.setState({ profileScope: scope });
-
-        let resolveHydration!: (response: Response) => void;
-        const hydrationResponse = new Promise<Response>((resolve) => {
-            resolveHydration = resolve;
+        const credentials = { token: tokenForSub(scope.accountId) };
+        await TokenStorage.setCredentialsForServerUrl(activeServer.serverUrl, { serverId: activeServer.id }, credentials);
+        const { subscribeHomeCredentialChange } = await import('./runtime/orchestration/homeAccountChange');
+        let credentialCurrent = true;
+        const unsubscribe = subscribeHomeCredentialChange(({ serverId }) => {
+            if (serverId === activeServer.id) credentialCurrent = false;
         });
-        const authorityRequest = vi.fn(async () => await hydrationResponse);
-        const authority = {
+        onTestFinished(unsubscribe);
+        const { captureServerRequestAuthorityForServerAccountScope } = await import('./runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+        const { apiSocket } = await import('./api/session/apiSocket');
+        const authority = await captureServerRequestAuthorityForServerAccountScope({
             scope,
-            context: {
-                scope: 'scoped',
-                timeoutMs: 30_000,
-                targetServerId: activeServer.id,
-                targetServerUrl: 'https://same-server.example',
-                targetAccountId: scope.accountId,
-                token: 'account-a-token',
-                credentials: {
-                    token: 'account-a-token',
-                    secret: 'account-a-secret',
-                },
-                encryption: {
-                    decryptEncryptionKey: async () => null,
-                    initializeSessions: async () => undefined,
-                    getSessionEncryption: () => null,
-                },
-            },
-            request: authorityRequest,
-        } as unknown as ServerAccountRequestAuthority;
+            activeRequest: apiSocket.request,
+        });
+        onTestFinished(authority.release);
+        const hydrationResponse = createDeferred<Response>();
+        const requested = createDeferred<void>();
+        const defaultFetch = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+            const path = new URL(url).pathname;
+            if (path === `/v2/sessions/${sessionId}`) {
+                requested.resolve();
+                return hydrationResponse.promise;
+            }
+            return defaultFetch(url, init);
+        });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = authority.context.credentials;
-        (sync as any).encryption = authority.context.encryption;
-        (sync as any).messagesSync = new Map();
-        (sync as any).activeServerSessionIds = new Set<string>();
-        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
 
         const hydration = sync.ensureSessionVisibleForMessageRoute(sessionId, {
             forceRefresh: true,
+            serverId: activeServer.id,
             authority,
+            scopeCurrentness: () => credentialCurrent,
         });
-        await vi.waitFor(() => expect(authorityRequest).toHaveBeenCalledTimes(1));
+        await requested.promise;
 
         (sync as any).messagesSync.clear();
         storage.getState().resetSessionMessages(sessionId);
-        resolveHydration(new Response(JSON.stringify({
+        hydrationResponse.resolve(new Response(JSON.stringify({
             session: {
                 id: sessionId,
                 createdAt: 1,
@@ -3129,8 +2870,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect((sync as any).messagesSync.has(sessionId)).toBe(false);
         expect(requestMock).not.toHaveBeenCalled();
         expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
+        expectRuntimeFetchWithBearer(`${activeServer.serverUrl}/v2/sessions/${sessionId}`, credentials.token);
 
         const ordinarySessionId = 'ordinary_hydration_after_reset';
+        runtimeFetchMock.mockImplementation(defaultFetch);
+        await applySelectedHomeForSessionListTest(credentials);
         requestMock.mockImplementation(async (path: string) => {
             if (path === `/v2/sessions/${ordinarySessionId}`) {
                 return new Response(JSON.stringify({
@@ -3175,88 +2919,45 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('initializes encrypted explicit-server route hydration with the owner server scope', async () => {
         const sessionId = 'deep_link_explicit_server_encrypted';
-        const scopedToken = tokenForSub('scoped-account');
         const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = await upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
-        storage.getState().resetSessionMessages(sessionId);
-
+        await applySelectedHomeForSessionListTest();
+        const fixture = await createEncryptedSessionFixture(sessionId);
+        const scopedCredentials = { ...fixture.credentials, token: tokenForSub('scoped-account') };
+        await TokenStorage.setCredentialsForServerUrl(ownerServer.serverUrl, { serverId: ownerServer.id }, scopedCredentials);
         const { sync } = await import('./sync');
-        const initializeSessions = vi.fn<(
-            keys: Map<string, Uint8Array | null>,
-            scope?: Readonly<{ serverId?: string | null }>,
-        ) => Promise<void>>(async () => {});
-        const scopedInitializeSessions = vi.fn(async () => {});
-
-        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
-        (sync as any).activeServerSessionIds = new Set<string>();
-        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
-            initializeSessions,
-            getSessionEncryption: () => null,
-        };
-
+        const activeEncryption = await Encryption.create(new Uint8Array(32).fill(9));
+        Reflect.set(sync, 'encryption', activeEncryption);
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({
-            decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
-            initializeSessions: scopedInitializeSessions,
-            getSessionEncryption: () => ({
-                decryptMetadata: async () => ({ path: '/repo', host: 'owner' }),
-                decryptAgentState: async () => ({ controlledByUser: true }),
-            }),
+        runtimeFetchMock.mockImplementation(async (url: string) => {
+            if (new URL(url).pathname === '/v1/auth/ping') return Response.json({ success: true });
+            return Response.json({ session: fixture.row });
         });
-        runtimeFetchMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({
-                    session: {
-                        id: sessionId,
-                        createdAt: 1,
-                        updatedAt: 2,
-                        seq: 3,
-                        active: true,
-                        activeAt: 2,
-                        encryptionMode: 'e2ee',
-                        dataEncryptionKey: 'dek',
-                        metadataVersion: 1,
-                        metadata: 'enc-meta',
-                        agentStateVersion: 1,
-                        agentState: 'enc-state',
-                        share: null,
-                    },
-                }),
-                { status: 200, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
-
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toMatchObject({
-            kind: 'available',
-            sessionId,
-            serverId: ownerServer.id,
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            forceRefresh: true, serverId: ownerServer.id,
+        })).resolves.toMatchObject({ kind: 'available', sessionId, serverId: ownerServer.id });
+        expectRuntimeFetchWithBearer(`https://scoped.example/v2/sessions/${sessionId}`, scopedCredentials.token);
+        expect(storage.getState().sessions[sessionId]).toMatchObject({
+            serverId: ownerServer.id, metadata: { path: '/repo', host: 'host' }, agentState: { controlledByUser: true },
         });
-
-        expect(requestMock).not.toHaveBeenCalled();
-        expect(scopedInitializeSessions).toHaveBeenCalled();
-        expect(initializeSessions).not.toHaveBeenCalled();
+        expect(activeEncryption.getSessionEncryption(sessionId)).toBeNull();
+        expect(requestMock.mock.calls.filter(([path]) => String(path).startsWith(`/v2/sessions/${sessionId}`) || String(path).startsWith(`/v1/sessions/${sessionId}/`))).toEqual([]);
     });
 
     it('fails closed on an unknown explicit route Home without requesting the active Home', async () => {
         const sessionId = 'deep_link_stale_route_server_id';
         const activeServer = await upsertServerProfile({ serverUrl: 'http://localhost:52753', name: 'Active' });
         await setActiveServerId(activeServer.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         storage.getState().resetSessionMessages(sessionId);
 
         const { sync } = await import('./sync');
 
-        (sync as any).credentials = { token: 'active-token', secret: 'active-secret' };
+        (sync as any).credentials = { token: tokenForSub('account-a'), secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
-        (sync as any).encryption = {
-            decryptEncryptionKey: vi.fn(async () => null),
-            initializeSessions: vi.fn(async () => {}),
-            getSessionEncryption: vi.fn(() => null),
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
 
         requestMock.mockResolvedValue(
             new Response(
@@ -3302,6 +3003,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         const requested = await upsertServerProfile({ serverUrl: 'https://route-a.example.test', name: 'A' });
         const active = await upsertServerProfile({ serverUrl: 'https://route-b.example.test', name: 'B' });
         await setActiveServerId(active.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         const { sync } = await import('./sync');
         Reflect.set(sync, 'credentials', null);
         const session = createSessionFixture({ id: 'duplicate-route', serverId: active.id, encryptionMode: 'plain' });
@@ -3314,7 +3016,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }));
         expect(storage.getState().sessions[session.id].serverId).toBe(active.id);
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
+        expect(runtimeFetchMock.mock.calls.filter(([url]) => /^\/v[12]\/sessions(?:\/|$)/.test(new URL(String(url)).pathname))).toEqual([]);
     });
 
     it('accepts a profile-proven canonical alias for an already hydrated route Home', async () => {
@@ -3326,6 +3028,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             serverUrl: legacy.serverUrl, homeServerIdentityId: 'srv_route_alias',
         } });
         await setActiveServerId(canonical.id, { scope: 'device' });
+        await applySelectedHomeForSessionListTest();
         expect(areServerProfileIdentifiersEquivalent(legacy.id, canonical.id)).toBe(true);
         const session = createSessionFixture({ id: 'alias-route', serverId: canonical.id, encryptionMode: 'plain' });
         storage.setState({ sessions: { [session.id]: session } });
@@ -3362,16 +3065,16 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             }),
         };
         vi.stubGlobal('localStorage', localStorageMock as unknown as Storage);
+        onTestFinished(() => {
+            vi.unstubAllGlobals();
+        });
 
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
+        (sync as any).credentials = { token: tokenForSub('account-a') };
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
-        (sync as any).encryption = {
-            decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
-            initializeSessions: async () => {},
-            getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
-        };
+        (sync as any).encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        await (sync as any).encryption.initializeSessions(new Map([[sessionId, new Uint8Array(32).fill(8)]]));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
             kind: 'available',
@@ -3383,29 +3086,34 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
     it('records terminal auth and stops route hydration when session-by-id returns 401', async () => {
         const sessionId = 'deep_link_auth_failed';
         storage.getState().resetSessionMessages(sessionId);
-
+        const home = getActiveServerSnapshot();
+        const { disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        const credentials = { token: tokenForSub('deep-link-account') };
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId }, credentials);
+        const { subscribeHomeCredentialChange } = await import('./runtime/orchestration/homeAccountChange');
+        let credentialCurrent = true;
+        const unsubscribe = subscribeHomeCredentialChange(({ serverId }) => {
+            if (serverId === home.serverId) credentialCurrent = false;
+        });
+        onTestFinished(unsubscribe);
+        const { captureServerRequestAuthorityForServerAccountScope } = await import('./runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+        const { apiSocket } = await import('./api/session/apiSocket');
+        const authority = await captureServerRequestAuthorityForServerAccountScope({
+            serverId: home.serverId,
+            activeRequest: apiSocket.request,
+        });
+        onTestFinished(authority.release);
         const { sync } = await import('./sync');
-        (sync as any).credentials = { token: 't' };
-
-        requestMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({ error: 'auth failed' }),
-                { status: 401, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
-        // This suite never makes the applied active-server runtime available, so
-        // `resolveServerAccountRequestContext` takes its scoped branch for the
-        // active Home. Without a Home credential it throws before any request is
-        // issued and the route answers `retryable_failure`, hiding the 401 this
-        // case is about. Answer 401 on the scoped transport too.
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('deep-link-account') });
-        runtimeFetchMock.mockResolvedValue(
-            new Response(
-                JSON.stringify({ error: 'auth failed' }),
-                { status: 401, headers: { 'Content-Type': 'application/json' } },
-            ),
-        );
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+        runtimeFetchMock.mockImplementation(async (url: string) => {
+            if (new URL(url).pathname === '/v1/auth/ping') return Response.json({ success: true });
+            return Response.json({ error: 'auth failed' }, { status: 401 });
+        });
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, {
+            serverId: home.serverId,
+            authority,
+            scopeCurrentness: () => credentialCurrent,
+        })).resolves.toMatchObject({
             kind: 'missing',
             sessionId,
             cause: 'unauthorized',
@@ -3416,5 +3124,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             retryable: false,
             message: 'Authentication required',
         });
+        expectRuntimeFetchWithBearer(`${home.serverUrl}/v2/sessions/${sessionId}`, credentials.token);
+        expect(requestMock).not.toHaveBeenCalled();
     });
 });

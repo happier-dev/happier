@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import test from 'node:test';
 
 import { runExecutionHostBridge, runNativeExecutionHostBridge } from './bridge.mjs';
@@ -104,7 +105,17 @@ test('candidate bridge preserves default local 0.2 execution through a guarded r
 
 test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', async () => {
   const calls = [];
-  let brokerCloseCount = 0;
+  const sockets = () => {
+    try { return readdirSync(`/tmp/happier-ghops-brokers-${process.getuid()}`).filter((name) => name.startsWith(`broker-${process.pid}-`)); }
+    catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  };
+  const originalSockets = sockets();
+  const boundary = boundaryWithExit(0, calls);
+  const spawnChild = boundary.spawn;
+  boundary.spawn = (...args) => {
+    assert.deepEqual(sockets(), originalSockets, 'delegation must not create a foreground-owned broker');
+    return spawnChild(...args);
+  };
   const result = await runExecutionHostBridge({
     profile: { ...profile, activation: 'active' },
     workspaceId: '0.2',
@@ -114,11 +125,7 @@ test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', 
     env: { PATH: '/usr/bin' },
     platform: 'darwin',
     prepare: async () => {},
-    boundary: boundaryWithExit(0, calls),
-    startCredentialBroker: async () => ({
-      socketPath: '/tmp/happier-ghops-test/broker.sock',
-      async close() { brokerCloseCount += 1; },
-    }),
+    boundary,
   });
 
   assert.equal(result.delegated, true);
@@ -129,7 +136,6 @@ test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', 
     '/home/example/.happier-stack/workspace/0.2/apps/stack/scripts/repo_local.mjs',
     'tui', '--json', '--rescue',
   ]);
-  assert.equal(brokerCloseCount, 1);
 });
 
 test('active bridge refuses a mismatched workspace path instead of executing in another checkout', async () => {

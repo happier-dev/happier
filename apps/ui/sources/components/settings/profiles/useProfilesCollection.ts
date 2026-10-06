@@ -1,6 +1,7 @@
 import { useAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import * as React from 'react';
 import type { AiLaunchProfile } from '@happier-dev/protocol';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 import { resolveProfileMigrationStatus } from '@/components/profiles/migration/status';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
@@ -30,12 +31,37 @@ import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 
 export type ProfileMigrationStatus = ReturnType<typeof resolveProfileMigrationStatus>;
 
+export type ProfilesCollection = {
+    useProfiles: Settings['useProfiles'];
+    setUseProfiles: ReturnType<typeof useSettingMutable<'useProfiles'>>[1];
+    rawProfiles: Settings['profiles'];
+    launchProfiles: ReturnType<typeof useAiLaunchProfiles>;
+    profiles: ReturnType<typeof projectAiLaunchProfileForLegacyUi>[];
+    favoriteProfileIds: Settings['favoriteProfiles'];
+    setFavoriteProfileIds: ReturnType<typeof useSettingMutable<'favoriteProfiles'>>[1];
+    profileEnabledById: ReturnType<typeof readProfileEnabledById>;
+    providerSettingsV1: Settings['providerSettingsV1'];
+    secretBindingsByProfileId: ReturnType<typeof useCurrentSecretBindingsByProfileIdMutable>[0];
+    administrationTargetSelection: ReturnType<typeof useMachineAdministrationTargetSelection>;
+    executionTarget: ReturnType<ReturnType<typeof useMachineAdministrationTargetSelection>['resolveExecutionTarget']>;
+    resolveProfile: (profileId: string) => AiLaunchProfile | null;
+    isEnabled: (profile: AIBackendProfile) => boolean;
+    setEnabled: (profile: AIBackendProfile, enabled: boolean) => void;
+    isFavorite: (profileId: string) => boolean;
+    toggleFavorite: (profileId: string) => void;
+    migrationStatusOf: (profileId: string) => ProfileMigrationStatus | null;
+    describeStatus: (profile: AIBackendProfile) => string | null;
+    requestDelete: (profile: Readonly<{ id: string; name: string }>) => Promise<boolean>;
+    chooseDefaultSecret: (profile: AIBackendProfile) => void;
+    isSecretOverrideReady: (profile: AIBackendProfile) => boolean;
+};
+
 /**
  * Settings › Profiles state shared by the collection's list, rail and detail: the saved profiles,
  * favorites, which profiles are offered, the machine the page manages, and the operations on a
  * profile. Each operation writes through its existing settings owner.
  */
-export function useProfilesCollection() {
+export function useProfilesCollection(): ProfilesCollection {
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const rawProfiles = useSetting('profiles');
     const launchProfiles = useAiLaunchProfiles(rawProfiles);
@@ -213,5 +239,3 @@ export function useProfilesCollection() {
         isSecretOverrideReady,
     };
 }
-
-export type ProfilesCollection = ReturnType<typeof useProfilesCollection>;

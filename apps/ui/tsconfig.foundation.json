@@ -1707,7 +1707,6 @@
     "sources/components/voice/surface/voiceSurfaceTypes.ts",
     "sources/components/widgets/add/widgetAddModel.ts",
     "sources/components/widgets/add/widgetSetupModel.ts",
-    "sources/components/widgets/area/useWidgetAreaLayout.ts",
     "sources/components/widgets/definitions/widgetSnapshotCapture.ts",
     "sources/components/widgets/frame/widgetFrameResourceActivity.ts",
     "sources/components/widgets/nearViewport.ts",
@@ -2022,6 +2021,7 @@
     "sources/sync/domains/connectedServices/connectedServicePoolPolicy.ts",
     "sources/sync/domains/connectedServices/connectedServiceProfilePreferences.ts",
     "sources/sync/domains/connectedServices/connectedServiceQuotaErrorBackoff.ts",
+    "sources/sync/domains/connectedServices/connectedServiceQuotaMeterVisibility.ts",
     "sources/sync/domains/connectedServices/connectedServiceQuotaProfileRefs.ts",
     "sources/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation.ts",
     "sources/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings.ts",
@@ -2975,6 +2975,7 @@
     "sources/text/translations/workflowStartTranslations.ts",
     "sources/text/translations/workflowTranslations.ts",
     "sources/text/translations/workflowTriggersTranslations.ts",
+    "sources/text/translations/workflowValueReferenceTranslations.ts",
     "sources/text/translations/workflowsDestinationTranslations.ts",
     "sources/text/translations/workspaceBarTranslations.ts",
     "sources/text/translations/workspaceSyncDiagnosticTranslations.ts",
@@ -3258,7 +3259,18 @@
     "sources/voice/transcript/voiceTranscriptNoteMeta.ts"
   ],
   "include": [
-    "**/*.d.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts",
+    "sources/components/onboarding/tour/stage/react-native-view-shot-web.d.ts",
+    "sources/dev/jsdom.d.ts",
+    "sources/dev/why-is-node-running.d.ts",
+    "sources/types/expo-router-routes.d.ts",
+    "sources/types/react-native-svg.d.ts",
+    "sources/types/react-native-web.d.ts",
+    "sources/types/react-native-webrtc-web-shim.d.ts",
+    "sources/types/react-test-renderer-host-types.d.ts",
+    "sources/types/stylesheets.d.ts",
+    "sources/types/unistyles.d.ts",
     ".expo/types/**/*.d.ts"
   ],
   "exclude": [

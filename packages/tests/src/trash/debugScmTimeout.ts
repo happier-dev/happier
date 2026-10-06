@@ -95,7 +95,7 @@ async function main(): Promise<void> {
         const startedAt = Date.now();
         console.log('call start', method);
         const res = await rpc.call(fullMethod, req, 20_000);
-        console.log('call ack', method, Date.now() - startedAt, res?.ok, typeof res?.result === 'string' ? res.result.slice(0, 80) : res);
+        console.log('call ack', method, Date.now() - startedAt, res?.ok, res.ok === true && typeof res.result === 'string' ? res.result.slice(0, 80) : res);
         if (!res || res.ok !== true) {
             throw new Error(`bad ack for ${method}`);
         }

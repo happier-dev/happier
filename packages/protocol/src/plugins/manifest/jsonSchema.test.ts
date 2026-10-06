@@ -177,14 +177,24 @@ describe('createPluginManifestJsonSchemaV2', () => {
     const homeWidget = {
       ...valid,
       contributes: { ui: { ...valid.contributes.ui, views: [{
-        ...valid.contributes.ui.views[0],
         id: 'home-status',
+        container: 'widget',
         target: { kind: 'app' },
+        renderer: renderer.id,
+        title: 'Home status',
         home: { default: 'shown' },
       }] } },
     } as const;
     expect(PluginManifestV2Schema.safeParse(homeWidget).success).toBe(true);
     expect(validateExternalManifest(homeWidget)).toBe(true);
+    const sessionHomeWidget = {
+      ...valid,
+      contributes: { ui: { ...valid.contributes.ui, views: [{
+        ...valid.contributes.ui.views[0], home: { default: 'shown' },
+      }] } },
+    } as const;
+    expect(PluginManifestV2Schema.safeParse(sessionHomeWidget).success).toBe(true);
+    expect(validateExternalManifest(sessionHomeWidget)).toBe(true);
     expect(PluginManifestV2Schema.safeParse({
       ...homeWidget,
       contributes: { ui: { ...homeWidget.contributes.ui, views: [{
@@ -195,7 +205,7 @@ describe('createPluginManifestJsonSchemaV2', () => {
     for (const view of [
       { ...valid.contributes.ui.views[0], target: { kind: 'project' } },
       { ...valid.contributes.ui.views[0], instancePolicy: 'singleton' },
-      { ...valid.contributes.ui.views[0], home: { default: 'shown' } },
+      { ...valid.contributes.ui.views[0], home: { default: 'unsupported' } },
     ]) {
       const invalid = {
         ...valid,

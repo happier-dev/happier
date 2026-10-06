@@ -153,7 +153,9 @@ describe('workspace SCM public write outcomes', () => {
         expect(outcomeLine()).toMatchObject({ phase: outcome.kind, outcome });
     });
     it('uses the observed upstream identity for a workspace force-with-lease push and preserves typed rejection', async () => {
-        const outcome: ScmOperationOutcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_LEASE_REJECTED', nextActions: [{ kind: 'refresh' }] };
+        // The Git producer classifies a stale force lease as non-fast-forward,
+        // retaining both refresh and reconciliation choices for the person.
+        const outcome: ScmOperationOutcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_NON_FAST_FORWARD', nextActions: [{ kind: 'refresh' }, { kind: 'choose_reconcile' }] };
         push.mockResolvedValue({ success: false, outcome });
         await executeWorkspaceScmRemoteOperation({
             ...pushInput(),

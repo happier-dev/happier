@@ -14,9 +14,12 @@
     "composerRegions": [],
     "connectedAccountDescriptors": [],
     "daemonDatabases": [],
+    "dragSources": [],
+    "dropTargets": [],
     "events": [],
     "executionRunProfiles": [],
     "hooks": [],
+    "inputTypes": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -1044,6 +1047,10 @@
         },
         "id": "realtime-elevenlabs",
         "kind": "conversation",
+        "mark": {
+          "kind": "icon",
+          "name": "waveform"
+        },
         "platforms": [
           "web",
           "ios",
@@ -1418,6 +1425,14 @@
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure"
+          },
+          "privacyFacts": {
+            "audioDestination": "ElevenLabs",
+            "processor": "ElevenLabs",
+            "retention": {
+              "fallback": "Follows your service account settings and terms.",
+              "key": "settingsVoice.pages.privacy.servicePolicy"
+            }
           },
           "readiness": [
             {

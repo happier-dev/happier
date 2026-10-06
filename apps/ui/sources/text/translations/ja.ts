@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -827,7 +827,7 @@ const settingsSessionHandoffTranslationExtensions = {
   },
 } as const;
 
-export const ja: TranslationStructure = {
+const jaValues = {
     instrument: {
         contextGauge: {
             usedLabel: ({ percent }: { percent: number }) => `コンテキスト使用率 ${percent}%`,
@@ -15276,6 +15276,8 @@ settingsSession: {
             skipToContent: "コンテンツに移動",
         },
   },} as const;
+
+export const ja = defineTranslations(jaValues);
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
 import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
 import { glassAppearanceTranslations } from './glassAppearanceTranslations';

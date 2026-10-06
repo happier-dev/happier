@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
     MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
+    ExternalSessionTranscriptInvalidationV1Schema,
 } from "@happier-dev/protocol";
 
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
@@ -95,6 +96,9 @@ const defaultMachineUpdateHandlerOptions = {
         finalizeMachineSessionTerminal,
     },
 };
+
+// Load the real handler during collection, outside each socket event's test lifetime.
+await import("./machineUpdateHandler");
 
 describe("machineUpdateHandler authenticated machine identity binding", () => {
     beforeEach(() => {
@@ -611,7 +615,7 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
         });
         machineUpdateHandler("u1", socket as any, defaultMachineUpdateHandlerOptions);
 
-        await getSocketHandler(socket, "external-session-transcript-invalidated")({
+        await getSocketHandler(socket, "external-session-transcript-invalidated")(ExternalSessionTranscriptInvalidationV1Schema.parse({
             v: 1,
             type: "external-session-transcript-invalidated",
             binding: {
@@ -636,10 +640,10 @@ describe("machineUpdateHandler authenticated machine identity binding", () => {
                     },
                     generation: "source-generation-1",
                 },
-                contributionGeneration: "contribution-generation-1",
+                sourceCustody: { kind: "development", registeredRootId: "source-root-1" },
                 cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
             },
-        });
+        }));
 
         expect(log).toHaveBeenCalledWith(
             {

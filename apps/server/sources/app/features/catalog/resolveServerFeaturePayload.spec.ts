@@ -637,8 +637,19 @@ describe("resolveServerFeaturePayload", () => {
         });
     });
 
-    it("keeps server-routed live stream disabled by default even when direct live stream is server-allowed", () => {
+    it("advertises server-routed live stream by default without requiring optional operator caps", () => {
         const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveMachineLiveStreamFeature]);
+
+        expect(payload.features.machines.liveStream.directPeer.enabled).toBe(true);
+        expect(payload.features.machines.liveStream.serverRouted.enabled).toBe(true);
+        expect(payload.capabilities.machines.liveStream.serverRouted.caps).not.toBeNull();
+        expect(payload.capabilities.machines.liveStream.serverRouted.disabledReason).toBeNull();
+    });
+
+    it("keeps server-routed live stream disabled when explicitly denied even while direct live stream is server-allowed", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED: "false",
+        }, [resolveMachineLiveStreamFeature]);
 
         expect(payload.features.machines.liveStream.directPeer.enabled).toBe(true);
         expect(payload.features.machines.liveStream.serverRouted.enabled).toBe(false);

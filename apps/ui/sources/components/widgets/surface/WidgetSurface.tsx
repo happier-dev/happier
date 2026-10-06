@@ -92,7 +92,11 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
 export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
     if (props.instance.definition.kind === 'artifact' || props.instance.definition.kind === 'inline') return <AuthoredInstanceBody {...props} />;
     if (!props.descriptor) {
-        return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID} />;
+        const establishing = props.instance.definition.kind === 'installed' && props.appRuntime.phase === 'establishing';
+        return <UnavailableInstalledWidget unresolved={establishing
+            ? { state: 'loading', reasonCode: 'widget_projection_establishing' }
+            : { state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID}
+            onManagePlugin={props.instance.definition.kind === 'installed' ? props.onManagePlugin : undefined} />;
     }
     return <InstalledInstanceBody {...props} descriptor={props.descriptor} />;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildLaunchdPath, buildLaunchdPlistXml } from '@happier-dev/cli-common/service';
 
@@ -10,9 +11,12 @@ import { getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 import { ensureExecutionHostServiceTunnel } from './service_tunnel.mjs';
 import { mountExecutionHostWorkspace } from './workspace_mount.mjs';
+import { inspectGhopsBrokerSockets } from './ghops_credential_broker.mjs';
 
 const RECOVERY_LABEL = 'dev.happier.stack.dev-vm-recovery';
 const RECOVERY_ROOT = 'execution-host-recovery';
+const GHOPS_LABEL = 'dev.happier.stack.ghops-credential-broker';
+export const GHOPS_BROKER_FIX_COMMAND = 'hstack dev-vm recovery enable';
 const SAFE_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function requireActiveManagedProfile(profile) {
@@ -70,6 +74,84 @@ async function writeAtomically(path, contents, mode) {
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+function ghopsBrokerPaths({ env, homeDir }) {
+  const brokerRoot = join(getHappyStacksHomeDir(env), 'ghops-credential-broker');
+  return {
+    label: GHOPS_LABEL,
+    brokerRoot,
+    logsDir: join(brokerRoot, 'logs'),
+    stdoutPath: join(brokerRoot, 'logs', 'broker.out.log'),
+    stderrPath: join(brokerRoot, 'logs', 'broker.err.log'),
+    plistPath: join(requireAbsolutePath(homeDir, 'macOS home directory'), 'Library', 'LaunchAgents', `${GHOPS_LABEL}.plist`),
+  };
+}
+
+function ghopsTarget(uid) {
+  if (!Number.isInteger(uid) || uid < 0) throw new Error('[dev-vm] ghops broker requires the macOS user id');
+  return `gui/${uid}/${GHOPS_LABEL}`;
+}
+
+export async function installExecutionHostGhopsBroker({
+  env = process.env, homeDir = homedir(), platform = process.platform, uid = process.getuid?.(), boundary,
+  programArgs = [process.execPath, fileURLToPath(new URL('../../ghops_credential_broker.mjs', import.meta.url))],
+} = {}) {
+  if (platform !== 'darwin') throw new Error('[dev-vm] ghops broker is supported only by macOS user LaunchAgents');
+  const target = ghopsTarget(uid);
+  const paths = ghopsBrokerPaths({ env, homeDir });
+  const launchArgs = normalizeProgramArgs(programArgs);
+  const processBoundary = boundary ?? defaultBoundary(env);
+  await Promise.all([
+    mkdir(paths.logsDir, { recursive: true, mode: 0o700 }),
+    mkdir(dirname(paths.plistPath), { recursive: true, mode: 0o700 }),
+  ]);
+  await Promise.all([chmod(paths.brokerRoot, 0o700), chmod(paths.logsDir, 0o700)]);
+  const plist = buildLaunchdPlistXml({
+    label: GHOPS_LABEL, programArgs: launchArgs,
+    env: { HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+      PATH: buildLaunchdPath({ execPath: launchArgs[0], basePath: '' }) },
+    stdoutPath: paths.stdoutPath, stderrPath: paths.stderrPath, workingDirectory: paths.brokerRoot,
+    keepAliveOnFailure: true,
+  });
+  await writeAtomically(paths.plistPath, plist, 0o644);
+  await processBoundary.capture('launchctl', ['bootout', target]);
+  // Enable before bootstrap, so a previously disabled job starts immediately.
+  for (const args of [['enable', target], ['bootstrap', `gui/${uid}`, paths.plistPath]]) {
+    const result = await processBoundary.capture('launchctl', args);
+    if (result.exitCode !== 0) {
+      throw new Error(`[dev-vm] could not ${args[0]} the ghops broker LaunchAgent: ${String(result.err ?? result.out ?? '').trim()}`);
+    }
+  }
+  return { paths, launchAgent: { label: GHOPS_LABEL, loaded: true } };
+}
+
+export async function removeExecutionHostGhopsBroker({
+  env = process.env, homeDir = homedir(), platform = process.platform, uid = process.getuid?.(), boundary,
+} = {}) {
+  if (platform !== 'darwin') throw new Error('[dev-vm] ghops broker is supported only by macOS user LaunchAgents');
+  const paths = ghopsBrokerPaths({ env, homeDir });
+  await (boundary ?? defaultBoundary(env)).capture('launchctl', ['bootout', ghopsTarget(uid)]);
+  await rm(paths.plistPath, { force: true });
+  return { removed: true, paths, launchAgent: { label: GHOPS_LABEL, loaded: false } };
+}
+
+export async function inspectExecutionHostGhopsBroker({
+  env = process.env, homeDir = homedir(), platform = process.platform, uid = process.getuid?.(), boundary,
+  rootDirectory = '/tmp',
+} = {}) {
+  const paths = ghopsBrokerPaths({ env, homeDir });
+  const installed = await readFile(paths.plistPath).then(() => true, (error) => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  });
+  const result = platform === 'darwin' && installed
+    ? await (boundary ?? defaultBoundary(env)).capture('launchctl', ['print', ghopsTarget(uid)])
+    : null;
+  const loaded = result?.exitCode === 0;
+  const { socketLive } = await inspectGhopsBrokerSockets({ rootDirectory, uid });
+  return { installed, paths, launchAgent: { label: GHOPS_LABEL, loaded }, socketLive,
+    fixCommand: GHOPS_BROKER_FIX_COMMAND, health: { ok: installed && loaded && socketLive } };
 }
 
 function buildRecoveryPlist({ paths, programArgs, env }) {

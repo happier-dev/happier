@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import { defineTranslations } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -12359,7 +12359,7 @@ settingsSession: {
       },
     },};
 
-export const zhHant: TranslationStructure = deepMerge(zhHans, zhHantOverrides);
+export const zhHant = defineTranslations(deepMerge(zhHans, zhHantOverrides));
 import { PRODUCT_STORY_DETAILS_ENGLISH } from '@happier-dev/brand/product-story';
 import { accountEncryptionRecoveryTranslations } from './accountEncryptionRecoveryTranslations';
 import { glassAppearanceTranslations } from './glassAppearanceTranslations';

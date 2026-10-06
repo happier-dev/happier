@@ -100,7 +100,7 @@ export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
     // MCP detects Zod 4 through _zod; its nested Zod copy has different internal types.
     inputSchema: WaitActionInputV1Schema as unknown as AnySchema,
     annotations: { readOnlyHint: true, destructiveHint: false },
-  }, async (args: unknown, extra: RequestHandlerExtra<ServerRequest, ServerNotification>): Promise<CallToolResult> => {
+  }, async (args: unknown, extra?: RequestHandlerExtra<ServerRequest, ServerNotification>): Promise<CallToolResult> => {
     try {
       const input = WaitActionInputV1Schema.parse(args);
       const snapshot = await read(input, extra?.signal);

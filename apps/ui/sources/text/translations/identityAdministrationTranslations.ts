@@ -1,3 +1,7 @@
+import type { SupportedLanguage } from '../_all';
+
+type IdentityAdministrationLanguage = Exclude<SupportedLanguage, 'zh-Hans' | 'zh-Hant'> | 'zhHans' | 'zhHant';
+
 type Words = Readonly<{
     title: string;
     subtitle: string;
@@ -81,7 +85,16 @@ type Words = Readonly<{
     callbackUrlHint: string;
 }>;
 
-const githubAccessWords = {
+type GitHubAccessWords = Readonly<{
+    githubCurrentAccess: string;
+    githubCurrentAccessSubtitle: string;
+    githubCurrentAccessEmpty: string;
+    githubSetupAccess: string;
+    githubSetupAccessSubtitle: string;
+    githubRemoveInstallationFor: (params: { name: string }) => string;
+}>;
+
+const githubAccessWords: Readonly<Record<IdentityAdministrationLanguage, GitHubAccessWords>> = {
     en: {
         githubCurrentAccess: 'Current access',
         githubCurrentAccessSubtitle: 'Required by the enabled connections and directory sources that use this installation.',
@@ -180,7 +193,21 @@ const githubAccessWords = {
     },
 };
 
-const oidcEditorWords = {
+type OidcEditorWords = Readonly<{
+    clientAuthenticationMethod: string;
+    clientSecretPost: string;
+    clientSecretBasic: string;
+    storeRefreshToken: string;
+    buttonColor: string;
+    iconHint: string;
+    allowRulesHint: string;
+    brandingHint: string;
+    invalidScopes: string;
+    refreshFailed: string;
+    refreshFailedHint: string;
+}>;
+
+const oidcEditorWords: Readonly<Record<IdentityAdministrationLanguage, OidcEditorWords>> = {
     en: {
         clientAuthenticationMethod: 'Client authentication', clientSecretPost: 'POST body', clientSecretBasic: 'HTTP Basic', storeRefreshToken: 'Store refresh token', buttonColor: 'Sign-in button color', iconHint: 'Sign-in icon',
         allowRulesHint: 'Enter one value per line. Leave blank for no restriction.', brandingHint: 'Leave blank to use the default sign-in appearance.', invalidScopes: 'Include openid in the requested scopes.', refreshFailed: 'Couldn’t refresh this connection', refreshFailedHint: 'Your edits are kept. Retry to check for changes on the Home.',

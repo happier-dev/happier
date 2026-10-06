@@ -51,14 +51,9 @@ const DIRECT_BEARER_CONSUMER_DISPOSITIONS = [
         disposition: "Canonical optional-public bearer verification; restricted Directory/PAT bearers remain anonymous-compatible while verified Runner bearers are rejected by every consumer.",
     },
     {
-        path: "app/api/socket/accessKeyHandler.ts",
-        verifies: ["auth.verifyTokenForRoute"],
-        disposition: "Canonical single secret-bearing socket read: it re-runs the connect-time credential verification once before disclosing an access key and disconnects the socket on failure, so a suspended or rotated credential cannot keep reading secrets on an already-authenticated socket. It authorizes no route of its own; eager eviction remains the primary invalidation path and there is no per-event middleware.",
-    },
-    {
         path: "app/api/socket/socketCredentialCurrentness.ts",
         verifies: ["auth.verifyTokenForRoute"],
-        disposition: "Canonical socket-operation credential currentness reuses the route verifier; admitted PAT viewers receive their freshly verified grant before an operation, while Directory and unadmitted restricted credentials remain forbidden.",
+        disposition: "Canonical socket-operation credential currentness reuses the route verifier, including the access-key handler's final secret-disclosure check; admitted PAT viewers receive their freshly verified grant before an operation, while Directory and unadmitted restricted credentials remain forbidden.",
     },
 ] as const satisfies readonly DirectBearerConsumerDisposition[];
 

@@ -632,6 +632,7 @@ test.describe('ui e2e: automations authoring', () => {
             lifecycleRun = runs.find((candidate) => (
                 candidate.cause.kind === 'trigger'
                 && candidate.cause.triggerKind === 'sessionLifecycle'
+                && candidate.cause.evidence.event === 'parentTurnCompleted'
                 && candidate.cause.evidence?.sourceSessionId === sourceSession.sessionId
                 && candidate.cause.evidence?.sourceTurnId === observedTurnId
             )) ?? null;
