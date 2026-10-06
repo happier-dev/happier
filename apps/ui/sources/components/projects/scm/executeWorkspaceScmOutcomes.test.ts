@@ -153,7 +153,7 @@ describe('workspace SCM public write outcomes', () => {
         expect(outcomeLine()).toMatchObject({ phase: outcome.kind, outcome });
     });
     it('uses the observed upstream identity for a workspace force-with-lease push and preserves typed rejection', async () => {
-        const outcome: ScmOperationOutcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_LEASE_REJECTED', nextActions: [{ kind: 'refresh' }] };
+        const outcome: ScmOperationOutcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_REJECTED', nextActions: [{ kind: 'refresh' }] };
         push.mockResolvedValue({ success: false, outcome });
         await executeWorkspaceScmRemoteOperation({
             ...pushInput(),
