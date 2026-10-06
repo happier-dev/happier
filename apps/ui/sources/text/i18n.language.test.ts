@@ -51,13 +51,17 @@ describe('text/i18n language state', () => {
         expect(i18n.t('agentInput.connectedServiceLabel.gemini')).toBe('Google Gemini');
     });
 
-    it('uses localized Home setup details while retaining English fallback for keys without overrides', () => {
+    it('uses localized Home setup commands and details from the active locale', () => {
         i18n.setPreferredLanguageFromSettings('es');
 
         expect(i18n.t('setupOnboarding.webDesktopOnlySetupCommandSubtitle')).toBe(
+            es.setupOnboarding.webDesktopOnlySetupCommandSubtitle,
+        );
+        expect(es.setupOnboarding.webDesktopOnlySetupCommandSubtitle).not.toBe(
             en.setupOnboarding.webDesktopOnlySetupCommandSubtitle,
         );
-        expect(i18n.t('setupOnboarding.preAuthTitle')).toBe(en.setupOnboarding.preAuthTitle);
+        expect(i18n.t('setupOnboarding.preAuthTitle')).toBe(es.setupOnboarding.preAuthTitle);
+        expect(es.setupOnboarding.preAuthTitle).not.toBe(en.setupOnboarding.preAuthTitle);
         expect(i18n.t('setupOnboarding.thisComputerStages.registerComputerDetails')).toBe(
             es.setupOnboarding.thisComputerStages.registerComputerDetails,
         );
