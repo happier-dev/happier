@@ -72,6 +72,10 @@
       "types": "./dist/exec/protocol-clients/index.d.ts",
       "default": "./dist/exec/protocol-clients/index.js"
     },
+    "./first-party/claude": {
+      "types": "./dist/first-party/claude/index.d.ts",
+      "default": "./dist/first-party/claude/index.js"
+    },
     "./first-party/connected-accounts": {
       "types": "./dist/first-party/connected-accounts/index.d.ts",
       "default": "./dist/first-party/connected-accounts/index.js"
