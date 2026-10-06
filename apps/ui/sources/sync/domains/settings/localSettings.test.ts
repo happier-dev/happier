@@ -21,6 +21,12 @@ describe('localSettingsParse', () => {
     it('defaults focused session folder state to null', () => {
         expect(localSettingsParse(null).sessionListFocusedFolderV1).toBeNull();
     });
+    it('restores known focused-folder fields from stored records with extras without accepting missing identity', () => {
+        const focused = { serverId: 'home-a', workspace: { t: 'workspaceScope', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' }, folderId: 'folder-a' };
+        const stored = { ...focused, savedBy: 'other-client', workspace: { ...focused.workspace, savedBy: 'other-client' } };
+        expect(localSettingsParse({ sessionListFocusedFolderV1: stored }).sessionListFocusedFolderV1).toEqual(focused);
+        expect(localSettingsParse({ sessionListFocusedFolderV1: { ...stored, workspace: { ...stored.workspace, rootPath: undefined } } }).sessionListFocusedFolderV1).toBeNull();
+    });
 
     it('keeps collapsed session-list group state local', () => {
         expect(localSettingsParse(null).collapsedGroupKeysV1).toEqual({});

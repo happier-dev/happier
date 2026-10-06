@@ -1,4 +1,4 @@
-import { WorkspaceTabsV1Schema } from '@happier-dev/protocol';
+import { WorkspaceTabsV1StoredSchema } from '@happier-dev/protocol';
 import { applyWorkspaceTabIntents, emptyWorkspaceTabs, type SharedWorkspaceTabs, type WorkspaceTabIntent } from './workspaceSyncedTabs';
 
 export type WorkspaceTabsTransport = Readonly<{
@@ -14,7 +14,7 @@ export class WorkspaceTabsSchemaError extends Error {
 
 export function parseWorkspaceTabs(value: unknown, version: number, tombstone = false): SharedWorkspaceTabs {
     if (value === null && (version === -1 || tombstone)) return emptyWorkspaceTabs();
-    const result = WorkspaceTabsV1Schema.safeParse(value);
+    const result = WorkspaceTabsV1StoredSchema.safeParse(value);
     if (!result.success) throw new WorkspaceTabsSchemaError();
     return result.data;
 }

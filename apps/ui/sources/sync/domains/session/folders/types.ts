@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
     SessionFolderV1Schema,
     SessionFolderWorkspaceRefV1Schema,
+    SessionFolderWorkspaceRefV1StoredSchema,
     SessionFoldersV1Schema,
     type SessionFolderV1,
     type SessionFolderWorkspaceRefV1,
@@ -71,7 +72,7 @@ export type SessionFolderViewModeV1 = z.infer<typeof SessionFolderViewModeV1Sche
 
 export const SessionListFocusedFolderV1Schema = z.object({
     serverId: z.string().min(1),
-    workspace: SessionFolderWorkspaceRefV1Schema,
+    workspace: SessionFolderWorkspaceRefV1StoredSchema,
     renderWorkspaceKey: z.string().min(1).optional(),
     folderId: z.string().min(1),
 }).nullable().catch(null);
