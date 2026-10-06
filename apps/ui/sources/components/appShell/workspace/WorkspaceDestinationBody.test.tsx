@@ -49,6 +49,13 @@ beforeAll(() => {
         './(app)/settings/machines/[id].tsx': { WorkspaceRouteBody: Editor },
         './(app)/settings/connected-services/_layout.tsx': { default: CollectionLayout },
         './(app)/settings/connected-services/account.tsx': { WorkspaceRouteBody: Editor },
+        './(app)/settings/embeds/_layout.tsx': { default: CollectionLayout },
+        './(app)/settings/embeds/index.tsx': { WorkspaceRouteBody: Index },
+        './(app)/settings/embeds/new.tsx': { WorkspaceRouteBody: Editor },
+        './(app)/settings/embeds/[tokenId].tsx': { WorkspaceRouteBody: Editor },
+        './(app)/settings/account/api-tokens/_layout.tsx': { default: CollectionLayout },
+        './(app)/settings/account/api-tokens/index.tsx': { WorkspaceRouteBody: Index },
+        './(app)/settings/account/api-tokens/[tokenId].tsx': { WorkspaceRouteBody: Editor },
         './(app)/artifacts/index.tsx': { WorkspaceRouteBody: ArtifactBody },
         './(app)/artifacts/new.tsx': { WorkspaceRouteBody: ArtifactBody },
         './(app)/artifacts/[id].tsx': { WorkspaceRouteBody: ArtifactBody },
@@ -101,6 +108,33 @@ describe('workspace destination route composition', () => {
         await act(async () => { screen.update(hosted('/settings/agents/custom')); });
         expect(screen.root.findAllByType('HostedIndex')).toHaveLength(0);
         expect(screen.root.findByType('HostedEditor').props.collection).toBe('collection');
+        expect(screen.root.findByType('LayoutState').props.identity).toBe(identity);
+    });
+
+    it.each([
+        ['/settings/embeds', 'HostedIndex', {}],
+        ['/settings/embeds/new', 'HostedEditor', {}],
+        ['/settings/embeds/token%201', 'HostedEditor', { tokenId: 'token 1' }],
+        ['/settings/account/api-tokens', 'HostedIndex', {}],
+        ['/settings/account/api-tokens/token%201', 'HostedEditor', { tokenId: 'token 1' }],
+    ] as const)('renders the registered collection leaf for %s', async (pathname, leaf, params) => {
+        const screen = await renderScreen(hosted(pathname));
+        expect(screen.root.findAllByType(leaf)).toHaveLength(1);
+        expect(screen.root.findAllByType('LayoutState')).toHaveLength(1);
+        if (leaf === 'HostedEditor') {
+            expect(screen.root.findByType(leaf).props).toMatchObject({ collection: 'collection', params });
+        }
+    });
+
+    it('retains the Embeds collection provider when its index, create and detail URLs settle', async () => {
+        const screen = await renderScreen(hosted('/settings/embeds'));
+        const identity = screen.root.findByType('LayoutState').props.identity;
+        await act(async () => { screen.update(hosted('/settings/embeds/new')); });
+        expect(screen.root.findByType('HostedEditor').props.params.tokenId).toBeUndefined();
+        await act(async () => { screen.update(hosted('/settings/embeds/token%201')); });
+        expect(screen.root.findByType('HostedEditor').props.params.tokenId).toBe('token 1');
+        await act(async () => { screen.update(hosted('/settings/embeds')); });
+        expect(screen.root.findAllByType('HostedIndex')).toHaveLength(1);
         expect(screen.root.findByType('LayoutState').props.identity).toBe(identity);
     });
 });

@@ -175,12 +175,13 @@ type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     availability: PluginUiSurfaceAvailabilityProjection;
     headerActions: readonly PluginUiPageHeaderActionProjection[];
     rightSidebar?: UnknownRecord;
-    /** An app page's own shell column: its renderer and that renderer's availability. */
+    /** An app page's own shell column: its admitted binding, renderer and availability. */
     column?: PluginUiAppPageColumnProjection;
     widgetAreas?: readonly PluginUiWidgetAreaDeclarationV1[];
 }>;
 
 export type PluginUiAppPageColumnProjection = Readonly<{
+    binding: PluginUiDestinationBindingV1;
     renderer: UnknownRecord;
     availability: PluginUiSurfaceAvailabilityProjection;
 }>;
@@ -616,10 +617,11 @@ function readSurfaceAvailability(value: unknown): PluginUiSurfaceAvailabilityPro
 
 function readAppPageColumn(value: unknown): PluginUiAppPageColumnProjection | undefined {
     const column = asRecord(value);
+    const binding = column?.binding;
     const renderer = asRecord(column?.renderer);
     const availability = readSurfaceAvailability(column?.availability);
-    return renderer && availability
-        ? Object.freeze({ renderer: Object.freeze({ ...renderer }), availability })
+    return isNormalizedPluginUiDestinationBinding(binding) && renderer && availability
+        ? Object.freeze({ binding, renderer: Object.freeze({ ...renderer }), availability })
         : undefined;
 }
 
