@@ -436,7 +436,7 @@ describe('VoiceDiagnosticsIndicator', () => {
     });
     const voice = {
       diagnostics: { ...diagnostics },
-      executionMachine: { mode: 'fixed', machineId: 'm1', autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId: 'm1' },
     };
     const resolveCaptureContext = () => resolveVoiceDiagnosticsCaptureContextFromSettings({
       settings: captureSettings,
@@ -552,7 +552,7 @@ describe('VoiceDiagnosticsIndicator', () => {
   it('keeps a failed exact-old-machine shutdown visible and retryable through the real runtime sync path', async () => {
     const voiceFor = (machineId: string) => ({
       diagnostics: { ...diagnostics },
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {

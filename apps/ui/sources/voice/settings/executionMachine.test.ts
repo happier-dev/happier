@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 import {
   isCapturedVoiceExecutionMachineCurrent,
@@ -13,6 +14,8 @@ function machine(id: string, active: boolean, extra: Record<string, unknown> = {
 }
 
 describe('resolveVoiceExecutionMachineIdFromState', () => {
+  const settingsScope = { serverId: 'execution-home', accountId: 'execution-account' };
+  beforeEach(() => useVoiceTargetStore.setState({ autoTargetMachineByScope: {} }));
   it('keeps an unresolved captured target current until the selected execution machine changes', () => {
     const previous = storage.getState();
     storage.setState({
@@ -43,7 +46,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
         ...previous.settings,
         voice: {
           ...previous.settings.voice,
-          executionMachine: { mode: 'fixed', machineId: 'machine-a', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'machine-a' },
         },
       },
       machines: {
@@ -69,7 +72,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
           ...storage.getState().settings,
           voice: {
             ...storage.getState().settings.voice,
-            executionMachine: { mode: 'fixed', machineId: 'machine-b', autoMachineId: null },
+            executionMachine: { mode: 'fixed', machineId: 'machine-b' },
           },
         },
         machines: {
@@ -85,11 +88,13 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
   });
 
   it('resolves fixed and sticky-auto targets without requiring a voice-home directory', () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(settingsScope, 'sticky');
     const state = {
+      settingsScope,
       machines: { fixed: machine('fixed', true), sticky: machine('sticky', true) },
       settings: {
         voice: {
-          executionMachine: { mode: 'fixed', machineId: 'fixed', autoMachineId: 'sticky' },
+          executionMachine: { mode: 'fixed', machineId: 'fixed' },
         },
       },
     };
@@ -107,7 +112,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       },
       settings: {
         voice: {
-          executionMachine: { mode: 'fixed', machineId: 'old', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'old' },
         },
       },
     };
@@ -128,7 +133,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       },
       settings: {
         voice: {
-          executionMachine: { mode: 'fixed', machineId: 'fixed', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'fixed' },
         },
       },
     };
@@ -140,14 +145,16 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
   });
 
   it('fails closed instead of roaming when a sticky target disconnects', () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(settingsScope, 'sticky');
     const state = {
+      settingsScope,
       machines: {
         sticky: machine('sticky', false),
         another: machine('another', true),
       },
       settings: {
         voice: {
-          executionMachine: { mode: 'auto', machineId: null, autoMachineId: 'sticky' },
+          executionMachine: { mode: 'auto', machineId: null },
         },
       },
     };
@@ -166,7 +173,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       },
       settings: {
         voice: {
-          executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+          executionMachine: { mode: 'auto', machineId: null },
         },
       },
     };
@@ -179,7 +186,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       machines: { global: machine('global', true), scoped: machine('scoped', true) },
       settings: {
         voice: {
-          executionMachine: { mode: 'fixed', machineId: 'global', autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 'global' },
         },
       },
     };
@@ -216,7 +223,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       machines: { wrong: machine('wrong', true) },
       settings: {
         voice: {
-          executionMachine: { mode: 'fixed', machineId: 42, autoMachineId: null },
+          executionMachine: { mode: 'fixed', machineId: 42 },
         },
       },
     };

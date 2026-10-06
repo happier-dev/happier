@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { SettingsDeclarationValueV1Schema, resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol';
+import { resolveVoiceProviderLanguagePreference } from '@happier-dev/protocol';
 
 import type { SettingStorageBinding, SettingScalarValue } from '@/components/settings/catalog/settingDeclarations';
-import { SETTING_VALUE_UNAVAILABLE } from '@/components/settings/catalog/settingDeclarations';
+import { SETTING_VALUE_UNAVAILABLE, parseSettingScalarValue, type SettingValue } from '@/components/settings/catalog/settingDeclarations';
 import {
     CanonicalVoiceSettingsSchema,
     readVoiceProviderSettingsConfig,
@@ -24,6 +24,7 @@ import { captureConversationLanguagePreferenceOwner, projectConversationLanguage
 
 const choiceRegistry = createDefaultVoiceProviderRegistry();
 const serviceChoiceSchema = z.object({ providerId: z.string().min(1), optionId: z.string().min(1) }).strict();
+const voiceGreetingChoiceSchema = z.enum(['off', 'immediate', 'on_first_turn']);
 
 function decodeServiceChoice(value: unknown) {
     if (typeof value !== 'string') return null;
@@ -97,8 +98,7 @@ function schemaAtPath(root: z.core.$ZodType, segments: readonly string[]): z.cor
 
 function parseScalar(schema: z.core.$ZodType, value: unknown) {
     const parsed = z.safeParse(schema, value);
-    const scalar = parsed.success ? SettingsDeclarationValueV1Schema.safeParse(parsed.data) : null;
-    return scalar?.success ? { success: true as const, value: scalar.data } : { success: false as const };
+    return parsed.success ? parseSettingScalarValue(parsed.data) : { success: false as const };
 }
 
 /** The shared root preference is writable only by a consumer that declares its meaning. */
@@ -110,8 +110,9 @@ export function updateVoiceConversationLanguagePreference(voice: VoiceSettings, 
 
 export function voiceConversationLanguageBinding(registry: VoiceProviderRegistry = choiceRegistry, capturedVoice?: VoiceSettings): SettingStorageBinding {
     const capturedPreference = capturedVoice && projectConversationLanguagePreference(capturedVoice, registry);
-    const mutate = (settings: import('@/sync/domains/settings/settings').Settings, value: SettingScalarValue) => {
-        const voice = updateVoiceConversationLanguagePreference(settings.voice, value, registry);
+    const mutate = (settings: import('@/sync/domains/settings/settings').Settings, value: SettingValue) => {
+        const parsed = parseScalar(schemaAtPath(CanonicalVoiceSettingsSchema, ['assistantLanguage']), value);
+        const voice = parsed.success && updateVoiceConversationLanguagePreference(settings.voice, parsed.value, registry);
         return voice ? { voice } : null;
     };
     return {
@@ -170,8 +171,11 @@ export function voiceSettingBinding(path: VoicePreferencePath): SettingStorageBi
             scope: 'account', kind: 'owner', access: 'read_write',
             read: (settings) => settings.voice.dictation.sttBinding === 'same_as_local' ? local.read(settings) : readPath(settings.voice, segments),
             parse: (value) => parseScalar(valueSchema, value),
-            mutate: (settings, value) => settings.voice.dictation.sttBinding === 'same_as_local'
-                ? local.mutate(settings, value) : { voice: replacePath(settings.voice, segments, value) as VoiceSettings },
+            mutate: (settings, value) => {
+                const parsed = parseScalar(valueSchema, value);
+                return !parsed.success ? null : settings.voice.dictation.sttBinding === 'same_as_local'
+                    ? local.mutate(settings, parsed.value) : { voice: replacePath(settings.voice, segments, parsed.value) as VoiceSettings };
+            },
         };
     }
     const segments = path.split('.');
@@ -180,7 +184,10 @@ export function voiceSettingBinding(path: VoicePreferencePath): SettingStorageBi
         scope: 'account', kind: 'owner', access: 'read_write',
         read: (settings) => readPath(settings.voice, segments),
         parse: (value) => parseScalar(valueSchema, value),
-        mutate: (settings, value) => ({ voice: replacePath(settings.voice, segments, value) as VoiceSettings }),
+        mutate: (settings, value) => {
+            const parsed = parseScalar(valueSchema, value);
+            return parsed.success ? { voice: replacePath(settings.voice, segments, parsed.value) as VoiceSettings } : null;
+        },
     };
 }
 
@@ -227,7 +234,8 @@ export function voiceLocalConversationBinding(path: LocalConversationPreferenceP
         },
         parse: (value) => parseScalar(valueSchema, value),
         mutate: (settings, value) => {
-            const voice = updateVoiceLocalConversationSetting(settings.voice, path, value);
+            const parsed = parseScalar(valueSchema, value);
+            const voice = parsed.success && updateVoiceLocalConversationSetting(settings.voice, path, parsed.value);
             return voice ? { voice } : null;
         },
     };
@@ -237,12 +245,13 @@ export const voiceGreetingBinding: SettingStorageBinding = {
     scope: 'account', kind: 'owner', access: 'read_write', allowedValues: ['off', 'immediate', 'on_first_turn'],
     read: (settings) => resolveVoiceWelcomeSelection(settings.voice.welcome),
     parse: (value) => {
-        const parsed = z.enum(['off', 'immediate', 'on_first_turn']).safeParse(value);
+        const parsed = voiceGreetingChoiceSchema.safeParse(value);
         return parsed.success ? { success: true, value: parsed.data } : { success: false };
     },
-    mutate: (settings, value: SettingScalarValue) => ({
-        voice: applyVoiceWelcomeSelection(settings.voice, z.enum(['off', 'immediate', 'on_first_turn']).parse(value)),
-    }),
+    mutate: (settings, value) => {
+        const parsed = voiceGreetingChoiceSchema.safeParse(value);
+        return parsed.success ? { voice: applyVoiceWelcomeSelection(settings.voice, parsed.data) } : null;
+    },
 };
 
 export const voiceAgentSelectionBinding: SettingStorageBinding = {

@@ -151,7 +151,6 @@ function createLocalConversationVoice(overrides: LocalConversationAdapterOverrid
     executionMachine: {
       mode: overrides.agent?.machineTargetMode === 'fixed' ? 'fixed' : 'auto',
       machineId: overrides.agent?.machineTargetId ?? null,
-      autoMachineId: overrides.agent?.autoTargetMachineId ?? null,
     },
     welcome: overrides.agent?.welcome
       ? { ...voiceSettingsDefaults.welcome, ...overrides.agent.welcome }

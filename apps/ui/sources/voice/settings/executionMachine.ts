@@ -5,6 +5,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { readVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
 import {
   VoiceExecutionMachineSettingsSchema,
   voiceSettingsParse,
@@ -63,7 +64,7 @@ export function resolveVoiceExecutionMachineSelectionFromState(
   const mode = target?.mode === 'fixed' ? 'fixed' : 'auto';
   const persistedMachineId = mode === 'fixed'
     ? normalizeNonEmptyString(target?.machineId)
-    : normalizeNonEmptyString(target?.autoMachineId);
+    : readVoiceAutoTargetMachineId(state);
 
   if (persistedMachineId) return resolveReplacementAwareSelection(state, persistedMachineId);
   if (mode === 'fixed') return { kind: 'none' };

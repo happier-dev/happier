@@ -15,8 +15,11 @@ import {
   voiceSettingsParse,
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useAllMachines } from '@/sync/store/hooks';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
 import { resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { resolveVoiceDictationExecutionMachineRequirement } from '@/voice/dictation/voiceDictationReadiness';
@@ -44,7 +47,15 @@ export function VoiceExecutionMachineSection(props: Readonly<{
 }>) {
   const { theme } = useUnistyles();
   const machines = useAllMachines();
-  const accountSettings = useSettings();
+  const accountSettings = useSettingsSelector((settings) => ({
+      voiceSettingsV1: settings.voiceSettingsV1,
+      secrets: settings.secrets,
+      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+  }));
+  const settingsScope = useAccountSettingsScope();
+  const rememberedAutoMachineId = useVoiceTargetStore((state) => settingsScope
+    ? state.autoTargetMachineByScope[accountSettingsScopeKeySuffix(settingsScope)]
+    : undefined);
   const [open, setOpen] = React.useState(false);
   const voice = voiceSettingsParse(props.voice);
   const registry = props.registry ?? defaultRegistry;
@@ -118,7 +129,7 @@ export function VoiceExecutionMachineSection(props: Readonly<{
     ? String(voice.executionMachine.machineId ?? '').trim()
     : '';
   const stickyAutoMachineId = voice.executionMachine.mode === 'auto'
-    ? String(voice.executionMachine.autoMachineId ?? '').trim()
+    ? String(rememberedAutoMachineId ?? '').trim()
     : '';
   const selectedId = fixedMachineId || 'auto';
   const selectedItem = items.find((item) => item.id === selectedId) ?? null;
@@ -129,6 +140,9 @@ export function VoiceExecutionMachineSection(props: Readonly<{
   const selectMachine = (id: string) => {
     const machineId = String(id ?? '').trim();
     if (!machineId) return;
+    if (machineId === 'auto' && settingsScope) {
+      useVoiceTargetStore.getState().rememberAutoTargetMachine(settingsScope, null);
+    }
     props.setVoice(applyVoiceExecutionMachineChoice(voice, machineId));
     setOpen(false);
   };

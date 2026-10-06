@@ -308,7 +308,7 @@ describe('voice provider settings catalog', () => {
     }, {
       root: {
         welcome: { enabled: true, mode: 'on_first_turn', templateId: 'welcome-1' },
-        executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
+        executionMachine: { mode: 'fixed', machineId: 'machine-1' },
       },
       resolveCredential: () => null,
       resolveProviderConfig: () => null,

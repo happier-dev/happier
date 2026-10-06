@@ -39,7 +39,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 vi.mock('@/sync/store/hooks', () => ({
   useProfile: () => profileState,
-  useSettings: () => ({
+  useSettingsSelector: <T,>(selector: (settings: Record<string, unknown>) => T) => selector({
     connectedServicesProfileLabelByKey: {},
     connectedServicesDefaultProfileByServiceId: {},
   }),

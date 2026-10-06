@@ -1,13 +1,23 @@
 import { storage } from '@/sync/domains/state/storage';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
-export function readVoiceAutoTargetMachineId(state: any): string | null {
+type VoiceTargetSettingsState = Readonly<{
+    settings?: Readonly<{ voice?: unknown }>;
+    settingsScope?: AccountSettingsScope | null;
+}>;
+
+export function readVoiceAutoTargetMachineId(state: VoiceTargetSettingsState): string | null {
     const target = voiceSettingsParse(state?.settings?.voice).executionMachine;
     if ((normalizeNonEmptyString(target?.mode) ?? 'auto') !== 'auto') return null;
-    return normalizeNonEmptyString(target?.autoMachineId);
+    if (state.settingsScope) {
+        const key = accountSettingsScopeKeySuffix(state.settingsScope);
+        const memory = useVoiceTargetStore.getState().autoTargetMachineByScope;
+        if (Object.hasOwn(memory, key)) return memory[key] ?? null;
+    }
+    return null;
 }
 
 export function persistVoiceAutoTargetMachineId(
@@ -15,20 +25,12 @@ export function persistVoiceAutoTargetMachineId(
     expectedSettingsScope: AccountSettingsScope | null,
 ): void {
     const normalizedMachineId = normalizeNonEmptyString(machineId);
-    const state: any = storage.getState();
+    const state = storage.getState();
     if (!state?.settings?.voice) return;
     const voiceSettings = voiceSettingsParse(state.settings.voice);
     const executionMachine = voiceSettings.executionMachine;
     if ((normalizeNonEmptyString(executionMachine.mode) ?? 'auto') !== 'auto') return;
-    if (normalizeNonEmptyString(executionMachine.autoMachineId) === normalizedMachineId) return;
-
-    getSyncSingleton().applySettings({
-        voice: {
-            ...voiceSettings,
-            executionMachine: {
-                ...executionMachine,
-                autoMachineId: normalizedMachineId,
-            },
-        },
-    }, { expectedSettingsScope, source: 'ui' });
+    const scope = expectedSettingsScope ?? state.settingsScope;
+    if (!scope) return;
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, normalizedMachineId);
 }

@@ -26,7 +26,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
 import { t, tLoose } from '@/text';
 
 const PICKER_MAX_HEIGHT = 520;
@@ -99,7 +99,10 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   onChange: (value: unknown) => void;
 }>) {
   const profile = useProfile();
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+      connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+  }));
   const router = useRouter();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const bundledAgentId = isBundledAgentId(props.agentId)

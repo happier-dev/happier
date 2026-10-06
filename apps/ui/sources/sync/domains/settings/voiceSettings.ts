@@ -125,12 +125,10 @@ export const VoiceExecutionMachineSettingsSchema = z.preprocess((input) => {
     ...raw,
     mode: typeof raw.mode === 'string' ? raw.mode.trim() : raw.mode,
     machineId: normalizeId(raw.machineId),
-    autoMachineId: normalizeId(raw.autoMachineId),
   };
 }, z.object({
   mode: z.enum(['auto', 'fixed']).default('auto'),
   machineId: z.string().nullable().default(null),
-  autoMachineId: z.string().nullable().default(null),
 }));
 
 export { type VoiceProviderSettingsEnvelopeV1 };

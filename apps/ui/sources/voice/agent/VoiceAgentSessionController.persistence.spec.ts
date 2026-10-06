@@ -14,6 +14,8 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '@/sync/domains/state/storage';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -253,6 +255,9 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
 
 installDisconnectedServerSocketBoundary((socket) => {
   socket.connected = true;
+  // This synthetic connected Socket has no network engine; keep outgoing
+  // presence/disconnect packets at the external transport boundary.
+  vi.spyOn(socket.io, '_packet').mockImplementation(() => {});
   vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
     if (event !== 'update-metadata') throw new Error(`Unexpected socket acknowledgement: ${event}`);
     return { result: 'success', version: payload.expectedVersion + 1, metadata: payload.metadata };
@@ -416,8 +421,9 @@ describe('VoiceExecutionTransport (persistence)', () => {
 
     homeId = (await upsertAndActivateServer({ serverUrl: 'https://voice-persistence.example.test', name: 'Test Home' })).id;
     state = createVoiceAgentPersistenceTestState();
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
     state.settings.voice.providers.local_conversation.config.agent.resumabilityMode = 'replay';
-    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: null };
+    state.settings.voice.executionMachine = { mode: 'auto', machineId: null };
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     voiceSessionBindingStore.setState({
       runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {}, bindingsByConversationSessionId: {},
@@ -1524,7 +1530,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
       [homeId]: Object.values(state.machines),
     };
     state.settings.recentMachinePaths = [];
-	    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_old' };
+    useVoiceTargetStore.getState().rememberAutoTargetMachine({ serverId: homeId, accountId: 'account-a' }, 'm_old');
 	    start.mockResolvedValueOnce({ voiceAgentId: 'run_new' });
 		    modalConfirm
 		      .mockResolvedValueOnce(true)
@@ -1589,7 +1595,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         previousSessionId: 'sys_voice',
       }),
     }));
-    expect(state.settings.voice.executionMachine.autoMachineId).toBe('m_new');
+    expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(state.settingsScope)]).toBe('m_new');
   });
 
   it('refreshes machines before prompting to switch away from a stale sticky global voice machine', async () => {
@@ -1665,7 +1671,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
       [homeId]: [state.machines.m_old],
       'active-server': [state.machines.m_old],
     };
-    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_old' };
+    useVoiceTargetStore.getState().rememberAutoTargetMachine({ serverId: homeId, accountId: 'account-a' }, 'm_old');
     start
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ voiceAgentId: 'run_new' });
@@ -1752,7 +1758,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
       machineId: 'm_new',
       directory: '/new/.happier/voice-agent',
     }));
-    expect(state.settings.voice.executionMachine.autoMachineId).toBe('m_new');
+    expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(state.settingsScope)]).toBe('m_new');
   });
 
 });

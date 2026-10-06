@@ -5,7 +5,6 @@ import {
 } from '@happier-dev/agents';
 
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { buildVoiceSpawnUserAttemptId } from '@/voice/shared/voiceSpawnAttempt';
 
 type CompletePendingMachineSpawnAttemptCustodyForSessionFn =
@@ -188,8 +187,9 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
 }));
 
 describe('voiceConversationSession', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
     spawnSession.mockReset();
     spawnTrustedHiddenSystemSession.mockReset();
     executeSessionSpawnNewAction.mockReset();
@@ -249,7 +249,8 @@ describe('voiceConversationSession', () => {
     getActiveServerSnapshot.mockClear();
     loadDaemonMergedProjectionInputs.mockReset();
     loadDaemonMergedProjectionInputs.mockResolvedValue(null);
-    useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionAddress: null, voiceLiveContextSessionAddresses: [], lastFocusedSessionAddress: null } as any);
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {}, scope: 'global', primaryActionSessionAddress: null, voiceLiveContextSessionAddresses: [], lastFocusedSessionAddress: null });
+    state.settingsScope = { serverId: 'active-server', accountId: 'voice-account' };
 
     state.sessions = {};
     state.machines = {
@@ -264,7 +265,7 @@ describe('voiceConversationSession', () => {
     state.settings = {
       lastUsedAgent: 'claude',
       voice: {
-        executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+        executionMachine: { mode: 'auto', machineId: null },
         providers: {
           local_conversation: { schemaVersion: 1, config: {
             agent: {
@@ -774,7 +775,7 @@ describe('voiceConversationSession', () => {
       m_stale: { id: 'm_stale', active: false, metadata: { host: 'stale', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/stale', homeDir: '/home/u' } },
       m_active: { id: 'm_active', active: true, metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' } },
     };
-    state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_stale', autoMachineId: null };
+    state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_stale' };
     state.authoringMemory.recentMachinePaths = [{ machineId: 'm_active', path: '/tmp/repo-active' }];
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
@@ -805,7 +806,7 @@ describe('voiceConversationSession', () => {
       const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {};
-    state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_fixed', autoMachineId: null };
+    state.settings.voice.executionMachine = { mode: 'fixed', machineId: 'm_fixed' };
     state.authoringMemory.recentMachinePaths = [
       { machineId: 'm_fixed', path: '/tmp/fixed-repo' },
       { machineId: 'm_other', path: '/tmp/other-repo' },
@@ -898,7 +899,8 @@ describe('voiceConversationSession', () => {
       },
     };
     state.authoringMemory.recentMachinePaths = [{ machineId: 'm_recent', path: '/tmp/recent-repo' }];
-    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_sticky' };
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(state.settingsScope, 'm_sticky');
 
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
     refreshSessions.mockImplementation(async () => {
@@ -941,7 +943,8 @@ describe('voiceConversationSession', () => {
           metadata: { host: 'other', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/other', homeDir: '/home/u' },
         },
       };
-      state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'm_sticky' };
+      const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+      useVoiceTargetStore.getState().rememberAutoTargetMachine(state.settingsScope, 'm_sticky');
       state.authoringMemory.recentMachinePaths = [{ machineId: 'm_other', path: '/tmp/other-repo' }];
 
       spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });

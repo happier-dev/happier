@@ -7,6 +7,8 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildVoiceSpawnUserAttemptId } from '@/voice/shared/voiceSpawnAttempt';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 type MachineContributionRegistryProjectionDescribeFn =
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
@@ -337,24 +339,8 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-// The sticky auto-target write reaches the sync singleton through its own lazy accessor,
-// which is a bundler-only `require` and therefore never sees the `@/sync/sync` mock above.
-// Mock the accessor that owns it, exactly as `voiceAutoTargetMachineSettings.test.ts` does.
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  getSyncSingleton: () => ({ applySettings }),
-}));
-
 vi.mock('@/utils/sessions/machineUtils', () => ({
   isMachineOnline: () => true,
-}));
-
-vi.mock('@/voice/runtime/voiceTargetStore', () => ({
-  useVoiceTargetStore: {
-    getState: () => ({
-      primaryActionSessionAddress: null,
-      lastFocusedSessionAddress: null,
-    }),
-  },
 }));
 
 // Load the real host graph during collection so binding assertions do not spend
@@ -365,6 +351,7 @@ const { createBundledConversationRuntimeHostLease } = await import(
 
 describe('ensureVoiceConversationSessionForVoiceHome', () => {
   beforeEach(() => {
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {}, primaryActionSessionAddress: null, lastFocusedSessionAddress: null });
     activeServerRef.current = 'server-1';
     clearDaemonMergedProjectionCacheForTests();
     machineSpawnNewSession.mockReset();
@@ -392,7 +379,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       settings: {
         lastUsedAgent: 'codex',
         voice: {
-          executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+          executionMachine: { mode: 'auto', machineId: null },
           providers: {
             local_conversation: { schemaVersion: 1, config: {
               agent: {
@@ -648,7 +635,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     }));
   });
 
-  it('keeps sticky auto-target persistence bound to the Account selected before the spawn await', async () => {
+  it('keeps local sticky auto-target memory bound to the Account selected before the spawn await', async () => {
     const spawned = createDeferred<{ type: 'success'; sessionId: string }>();
     machineSpawnNewSession.mockImplementation(async () => await spawned.promise);
     const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
@@ -665,10 +652,10 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     spawned.resolve({ type: 'success', sessionId: 'voice-home-session' });
 
     await expect(pending).resolves.toBe('voice-home-session');
-    expect(applySettings).toHaveBeenCalledWith(expect.any(Object), {
-      expectedSettingsScope: { serverId: 'server-1', accountId: 'account-1' },
-      source: 'ui',
+    expect(useVoiceTargetStore.getState().autoTargetMachineByScope).toEqual({
+      [accountSettingsScopeKeySuffix({ serverId: 'server-1', accountId: 'account-1' })]: 'machine-1',
     });
+    expect(applySettings).not.toHaveBeenCalled();
   });
 
   it('spawns the configured external Agent through its exact projected backend target', async () => {
@@ -1124,7 +1111,6 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.settings.voice.executionMachine = {
       mode: ' fixed ',
       machineId: ' machine-2 ',
-      autoMachineId: null,
     };
 
     const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
@@ -1201,7 +1187,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   });
 
   it('fails closed instead of roaming when the sticky auto target has no voice-home directory', async () => {
-    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'stale-machine' };
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(state.settingsScope!, 'stale-machine');
     state.machines['stale-machine'] = {
       id: 'stale-machine',
       active: true,
@@ -1217,7 +1203,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   });
 
   it('fails closed instead of roaming when the sticky auto target is inactive', async () => {
-    state.settings.voice.executionMachine = { mode: 'auto', machineId: null, autoMachineId: 'stale-machine' };
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(state.settingsScope!, 'stale-machine');
     state.machines['stale-machine'] = {
       id: 'stale-machine',
       active: false,
@@ -1869,7 +1855,7 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
         lastUsedAgent: 'codex',
         recentMachinePaths: [],
         voice: {
-          executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+          executionMachine: { mode: 'auto', machineId: null },
           providers: {
             local_conversation: { schemaVersion: 1, config: {
               agent: {

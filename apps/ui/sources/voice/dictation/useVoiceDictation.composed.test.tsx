@@ -124,7 +124,6 @@ describe('useVoiceDictation composed daemon readiness', () => {
                     executionMachine: {
                         mode: 'fixed',
                         machineId: executionMachineId,
-                        autoMachineId: null,
                     },
                     dictation: {
                         ...voiceSettingsDefaults.dictation,
