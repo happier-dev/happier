@@ -2,12 +2,12 @@ import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type { TsconfigRaw } from 'esbuild';
-import ts from 'typescript';
+import type ts from 'typescript';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { realpathNearestExistingAncestor } from '@/utils/path/physicalAncestorPath';
 
-function formatConfigDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-  return diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')).join('; ');
+function formatConfigDiagnostics(diagnostics: readonly ts.Diagnostic[], api: typeof ts): string {
+  return diagnostics.map((diagnostic) => api.flattenDiagnosticMessageText(diagnostic.messageText, ' ')).join('; ');
 }
 
 async function assertConfigPathContained(params: Readonly<{
@@ -119,6 +119,7 @@ export async function resolvePluginAuthorTypeScriptConfigBoundary(params: Readon
 }>): Promise<PluginAuthorTypeScriptConfigBoundary> {
   const packageRoot = await realpath(resolve(params.packageRootPath));
   const entryPath = await realpath(resolve(params.entryPath));
+  const { default: ts } = await import('typescript');
   const configPath = ts.findConfigFile(dirname(entryPath), ts.sys.fileExists, 'tsconfig.json');
   if (!configPath || !isCanonicalAbsolutePathInsideRoot(packageRoot, resolve(configPath))) {
     return Object.freeze({
@@ -136,7 +137,7 @@ export async function resolvePluginAuthorTypeScriptConfigBoundary(params: Readon
   const rootConfig = ts.readConfigFile(physicalConfigPath, ts.sys.readFile);
   if (rootConfig.error) {
     throw new Error(
-      `Plugin author TypeScript config is invalid: ${formatConfigDiagnostics([rootConfig.error])}`,
+      `Plugin author TypeScript config is invalid: ${formatConfigDiagnostics([rootConfig.error], ts)}`,
     );
   }
 
@@ -156,7 +157,7 @@ export async function resolvePluginAuthorTypeScriptConfigBoundary(params: Readon
     && diagnostic.code !== 18003
   ));
   if (!parsed || configErrors.length > 0) {
-    const detail = formatConfigDiagnostics(configErrors) || 'configuration could not be parsed';
+    const detail = formatConfigDiagnostics(configErrors, ts) || 'configuration could not be parsed';
     throw new Error(`Plugin author TypeScript config is invalid: ${detail}`);
   }
 

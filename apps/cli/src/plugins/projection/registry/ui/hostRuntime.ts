@@ -1,8 +1,5 @@
-import {
-    DaemonHostedWebFrameCapabilityV1Schema,
-    type DaemonHostedWebFrameCapabilityV1,
-    type FeatureDecision,
-} from '@happier-dev/protocol';
+import { DaemonHostedWebFrameCapabilityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { DaemonHostedWebFrameCapabilityV1, FeatureDecision } from '@happier-dev/protocol';
 import type { PluginUiChannelV1, PluginUiPlatformV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiProjectionHostRuntimeContext } from './projection';

@@ -1,8 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-} from '@happier-dev/protocol';
-import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui/sessionInfoSections';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {

@@ -1,16 +1,6 @@
-import {
-  PluginComposerReferenceProviderContributionV1Schema,
-  PluginContributionIntrospectionProjectionV1Schema,
-  PluginDiagnosticRecordV1Schema,
-  type PluginContributionCatalogEntryV2,
-  type PluginContributionIntrospectionIdentityV1,
-  type PluginContributionIntrospectionProjectionV1,
-  type PluginContributionLifecycleRecordV1,
-  type PluginDiagnosticDataV1,
-  type PluginDiagnosticHostV1,
-  type PluginDiagnosticRecordV1,
-  type PluginDiagnosticStageV1,
-} from '@happier-dev/protocol';
+import { PluginComposerReferenceProviderContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/composer-reference-providers';
+import { PluginContributionIntrospectionProjectionV1Schema, PluginDiagnosticRecordV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginContributionCatalogEntryV2, PluginContributionIntrospectionIdentityV1, PluginContributionIntrospectionProjectionV1, PluginContributionLifecycleRecordV1, PluginDiagnosticDataV1, PluginDiagnosticHostV1, PluginDiagnosticRecordV1, PluginDiagnosticStageV1 } from '@happier-dev/protocol';
 import type {
   PluginContributionIntrospectionCandidate,
   PluginContributionRuntimeFacts,

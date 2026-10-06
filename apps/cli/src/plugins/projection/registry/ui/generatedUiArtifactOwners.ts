@@ -1,11 +1,6 @@
-import {
-  PluginActionExecutionV2Schema,
-} from '@happier-dev/protocol';
-import {
-  PluginUiArtifactsManifestEntryV2Schema,
-  type PluginUiArtifactsManifestEntryV2,
-  type PluginUiArtifactsManifestV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+import type { PluginUiArtifactsManifestEntryV2, PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 import type { ResolvedContributionRegistry, ResolvedContributionSource } from '../types';
 

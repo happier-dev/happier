@@ -273,6 +273,35 @@ describe('logger.debugLargeJson', () => {
         fetchSpy.mockRestore();
     });
 
+    it('keeps local file warnings actionable at warn level without forwarding them to console or remote logging', async () => {
+        process.env.HAPPIER_LOG_LEVEL = 'warn';
+        process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING = '1';
+        process.env.HAPPIER_SERVER_URL = 'https://logs.example.test';
+        const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+        const { Logger } = await import('@/ui/logger');
+        const logPath = join(tempDir, 'logs', 'local-warning.log');
+        const isolatedLogger = new Logger({ logFilePath: logPath, pruneCurrentProcessLogs: false });
+        const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+        const missingPath = join(tempDir, 'node_modules', 'missing-package');
+        try {
+            isolatedLogger.warnLocalFile('plugin_dev_dependency_preparation_failed', {
+                error: Object.assign(new Error(`ENOENT, lstat '${missingPath}'; Authorization: Bearer local-warning-secret-token`), { code: 'ENOENT' }),
+            });
+            isolatedLogger.flushSync();
+            const content = readFileSync(logPath, 'utf8');
+            expect(content).toContain('[WARN]');
+            expect(content).toContain('plugin_dev_dependency_preparation_failed');
+            expect(content).toContain(missingPath);
+            expect(content).toContain('[REDACTED]');
+            expect(content).not.toContain('local-warning-secret-token');
+            expect(consoleSpy).not.toHaveBeenCalled();
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            consoleSpy.mockRestore();
+            fetchSpy.mockRestore();
+        }
+    });
+
     it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
         const { Logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
         const logPath = join(tempDir, 'logs', 'fatal.log');

@@ -1,10 +1,5 @@
-import {
-  PLUGIN_CONTRIBUTION_CATALOG_V2,
-  type PluginDiagnosticHostV1,
-  type PluginDiagnosticRecordV1,
-  type PluginDiagnosticStageV1,
-  type PluginContributionIntrospectionProjectionV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { PluginDiagnosticHostV1, PluginDiagnosticRecordV1, PluginDiagnosticStageV1, PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -17,14 +12,27 @@ import {
 } from './project';
 import type { PluginContributionIntrospectionCandidate } from './types';
 
+// Admission/reload supplies a new canonical manifest identity. Retain only its
+// declaration metadata, never the changing generation, diagnostics or runtime
+// facts; weak keys release retired manifests with their owning registry.
+const candidatesByManifest = new WeakMap<CanonicalPluginManifest, Map<
+  PluginDiagnosticRecordV1['plugin']['source'],
+  readonly PluginContributionIntrospectionCandidate[]
+>>();
+
 export function collectManifestContributionIntrospectionCandidates(params: Readonly<{
   manifest: CanonicalPluginManifest;
   source: PluginDiagnosticRecordV1['plugin']['source'];
 }>): readonly PluginContributionIntrospectionCandidate[] {
+  const retainedBySource = candidatesByManifest.get(params.manifest);
+  const retained = retainedBySource?.get(params.source);
+  if (retained) return retained;
   const candidates: PluginContributionIntrospectionCandidate[] = [];
   for (const catalogEntry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
-    for (const rawDefinition of catalogEntry.readEntries(params.manifest.contributes)) {
-      const definition = catalogEntry.canonicalize(rawDefinition, { pluginId: params.manifest.id });
+    // The canonical manifest has already crossed schema admission.
+    // Introspection reads catalog metadata only: reparsing executable payloads
+    // here repeats deep schema/workflow traversal on every daemon catalog read.
+    for (const definition of catalogEntry.readEntries(params.manifest.contributes)) {
       if (!definition || typeof definition !== 'object' || Array.isArray(definition)) continue;
       const record = definition as Readonly<Record<string, unknown>>;
       const introspection = catalogEntry.projectIntrospection(record);
@@ -57,10 +65,17 @@ export function collectManifestContributionIntrospectionCandidates(params: Reado
       });
     }
   }
-  return Object.freeze(candidates.sort((left, right) => (
+  const collected = Object.freeze(candidates.sort((left, right) => (
     buildPluginContributionIntrospectionQualifiedId(left)
       .localeCompare(buildPluginContributionIntrospectionQualifiedId(right))
   )));
+  const bySource = retainedBySource ?? new Map<
+    PluginDiagnosticRecordV1['plugin']['source'],
+    readonly PluginContributionIntrospectionCandidate[]
+  >();
+  bySource.set(params.source, collected);
+  candidatesByManifest.set(params.manifest, bySource);
+  return collected;
 }
 
 export function projectManifestContributionIntrospection(params: Readonly<{

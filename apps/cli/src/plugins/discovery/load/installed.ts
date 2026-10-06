@@ -1,21 +1,16 @@
-import { resolve } from 'node:path';
-
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginStateFileV1, PluginStateSourceRecord } from '@/plugins/store/state';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
-import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
   resolvePluginDaemonEntryPath,
   shouldResolvePluginDevelopmentEntrypoint,
 } from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
-import {
-  resolveLocalPathPluginSource,
-  type ResolvedLocalPathPluginSourceSuccess,
-} from '@/plugins/discovery/sources/localPath';
+import type { ResolvedLocalPathPluginSourceSuccess } from '@/plugins/discovery/sources/localPath';
+import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
 import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
 
 export type LoadedPlugin = Readonly<{
@@ -36,9 +31,6 @@ export type LoadInstalledPluginsResult = Readonly<{
   materializationIdsByPluginId?: Readonly<Record<string, string>>;
 }>;
 
-// Backwards compatible resolution: older plugin state records may store a manifestPath override
-// that no longer matches the default.
-
 function mergeLoadedPluginSourceSpec(params: Readonly<{
   recordSource: PluginStateSourceRecord;
   resolvedSource: ResolvedLocalPathPluginSourceSuccess;
@@ -54,6 +46,7 @@ function mergeLoadedPluginSourceSpec(params: Readonly<{
 export async function loadPluginsFromState(
   state: PluginStateFileV1,
   materializationIdsByPluginId: Readonly<Record<string, string>> = {},
+  approvedAuthorityManifestsByPluginId: Readonly<Record<string, CanonicalPluginManifest>> = {},
 ): Promise<LoadInstalledPluginsResult> {
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
@@ -88,25 +81,9 @@ export async function loadPluginsFromState(
       continue;
     }
 
-    const defaultManifestPath = resolve(record.source.locator, PLUGIN_MANIFEST_RELATIVE_PATH);
-    const resolvedLocator = record.install.mode === 'managed_install'
-      ? record.install.installedPath
-      : record.source.manifestPath && record.source.manifestPath !== defaultManifestPath
-        ? record.source.manifestPath
-        : record.source.locator;
-    if (typeof resolvedLocator !== 'string' || resolvedLocator.trim().length === 0) {
-      diagnosticsByPluginId[pluginId] = [
-        {
-          code: 'plugin_manifest_semantic_invalid',
-          message: `Plugin state for '${pluginId}' is missing a resolvable install path`,
-        },
-      ];
-      continue;
-    }
-
-    const resolvedSource = await resolveLocalPathPluginSource({
-      locator: resolvedLocator,
-      installedSourceKind: record.source.kind,
+    const resolvedSource = await resolveInstalledPluginSource({
+      record,
+      approvedAuthorityManifest: approvedAuthorityManifestsByPluginId[pluginId],
     });
     if (!resolvedSource.ok) {
       diagnosticsByPluginId[pluginId] = resolvedSource.diagnostics;
@@ -193,5 +170,9 @@ export async function loadPluginsFromState(
 export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
   const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
   const snapshot = await stateStore.readSnapshot();
-  return await loadPluginsFromState(snapshot.state, snapshot.materializationIdsByPluginId);
+  return await loadPluginsFromState(
+    snapshot.state,
+    snapshot.materializationIdsByPluginId,
+    snapshot.approvedAuthorityManifestsByPluginId,
+  );
 }

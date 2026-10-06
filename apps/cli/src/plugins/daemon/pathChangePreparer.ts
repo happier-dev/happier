@@ -1,4 +1,4 @@
-import { isReservedHappierPluginId } from '@happier-dev/protocol';
+import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
 
 import {
   resolveLocalPathPluginSource,
@@ -73,15 +73,18 @@ export type DaemonPathPluginChangePreparationContext = Readonly<{
 
 type RunPluginUiArtifactBuildBoundary = (params: Readonly<{
   projectRoot: string;
+  manifest?: Parameters<typeof runPluginUiArtifactBuild>[0]['manifest'];
   signal?: AbortSignal;
 }>) => Promise<PluginUiArtifactBuildResult>;
 
 async function buildOwnedPluginDevelopmentUiArtifacts(params: Readonly<{
   projectRoot: string;
+  manifest?: Parameters<typeof runPluginUiArtifactBuild>[0]['manifest'];
   runPluginUiArtifactBuild?: RunPluginUiArtifactBuildBoundary;
 }>): Promise<void> {
   const build = await (params.runPluginUiArtifactBuild ?? runPluginUiArtifactBuild)({
     projectRoot: params.projectRoot,
+    ...(params.manifest ? { manifest: params.manifest } : {}),
   });
   if (build.ok) return;
   // The change contract carries one failure string, not structured
@@ -275,17 +278,10 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
         throw new DaemonPluginChangePreparationError(
           'plugin_dev_dependency_preparation_failed',
           projectPluginFailureText(error),
+          { cause: error },
         );
       });
       try {
-        if ((entry?.kind ?? 'packageRoot') === 'packageRoot') {
-          await buildOwnedPluginDevelopmentUiArtifacts({
-            projectRoot: preparedRoot.rootPath,
-            ...(params.runPluginUiArtifactBuild
-              ? { runPluginUiArtifactBuild: params.runPluginUiArtifactBuild }
-              : {}),
-          });
-        }
         const sourceAuthority = bindPluginRuntimeSourceAuthority({
           custody: { kind: 'development', registeredRootId: distribution.canonicalPath },
           resolvedRoot: preparedRoot.rootPath,
@@ -310,6 +306,15 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
           throw new PluginRegistryCandidateConflictError(
             `Plugin development source identity changed from '${expectedPluginId}' to '${projected.manifest.id}'`,
           );
+        }
+        if ((entry?.kind ?? 'packageRoot') === 'packageRoot') {
+          await buildOwnedPluginDevelopmentUiArtifacts({
+            projectRoot: preparedRoot.rootPath,
+            ...(developmentAuthoringSource.kind === 'code' ? { manifest: projected.manifest } : {}),
+            ...(params.runPluginUiArtifactBuild
+              ? { runPluginUiArtifactBuild: params.runPluginUiArtifactBuild }
+              : {}),
+          });
         }
         const registryStateStore = createPluginRegistryStateStore({
           happyHomeDir: params.happyHomeDir,

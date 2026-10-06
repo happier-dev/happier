@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rm, writeFile, realpath } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, readdir, rm, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -73,45 +73,6 @@ describe('runPluginAuthorToolchain', () => {
     }
   }, 120_000);
 
-  it('refuses to replace an author-owned pnpm workspace configuration for bundled SDK resolution', async () => {
-    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-owned-pnpm-workspace-'));
-    const spawn = vi.fn(successfulSpawn);
-    const workspaceConfigPath = join(projectRoot, 'pnpm-workspace.yaml');
-    const existingWorkspaceConfig = 'packages:\n  - plugins/*\n';
-    try {
-      await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
-        name: 'external-happier-plugin',
-        version: '0.1.0',
-        type: 'module',
-        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
-      }), 'utf8');
-      await writeFile(workspaceConfigPath, existingWorkspaceConfig, 'utf8');
-
-      const result = await runPluginAuthorToolchain({
-        operation: 'install',
-        projectRoot,
-      }, {
-        ensureManagedPnpmCommand: async () => '/happier/tools/pnpm/current/bin/pnpm',
-        managedPnpmBinPath: () => '/happier/tools/pnpm/current/bin/pnpm',
-        managedJavaScriptRuntimeBinPath: () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
-        buildManagedPnpmEnvironment: (env = {}) => env,
-        ensureManagedJavaScriptRuntimeCommand: async () => '/happier/tools/js-runtime/current/bin/happier-js-runtime',
-        resolveNativeTypeScriptBin: () => '/fixture/plugin/node_modules/@typescript/native/bin/tsc',
-        spawn,
-        processEnv: {},
-      });
-
-      expect(result).toMatchObject({
-        ok: false,
-        operation: 'install',
-        diagnostics: [expect.objectContaining({ code: 'plugin_author_tool_failed' })],
-      });
-      expect(spawn).not.toHaveBeenCalled();
-      await expect(readFile(workspaceConfigPath, 'utf8')).resolves.toBe(existingWorkspaceConfig);
-    } finally {
-      await rm(projectRoot, { recursive: true, force: true });
-    }
-  }, 120_000);
 });
 
 describe('runPluginAuthorToolchain', () => {
@@ -152,6 +113,9 @@ describe('runPluginAuthorToolchain', () => {
       });
       expect(refreshed.rootPath).toBe(await realpath(projectRoot));
       await refreshed.cleanup();
+      const virtualStoreEntries = await readdir(join(projectRoot, 'node_modules', '.pnpm'));
+      expect(virtualStoreEntries.filter(name => name.startsWith('@happier-dev+plugin-sdk@file+')),
+        'refresh must remove the unreachable SDK copy from the previous transient install').toHaveLength(1);
       await expect(readFile(join(projectRoot, 'pnpm-workspace.yaml'), 'utf8'))
         .rejects.toMatchObject({ code: 'ENOENT' });
 

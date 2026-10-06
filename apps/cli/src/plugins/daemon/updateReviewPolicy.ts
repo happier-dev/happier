@@ -1,10 +1,6 @@
-import {
-  DEFAULT_PLUGIN_UPDATE_REVIEW_MODE_V1,
-  PluginHostAccessRequestV2Schema,
-  PluginUpdateReviewModeV1Schema,
-  type PluginHostAccessRequestV2,
-  type PluginUpdateReviewModeV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_PLUGIN_UPDATE_REVIEW_MODE_V1, PluginUpdateReviewModeV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
+import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginHostAccessRequestV2, PluginUpdateReviewModeV1 } from '@happier-dev/protocol';
 import type {
   PluginInstallationReview,
   PluginInstallationReviewRequestInterceptor,

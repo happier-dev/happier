@@ -18,6 +18,7 @@ import type {
 } from './changeContract';
 import { PluginRegistryProfileRequiredError } from './changeContract';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { logger } from '@/ui/logger';
 import type {
   DaemonPluginDevelopmentControlRequest,
   DaemonPluginDevelopmentControlResult,
@@ -88,8 +89,8 @@ export type DaemonPluginChangeOwner = DaemonPluginChangeService & Readonly<{
 export class DaemonPluginChangePreparationError extends Error {
   readonly code: string;
 
-  constructor(code: string, message: string) {
-    super(message);
+  constructor(code: string, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'DaemonPluginChangePreparationError';
     this.code = code;
   }
@@ -103,7 +104,9 @@ function describePluginChangeFailureCause(error: unknown): string | undefined {
 function failedPluginChange(
   code: string,
   error: unknown,
+  sourceRootPath?: string,
 ): Readonly<{ kind: 'failed'; code: string; message?: string }> {
+  logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
   const message = describePluginChangeFailureCause(error);
   return { kind: 'failed', code, ...(message ? { message } : {}) };
 }
@@ -336,11 +339,14 @@ export function createDaemonPluginChangeService(params: Readonly<{
     try {
       if (isDevelopmentCandidate(prepared)) {
         if (!params.applyDevelopment) {
-          return { kind: 'failed', code: 'plugin_development_runtime_unavailable' };
+          return failedPluginChange('plugin_development_runtime_unavailable', undefined, prepared.sourceAuthority.canonicalRoot);
         }
-        return await params.applyDevelopment(prepared, decision ? {
+        const result = await params.applyDevelopment(prepared, decision ? {
           optionalSelections: decision.optionalSelections ?? [],
         } : undefined);
+        return result.kind === 'failed'
+          ? failedPluginChange(result.code, result.message, prepared.sourceAuthority.canonicalRoot)
+          : result;
       }
       return await prepared.apply(decision ? {
         optionalSelections: decision.optionalSelections ?? [],
@@ -351,6 +357,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
           ? error.code
           : 'plugin_change_failed',
         error,
+        isDevelopmentCandidate(prepared) ? prepared.sourceAuthority.canonicalRoot : undefined,
       );
     } finally {
       lease.release();
@@ -383,6 +390,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
               ? error.code
               : 'plugin_change_preparation_failed',
             error,
+            request.kind === 'development' ? request.sourceRootPath : undefined,
           );
         }
 
@@ -480,6 +488,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
                 ? error.code
                 : 'plugin_change_preparation_failed',
               error,
+              sourceApproval.review.source.locator,
             );
             releasePendingChangeKey(pending);
             await cleanupPrepared(sourceApproval);

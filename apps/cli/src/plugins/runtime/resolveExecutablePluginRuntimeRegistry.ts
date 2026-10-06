@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DaemonPluginStoredImageReadRequest } from '@happier-dev/protocol';
-import { projectPluginSessionAccessIdentity } from '@happier-dev/protocol';
+import { projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginUiReadStoredImageResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -67,40 +67,22 @@ import type {
     ResolvedManagedProviderRuntime,
     ResolvedProviderCatalogParsers,
 } from '../projection/registry/types';
-import {
-    buildQualifiedPluginContributionKey,
-    arePluginMachineMaterializationRefsEqual,
-    createPluginContributionIdentity,
-    evaluatePluginFinalPolicy,
-    isDynamicPluginResourceContributionV2,
-    McpDetectedProviderV1Schema,
-    normalizePluginAccountCollectionContractsV1,
-    PluginMachineExecutionOriginV1Schema,
-    PluginMachineMaterializationRefV1Schema,
-    TargetActionApprovalReplayPlacementV1Schema,
-    resolveProviderManagedRuntimeDeclarationV1,
-    createProviderManagedPurposeBindingsEqualityKeyV1,
-    resolveAttentionDeliveryPolicyDecision,
-    QualifiedConnectedAccountPurposeBindingsV1Schema,
-    SessionExecutionTargetV1Schema,
-    qualifiedPurposeKey,
-    type QualifiedConnectedAccountPurposeBindingsV1,
-    type ConnectedAccountRequestAuthUseV1,
-    ProviderRuntimeBindingBasisV1Schema,
-    type ProviderRuntimeBindingBasisV1,
-    type PluginContributionIdentityV1,
-    type PluginMachineExecutionOriginV1,
-    type PluginMachineMaterializationRefV1,
-    type TargetActionApprovalReplayPlacementV1,
-    type NormalizedPluginAccountCollectionContractV1,
-    type PluginCollectionCandidatePreparationBindingV1,
-    type PluginCollectionContractRefV1,
-    type PluginReleaseRefV1,
-    type PluginUiArtifactDigestV1,
-    type PluginResourceContextV1,
-    type PluginActionPresentUserGatePolicy,
-    readContributedProviderCatalogParserIds,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { McpDetectedProviderV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { TargetActionApprovalReplayPlacementV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { resolveProviderManagedRuntimeDeclarationV1, createProviderManagedPurposeBindingsEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import type { QualifiedConnectedAccountPurposeBindingsV1, ConnectedAccountRequestAuthUseV1, ProviderRuntimeBindingBasisV1, PluginContributionIdentityV1, PluginMachineExecutionOriginV1, PluginMachineMaterializationRefV1, TargetActionApprovalReplayPlacementV1, NormalizedPluginAccountCollectionContractV1, PluginCollectionCandidatePreparationBindingV1, PluginCollectionContractRefV1, PluginReleaseRefV1, PluginUiArtifactDigestV1, PluginResourceContextV1, PluginActionPresentUserGatePolicy } from '@happier-dev/protocol';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { DaemonMcpServersDetectWarningV1, HostSemanticEventV1 } from '@happier-dev/protocol';
 import type { HostStructuredMessageDescriptorV1 } from './invocation/services/structuredMessageDescriptor';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -1927,7 +1909,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
     }
     // Daemon-selected plugins with Account-scoped declarations claim a
     // release-less Account intent and execute through this machine
-    // materialization; it is the same caller-materialization owner below.
+    // materialization through the caller-materialization owner below. This
+    // declaration does not grant install-registry projection authority.
     const releaseLessDeclarationsByPluginId = projectReleaseLessPluginDeclarations({
         activationTargets,
         sourceCustodiesByPluginId: admittedPluginSourceCustodiesByPluginId,
@@ -1936,12 +1919,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
     });
     contributes = createResolvedContributionRegistry({
         ...contributes,
-        materializationIdsByPluginId: Object.freeze({
-            ...(contributes.materializationIdsByPluginId ?? {}),
-            ...Object.fromEntries([...releaseLessDeclarationsByPluginId].map(([pluginId, declaration]) => (
-                [pluginId, declaration.materializationId] as const
-            ))),
-        }),
         // The first normalization can precede durable generation selection and
         // immutable generation selection. Re-run every targeted admission fact
         // only from this one committed manifest snapshot.
@@ -2360,7 +2337,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const materialization = PluginMachineMaterializationRefV1Schema.safeParse({
             machineId,
             materializationId:
-                authoritativeContributes.materializationIdsByPluginId?.[pluginId],
+                authoritativeContributes.materializationIdsByPluginId?.[pluginId]
+                ?? releaseLessDeclarationsByPluginId.get(pluginId)?.materializationId,
             pluginId,
         });
         return materialization.success ? Object.freeze(materialization.data) : null;
