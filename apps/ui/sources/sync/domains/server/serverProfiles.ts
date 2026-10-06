@@ -3,6 +3,7 @@ import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import {
     HomeConnectionDescriptorV1Schema,
+    StoredHomeConnectionDescriptorV1Schema,
     normalizeServerIdentityIdCapability,
     type HomeConnectionDescriptorV1,
 } from '@happier-dev/protocol';
@@ -688,7 +689,7 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         : typeof record.publicServerUrl === 'string' ? normalizeUrl(record.publicServerUrl) : undefined;
     // Only the exact server-published descriptor owns transport facts. The
     // never-released scalar endpoint/revision drafts are not persistence inputs.
-    const homeConnectionDescriptorResult = HomeConnectionDescriptorV1Schema.safeParse(
+    const homeConnectionDescriptorResult = StoredHomeConnectionDescriptorV1Schema.safeParse(
         record.homeConnectionDescriptor,
     );
     // Tolerant, additive provenance read: unknown values are dropped, never trusted.

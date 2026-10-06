@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import sodium from '@/encryption/libsodium.lib';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -27,15 +27,18 @@ describe('exact Directory approval continuation', () => {
     let storageScopeSequence = 0;
     let fixture: ReturnType<typeof createDirectoryHttpFixture>;
     let restore: () => void;
+    let restoreLocks: () => void;
     beforeAll(async () => { await sodium.ready; });
     beforeEach(() => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `directory_enrollment_resume_${storageScopeSequence++}`;
         restore = installLocalStorageMock().restore;
+        restoreLocks = installWebLockManagerMock().restore;
         fixture = createDirectoryHttpFixture();
         boundary.request.mockImplementation(fixture.request);
     });
     afterEach(async () => {
         await cancelPendingDirectoryHomeEnrollment();
+        restoreLocks();
         restore();
         if (previousStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousStorageScope;

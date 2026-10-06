@@ -1,5 +1,5 @@
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './serverUrlCanonical';
-import { getActiveServerUrl, resolveUniqueServerProfileByUrl } from '../serverProfiles';
+import { getActiveServerUrl, isActiveServerSelectionExplicit, resolveUniqueServerProfileByUrl } from '../serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from '../serverRuntime';
 
 export type WebServerUrlOverride = Readonly<{ serverUrl: string; cleanedRelativeUrl: string }>;
@@ -132,7 +132,7 @@ export async function bootstrapActiveServerFromWebLocation(
         } catch {
             // ignore
         }
-    } else if (desiredKey && currentKey !== desiredKey) {
+    } else if (desiredKey && (currentKey !== desiredKey || !isActiveServerSelectionExplicit())) {
         const saved = resolveUniqueServerProfileByUrl(desired);
         if (saved) {
             try {

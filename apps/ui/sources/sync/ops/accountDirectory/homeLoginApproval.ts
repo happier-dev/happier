@@ -36,7 +36,6 @@ import {
 import { adoptDirectoryHome } from './adoptDirectoryHome';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { parseToken } from '@/utils/auth/parseToken';
-import { HappyError } from '@/utils/errors/errors';
 
 /**
  * Home-authoritative existing-device approval continuation. All requests target the exact
@@ -70,7 +69,7 @@ export type HomeLoginContinuationResult =
         canonicalServerUrl: string;
         error: HomeProfileAdoptionPartialCommitFailure;
     }>
-    | Readonly<{ kind: 'failed'; error?: unknown }>;
+    | Readonly<{ kind: 'failed'; reason?: 'account_mismatch'; error?: unknown }>;
 
 /**
  * Decrypts and strictly parses the exact protocol-owned `{ token }` plaintext.
@@ -377,7 +376,7 @@ export async function continueHomeLoginEnrollment(input: Readonly<{
                                 sameAccount = false;
                             }
                             if (!sameAccount) throw new HomeEnrollmentBoundaryError({
-                                kind: 'failed', error: new HappyError('Home credential belongs to a different Account', false, { kind: 'auth' }),
+                                kind: 'failed', reason: 'account_mismatch',
                             });
                         }
                         // Preserve same-Account material, including recoverable inconsistent
