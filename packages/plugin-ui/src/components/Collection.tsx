@@ -976,7 +976,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       sectionHeaderTitleRole: 'section' as const,
       // The page section header's rhythm: one section gap above, the header gap down to its sheet.
       sectionHeaderStyle: {
-        justifyContent: 'flex-end',
+        justifyContent: 'flex-end' as const,
         paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
         paddingBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
         paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
@@ -986,7 +986,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       sectionHeaderTitleRole: 'caption' as const,
       sectionHeaderStyle: {
         height: metrics.groupHeader,
-        justifyContent: 'center',
+        justifyContent: 'center' as const,
         paddingHorizontal: TABLE.insetStart,
         backgroundColor: theme.colors.elevatedSurface,
         borderBottomWidth: 1,
