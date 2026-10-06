@@ -20,14 +20,21 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { auth } from "@/app/auth/auth";
-import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { getOrCreateServerIdentityId, initializeServerIdentityCache } from "@/app/serverIdentity/serverIdentity";
 import {
     resetHomeConnectionDescriptorRevisionOwnerForTests,
 } from "@/app/features/homeConnectionDescriptorPublication";
 import type {
     HomeConnectionDescriptorContinuityStore,
 } from "@/app/features/homeConnectionDescriptorContinuity";
+import {
+    createHomeConnectionDescriptorContinuityStoreForServer,
+    createSimpleCacheHomeConnectionDescriptorContinuityStore,
+    createHomeConnectionDescriptorContentKey,
+    HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY,
+} from "@/app/features/homeConnectionDescriptorContinuity";
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -93,6 +100,7 @@ describe("API auth-token composition (integration)", () => {
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-api-auth-composition-",
+            sqliteConnectionLimit: 1,
             initAuth: true,
             initEncrypt: true,
             env: {
@@ -100,6 +108,7 @@ describe("API auth-token composition (integration)", () => {
                 AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
             },
         });
+        await initializeServerIdentityCache(process.env);
     }, 120_000);
 
     afterEach(async () => {
@@ -110,6 +119,7 @@ describe("API auth-token composition (integration)", () => {
         await db.accountIdentity.deleteMany();
         await db.accountDirectoryLink.deleteMany();
         await db.account.deleteMany();
+        await db.simpleCache.deleteMany({ where: { key: HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY } });
     });
 
     afterAll(async () => {
@@ -413,7 +423,7 @@ describe("API auth-token composition (integration)", () => {
         }
     });
 
-    it("redeems an Account Service assertion into an evidence-free ordinary Home credential", async () => {
+    it.each(["default", "file", "database"] as const)("redeems an Account Service assertion with %s continuity on single-connection SQLite", async (continuity) => {
         const canonicalServerUrl = "https://home-assertion-credential.example.test";
         harness.resetEnv({
             HAPPIER_CANONICAL_SERVER_URL: canonicalServerUrl,
@@ -422,7 +432,8 @@ describe("API auth-token composition (integration)", () => {
         });
         resetHomeConnectionDescriptorRevisionOwnerForTests();
 
-        const homeServerIdentityId = await getOrCreateServerIdentityId(process.env);
+        const homeServerIdentityId = await initializeServerIdentityCache(process.env);
+        if (!homeServerIdentityId) throw new Error("Home identity was not initialized");
         const descriptor = {
             v: 1 as const,
             homeServerIdentityId,
@@ -472,7 +483,13 @@ describe("API auth-token composition (integration)", () => {
                 "base64url",
             ),
         };
-        const app = createProductionCompositionApp();
+        // Exercise the production API resolver as well as the route's default resolver.
+        // The database store is the same owner used by PostgreSQL/MySQL deployments.
+        const app = createProductionCompositionApp(continuity === "default" ? {} : {
+            homeConnectionDescriptorContinuityStore: continuity === "file"
+                ? createHomeConnectionDescriptorContinuityStoreForServer(process.env)
+                : createSimpleCacheHomeConnectionDescriptorContinuityStore(),
+        });
 
         try {
             await app.ready();
@@ -482,7 +499,7 @@ describe("API auth-token composition (integration)", () => {
                 payload: { v: 1, assertion },
             });
 
-            expect(response.statusCode).toBe(200);
+            expect(response.statusCode, response.body).toBe(200);
             const body = response.json() as { sealedHomeTokenBase64Url: string };
             const opened = openBoxBundle({
                 bundle: decodeBase64(body.sealedHomeTokenBase64Url, "base64url"),
@@ -502,6 +519,32 @@ describe("API auth-token composition (integration)", () => {
         }
     });
 
+    it("commits database descriptor continuity through an existing transaction", async () => {
+        const store = createSimpleCacheHomeConnectionDescriptorContinuityStore();
+        const predecessor = {
+            revision: 1,
+            contentKey: createHomeConnectionDescriptorContentKey({
+                homeServerIdentityId: "srv_home_continuity",
+                canonicalServerUrl: "https://home.example.test",
+                endpoints: [{ kind: "https", url: "https://home.example.test" }],
+            }),
+        };
+        const successor = {
+            revision: 2,
+            contentKey: createHomeConnectionDescriptorContentKey({
+                homeServerIdentityId: "srv_home_continuity",
+                canonicalServerUrl: "https://home.example.test",
+                endpoints: [{ kind: "https", url: "https://new-home.example.test" }],
+            }),
+        };
+        await inTx(async (tx) => {
+            await expect(store.write(predecessor, tx)).resolves.toMatchObject({ status: "committed" });
+            await expect(store.read(tx)).resolves.toEqual(predecessor);
+            await expect(store.write(successor, tx)).resolves.toMatchObject({ status: "committed" });
+        });
+        await expect(store.read()).resolves.toEqual(successor);
+    });
+
     it("uses the lifecycle-selected descriptor continuity owner for Home-login redemption", async () => {
         const canonicalServerUrl = "https://home-descriptor-owner.example.test";
         harness.resetEnv({
@@ -511,7 +554,8 @@ describe("API auth-token composition (integration)", () => {
         });
         resetHomeConnectionDescriptorRevisionOwnerForTests();
 
-        const homeServerIdentityId = await getOrCreateServerIdentityId(process.env);
+        const homeServerIdentityId = await initializeServerIdentityCache(process.env);
+        if (!homeServerIdentityId) throw new Error("Home identity was not initialized");
         const descriptor = {
             v: 1 as const,
             homeServerIdentityId,

@@ -1,5 +1,5 @@
 import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 
 export async function writeToSimpleCache(key: string, value: string) {
@@ -10,8 +10,8 @@ export async function writeToSimpleCache(key: string, value: string) {
     });
 }
 
-export async function readFromSimpleCache(key: string): Promise<string | null> {
-    const cache = await db.simpleCache.findFirst({
+export async function readFromSimpleCache(key: string, reader: Pick<Tx, "simpleCache"> = db): Promise<string | null> {
+    const cache = await reader.simpleCache.findFirst({
         where: { key }
     });
     return cache?.value ?? null;
@@ -24,23 +24,31 @@ export async function compareAndSetSimpleCache(
     nextValue: string,
 ): Promise<boolean> {
     try {
-        return await inTx(async (tx) => {
-            if (expectedValue === null) {
-                const existing = await tx.simpleCache.findUnique({ where: { key }, select: { key: true } });
-                if (existing) return false;
-                await tx.simpleCache.create({ data: { key, value: nextValue } });
-                return true;
-            }
-            const updated = await tx.simpleCache.updateMany({
-                where: { key, value: expectedValue },
-                data: { value: nextValue },
-            });
-            return updated.count === 1;
-        });
+        return await inTx((tx) => compareAndSetSimpleCacheInTx(tx, key, expectedValue, nextValue));
     } catch (error) {
         if (expectedValue === null && isPrismaErrorCode(error, "P2002")) return false;
         throw error;
     }
+}
+
+/** The same compare-and-set using the caller's existing transaction. */
+export async function compareAndSetSimpleCacheInTx(
+    tx: Tx,
+    key: string,
+    expectedValue: string | null,
+    nextValue: string,
+): Promise<boolean> {
+    if (expectedValue === null) {
+        const existing = await tx.simpleCache.findUnique({ where: { key }, select: { key: true } });
+        if (existing) return false;
+        await tx.simpleCache.create({ data: { key, value: nextValue } });
+        return true;
+    }
+    const updated = await tx.simpleCache.updateMany({
+        where: { key, value: expectedValue },
+        data: { value: nextValue },
+    });
+    return updated.count === 1;
 }
 
 export async function runCachedBoolean(key: string, execute: () => Promise<boolean>): Promise<boolean> {

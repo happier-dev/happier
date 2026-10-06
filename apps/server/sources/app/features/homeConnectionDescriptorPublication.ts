@@ -19,6 +19,7 @@ import {
     resolveConfiguredPublicServerUrl,
 } from "@/app/serverUrls/effectiveServerUrls";
 import { log } from "@/utils/logging/log";
+import type { Tx } from "@/storage/inTx";
 import {
     createHomeConnectionDescriptorContentKey,
     homeConnectionDescriptorContentKeyCarriesIroh,
@@ -282,9 +283,10 @@ export function resolveAuthenticatedHomeConnectionDescriptor(
 
 async function primeDescriptorContinuity(
     store: HomeConnectionDescriptorContinuityStore,
+    tx?: Tx,
 ): Promise<ContinuityPrime> {
     if (continuityPrime) return continuityPrime;
-    continuityPrimeInFlight ??= store.read()
+    continuityPrimeInFlight ??= store.read(tx)
         .then((persisted): ContinuityPrime => ({ status: "ready", persisted }))
         .catch((error): ContinuityPrime => {
             log(
@@ -325,6 +327,7 @@ export async function readHomeConnectionDescriptor(params: Readonly<{
     env?: NodeJS.ProcessEnv;
     continuityStore: HomeConnectionDescriptorContinuityStore;
     visibility: HomeConnectionDescriptorVisibility;
+    tx?: Tx;
     /** Narrow injected Iroh lifecycle boundary; production reads the live owner. */
     resolveIrohEndpointState?: () => HomeIrohEndpointState | Promise<HomeIrohEndpointState>;
 }>): Promise<HomeConnectionDescriptorV1 | undefined> {
@@ -416,6 +419,7 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
 export async function readRequiredAuthenticatedHomeConnectionDescriptor(params: Readonly<{
     env?: NodeJS.ProcessEnv;
     continuityStore: HomeConnectionDescriptorContinuityStore;
+    tx?: Tx;
     resolveIrohEndpointState?: () => HomeIrohEndpointState | Promise<HomeIrohEndpointState>;
 }>): Promise<HomeConnectionDescriptorV1 | undefined> {
     const turn = publicationTransactionChain.then(async () => {
@@ -474,6 +478,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
     env?: NodeJS.ProcessEnv;
     continuityStore: HomeConnectionDescriptorContinuityStore;
     visibility: HomeConnectionDescriptorVisibility;
+    tx?: Tx;
     resolveIrohEndpointState?: () => HomeIrohEndpointState | Promise<HomeIrohEndpointState>;
     publicationIdentity?: Readonly<{ homeServerIdentityId: string; canonicalServerUrl: string }>;
     minimumOuterRevisionExclusive?: number;
@@ -481,7 +486,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
     const env = params.env ?? process.env;
     const [iroh, prime] = await Promise.all([
         params.resolveIrohEndpointState ? params.resolveIrohEndpointState() : getHomeIrohEndpointState(),
-        primeDescriptorContinuity(params.continuityStore),
+        primeDescriptorContinuity(params.continuityStore, params.tx),
     ]);
     if (prime.status !== "ready") {
         if (required) throw new HomeConnectionDescriptorPublicationUnavailableError();
@@ -521,7 +526,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
     if (composed && candidateOwner) {
         try {
             if (supersededLocalCandidate?.contentKey === candidateOwner.contentKey) {
-                const current = await params.continuityStore.read();
+                const current = await params.continuityStore.read(params.tx);
                 if (!current) {
                     if (required) throw new HomeConnectionDescriptorPublicationUnavailableError();
                     return undefined;
@@ -548,7 +553,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
                     params.visibility,
                 );
             }
-            const result = await params.continuityStore.write(candidateOwner);
+            const result = await params.continuityStore.write(candidateOwner, params.tx);
             continuityPrime = { status: "ready", persisted: result.continuity };
             if (result.status === "superseded" && result.continuity.contentKey !== candidateOwner.contentKey) {
                 revisionOwner = result.continuity;

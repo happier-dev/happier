@@ -638,12 +638,12 @@ function validateAssertionAgainstLink(
     if (signatureStatus !== "ok") throw new AccountDirectoryError("invalid_assertion");
 }
 
-export type HomeConnectionDescriptorResolver = () => Promise<HomeConnectionDescriptorV1 | undefined>;
+export type HomeConnectionDescriptorResolver = (tx?: Tx) => Promise<HomeConnectionDescriptorV1 | undefined>;
 
 function createCurrentHomeConnectionDescriptorResolver(
     env: NodeJS.ProcessEnv,
 ): HomeConnectionDescriptorResolver {
-    return async () => {
+    return async (tx) => {
         // The canonical descriptor publication binds to the server identity
         // primed once at startup. Establish it through the canonical owner so
         // the dual-role classification cannot collapse the recoverable
@@ -652,12 +652,13 @@ function createCurrentHomeConnectionDescriptorResolver(
         // sequence. No-op wherever startup already primed the cache; a
         // storage-less environment still fails soft to null and stays
         // classified not-dual-role.
-        await initializeServerIdentityCache(env);
+        if (!tx) await initializeServerIdentityCache(env);
         const continuityStore = createHomeConnectionDescriptorContinuityStoreForServer(env);
         if (!continuityStore) return undefined;
         return readRequiredAuthenticatedHomeConnectionDescriptor({
             env,
             continuityStore,
+            tx,
         });
     };
 }
@@ -665,10 +666,11 @@ function createCurrentHomeConnectionDescriptorResolver(
 async function validateCredentialDestination(
     assertion: HomeLoginAssertionV1,
     resolveHomeConnectionDescriptor: HomeConnectionDescriptorResolver,
+    tx?: Tx,
 ): Promise<void> {
     let descriptor: HomeConnectionDescriptorV1 | undefined;
     try {
-        descriptor = await resolveHomeConnectionDescriptor();
+        descriptor = await resolveHomeConnectionDescriptor(tx);
     } catch {
         throw new AccountDirectoryError(
             "home_redemption_unavailable",
@@ -829,7 +831,7 @@ export async function redeemHomeLoginAssertion(params: Readonly<{
         // digest. Re-read the canonical Home owner after every transactional
         // trust check and immediately before issuance, so a destination change
         // while approval was pending cannot produce a usable Home credential.
-        await validateCredentialDestination(assertion, resolveHomeConnectionDescriptor);
+        await validateCredentialDestination(assertion, resolveHomeConnectionDescriptor, tx);
         if (params.nowMs === undefined) {
             const issuanceBoundaryNowMs = Date.now();
             if (assertion.expiresAtMs <= issuanceBoundaryNowMs) {

@@ -11,7 +11,8 @@ import {
     IrohEndpointIdV1Schema,
     type HomeConnectionEndpointV1,
 } from '@happier-dev/protocol';
-import { compareAndSetSimpleCache, readFromSimpleCache } from '@/storage/cache/simpleCache';
+import { compareAndSetSimpleCache, compareAndSetSimpleCacheInTx, readFromSimpleCache } from '@/storage/cache/simpleCache';
+import type { Tx } from '@/storage/inTx';
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
 
 export type HomeConnectionDescriptorContinuity = Readonly<{
@@ -22,8 +23,8 @@ export type HomeConnectionDescriptorContinuity = Readonly<{
 }>;
 
 export type HomeConnectionDescriptorContinuityStore = Readonly<{
-    read: () => Promise<HomeConnectionDescriptorContinuity | null>;
-    write: (continuity: HomeConnectionDescriptorContinuity) => Promise<HomeConnectionDescriptorContinuityWriteResult>;
+    read: (tx?: Tx) => Promise<HomeConnectionDescriptorContinuity | null>;
+    write: (continuity: HomeConnectionDescriptorContinuity, tx?: Tx) => Promise<HomeConnectionDescriptorContinuityWriteResult>;
 }>;
 
 export type HomeConnectionDescriptorContinuityWriteResult = Readonly<{
@@ -53,13 +54,15 @@ export function resolveHomeConnectionDescriptorContinuityPath(irohEndpointKeyPat
  * without fabricating Personal Home filesystem state.
  */
 type HomeConnectionDescriptorContinuityStoreDependencies = Readonly<{
-    readSimpleCache: (key: string) => Promise<string | null>;
-    compareAndSetSimpleCache: (key: string, expectedValue: string | null, nextValue: string) => Promise<boolean>;
+    readSimpleCache: (key: string, tx?: Tx) => Promise<string | null>;
+    compareAndSetSimpleCache: (key: string, expectedValue: string | null, nextValue: string, tx?: Tx) => Promise<boolean>;
 }>;
 
 const defaultStoreDependencies: HomeConnectionDescriptorContinuityStoreDependencies = {
-    readSimpleCache: readFromSimpleCache,
-    compareAndSetSimpleCache,
+    readSimpleCache: (key, tx) => readFromSimpleCache(key, tx),
+    compareAndSetSimpleCache: (key, expectedValue, nextValue, tx) => tx
+        ? compareAndSetSimpleCacheInTx(tx, key, expectedValue, nextValue)
+        : compareAndSetSimpleCache(key, expectedValue, nextValue),
 };
 
 export function createHomeConnectionDescriptorContinuityStoreForServer(
@@ -222,15 +225,15 @@ export function createSimpleCacheHomeConnectionDescriptorContinuityStore(
     dependencies: HomeConnectionDescriptorContinuityStoreDependencies = defaultStoreDependencies,
 ): HomeConnectionDescriptorContinuityStore {
     return {
-        read: async () => {
-            const raw = await dependencies.readSimpleCache(HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY);
+        read: async (tx) => {
+            const raw = await dependencies.readSimpleCache(HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY, tx);
             return raw === null ? null : parseSerializedContinuity(raw);
         },
-        write: async (continuity) => {
+        write: async (continuity, tx) => {
             const normalized = parseHomeConnectionDescriptorContinuity(continuity);
             const nextValue = serializeContinuity(normalized);
             while (true) {
-                const observedRaw = await dependencies.readSimpleCache(HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY);
+                const observedRaw = await dependencies.readSimpleCache(HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY, tx);
                 const observed = observedRaw === null ? null : parseSerializedContinuity(observedRaw);
                 if (observed) {
                     const sameGenerationResult = resolveSameGenerationResult(observed, normalized);
@@ -240,6 +243,7 @@ export function createSimpleCacheHomeConnectionDescriptorContinuityStore(
                             HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY,
                             observedRaw,
                             serializeContinuity(sameGenerationResult.continuity),
+                            tx,
                         )) {
                             return sameGenerationResult;
                         }
@@ -255,6 +259,7 @@ export function createSimpleCacheHomeConnectionDescriptorContinuityStore(
                     HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY,
                     observedRaw,
                     nextValue,
+                    tx,
                 )) {
                     return { status: 'committed', continuity: normalized };
                 }
