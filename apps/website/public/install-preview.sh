@@ -2478,18 +2478,20 @@ ensure_minisign() {
   local os="$(detect_os)"
   local asset=""
   local expected_sha=""
-  local url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
 
   if [[ "${os}" == "linux" ]]; then
     asset="minisign-${minisign_version}-linux.tar.gz"
     expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
   elif [[ "${os}" == "darwin" ]]; then
+    # 0.12's macOS binary is arm64-only; 0.11 is universal (x86_64 + arm64).
+    minisign_version="0.11"
     asset="minisign-${minisign_version}-macos.zip"
-    expected_sha="89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63"
+    expected_sha="e7c410ae8b8960d7087392472b040bda9b2f307c76df0384ac37f9ad103fc893"
   else
     return 1
   fi
 
+  local url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
   local archive_path="${TMP_DIR}/${asset}"
   curl -fsSL "${url_base}/${asset}" -o "${archive_path}"
   local actual_sha
@@ -2863,11 +2865,11 @@ PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 stage_release_asset "Downloading minisign signature" "${SIG_PATH}" "${SIG_SOURCE}"
 
-installer_phase "Verify"
+section "Verify"
 run_installer_step "Verifying archive checksum" verify_archive_checksum
 run_installer_step "Verifying release signature" verify_release_signature
 
-installer_phase "Install"
+section "Install"
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
 run_installer_step "Extracting payload" tar_extract_gz "${ARCHIVE_PATH}" "${EXTRACT_DIR}"
