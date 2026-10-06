@@ -7,11 +7,15 @@ import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './reviewAndConverge.js';
 export { WORKFLOW_STARTER_EXAMPLE_KEYS_V1, WORKFLOW_STARTER_EXAMPLES_V1, getWorkflowStarterExamplesV1,
   type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from './examples.js';
 
+/** What a built-in is for, as its row's mark says it (lab `nav-N1`); hosts map it to their own glyph. */
+export type BuiltinWorkflowPurposeV1 = 'goal' | 'review' | 'plan' | 'pull_request';
+
 type CatalogEntryFieldsV1 = Readonly<{
   id: `builtin:${string}`;
   version: number;
   titleKey: string;
   descriptionKey: string;
+  purpose: BuiltinWorkflowPurposeV1;
   requiresOriginSession: boolean;
   definition: WorkflowDefinitionV1;
 }>;
@@ -20,19 +24,19 @@ type CatalogEntryFieldsV1 = Readonly<{
 export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
   { id: 'builtin:keep-going', version: 1,
     titleKey: 'workflows.builtins.keepGoing.title',
-    descriptionKey: 'workflows.builtins.runsInsideSession', requiresOriginSession: true,
+    descriptionKey: 'workflows.builtins.runsInsideSession', purpose: 'goal', requiresOriginSession: true,
     definition: KEEP_GOING_WORKFLOW_V1 },
   { id: 'builtin:review-and-converge', version: 1,
     titleKey: 'workflows.builtins.reviewAndConverge.title',
-    descriptionKey: 'workflows.builtins.runsInsideSession', requiresOriginSession: true,
+    descriptionKey: 'workflows.builtins.runsInsideSession', purpose: 'review', requiresOriginSession: true,
     definition: REVIEW_AND_CONVERGE_WORKFLOW_V1 },
   { id: 'builtin:plan-with-a-panel', version: 1,
     titleKey: 'workflows.builtins.planWithAPanel.title',
-    descriptionKey: 'workflows.builtins.planWithAPanel.description', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.planWithAPanel.description', purpose: 'plan', requiresOriginSession: false,
     definition: PLAN_WITH_A_PANEL_WORKFLOW_V1 },
   { id: 'builtin:open-a-pull-request', version: 1,
     titleKey: 'workflows.builtins.openAPullRequest.title',
-    descriptionKey: 'workflows.builtins.openAPullRequest.description', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.openAPullRequest.description', purpose: 'pull_request', requiresOriginSession: false,
     definition: OPEN_A_PULL_REQUEST_WORKFLOW_V1 },
 ] satisfies readonly CatalogEntryFieldsV1[]);
 
