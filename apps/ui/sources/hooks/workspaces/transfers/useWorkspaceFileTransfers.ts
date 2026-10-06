@@ -562,6 +562,12 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         const setCurrentDownloadState: typeof setDownloadState = (next) => {
             if (isCurrentDownload()) setDownloadState(next);
         };
+        const beginNativeHandoff = () => {
+            // The OS owns the action after handoff; app cancellation cannot
+            // stop its copy, dismiss its share sheet, or retract a granted URI.
+            operation.cancelable = false;
+            setCurrentDownloadState(prev => prev.status === 'downloading' ? { ...prev, cancelable: false } : prev);
+        };
 
         let failureMessage: string | null = null;
         let keepNativeSink = false;
@@ -736,16 +742,13 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 webSinkCleanupScheduled = true;
                 downloadWebFile(file, res.name || 'download', cleanupWebSinkOnce);
             } else if (nativeSinkRef.current) {
-                if (Platform.OS === 'android') {
+                const action = input.action ?? 'save';
+                if (Platform.OS === 'android' && action !== 'share') {
                     const { performAndroidFileAction } = await import('@/sync/runtime/files/nativeFileActions');
                     if (!isCurrentDownload() || controller.signal.aborted) {
                         return { ok: false, error: 'Download canceled', canceled: true };
                     }
-                    // Once Android owns the picker/copy/intent, app cancellation
-                    // cannot retract that side effect. Report its actual result.
-                    operation.cancelable = false;
-                    setCurrentDownloadState(prev => prev.status === 'downloading' ? { ...prev, cancelable: false } : prev);
-                    const action = input.action ?? 'save';
+                    beginNativeHandoff();
                     const result = await performAndroidFileAction({ fileUri: nativeSinkRef.current.fileUri, name: res.name || 'download', action });
                     if (result.canceled) {
                         failureMessage = 'Download canceled';
@@ -753,8 +756,19 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         return { ok: false, error: 'Download canceled', canceled: true };
                     }
                     keepNativeSink = action !== 'save';
-                } else if (!await shareNativeCacheFile(nativeSinkRef.current.fileUri, undefined, () => isCurrentDownload() && !controller.signal.aborted)) {
-                    throw new Error(t('files.fileSharingUnavailable'));
+                } else {
+                    const shared = await shareNativeCacheFile({
+                        fileUri: nativeSinkRef.current.fileUri,
+                        name: res.name || 'download',
+                        isCurrent: () => isCurrentDownload() && !controller.signal.aborted,
+                        onHandoff: beginNativeHandoff,
+                    });
+                    if (shared.status === 'canceled') {
+                        setCurrentDownloadState({ status: 'canceled' });
+                        return { ok: false, error: 'Download canceled', canceled: true };
+                    }
+                    if (shared.status === 'unavailable') throw new Error(t('files.fileSharingUnavailable'));
+                    keepNativeSink = shared.retainCacheFile;
                 }
                 if (!keepNativeSink) await cleanupNativeSinkOnce();
             } else {

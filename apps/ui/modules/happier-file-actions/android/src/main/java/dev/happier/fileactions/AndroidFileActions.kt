@@ -82,10 +82,10 @@ internal object AndroidFileActions {
     }
   }
 
-  fun fileIntent(uri: Uri, name: String, share: Boolean): Intent = Intent(
+  fun fileIntent(uri: Uri, name: String, share: Boolean, explicitMimeType: String? = null): Intent = Intent(
     if (share) Intent.ACTION_SEND else Intent.ACTION_VIEW
   ).apply {
-    val mimeType = mimeType(name)
+    val mimeType = explicitMimeType ?: mimeType(name)
     if (share) {
       type = mimeType
       putExtra(Intent.EXTRA_STREAM, uri)

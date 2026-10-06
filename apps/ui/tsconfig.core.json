@@ -2795,7 +2795,6 @@
     "sources/sync/runtime/browserIroh/index.ts",
     "sources/sync/runtime/browserIroh/machineCarrierStream.ts",
     "sources/sync/runtime/connectivity/bindManagedConnectionStateToRealtimeStore.ts",
-    "sources/sync/runtime/files/nativeFileActions.ts",
     "sources/sync/runtime/getSyncSingleton.ts",
     "sources/sync/runtime/homeCarrierPolicy.ts",
     "sources/sync/runtime/nativeIrohTunnels/desktopLifecycle.ts",

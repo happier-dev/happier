@@ -6,16 +6,24 @@ describe('createNativeCacheFileSink', () => {
         vi.clearAllMocks();
     });
 
-    it('offers a local PDF to the native OS share/open boundary and reports unavailable sharing', async () => {
+    it('offers a local PDF to the iOS share sheet and reports unavailable sharing', async () => {
+        const { Platform } = await import('react-native');
+        const previous = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         const shareAsync = vi.fn(async () => {});
         let available = true;
         vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => available, shareAsync }));
-        const { shareNativeCacheFile } = await import('./nativeCacheFileSink');
-        await expect(shareNativeCacheFile('file:///cache/document.pdf', 'application/pdf')).resolves.toBe(true);
-        expect(shareAsync).toHaveBeenCalledWith('file:///cache/document.pdf', { mimeType: 'application/pdf' });
-        available = false;
-        await expect(shareNativeCacheFile('file:///cache/document.pdf', 'application/pdf')).resolves.toBe(false);
-        expect(shareAsync).toHaveBeenCalledTimes(1);
+        try {
+            const { shareNativeCacheFile } = await import('./nativeCacheFileSink');
+            const input = { fileUri: 'file:///cache/document.pdf', name: 'document.pdf', mimeType: 'application/pdf' };
+            await expect(shareNativeCacheFile(input)).resolves.toEqual({ status: 'shared', retainCacheFile: false });
+            expect(shareAsync).toHaveBeenCalledWith(input.fileUri, { mimeType: 'application/pdf' });
+            available = false;
+            await expect(shareNativeCacheFile(input)).resolves.toEqual({ status: 'unavailable' });
+            expect(shareAsync).toHaveBeenCalledTimes(1);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
+        }
     });
 
     it('surfaces exact cache-file removal failures and accepts a later confirmed absence', async () => {

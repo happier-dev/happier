@@ -1,4 +1,5 @@
 import { log } from '@/log';
+import { Platform } from 'react-native';
 import { randomUUID } from '@/platform/randomUUID';
 import { MAX_CACHE_FILE_NAME_BYTES, sanitizeFileUriSegment } from './fileUriPath';
 
@@ -36,12 +37,37 @@ export type NativeCacheFileSink = Readonly<{
     cleanup: () => Promise<void>;
 }>;
 
-/** The existing native downloaded-file handoff. False means no OS action is available. */
-export async function shareNativeCacheFile(fileUri: string, mimeType?: string, isCurrent: () => boolean = () => true): Promise<boolean> {
+export type NativeCacheFileShareResult =
+    | Readonly<{ status: 'shared'; retainCacheFile: boolean }>
+    | Readonly<{ status: 'unavailable' }>
+    | Readonly<{ status: 'canceled' }>;
+
+/** Shares through the platform owner and reports whether the recipient still owns reads. */
+export async function shareNativeCacheFile(input: Readonly<{
+    fileUri: string;
+    name: string;
+    mimeType?: string;
+    isCurrent?: () => boolean;
+    onHandoff?: () => void;
+}>): Promise<NativeCacheFileShareResult> {
+    const isCurrent = input.isCurrent ?? (() => true);
+    if (Platform.OS === 'android') {
+        const { performAndroidFileAction } = await import('./nativeFileActions');
+        if (!isCurrent()) return { status: 'canceled' };
+        input.onHandoff?.();
+        await performAndroidFileAction({ fileUri: input.fileUri, name: input.name, action: 'share', mimeType: input.mimeType });
+        // Android chooser completion does not prove the recipient finished reading.
+        return { status: 'shared', retainCacheFile: true };
+    }
     const sharing = await import('expo-sharing');
-    if (!isCurrent() || !await sharing.isAvailableAsync() || !isCurrent()) return false;
-    await sharing.shareAsync(fileUri, mimeType ? { mimeType } : undefined);
-    return true;
+    if (!isCurrent()) return { status: 'canceled' };
+    const available = await sharing.isAvailableAsync();
+    if (!isCurrent()) return { status: 'canceled' };
+    if (!available) return { status: 'unavailable' };
+    input.onHandoff?.();
+    await sharing.shareAsync(input.fileUri, input.mimeType ? { mimeType: input.mimeType } : undefined);
+    // Expo iOS settles from UIActivityViewController's completion handler.
+    return { status: 'shared', retainCacheFile: false };
 }
 
 /** Removes one exact cache file after its creating component/process-local closure is gone. */

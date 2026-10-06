@@ -9,13 +9,13 @@ const fs = vi.hoisted(async () => {
     const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
     return createExpoFileSystemFileMock();
 });
-const actions = vi.hoisted(() => ({ saveFile: vi.fn(), openFile: vi.fn(), shareFile: vi.fn(), iosShare: vi.fn() }));
+const actions = vi.hoisted(() => ({ saveFile: vi.fn(), openFile: vi.fn(), shareFile: vi.fn(), iosShare: vi.fn(), iosAvailable: vi.fn() }));
 vi.mock('expo-file-system', async () => (await fs).module);
 vi.mock('expo-modules-core', async importOriginal => ({
     ...await importOriginal<typeof import('expo-modules-core')>(),
     requireOptionalNativeModule: (name: string) => name === 'HappierFileActions' ? actions : null,
 }));
-vi.mock('expo-sharing', () => ({ isAvailableAsync: async () => true, shareAsync: actions.iosShare }));
+vi.mock('expo-sharing', () => ({ isAvailableAsync: actions.iosAvailable, shareAsync: actions.iosShare }));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: key => key });
@@ -34,6 +34,7 @@ describe('workspace file native download actions through the prepared carrier', 
         actions.openFile.mockResolvedValue(undefined);
         actions.shareFile.mockResolvedValue(undefined);
         actions.iosShare.mockResolvedValue(undefined);
+        actions.iosAvailable.mockReset().mockResolvedValue(true);
         harness = await createWorkspaceFileDownloadHarness({ name: 'recording.mp4' });
     });
     afterEach(async () => {
@@ -158,6 +159,61 @@ describe('workspace file native download actions through the prepared carrier', 
             expect(await transfers.api().startDownload({ path: 'recording.mp4', asZip: false })).toEqual({ ok: true });
         });
         expect(actions.saveFile).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['cancel', 'success'], ['cancel', 'failure'], ['unmount', 'success'], ['unmount', 'failure'],
+    ] as const)('reports the iOS share result after %s during a pending %s handoff', async (interruption, outcome) => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        actions.iosShare.mockImplementationOnce(async () => {
+            entered.resolve();
+            await release.promise;
+            if (outcome === 'failure') throw new Error('Share sheet failed');
+        });
+        const transfers = await renderTransfers();
+        let pending: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']> | undefined;
+        await act(async () => {
+            pending = transfers.api().startDownload({ path: 'recording.mp4', asZip: false });
+            await entered.promise;
+        });
+        const handoffState = transfers.api().downloadState;
+        const uri = actions.iosShare.mock.calls[0]?.[0];
+        expect((await fs).files.get(uri)).toEqual([1, 2, 3]);
+        if (interruption === 'unmount') await transfers.screen.unmount();
+        await act(async () => {
+            if (interruption === 'cancel') transfers.api().cancelDownload();
+            release.resolve();
+            await expect(pending).resolves.toEqual(outcome === 'success' ? { ok: true } : { ok: false, error: 'Share sheet failed' });
+        });
+        expect(handoffState).toMatchObject({ status: 'downloading', cancelable: false });
+        expect((await fs).files.size).toBe(0);
+    });
+
+    it.each(['cancel', 'unmount'] as const)('stops before iOS handoff after %s while availability is pending', async interruption => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        actions.iosAvailable.mockImplementationOnce(async () => {
+            entered.resolve();
+            await release.promise;
+            return true;
+        });
+        const transfers = await renderTransfers();
+        let pending: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']> | undefined;
+        await act(async () => {
+            pending = transfers.api().startDownload({ path: 'recording.mp4', asZip: false });
+            await entered.promise;
+        });
+        if (interruption === 'unmount') await transfers.screen.unmount();
+        await act(async () => {
+            if (interruption === 'cancel') transfers.api().cancelDownload();
+            release.resolve();
+            await expect(pending).resolves.toMatchObject({ ok: false, canceled: true });
+        });
+        expect(actions.iosShare).not.toHaveBeenCalled();
+        expect((await fs).files.size).toBe(0);
     });
 
     it('reports an iOS sharing rejection and releases its cache', async () => {

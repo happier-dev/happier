@@ -56,16 +56,16 @@ class HappierFileActionsModule : Module() {
       launchFileIntent(fileUri, name, share = false)
     }.runOnQueue(Queues.MAIN)
 
-    AsyncFunction("shareFile") { fileUri: String, name: String ->
-      launchFileIntent(fileUri, name, share = true)
+    AsyncFunction("shareFile") { fileUri: String, name: String, mimeType: String? ->
+      launchFileIntent(fileUri, name, share = true, explicitMimeType = mimeType)
     }.runOnQueue(Queues.MAIN)
   }
 
-  private fun launchFileIntent(fileUri: String, name: String, share: Boolean) {
+  private fun launchFileIntent(fileUri: String, name: String, share: Boolean, explicitMimeType: String? = null) {
     val context = requireNotNull(appContext.reactContext) { "App context is unavailable" }
     val file = AndroidFileActions.checkedDownloadFile(context, fileUri)
     val uri = AndroidFileActions.contentUri(context, file, name)
-    val intent = AndroidFileActions.fileIntent(uri, name, share)
+    val intent = AndroidFileActions.fileIntent(uri, name, share, explicitMimeType)
     val chooser = Intent.createChooser(intent, null).apply {
       clipData = intent.clipData
       addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
