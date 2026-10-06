@@ -1,7 +1,7 @@
 import {
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListItemSchema,
-    AutomationRunResultStoredV1Schema,
+    parseAutomationRunResultStoredEnvelopeV1,
     AutomationV3RunDetailSchema,
     AutomationV3RunListItemSchema,
     createCanonicalJsonSigningInput,
@@ -292,12 +292,11 @@ function projectRunEvents(events: readonly AutomationRunEventRow[] | undefined):
 
 function storedResultDetail(raw: string | null, mode: "plain" | "e2ee") {
     if (raw === null) return { resultEnvelope: null, legacySummaryCiphertext: null };
-    const parsedRaw = parseStoredContentEnvelope(raw);
-    const parsed = AutomationRunResultStoredV1Schema.safeParse(parsedRaw);
-    if (!parsed.success) throw new AutomationStoredContentReadError("contentInvalid");
-    const outer = validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1({ content: "result", mode, envelope: parsedRaw });
+    const parsed = parseAutomationRunResultStoredEnvelopeV1(raw);
+    if (parsed === null) throw new AutomationStoredContentReadError("contentInvalid");
+    const outer = validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1({ content: "result", mode, envelope: parsed });
     if (outer.kind === "legacyUnsupported") {
-        return { resultEnvelope: null, legacySummaryCiphertext: parsed.data.t === "legacySummaryCiphertext" ? parsed.data.c : null };
+        return { resultEnvelope: null, legacySummaryCiphertext: parsed.t === "legacySummaryCiphertext" ? parsed.c : null };
     }
     if (outer.kind !== "available") throw new AutomationStoredContentReadError(outer.kind === "modeMismatch" ? "modeMismatch" : "contentInvalid");
     return { resultEnvelope: raw, legacySummaryCiphertext: null };

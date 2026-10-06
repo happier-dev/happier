@@ -9,6 +9,8 @@ import type {
 import type { Tx } from "@/storage/inTx";
 import { resolveArtifactAccessInTx, resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
 import { resolveTeamMembershipContextInTx } from "@/app/teams/memberships/effectiveMembership";
+import { readTeamSummaryForActorInTx } from "@/app/teams/lifecycle";
+import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { acquireAccountEncryptionTransitionFenceInTx, deriveAccountEncryptionMigrationKeyFingerprints } from "@/app/encryption/accountEncryptionTransition";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -85,16 +87,24 @@ export async function resolveWorkflowRunAccessInTx(tx: Tx, input: Readonly<{ act
     return row ? accessFromFactsInTx(tx, row, input.actorAccountId) : null;
 }
 
-/** A Team-shared source cannot opt out; several Teams require the caller's choice. */
+/** Only viewable granted Teams are eligible; several require the caller's choice. */
 export async function resolveWorkflowRunAdmissionVisibilityInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; sourceArtifactId: string | null; visibleTeamId?: string | null;
+    authentication?: TeamOperationAuthenticationContext;
 }>): Promise<string | null> {
     if (input.sourceArtifactId && !await resolveArtifactAccessInTx(tx, { actorAccountId: input.actorAccountId, artifactId: input.sourceArtifactId })) {
         throw new WorkflowRunAccessError("run_not_found");
     }
     const grants = input.sourceArtifactId
         ? await tx.artifactTeamGrant.findMany({ where: { artifactId: input.sourceArtifactId }, select: { teamId: true } }) : [];
-    const visibility = resolveWorkflowRunVisibleTeamV1(grants.map(grant => grant.teamId), input.visibleTeamId);
+    const viewableTeamIds: string[] = [];
+    for (const grant of grants) {
+        const result = await readTeamSummaryForActorInTx(tx, { teamId: grant.teamId, actorAccountId: input.actorAccountId,
+            authentication: input.authentication });
+        if (result.ok) viewableTeamIds.push(grant.teamId);
+        else if (result.error !== "team_not_found") throw new WorkflowRunAccessError("run_access_denied");
+    }
+    const visibility = resolveWorkflowRunVisibleTeamV1(viewableTeamIds, input.visibleTeamId);
     if (!visibility.ok) throw new WorkflowRunAccessError(visibility.code);
     return visibility.visibleTeamId;
 }
@@ -161,12 +171,15 @@ export async function readWorkflowRunKeyProjectionInTx(tx: Tx, input: Readonly<{
 }
 
 /** Before first sealing, the starter can census the chosen saved-source audience. */
-export async function readWorkflowRunRecipientCensusInTx(tx: Tx, input: WorkflowRunRecipientCensusInputV1 & { actorAccountId: string }): Promise<WorkflowRunRecipientCensusResponseV1> {
+export async function readWorkflowRunRecipientCensusInTx(tx: Tx, input: WorkflowRunRecipientCensusInputV1 & {
+    actorAccountId: string; authentication?: TeamOperationAuthenticationContext;
+}): Promise<WorkflowRunRecipientCensusResponseV1> {
     const row = await readRunFactsInTx(tx, input.runId);
     if (row && row.workflowAcceptedSnapshotEnvelope !== null) return readWorkflowRunKeyProjectionInTx(tx, input);
     if (row && row.accountId !== input.actorAccountId) throw new WorkflowRunAccessError("run_not_found");
     const sourceArtifactId = input.sourceArtifactId ?? null;
-    const visibleTeamId = await resolveWorkflowRunAdmissionVisibilityInTx(tx, { actorAccountId: input.actorAccountId, sourceArtifactId, visibleTeamId: input.visibleTeamId });
+    const visibleTeamId = await resolveWorkflowRunAdmissionVisibilityInTx(tx, { actorAccountId: input.actorAccountId, sourceArtifactId,
+        visibleTeamId: input.visibleTeamId, authentication: input.authentication });
     const account = await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { encryptionMode: true } });
     if (!account) throw new WorkflowRunAccessError("run_not_found");
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(account);

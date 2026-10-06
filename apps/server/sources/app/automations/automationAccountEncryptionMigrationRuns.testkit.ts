@@ -358,7 +358,11 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
                 evidence: { eventRef: event.eventRef, sourceSelectorId },
             })),
             occurrenceEvidenceEqualityTag: null,
-            triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: event }),
+            triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {
+                ...event,
+                retainedExtension: true,
+                eventRef: { ...event.eventRef, retainedExtension: true },
+            } }),
             executionInputEnvelope: strictExecutionInput({
                 templateVersion: eventAutomation.templateVersion,
                 prompt: "migrate Event Run",
@@ -411,7 +415,11 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
                 occurredAt: conversation.occurredAt,
             }),
             occurrenceEvidenceEqualityTag: null,
-            triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: conversation }),
+            triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {
+                ...conversation,
+                retainedExtension: true,
+                caller: { ...conversation.caller, retainedExtension: true },
+            } }),
             executionInputEnvelope: strictExecutionInput({
                 templateVersion: conversationAutomation.templateVersion,
                 prompt: "migrate Conversation Run",
@@ -533,6 +541,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
             resultEnvelope: JSON.stringify({
                 t: "legacySummaryCiphertext",
                 c: "manual-predecessor-summary",
+                retainedExtension: true,
             }),
             summaryCiphertext: "manual-predecessor-summary",
             scheduledAt: new Date("2026-08-10T10:04:00.000Z"),

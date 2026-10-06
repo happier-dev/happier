@@ -1,6 +1,6 @@
 import {
     AutomationTriggerDefinitionBindingV1Schema,
-    AutomationStoredContentEnvelopeV1Schema,
+    AutomationStoredContentEnvelopeV1ReadSchema,
     validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1,
     normalizeAutomationTemplateEnvelopeStoredRead,
     parseAutomationRunExecutionRecipeV1,
@@ -120,7 +120,7 @@ export function assertAutomationTriggerDefinitionEnvelopeOuterForMode(params: {
 
 /**
  * The ciphertext-blind server boundary for generic Automation envelopes.
- * It validates JSON, the strict tagged outer shape, and Account mode without
+ * It validates known tagged outer fields and Account mode without
  * decrypting or interpreting the private inner payload.
  */
 export function validateAutomationStoredContentEnvelopeOuterForMode(params: {
@@ -133,7 +133,7 @@ export function validateAutomationStoredContentEnvelopeOuterForMode(params: {
     } catch {
         return { kind: "contentInvalid" };
     }
-    const parsed = AutomationStoredContentEnvelopeV1Schema.safeParse(raw);
+    const parsed = AutomationStoredContentEnvelopeV1ReadSchema.safeParse(raw);
     if (!parsed.success) {
         return { kind: "contentInvalid" };
     }
@@ -236,12 +236,8 @@ export type RetainedAutomationRunExecutionTargetV2 =
 export const RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX =
     '{"kind":"happier_automation_run_execution_input_v1"';
 
-function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const actual = Object.keys(value).sort();
-    const expected = [...keys].sort();
-    return actual.length === expected.length
-        && actual.every((key, index) => key === expected[index]);
+function isStoredObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseRetainedAutomationRunExecutionInputV2(params: {
@@ -254,13 +250,7 @@ function parseRetainedAutomationRunExecutionInputV2(params: {
     } catch {
         return null;
     }
-    if (!isExactObject(raw, [
-        "kind",
-        "targetType",
-        "templateVersion",
-        "templateCiphertext",
-        "origin",
-    ])) return null;
+    if (!isStoredObject(raw)) return null;
     if (
         raw.kind !== "happier_automation_run_execution_input_v1"
         || (raw.targetType !== "new_session" && raw.targetType !== "existing_session")
@@ -271,12 +261,11 @@ function parseRetainedAutomationRunExecutionInputV2(params: {
     ) return null;
 
     const origin = raw.origin;
-    const scheduled = isExactObject(origin, ["kind", "scheduledFor"])
-        && origin.kind === "scheduled"
+    if (!isStoredObject(origin)) return null;
+    const scheduled = origin.kind === "scheduled"
         && Number.isSafeInteger(origin.scheduledFor)
         && (origin.scheduledFor as number) >= 0;
-    const manual = isExactObject(origin, ["kind", "invokedAt"])
-        && origin.kind === "manual"
+    const manual = origin.kind === "manual"
         && Number.isSafeInteger(origin.invokedAt)
         && (origin.invokedAt as number) >= 0;
     if (!scheduled && !manual) return null;
@@ -285,7 +274,15 @@ function parseRetainedAutomationRunExecutionInputV2(params: {
         && params.retainedV2OriginKind !== origin.kind
     ) return null;
 
-    const recipe = raw as RetainedAutomationRunExecutionInputV2;
+    const recipe: RetainedAutomationRunExecutionInputV2 = {
+        kind: raw.kind,
+        targetType: raw.targetType,
+        templateVersion: raw.templateVersion as number,
+        templateCiphertext: raw.templateCiphertext,
+        origin: scheduled
+            ? { kind: "scheduled", scheduledFor: origin.scheduledFor as number }
+            : { kind: "manual", invokedAt: origin.invokedAt as number },
+    };
 
     let templateRaw: unknown;
     try {

@@ -398,6 +398,44 @@ describe("automationClaimService (integration)", () => {
         })).resolves.toEqual({ run: null, accountCurrentness: null });
     });
 
+    it("rejoins an admitted Automation snapshot without copying private bytes into the claim receipt", async () => {
+        const machineId = "machine-workflow-reclaim";
+        const machineInstallationId = "installation-workflow-reclaim";
+        const { accountId } = await createAccountWithMachine(machineId, "e2ee");
+        await db.machine.update({ where: { id: machineId }, data: { installationId: machineInstallationId } });
+        const automation = await createAutomationWithAssignments({ accountId, machineIds: [machineId], name: "Reclaim" });
+        const definitionEnvelope = JSON.stringify({ t: "encrypted", c: "frozen-definition" });
+        const acceptedEnvelope = JSON.stringify({ t: "encrypted", c: "admitted-snapshot" });
+        const run = await db.automationRun.create({ data: {
+            automationId: automation.id, ...scheduleRunCause(automation.triggerId), accountId,
+            state: "queued", scheduledAt: new Date(Date.now() - 1_000), dueAt: new Date(Date.now() - 1_000),
+            executionInputEnvelope: definitionEnvelope, workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
+            workflowCheckpointEnvelope: JSON.stringify({ t: "encrypted", c: "root-checkpoint" }),
+            workflowCustodyState: "pending", assignments: frozenRunAssignments([machineId]),
+        } });
+        const claimRequest = { machineInstallationId, nonce: "workflow-reclaim-nonce", expiresAt: new Date(Date.now() + 300_000) };
+        const claim = () => claimAutomationRun({ accountId, machineId, leaseDurationMs: 30_000,
+            recipeFeaturePolicy: { workflowsEnabled: true }, claimRequest });
+        expect(toAutomationV3WorkerClaimResponse(await claim())).toMatchObject({ run: {
+            id: run.id, workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
+        } });
+        const receipt = await readSignedClaimReceiptRow({ accountId, machineId });
+        expect(receipt.claimResultJson).not.toContain("admitted-snapshot");
+        // Receipt replay reads the canonical sidecar, not a private receipt copy.
+        const currentEnvelope = JSON.stringify({ t: "encrypted", c: "current-admitted-snapshot" });
+        await db.automationRun.update({ where: { id: run.id }, data: { workflowAcceptedSnapshotEnvelope: currentEnvelope } });
+        expect(toAutomationV3WorkerClaimResponse(await claim())).toMatchObject({ run: {
+            id: run.id, attempt: 1, workflowAcceptedSnapshotEnvelope: currentEnvelope,
+        } });
+        await db.automationRun.update({ where: { id: run.id }, data: {
+            state: "queued", claimedAt: null, claimedByMachineId: null, leaseExpiresAt: null,
+        } });
+        expect(toAutomationV3WorkerClaimResponse(await claimAutomationRun({ accountId, machineId,
+            leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true },
+            claimRequest: { ...claimRequest, nonce: "workflow-reclaim-nonce-2" },
+        }))).toMatchObject({ run: { id: run.id, attempt: 2, workflowAcceptedSnapshotEnvelope: currentEnvelope } });
+    });
+
     it("claims a direct Workflow Run without an Automation relation", async () => {
         const machineId = "machine-direct-workflow-claim";
         const { accountId } = await createAccountWithMachine(machineId, "plain");

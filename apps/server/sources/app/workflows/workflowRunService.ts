@@ -17,6 +17,7 @@ import {
 import type { Prisma } from "@prisma/client";
 import { isWorkflowDraftPublicationLifecycleV1, type WorkflowRunRecipientKeyEnvelopeV1, type WorkflowRunWaitConditionV1 } from "@happier-dev/protocol/workflows";
 import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx } from "./workflowRunAccess";
+import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { markAccountChangesForSessionAccounts } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
@@ -281,6 +282,7 @@ export type AdmitWorkflowRunInput = Readonly<{
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     sourceArtifactId?: string | null;
     visibleTeamId?: string | null;
+    authentication?: TeamOperationAuthenticationContext;
     recipientKeyEnvelopes?: readonly WorkflowRunRecipientKeyEnvelopeV1[];
     resultDelivery?: Readonly<{ kind: "originating_session" }>;
 }>;
@@ -349,6 +351,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
         }
         const visibleTeamId = await withWorkflowRunAccess(() => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
             actorAccountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null,
+            authentication: params.authentication,
             ...(params.visibleTeamId === undefined ? {} : { visibleTeamId: params.visibleTeamId }),
         }));
         const now = new Date();
@@ -434,6 +437,7 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
     resultDelivery?: AdmitWorkflowRunInput["resultDelivery"];
     sourceArtifactId?: string | null;
     visibleTeamId?: string | null;
+    authentication?: TeamOperationAuthenticationContext;
     recipientKeyEnvelopes?: readonly WorkflowRunRecipientKeyEnvelopeV1[];
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
 }>) {
@@ -482,6 +486,7 @@ export async function resolveAutomationWorkflowAcceptedSnapshot(params: Readonly
         }
         const visibleTeamId = await withWorkflowRunAccess(() => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
             actorAccountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null,
+            authentication: params.authentication,
             ...(params.visibleTeamId === undefined ? {} : { visibleTeamId: params.visibleTeamId }),
         }));
         const changed = await tx.automationRun.updateMany({ where: {

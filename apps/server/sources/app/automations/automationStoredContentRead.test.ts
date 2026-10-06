@@ -6,6 +6,12 @@ import {
 } from "./automationStoredContentRead";
 
 describe("Automation stored-content outer read", () => {
+    it("opens unknown stored outer fields while preserving mode and required ciphertext checks", () => {
+        expect(validateAutomationStoredContentEnvelopeOuterForMode({ raw: '{"t":"plain","v":{"extra":true},"extra":true}', mode: "plain" }))
+            .toEqual({ kind: "available", envelope: { t: "plain", v: { extra: true } } });
+        expect(validateAutomationStoredContentEnvelopeOuterForMode({ raw: '{"t":"encrypted","c":null,"extra":true}', mode: "e2ee" }))
+            .toEqual({ kind: "contentInvalid" });
+    });
     it("accepts only a valid outer envelope tagged for the Account mode", () => {
         expect(validateAutomationStoredContentEnvelopeOuterForMode({
             raw: '{"t":"plain","v":{"source":"private"}}',
@@ -65,6 +71,6 @@ describe("Automation stored-content outer read", () => {
             ),
             mode: "plain",
             retainedV2OriginKind: "scheduled",
-        })).toBeNull();
+        })).toEqual({ kind: "newSession" });
     });
 });

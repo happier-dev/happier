@@ -44,6 +44,7 @@ import {
 import { WorkflowStoredContentError } from "@/app/workflows/runs/storedContent";
 import { inTx } from "@/storage/inTx";
 import { readWorkflowRunRecipientCensusInTx, commitWorkflowRunRecipientKeyEnvelopesInTx, WorkflowRunAccessError } from "@/app/workflows/workflowRunAccess";
+import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 
 import type { Fastify } from "../../types";
 import { isRestrictedAuthTokenKind } from "../../utils/apiTokenRouteAdmission";
@@ -134,12 +135,14 @@ export function registerWorkflowRunStorageRoutes(
             }
         }
         try {
+            // Carry only server-verified credential facts; the strict body cannot supply Team authority.
+            const authentication = request.authAuthority ? readTeamOperationAuthenticationFromRequest(request) : undefined;
             switch (body.operation) {
-                case "run-key.census": return await inTx(tx => readWorkflowRunRecipientCensusInTx(tx, { ...body, actorAccountId: request.userId }));
+                case "run-key.census": return await inTx(tx => readWorkflowRunRecipientCensusInTx(tx, { ...body, actorAccountId: request.userId, authentication }));
                 case "run-key.commit": return await inTx(tx => commitWorkflowRunRecipientKeyEnvelopesInTx(tx, { ...body, actorAccountId: request.userId }));
-                case "admit": return await admitWorkflowRun({ accountId: request.userId, runId: body.runId, origin: body.origin, machineId: body.machineId, sourceArtifactId: body.sourceArtifactId, visibleTeamId: body.visibleTeamId, recipientKeyEnvelopes: body.recipientKeyEnvelopes, accountCurrentness: body.accountCurrentness, acceptedEnvelope: body.acceptedEnvelope, ...(body.resultDelivery ? { resultDelivery: body.resultDelivery } : {}) });
+                case "admit": return await admitWorkflowRun({ accountId: request.userId, runId: body.runId, origin: body.origin, machineId: body.machineId, sourceArtifactId: body.sourceArtifactId, visibleTeamId: body.visibleTeamId, authentication, recipientKeyEnvelopes: body.recipientKeyEnvelopes, accountCurrentness: body.accountCurrentness, acceptedEnvelope: body.acceptedEnvelope, ...(body.resultDelivery ? { resultDelivery: body.resultDelivery } : {}) });
                 case "initialize": return await initializeWorkflowRunExecution({ accountId: request.userId, runId: body.runId, machineId: body.publisherMachineId, parentAttempt: body.parentAttempt, expectedRevision: body.expectedRevision, accountCurrentness: body.accountCurrentness, checkpointEnvelope: body.checkpointEnvelope, rootInvocation: body.rootInvocation });
-                case "accepted-snapshot.resolve": return await resolveAutomationWorkflowAcceptedSnapshot({ accountId: request.userId, runId: body.runId, automationId: body.automationId, machineId: body.publisherMachineId, originSessionId: body.originSessionId, resultDelivery: body.resultDelivery, sourceArtifactId: body.sourceArtifactId, visibleTeamId: body.visibleTeamId, recipientKeyEnvelopes: body.recipientKeyEnvelopes, expectedAttempt: body.expectedAttempt, expectedRevision: body.expectedRevision, accountCurrentness: body.accountCurrentness, definitionEnvelope: body.definitionEnvelope, acceptedEnvelope: body.acceptedEnvelope });
+                case "accepted-snapshot.resolve": return await resolveAutomationWorkflowAcceptedSnapshot({ accountId: request.userId, runId: body.runId, automationId: body.automationId, machineId: body.publisherMachineId, originSessionId: body.originSessionId, resultDelivery: body.resultDelivery, sourceArtifactId: body.sourceArtifactId, visibleTeamId: body.visibleTeamId, authentication, recipientKeyEnvelopes: body.recipientKeyEnvelopes, expectedAttempt: body.expectedAttempt, expectedRevision: body.expectedRevision, accountCurrentness: body.accountCurrentness, definitionEnvelope: body.definitionEnvelope, acceptedEnvelope: body.acceptedEnvelope });
                 case "get": return await getWorkflowRun({ accountId: request.userId, runId: body.runId });
                 case "wait": {
                     const controller = new AbortController();

@@ -1,5 +1,6 @@
 import {
     SessionOrganizationContentEnvelopeSchema,
+    SessionOrganizationContentEnvelopeStoredSchema,
     type SessionOrganizationContentEnvelope,
 } from "@happier-dev/protocol";
 
@@ -79,7 +80,7 @@ export function parseSessionOrganizationDisplayEnvelope(
     }
     try {
         const parsed =
-            SessionOrganizationContentEnvelopeSchema.safeParse(
+            SessionOrganizationContentEnvelopeStoredSchema.safeParse(
                 JSON.parse(value),
             );
         return parsed.success
