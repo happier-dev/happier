@@ -1,5 +1,6 @@
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 const ArtifactStoredJsonContentEnvelopeSchema = z.discriminatedUnion('t', [
   z.object({
@@ -28,7 +29,7 @@ export const ARTIFACT_PLAIN_DATA_KEY_MARKER = encodeStoredJsonContentEnvelope(nu
 
 function decodeStoredJsonContentEnvelope(value: string): ArtifactStoredJsonContentEnvelope | null {
   try {
-    const parsed = ArtifactStoredJsonContentEnvelopeSchema.safeParse(
+    const parsed = createStoredReadSchema(ArtifactStoredJsonContentEnvelopeSchema).safeParse(
       JSON.parse(new TextDecoder().decode(decodeBase64(value, 'base64'))),
     );
     return parsed.success ? parsed.data : null;

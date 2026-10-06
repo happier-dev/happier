@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import {
   AutomationReplyHandoffStateV1Schema,
@@ -119,6 +120,7 @@ export {
   MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES,
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 };
+export { AutomationStoredContentEnvelopeV1ReadSchema } from './automationStoredContentEnvelopeV1.js';
 export type { AutomationStoredContentEnvelopeV1 } from './automationStoredContentEnvelopeV1.js';
 import {
   AutomationConversationAdmitInputV1Schema,
@@ -965,14 +967,19 @@ export type AutomationReplyHandoffCorrespondenceV1 = z.infer<
   typeof AutomationReplyHandoffCorrespondenceV1Schema
 >;
 
-export const AutomationRunResultCorrespondenceV1Schema = z.union([
+const AutomationRunOnlyCorrespondenceV1Schema = z.object({
+  accountId: asProtocolZod(HostIdentifierV1Schema),
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  runId: asProtocolZod(HostIdentifierV1Schema),
+}).strict();
+export const AutomationRunResultCorrespondenceV1Schema = defineStoredReadProjection(z.union([
   AutomationReplyHandoffCorrespondenceV1Schema,
-  z.object({
-    accountId: asProtocolZod(HostIdentifierV1Schema),
-    automationId: asProtocolZod(AutomationIdV1Schema),
-    runId: asProtocolZod(HostIdentifierV1Schema),
-  }).strict(),
-]);
+  AutomationRunOnlyCorrespondenceV1Schema,
+]), () => z.union([
+  createStoredReadSchema(AutomationReplyHandoffCorrespondenceV1Schema),
+  z.preprocess((value) => value !== null && typeof value === 'object' && 'handoffId' in value ? null : value,
+    createStoredReadSchema(AutomationRunOnlyCorrespondenceV1Schema)),
+]));
 export type AutomationRunResultCorrespondenceV1 = z.infer<
   typeof AutomationRunResultCorrespondenceV1Schema
 >;
@@ -1094,10 +1101,10 @@ export function validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1(param
     | ReturnType<typeof AutomationConversationReplyContextStoredV1Schema.safeParse>;
   switch (params.content) {
     case 'result':
-      parsed = AutomationRunResultStoredV1Schema.safeParse(params.envelope);
+      parsed = createStoredReadSchema(AutomationRunResultStoredV1Schema).safeParse(params.envelope);
       break;
     case 'replyContext':
-      parsed = AutomationConversationReplyContextStoredV1Schema.safeParse(params.envelope);
+      parsed = createStoredReadSchema(AutomationConversationReplyContextStoredV1Schema).safeParse(params.envelope);
       break;
   }
   if (!parsed.success) return { kind: 'contentInvalid' };

@@ -26,6 +26,7 @@ import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.j
 import type { InputFieldHint } from '../inputs/inputFields.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 export {
   WorkflowStepComposerDocumentSchema,
@@ -360,7 +361,7 @@ function workflowChildLists(value: unknown): { blocks: unknown[]; path: (string 
 }
 
 /** One structural engine for canonical parsing, ingress and normalization. */
-function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInsertBlockV1>(dialect: 'canonical' | 'ingress' | 'insert'): z.ZodType<T> {
+function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInsertBlockV1>(dialect: 'canonical' | 'ingress' | 'insert' | 'stored'): z.ZodType<T> {
   const allowShorthand = dialect === 'ingress';
   const optionalIds = dialect === 'insert';
   const step = optionalIds ? WorkflowStepSchema.partial({ id: true }) : WorkflowStepSchema;
@@ -373,11 +374,12 @@ function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInse
     repetition: createWorkflowRepetitionSchema(z.discriminatedUnion('kind', [step, action])),
   }) : WorkflowLoopBlockFieldsSchema;
   const conditional = optionalIds ? WorkflowIfBlockFieldsSchema.partial({ id: true }) : WorkflowIfBlockFieldsSchema;
-  const shallow = z.discriminatedUnion('kind', [step, action, workflow, wait,
+  const canonicalShallow = z.discriminatedUnion('kind', [step, action, workflow, wait,
     parallel.extend({ branches: z.array(branch.extend({ blocks: z.array(z.unknown()).min(1) })).min(1) }),
     loop.extend({ body: z.array(z.unknown()).min(1) }),
     conditional.extend({ then: z.array(z.unknown()).min(1), otherwise: z.array(z.unknown()).default([]) }),
   ]);
+  const shallow = dialect === 'stored' ? createStoredReadSchema(canonicalShallow) : canonicalShallow;
   const schema = z.unknown().transform((value, context): T => {
     let output: unknown;
     let failed = false;
@@ -446,7 +448,8 @@ function createWorkflowBlockSchema<T extends WorkflowIngressBlock | WorkflowInse
   return schema;
 }
 
-export const WorkflowBlockSchema = createWorkflowBlockSchema<WorkflowBlock>('canonical');
+export const WorkflowBlockSchema = defineStoredReadProjection(createWorkflowBlockSchema<WorkflowBlock>('canonical'),
+  () => createWorkflowBlockSchema<WorkflowBlock>('stored'));
 export const WorkflowInsertBlockV1Schema = createWorkflowBlockSchema<WorkflowInsertBlockV1>('insert');
 
 export const WorkflowDefinitionBaseSchema = z.object({
@@ -473,7 +476,9 @@ export type WorkflowDefinitionV1 = Readonly<{
  * `validateWorkflowDefinition`, which reparses its normalized output through
  * this schema.
  */
-export const WorkflowDefinitionSchema = WorkflowDefinitionBaseSchema as unknown as z.ZodType<WorkflowDefinitionV1>;
+// Author inputs carry the same canonical definition as parsed output. Keeping
+// this at the schema owner also preserves nested Action DTO correspondence.
+export const WorkflowDefinitionSchema = WorkflowDefinitionBaseSchema as unknown as z.ZodType<WorkflowDefinitionV1, WorkflowDefinitionV1>;
 /** Epoch-qualified public name; aliases the single executable owner above. */
 export const WorkflowDefinitionV1Schema = WorkflowDefinitionSchema;
 

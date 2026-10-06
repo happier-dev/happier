@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import {
@@ -30,6 +31,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = z.object({
 }).strict();
 export type AutomationStoredWorkflowDefinitionV2 = z.infer<typeof AutomationStoredWorkflowDefinitionV2Schema>;
 export type WorkflowTriggerContextV1 = AutomationStoredWorkflowDefinitionV2;
+export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSchema(AutomationStoredWorkflowDefinitionV2Schema);
 
 /**
  * The current Automation definition recipe for managed workflows.
@@ -39,31 +41,49 @@ export type WorkflowTriggerContextV1 = AutomationStoredWorkflowDefinitionV2;
  * context and an inline target's definition. Workflow references resolve live
  * at claim and are never copied into this payload.
  */
-export const AutomationStoredWorkflowDefinitionRecipeV2Schema = z.object({
-  v: z.literal(2),
-  templateVersion: z.number().int().nonnegative().safe(),
-  workflow: AutomationStoredContentEnvelopeV1Schema,
-  triggerEvidence: z.null(),
-}).strict().superRefine((value, context) => {
-  addAutomationStoredEnvelopeUtf8LimitIssue(
-    value,
-    context,
-    'Automation workflow definition recipe exceeds its UTF-8 byte limit',
-  );
-  if (
-    value.workflow.t === 'plain'
-    && !AutomationStoredWorkflowDefinitionV2Schema.safeParse(value.workflow.v).success
-  ) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['workflow'],
-      message: 'Automation workflow definition is invalid',
-    });
-  }
-});
+function createAutomationStoredWorkflowDefinitionRecipeV2Schema(definitionSchema: z.ZodType) {
+  return z.object({
+    v: z.literal(2),
+    templateVersion: z.number().int().nonnegative().safe(),
+    workflow: AutomationStoredContentEnvelopeV1Schema,
+    triggerEvidence: z.null(),
+  }).strict().superRefine((value, context) => {
+    addAutomationStoredEnvelopeUtf8LimitIssue(
+      value,
+      context,
+      'Automation workflow definition recipe exceeds its UTF-8 byte limit',
+    );
+    if (value.workflow.t === 'plain' && !definitionSchema.safeParse(value.workflow.v).success) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['workflow'],
+        message: 'Automation workflow definition is invalid',
+      });
+    }
+  });
+}
+
+// Writes admit the canonical plain payload. Stored reads re-read the opaque plain payload through
+// the tolerant definition reader, so an extra stored field is dropped instead of hiding the recipe.
+export const AutomationStoredWorkflowDefinitionRecipeV2Schema = defineStoredReadProjection(
+  createAutomationStoredWorkflowDefinitionRecipeV2Schema(AutomationStoredWorkflowDefinitionV2Schema),
+  () => createStoredReadSchema(
+    createAutomationStoredWorkflowDefinitionRecipeV2Schema(AutomationStoredWorkflowDefinitionV2ReadSchema),
+  ).transform((recipe) => recipe.workflow.t === 'plain'
+    ? {
+      ...recipe,
+      workflow: AutomationStoredContentEnvelopeV1Schema.parse({
+        t: 'plain',
+        v: AutomationStoredWorkflowDefinitionV2ReadSchema.parse(recipe.workflow.v),
+      }),
+    }
+    : recipe),
+);
 export type AutomationStoredWorkflowDefinitionRecipeV2 = z.infer<
   typeof AutomationStoredWorkflowDefinitionRecipeV2Schema
 >;
+export const AutomationStoredWorkflowDefinitionRecipeV2ReadSchema =
+  createStoredReadSchema(AutomationStoredWorkflowDefinitionRecipeV2Schema);
 
 export type AutomationStoredWorkflowDefinitionRecipeV2Result =
   | Readonly<{
@@ -86,7 +106,7 @@ export function parseAutomationStoredWorkflowDefinitionRecipeV2(
   } catch {
     return { kind: 'contentInvalid' };
   }
-  const parsed = AutomationStoredWorkflowDefinitionRecipeV2Schema.safeParse(value);
+  const parsed = AutomationStoredWorkflowDefinitionRecipeV2ReadSchema.safeParse(value);
   return parsed.success
     ? { kind: 'available', recipe: parsed.data, serialized }
     : { kind: 'contentInvalid' };

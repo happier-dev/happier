@@ -8,6 +8,7 @@ import {
     DEFAULT_WORK_BOARDS_V1,
     readWorkBoardItemKeyV1,
     WorkBoardIntentV1Schema,
+    WorkBoardV1StrictSchema,
     WorkBoardsV1Schema,
     type BoardItemRefV1,
     type WorkBoardsV1,
@@ -26,6 +27,62 @@ function applied(result: ReturnType<typeof applyWorkBoardIntentV1>): WorkBoardsV
 }
 
 describe('WorkBoardV1', () => {
+    it('reads known persisted fields and drops extras throughout the Board collection', () => {
+        const ref = session('home-a', 's1');
+        const key = buildWorkBoardItemKeyV1(ref);
+        const filter = normalizeSessionListFilterV1({ audiences: [{ kind: 'team', serverId: 'home-a', teamId: 'team' }],
+            tagIds: [{ serverId: 'home-a', tagId: 'tag' }] });
+        const board = { ...createWorkBoardV1({ id: 'b1', name: 'B' }), source: { sections: ['needs_you'], filter, picked: [ref] },
+            positionsByItemRef: { [key]: { x: 24, y: 48 } } };
+        const stored = { ...board, extra: true, source: { ...board.source, extra: true,
+            filter: { ...filter, extra: true, audiences: filter.audiences.map(value => ({ ...value, extra: true })),
+                tagIds: filter.tagIds.map(value => ({ ...value, extra: true })) },
+            picked: [{ ...ref, extra: true, qualifiedId: { ...ref.qualifiedId, extra: true } }] },
+            positionsByItemRef: { [key]: { x: 24, y: 48, extra: true } } };
+        expect(WorkBoardsV1Schema.parse({ v: 1, boards: [stored], extra: true })).toEqual({ v: 1, boards: [board] });
+        for (const value of [stored, { ...board, source: stored.source }, { ...board, positionsByItemRef: stored.positionsByItemRef }]) {
+            expect(WorkBoardV1StrictSchema.safeParse(value).success).toBe(false);
+        }
+    });
+
+    it('reads persisted widget extras without weakening placement invariants or opaque binding values', () => {
+        const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'summary' },
+            bindings: { payload: { kind: 'value', value: { extra: 'meaningful input' } } } } as const;
+        const ref = { surface, instanceId: instance.id };
+        const board = { ...createWorkBoardV1({ id: 'b1', name: 'B' }), widgets: [{ kind: 'widget', ref, instance, width: 1 }] };
+        const stored = { ...board, widgets: [{ ...board.widgets[0], extra: true,
+            ref: { ...ref, extra: true, surface: { ...surface, extra: true, owner: { ...surface.owner, extra: true } } },
+            instance: { ...instance, extra: true, definition: { ...instance.definition, extra: true },
+                bindings: { payload: { ...instance.bindings.payload, extra: true } } } }] };
+        const read = WorkBoardsV1Schema.parse({ v: 1, boards: [stored] });
+        expect(read.boards[0]).toMatchObject(board);
+        expect(read.boards[0]?.widgets).toEqual(board.widgets);
+        for (const widgets of [
+            [{ ...stored.widgets[0], ref: { ...ref, instanceId: 'other' } }],
+            [{ ...stored.widgets[0], ref: { ...ref, surface: { ...surface, owner: { kind: 'workBoard', boardId: 'other' } } } }],
+            [stored.widgets[0], stored.widgets[0]],
+        ]) {
+            const invalid = { ...stored, widgets };
+            expect(WorkBoardsV1Schema.parse({ v: 1, boards: [invalid] })).toEqual({ v: 1, boards: [], unreadable: [invalid] });
+        }
+    });
+
+    it('keeps invalid known fields unreadable even when extras are present', () => {
+        const healthy = createWorkBoardV1({ id: 'healthy', name: 'Healthy' });
+        const key = buildWorkBoardItemKeyV1(session('home', 'session'));
+        for (const invalid of [
+            { name: 'No identity', source: { picked: [] }, extra: true },
+            { id: 'invalid', source: { picked: [] }, extra: true },
+            { id: 'invalid', name: 'No source', extra: true },
+            { ...healthy, id: 'invalid', source: null, extra: true },
+            { ...healthy, id: 'invalid', mode: 'future-mode', extra: true },
+            { ...healthy, id: 'invalid', positionsByItemRef: { [key]: { x: '24', y: 48, extra: true } }, extra: true },
+        ]) {
+            expect(WorkBoardsV1Schema.parse({ v: 1, boards: [invalid, healthy] })).toEqual({ v: 1, boards: [healthy], unreadable: [invalid] });
+        }
+    });
+
     it('preserves a Board with a wrong-surface widget as unreadable without breaking neighboring Boards', () => {
         const healthy = createWorkBoardV1({ id: 'healthy', name: 'Healthy' });
         const damaged = { ...createWorkBoardV1({ id: 'damaged', name: 'Damaged' }), widgets: [{
@@ -208,7 +265,7 @@ describe('WorkBoardV1', () => {
 
     it('keeps a board it cannot read raw and unrendered in the dedicated record', () => {
         const mine = createWorkBoardV1({ id: 'b1', name: 'Mine' });
-        const newer = { ...createWorkBoardV1({ id: 'b2', name: 'From a newer app' }), color: 'teal' };
+        const newer = { id: 'b2', name: 'Missing required source', color: 'teal' };
         const boards = WorkBoardsV1Schema.parse({ v: 1, boards: [mine, newer] });
         expect(boards.boards.map((board) => board.id)).toEqual(['b1']);
 

@@ -5,6 +5,7 @@ import type {
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import {
   AutomationStoredWorkflowDefinitionV2Schema,
+  AutomationStoredWorkflowDefinitionV2ReadSchema,
   type AutomationStoredWorkflowDefinitionRecipeV2, type WorkflowTriggerContextV1,
 } from '../../automations/automationWorkflowRecipeV2.js';
 import { readTriggerTargetV1, type TriggerTargetV1 } from '../../workflows/triggers/triggerTargetV1.js';
@@ -132,7 +133,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       if (!deps.convertLegacy) refuse('legacy_conversion_unsupported', { reason: 'runtime_descriptor_unsupported' });
       return deps.convertLegacy(row, caller);
     }
-    const context = AutomationStoredWorkflowDefinitionV2Schema.safeParse(await deps.openContext(row));
+    const context = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(await deps.openContext(row));
     const target = readTriggerTargetV1(row, context.success ? context.data : null);
     if (!context.success || target.kind !== 'available') refuse('source_unavailable');
     return { context: context.data, target: target.target };

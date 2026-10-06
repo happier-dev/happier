@@ -14,6 +14,13 @@ const correspondence = {
 };
 
 describe('Automation Run failure-detail stored content', () => {
+  it('opens unknown stored fields and still rejects an invalid required detail', () => {
+    const envelope = { t: 'plain', extra: true, v: { v: 1, correspondence: { ...correspondence, extra: true }, detail: 'Private failure', extra: true } };
+    expect(openAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain', envelope }))
+      .toEqual({ kind: 'available', correspondence, detail: 'Private failure' });
+    expect(openAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain', envelope: { ...envelope, v: { ...envelope.v, detail: null } } }))
+      .toEqual({ kind: 'contentInvalid' });
+  });
   it('seals a strict plaintext detail and admits it only for a plaintext Account', () => {
     const envelope = sealAutomationRunFailureDetailStoredEnvelopeV1({
       mode: 'plain',

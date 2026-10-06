@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { WorkBoardIntentV1Schema, WorkBoardV1Schema } from './workBoardV1.js';
+import { WorkBoardIntentV1Schema, WorkBoardV1StrictSchema } from './workBoardV1.js';
 
 /** Closed V1 Action envelopes over the existing Board intent vocabulary. */
 export const WorkBoardActionInputSchemasV1 = {
@@ -17,10 +17,10 @@ export const WorkBoardActionInputSchemasV1 = {
 } as const;
 
 export const WorkBoardActionOutputSchemasV1 = {
-    'boards.list': z.object({ boards: z.array(WorkBoardV1Schema) }).strict(),
+    'boards.list': z.object({ boards: z.array(WorkBoardV1StrictSchema) }).strict(),
     'boards.apply': z.object({
         boardId: z.string().trim().min(1),
         /** Delete has no remaining Board; all other intents return the acknowledged document. */
-        board: WorkBoardV1Schema.nullable(),
+        board: WorkBoardV1StrictSchema.nullable(),
     }).strict(),
 } as const;

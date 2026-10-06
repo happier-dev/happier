@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import {
@@ -213,6 +214,9 @@ export const HomeConnectionDescriptorV1Schema = z.object({
     .max(ACCOUNT_DIRECTORY_MAX_ENDPOINTS),
 }).strict();
 export type HomeConnectionDescriptorV1 = z.infer<typeof HomeConnectionDescriptorV1Schema>;
+
+/** Device-persisted read projection only; live descriptor admission remains strict. */
+export const StoredHomeConnectionDescriptorV1Schema = createStoredReadSchema(HomeConnectionDescriptorV1Schema);
 
 function normalizeHomeApplicationOriginV1(value: string): string {
   return new URL(HomeApplicationOriginV1Schema.parse(value)).toString().replace(/\/+$/u, '');

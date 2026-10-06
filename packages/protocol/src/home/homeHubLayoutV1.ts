@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1 } from '../actions/anchoredListOrderV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema as BindingsSchema, type WidgetInstanceV1 } from '../widgets/widgetInstanceV1.js';
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
 const WidgetInputBindingsV1Schema = z.lazy(() => BindingsSchema);
@@ -18,14 +19,14 @@ function validateInstances(layout: Readonly<{ instances: readonly WidgetInstance
     }
 }
 export const HomeHubLayoutV1Schema = z.object(layoutShape).strict().superRefine(validateInstances);
-const storedLayoutSchema = z.object({
+const storedLayoutSchema = createStoredReadSchema(z.object({
     ...layoutShape,
     v: layoutShape.v.default(1),
     order: layoutShape.order.default([]),
     hidden: layoutShape.hidden.default([]),
     instances: layoutShape.instances.default([]),
     sections: z.record(id, sectionSchema).optional(),
-}).superRefine(validateInstances);
+}).superRefine(validateInstances));
 export type HomeHubLayoutValue = z.infer<typeof HomeHubLayoutV1Schema>;
 export type HomeHubLayoutV1 = HomeHubLayoutValue;
 const positionSchema = z.union([AnchoredListPositionV1Schema, z.object({ nativeIndex: z.number().int().nonnegative() }).strict()]);

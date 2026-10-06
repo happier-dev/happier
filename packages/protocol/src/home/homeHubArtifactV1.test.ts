@@ -51,18 +51,32 @@ describe('Home Account Artifact semantic edits', () => {
         expect((await port.apply({ kind: 'reset' })).layout).toEqual(HOME_HUB_DEFAULT_LAYOUT);
     });
 
-    it('drops unknown stored presentation fields without weakening widget identity validation', async () => {
+    it('drops nested stored extras, writes canonical content, and retains strict widget inputs', async () => {
         const b = boundary();
         const id = buildHomeHubArtifactIdV1(accountId);
         const instance = copy('one', 'A');
-        const seed = (instances: readonly ReturnType<typeof copy>[]) => b.rows.set(id, {
+        const storedInstance = { ...instance, obsolete: true, definition: { ...instance.definition, obsolete: true,
+            surface: { ...instance.definition.surface, obsolete: true } }, bindings: {
+            session: { ...instance.bindings.session, obsolete: true },
+        } };
+        const seed = (instances: readonly unknown[]) => b.rows.set(id, {
             artifactId: id, header: { v: 1, kind: HOME_HUB_ARTIFACT_KIND_V1 },
             body: JSON.stringify({ v: 1, instances, order: ['one'], sections: { one: { frameStyle: 'plain', obsolete: true } }, obsolete: true }),
             revision: { headerVersion: 1, bodyVersion: 1 },
         });
         const port = createHomeHubArtifactPortV1(b.transport, { accountId });
-        seed([instance]);
-        expect(await port.read()).toEqual({ ...HOME_HUB_DEFAULT_LAYOUT, instances: [instance], order: ['one'], sections: { one: { frameStyle: 'plain' } } });
+        seed([storedInstance]);
+        const known = { ...HOME_HUB_DEFAULT_LAYOUT, instances: [instance], order: ['one'], sections: { one: { frameStyle: 'plain' } } };
+        expect(await port.read()).toEqual(known);
+        await expect(port.apply({ kind: 'widget_add', instance: storedInstance })).rejects.toBeInstanceOf(z.ZodError);
+        expect(b.updates).toEqual([]);
+        const edited = (await port.apply({ kind: 'widget_rename', instanceId: 'one', displayName: 'Renamed' })).layout;
+        expect(edited.instances).toEqual([{ ...instance, displayName: 'Renamed' }]);
+        expect(JSON.parse(String(b.rows.get(id)?.body))).toEqual(edited);
+        expect(await port.read()).toEqual(edited);
+        const { id: _missing, ...withoutIdentity } = storedInstance;
+        seed([withoutIdentity]);
+        expect(await port.read()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
         seed([instance, instance]);
         expect(await port.read()).toEqual(HOME_HUB_DEFAULT_LAYOUT);
     });

@@ -1,4 +1,6 @@
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import { GlassSurfaceMaterialsSchema } from './glassSurfaceMaterials.js';
 
 import {
@@ -161,7 +163,7 @@ function rekeyLegacyBuiltInAgentMap<T>(
 
 export const ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION = 7;
 
-export const ForegroundBehaviorSchema = z.enum(['full', 'silent', 'off']);
+export const ForegroundBehaviorSchema = lazyZodSchema(() => z.enum(['full', 'silent', 'off']));
 export type ForegroundBehavior = z.infer<typeof ForegroundBehaviorSchema>;
 
 function normalizeNotificationsSettingsV1Input(raw: unknown): unknown {
@@ -179,7 +181,7 @@ function normalizeNotificationsSettingsV1Input(raw: unknown): unknown {
   return raw;
 }
 
-export const NotificationsSettingsV1Schema = z
+export const NotificationsSettingsV1Schema = lazyZodSchema(() => z
   .preprocess(
     normalizeNotificationsSettingsV1Input,
     z.object({
@@ -209,7 +211,7 @@ export const NotificationsSettingsV1Schema = z
     connectedServiceQuotaBlocked: true,
     connectedServiceQuotaRecovered: true,
     foregroundBehavior: 'full',
-  });
+  }));
 
 export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Schema>;
 
@@ -242,7 +244,7 @@ const CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_ID_SET_V1 = new Set<string>(
   CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1,
 );
 
-export const UsageLimitRecoverySettingsV1Schema = z
+export const UsageLimitRecoverySettingsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     mode: z.enum(['ask', 'auto_wait']).default('ask'),
@@ -261,7 +263,7 @@ export const UsageLimitRecoverySettingsV1Schema = z
     mode: 'ask',
     promptMode: 'standard',
     resumePromptMode: 'standard',
-  });
+  }));
 
 export type UsageLimitRecoverySettingsV1 = z.infer<typeof UsageLimitRecoverySettingsV1Schema>;
 
@@ -271,13 +273,13 @@ export const SESSION_PENDING_QUEUE_DRAIN_MODES = ['one_at_a_time', 'drain_all'] 
 export const DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE = 'one_at_a_time' as const;
 export const SESSION_INACTIVE_RESUME_POLICY_VALUES = ['when_available', 'online_only', 'manual'] as const;
 export const DEFAULT_SESSION_INACTIVE_RESUME_POLICY = 'online_only' as const;
-export const SessionInactiveResumePolicySchema = z
+export const SessionInactiveResumePolicySchema = lazyZodSchema(() => z
   .enum(SESSION_INACTIVE_RESUME_POLICY_VALUES)
-  .catch(DEFAULT_SESSION_INACTIVE_RESUME_POLICY);
+  .catch(DEFAULT_SESSION_INACTIVE_RESUME_POLICY));
 export type SessionInactiveResumePolicy = z.infer<typeof SessionInactiveResumePolicySchema>;
-export const SessionPendingQueueDrainModeSchema = z
+export const SessionPendingQueueDrainModeSchema = lazyZodSchema(() => z
   .enum(SESSION_PENDING_QUEUE_DRAIN_MODES)
-  .catch(DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE);
+  .catch(DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE));
 export type SessionPendingQueueDrainMode = z.infer<typeof SessionPendingQueueDrainModeSchema>;
 
 const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
@@ -396,15 +398,15 @@ function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): Act
   return changed ? { ...settings, actions: actions as ActionsSettingsV1['actions'] } : settings;
 }
 
-const BackendEnabledByTargetKeySchema = z.record(BackendTargetKeyV2InputSchema, z.boolean()).catch({});
-const FeatureTogglesSchema = withAccountSettingBounds(
+const BackendEnabledByTargetKeySchema = lazyZodSchema(() => z.record(BackendTargetKeyV2InputSchema, z.boolean()).catch({}));
+const FeatureTogglesSchema = lazyZodSchema(() => withAccountSettingBounds(
   z.record(z.string().max(256), z.boolean()),
   16 * 1024,
-).catch({}).default({});
-const BackendCliSourcePreferenceSchema = z.enum(['system-first', 'managed-first']);
-const BackendCliSourcePreferenceByTargetKeySchema = z
+).catch({}).default({}));
+const BackendCliSourcePreferenceSchema = lazyZodSchema(() => z.enum(['system-first', 'managed-first']));
+const BackendCliSourcePreferenceByTargetKeySchema = lazyZodSchema(() => z
   .record(BackendTargetKeyV2InputSchema, BackendCliSourcePreferenceSchema)
-  .catch({});
+  .catch({}));
 
 /**
  * Root keys that can never name a settings root, however they arrived in a raw
@@ -642,16 +644,19 @@ export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
   options: AccountCatalogDefinitionOptions,
 ) {
   const structuralBoundsOwner = options.structuralBoundsOwner ?? 'accountGeneric';
-  const boundedSchema = withAccountSettingBounds(
-    schema,
-    options.maximumSerializedValueBytes,
-    structuralBoundsOwner,
-  );
-  const parsedDefault = boundedSchema.parse(defaultValue);
-  const presentValueSchema = (options.recoverMalformed === false
-    ? boundedSchema
-    : boundedSchema.catch(parsedDefault)) as typeof boundedSchema;
-  const missingValueDefaultSchema = z.undefined().transform(() => parsedDefault);
+  const prepared = lazyDefinition(() => {
+    // Legacy stored objects tolerate additive fields; compatibility carriers
+    // declare their size-tolerant projection at the schema owner below.
+    const storedSchema = options.classification === 'legacy'
+      ? createStoredReadSchema(schema)
+      : schema;
+    const parsedDefault = storedSchema.parse(defaultValue);
+    const presentValueSchema = (options.recoverMalformed === false
+      ? storedSchema
+      : storedSchema.catch(parsedDefault)) as typeof storedSchema;
+    const missingValueDefaultSchema = z.undefined().transform(() => parsedDefault);
+    return { schema: missingValueDefaultSchema.or(presentValueSchema), default: parsedDefault };
+  });
   const parseMutationValue = (value: unknown): AccountSettingValueParseResult => {
     const boundIssue = inspectAccountSettingValueBounds(
       value,
@@ -666,9 +671,9 @@ export function accountCatalogDefinition<TSchema extends z.ZodTypeAny>(
     // Preserve Zod `.default(...)` semantics: a parsed transform result is returned as-is for
     // missing input. Definitions may opt out of malformed-value recovery when their value is
     // authoritative state that must never be reinterpreted as the default.
-    schema: missingValueDefaultSchema.or(presentValueSchema),
+    schema: lazyZodSchema(() => prepared.schema),
     parseMutationValue,
-    default: parsedDefault,
+    get default() { return prepared.default; },
     description: `Account ${options.semanticDomain} setting`,
     storageScope: 'account' as const,
     semanticDomain: options.semanticDomain,
@@ -750,12 +755,12 @@ function normalizeScmBackendQualifiedId(value: unknown): string | null {
   return parsed.success ? buildQualifiedPluginContributionKey(parsed.data) : null;
 }
 
-const ScmBackendQualifiedIdSchema = z
+const ScmBackendQualifiedIdSchema = lazyZodSchema(() => z
   .string()
   .trim()
   .min(1)
   .max(256)
-  .refine((value) => normalizeScmBackendQualifiedId(value) === value);
+  .refine((value) => normalizeScmBackendQualifiedId(value) === value));
 
 export const TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES = [
   'hover_web_hidden_mobile',
@@ -768,7 +773,7 @@ export type TranscriptMessageTimestampDisplayMode =
 
 export const DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT = 3;
 
-export const SessionTmuxMachineOverrideSchema = z
+export const SessionTmuxMachineOverrideSchema = lazyZodSchema(() => z
   .object({
     useTmux: z.boolean(),
     sessionName: accountBoundedString(256),
@@ -776,21 +781,21 @@ export const SessionTmuxMachineOverrideSchema = z
     tmpDir: accountBoundedString(16 * 1024).nullable(),
   })
   .passthrough()
-  .transform(({ terminalHost: _retiredDevelopmentHost, ...override }) => override);
+  .transform(({ terminalHost: _retiredDevelopmentHost, ...override }) => override));
 
-const AccountInstallablePolicyOverrideSchema = z
+const AccountInstallablePolicyOverrideSchema = lazyZodSchema(() => z
   .object({
     autoInstallWhenNeeded: z.boolean().optional(),
     autoUpdateMode: InstallableAutoUpdateModeSchema.optional(),
   })
-  .passthrough();
+  .passthrough());
 
-const AccountInstallablePoliciesByMachineIdSchema = z
+const AccountInstallablePoliciesByMachineIdSchema = lazyZodSchema(() => z
   .record(
     accountBoundedString(1024),
     z.record(accountBoundedString(1024), AccountInstallablePolicyOverrideSchema).default({}),
   )
-  .default({});
+  .default({}));
 
 export type SessionHandoffDirectTargetMode = 'keep_direct' | 'convert_to_persisted';
 
@@ -816,7 +821,7 @@ function hasForbiddenSessionHandoffData(value: unknown): boolean {
   ));
 }
 
-const SessionHandoffIgnoredIncludeGlobSchema = z
+const SessionHandoffIgnoredIncludeGlobSchema = lazyZodSchema(() => z
   .string()
   .trim()
   .min(1)
@@ -831,9 +836,9 @@ const SessionHandoffIgnoredIncludeGlobSchema = z
     ) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must be a relative glob' });
     }
-  });
+  }));
 
-export const SessionHandoffDefaultsV1Schema = z
+export const SessionHandoffDefaultsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     // Keep updated is the recommended first-use outcome. Explicit persisted
@@ -871,7 +876,7 @@ export const SessionHandoffDefaultsV1Schema = z
     includeIgnoredMode: value.includeIgnoredMode,
     ignoredIncludeGlobs: value.ignoredIncludeGlobs,
     directTargetMode: value.directTargetMode,
-  }));
+  })));
 
 export type SessionHandoffDefaultsV1 = z.infer<typeof SessionHandoffDefaultsV1Schema>;
 
@@ -882,6 +887,8 @@ export const DEFAULT_SESSION_HANDOFF_DEFAULTS_V1: SessionHandoffDefaultsV1 = Obj
   ignoredIncludeGlobs: [],
   directTargetMode: 'keep_direct',
 });
+
+export const SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES = ['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session'] as const;
 
 const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   analyticsOptOut: accountPreference(z.boolean(), false, 'privacy'),
@@ -991,9 +998,14 @@ const ACCOUNT_CORE_CATALOG_DEFINITIONS = {
   ),
   sessionNonSteerableSendPrompt: accountPreference(z.enum(['on', 'off']), 'on', 'message delivery'),
   sessionProviderUsageGaugeMode: accountPreference(z.enum(['auto', 'hidden']), 'auto', 'usage presentation'),
+  sessionProviderUsageGaugeWindowModes: accountPreference(
+    z.array(z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES)).min(1).nullable(),
+    null,
+    'usage presentation',
+  ),
   sessionUsageGaugeLabels: accountPreference(z.boolean(), false, 'usage presentation'),
   sessionProviderUsageGaugeWindowMode: accountPreference(
-    z.enum(['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session']),
+    z.enum(SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES),
     'most_constrained',
     'usage presentation',
   ),
@@ -1052,26 +1064,36 @@ const ACCOUNT_DISPLAY_CATALOG_DEFINITIONS = {
   composerSurfaceStyle: accountPreference(z.enum(['standard', 'glass']), 'glass', 'composer presentation'),
 } as const;
 
-const BoundedLegacyArraySchema = z.array(BoundedLegacyJsonValueSchema).max(256);
-const BoundedLegacyRecordSchema = z.record(z.string().max(64 * 1024), BoundedLegacyJsonValueSchema);
+const BoundedLegacyArraySchema = defineStoredReadProjection(
+  lazyZodSchema(() => z.array(BoundedLegacyJsonValueSchema).max(256)),
+  () => z.array(createStoredReadSchema(BoundedLegacyJsonValueSchema)),
+);
+const BoundedLegacyRecordSchema = defineStoredReadProjection(
+  lazyZodSchema(() => z.record(z.string().max(64 * 1024), BoundedLegacyJsonValueSchema)),
+  () => z.record(z.string(), createStoredReadSchema(BoundedLegacyJsonValueSchema)),
+);
 
-const SavedSecretsSchema = z.preprocess((value) => {
-  if (!Array.isArray(value)) return [];
-
-  return value.slice(0, SAVED_SECRET_COLLECTION_MAX_ENTRIES).flatMap((candidate) => {
-    const parsed = SavedSecretSchema.safeParse(candidate);
-    return parsed.success ? [parsed.data] : [];
-  });
-}, z.array(SavedSecretSchema).max(SAVED_SECRET_COLLECTION_MAX_ENTRIES));
+const SavedSecretsSchema = defineStoredReadProjection(
+  lazyZodSchema(() => z.array(SavedSecretSchema).max(SAVED_SECRET_COLLECTION_MAX_ENTRIES)),
+  () => z.preprocess((value) => {
+    if (!Array.isArray(value)) return value;
+    const storedSecretSchema = createStoredReadSchema(SavedSecretSchema);
+    return value.flatMap((candidate) => {
+      const parsed = storedSecretSchema.safeParse(candidate);
+      return parsed.success ? [parsed.data] : [];
+    });
+  }, z.array(createStoredReadSchema(SavedSecretSchema))),
+);
 
 const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
-  profiles: accountLegacy(BoundedLegacyArraySchema, [], 'profile entities', 128 * 1024),
+  profiles: accountLegacy(BoundedLegacyArraySchema, [], 'profile entities', 128 * 1024, false),
   profileEnabledById: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile entity state', 32 * 1024),
   secrets: accountLegacy(
     SavedSecretsSchema,
     [],
     'saved-secret records',
     ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES,
+    false,
   ),
   secretBindingsByProfileId: accountLegacy(BoundedLegacyRecordSchema, {}, 'profile secret bindings', 32 * 1024),
   connectedAccountServiceConfigurationsV1: accountLegacy(
@@ -1221,18 +1243,18 @@ const ACCOUNT_SIMPLE_COLLECTION_CATALOG_DEFINITIONS = {
   ),
 } as const;
 
-const KeyboardShortcutRuleSchema = z.object({
+const KeyboardShortcutRuleSchema = lazyZodSchema(() => z.object({
   binding: z.string().trim().min(1).max(256),
   platforms: z.array(z.enum(['macos', 'ios', 'windows', 'linux', 'android', 'web'])).max(6).optional(),
   blockedSurfaces: z.array(z.enum(['native', 'web'])).max(2).optional(),
   allowInEditable: z.boolean().optional(),
   nativeConsumable: z.boolean().optional(),
   conflictScope: z.string().trim().min(1).max(256).optional(),
-});
+}));
 
-const KeyboardShortcutCommandIdSchema = z.string().trim().min(1).max(256);
+const KeyboardShortcutCommandIdSchema = lazyZodSchema(() => z.string().trim().min(1).max(256));
 
-const KeyboardShortcutOverridesSchema = z.preprocess((value) => {
+const KeyboardShortcutOverridesSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
 
   const normalized: Record<string, unknown> = {};
@@ -1258,16 +1280,16 @@ const KeyboardShortcutOverridesSchema = z.preprocess((value) => {
 }, z.record(
   KeyboardShortcutCommandIdSchema,
   z.array(KeyboardShortcutRuleSchema).min(1).max(32),
-));
+)));
 
-const KeyboardShortcutDisabledCommandIdsSchema = z.preprocess((value) => {
+const KeyboardShortcutDisabledCommandIdsSchema = lazyZodSchema(() => z.preprocess((value) => {
   if (!Array.isArray(value)) return [];
 
   return value.slice(0, 256).flatMap((candidate) => {
     const parsed = KeyboardShortcutCommandIdSchema.safeParse(candidate);
     return parsed.success ? [parsed.data] : [];
   });
-}, z.array(KeyboardShortcutCommandIdSchema).max(256));
+}, z.array(KeyboardShortcutCommandIdSchema).max(256)));
 
 export const NEW_SESSION_WIZARD_SELECTION_SECTION_IDS = [
   'profiles',
@@ -1300,8 +1322,8 @@ export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECT
 export type NewSessionPresentationModeV1 = typeof NEW_SESSION_PRESENTATION_MODES[number];
 export type NewSessionDraftEntryMode = typeof NEW_SESSION_DRAFT_ENTRY_MODES[number];
 
-const NewSessionWizardSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
-const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
+const NewSessionWizardSectionIdSchema = lazyZodSchema(() => z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS));
+const NewSessionWizardSectionPresentationSchema = lazyZodSchema(() => z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS));
 
 export function resolveNewSessionWizardSectionPresentation(
   setting: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>> | null | undefined,
@@ -1310,7 +1332,7 @@ export function resolveNewSessionWizardSectionPresentation(
   return setting?.[sectionId] ?? 'auto';
 }
 
-const NewSessionWizardSectionPresentationByIdSchema = z.preprocess((value) => {
+const NewSessionWizardSectionPresentationByIdSchema = lazyZodSchema(() => z.preprocess((value) => {
   const record = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
@@ -1325,7 +1347,7 @@ const NewSessionWizardSectionPresentationByIdSchema = z.preprocess((value) => {
 }, z.partialRecord(
   NewSessionWizardSectionIdSchema,
   NewSessionWizardSectionPresentationSchema,
-).default({}));
+).default({})));
 
 const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
   sessionDefaultPermissionModeByTargetKey: accountPolicy(
@@ -1628,6 +1650,7 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
 } as const;
 
 const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
+  sessionReminderAutoClearOnOpen: accountPreference(z.boolean(), true, 'session reminders'),
   sessionReminderPresetsV1: accountPreference(
     SessionReminderPresetsV1Schema,
     [],
@@ -1699,7 +1722,7 @@ const ACCOUNT_HISTORICAL_PREFERENCE_CATALOG_DEFINITIONS = {
   lastUsedModelMode: accountLegacy(z.string().max(256).nullable(), null, 'deprecated session authoring'),
 } as const;
 
-export const ACCOUNT_SETTING_DEFINITIONS = defineAccountSettingDefinitions({
+const ACCOUNT_SETTING_CANDIDATES = {
   ...ACCOUNT_CORE_CATALOG_DEFINITIONS,
   ...ACCOUNT_DISPLAY_CATALOG_DEFINITIONS,
   ...ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS,
@@ -1869,16 +1892,17 @@ export const ACCOUNT_SETTING_DEFINITIONS = defineAccountSettingDefinitions({
     DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1,
     { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 },
   ),
-});
+} as const;
 
-export const ACCOUNT_SETTING_ARTIFACTS = buildSettingArtifacts(ACCOUNT_SETTING_DEFINITIONS);
-export const ACCOUNT_SETTING_KEYS = Object.freeze(Object.keys(ACCOUNT_SETTING_DEFINITIONS));
+export const ACCOUNT_SETTING_DEFINITIONS = lazyDefinition(() => defineAccountSettingDefinitions(ACCOUNT_SETTING_CANDIDATES));
+export const ACCOUNT_SETTING_ARTIFACTS = lazyDefinition(() => buildSettingArtifacts(ACCOUNT_SETTING_DEFINITIONS));
+export const ACCOUNT_SETTING_KEYS = Object.freeze(Object.keys(ACCOUNT_SETTING_CANDIDATES));
 export type AccountSettingKey = keyof typeof ACCOUNT_SETTING_DEFINITIONS;
 export type AccountSettingsDefaults = typeof ACCOUNT_SETTING_ARTIFACTS.defaults;
 
 // This is the canonical, forward-compatible schema for the server-synced account settings blob.
 // It MUST preserve unknown keys so newer clients can add fields without breaking older ones.
-export const AccountSettingsSchema = z.preprocess(
+export const AccountSettingsSchema = lazyZodSchema(() => z.preprocess(
   (raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const effective = backfillLegacyTargetKeyedAccountSettings(raw as Record<string, unknown>);
@@ -1928,7 +1952,7 @@ export const AccountSettingsSchema = z.preprocess(
         }
       }
     }),
-);
+));
 
 export type AccountSettings = z.infer<typeof AccountSettingsSchema>;
 

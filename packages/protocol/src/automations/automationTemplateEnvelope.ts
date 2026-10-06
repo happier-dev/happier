@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 export const AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND =
   'happier_automation_template_encrypted_v1' as const;
@@ -153,14 +154,13 @@ function readPayloadExistingSessionId(payload: unknown): string | null {
 export function normalizeAutomationTemplateEnvelopeStoredRead(
   input: unknown,
 ): AutomationTemplateEnvelopeStoredRead | null {
-  const current = AutomationTemplateEnvelopeSchema.safeParse(input);
-  if (current.success) {
-    return { envelope: current.data };
-  }
-
-  const predecessor = LegacyAutomationTemplateEnvelopeSchema.safeParse(input);
-  if (!predecessor.success || !predecessor.data.existingSessionId) {
-    return null;
+  // Recognize the released outer Session id before dropping unknown fields;
+  // otherwise a retained encrypted Session would lose its custody binding.
+  const predecessor = createStoredReadSchema(LegacyAutomationTemplateEnvelopeSchema).safeParse(input);
+  if (!predecessor.success) return null;
+  if (!predecessor.data.existingSessionId) {
+    const current = createStoredReadSchema(AutomationTemplateEnvelopeSchema).safeParse(input);
+    return current.success ? { envelope: current.data } : null;
   }
 
   if (predecessor.data.kind === AUTOMATION_TEMPLATE_PLAIN_V1_KIND) {
