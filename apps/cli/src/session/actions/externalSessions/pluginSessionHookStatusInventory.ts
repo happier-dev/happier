@@ -1,11 +1,5 @@
-import {
-    PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT,
-    PluginSessionHookStatusResponseV1Schema,
-    type PluginContributionIdentityV1,
-    type PluginSessionHookInstallationStatusV1,
-    type PluginSessionHookStatusInputV1,
-    type PluginSessionHookStatusResponseV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT, PluginSessionHookStatusResponseV1Schema } from '@happier-dev/protocol/sessions/external/hookManagementV1';
+import type { PluginContributionIdentityV1, PluginSessionHookInstallationStatusV1, PluginSessionHookStatusInputV1, PluginSessionHookStatusResponseV1 } from '@happier-dev/protocol';
 
 import type {
     ExternalSessionHookInstallationInventoryPageResult,

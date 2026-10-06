@@ -1,10 +1,6 @@
-import {
-    EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1,
-    EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3,
-    ExternalSessionTakeoverStartInputV1Schema,
-    type ActionExecuteResult,
-    type ActionId,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_IMPORT_PUBLICATION_FENCE_VERSION_V1, EXTERNAL_SESSION_RUNTIME_BOUND_ADMISSION_VERSION_V3 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { ExternalSessionTakeoverStartInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
 
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 

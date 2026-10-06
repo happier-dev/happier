@@ -4,21 +4,11 @@
  */
 
 import axios from 'axios';
-import {
-    TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1,
-    TeamCredentialExternalProviderOperationRetireV1Schema,
-    TeamCredentialExternalProviderOperationRetireResponseV1Schema,
-} from '@happier-dev/protocol/teams';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema, TeamCredentialExternalProviderOperationRetireResponseV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { randomBytes } from 'node:crypto';
-import {
-    MachineLiveStreamDecodedEnvelopeV1Schema,
-    MachineLiveStreamRelayEnvelopeV1Schema,
-    hasMachineLiveStreamSensitiveContentV1,
-    sealMachineLiveStreamEnvelopeV1,
-    openMachineLiveStreamEnvelopeV1,
-    type MachineLiveStreamPayloadErrorCodeV1,
-    type MachineLiveStreamWireEnvelopeV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamDecodedEnvelopeV1Schema, MachineLiveStreamRelayEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { hasMachineLiveStreamSensitiveContentV1, sealMachineLiveStreamEnvelopeV1, openMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import type { MachineLiveStreamPayloadErrorCodeV1, MachineLiveStreamWireEnvelopeV1 } from '@happier-dev/protocol';
 import { isDeepStrictEqual } from 'node:util';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
@@ -27,19 +17,12 @@ import {
     readCurrentMessageActionReferenceRowV1,
     resolveMessageActionReferenceSnapshotV1,
 } from '@/api/session/messageActionReference';
-import {
-    createAccountScopedCryptoMaterialSnapshotV1,
-    EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1,
-    readServerEnabledBit,
-    type FeaturesResponse,
-    type IrohEndpointDescriptorV1,
-    sealAccountScopedBlobCiphertext,
-    ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1,
-    type ActionOperationRevisionEphemeralV1,
-    type ConnectedServiceExecutionAuthorityV1,
-    type ExternalSessionSourceUnavailableOccurrenceV1,
-    signExternalActionMachineRpcRequestV1,
-} from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { EXTERNAL_SESSION_SOURCE_UNAVAILABLE_OCCURRENCE_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse, IrohEndpointDescriptorV1, ActionOperationRevisionEphemeralV1, ConnectedServiceExecutionAuthorityV1, ExternalSessionSourceUnavailableOccurrenceV1 } from '@happier-dev/protocol';
+import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { fetchAccountProfile } from './accountProfile';
 import { fetchAccountEncryptionCurrentness } from './client/connectedServiceCredentialApi';
 import { logger } from '@/ui/logger';
@@ -111,24 +94,13 @@ import {
 } from './rpc/RpcHandlerManager';
 import type { RpcHandlerActiveExecution, RpcHandlerInvoker, RpcLocalActionContext } from './rpc/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-    EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1,
-    EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
-    MACHINE_LIVE_STREAM_SOCKET_EVENT,
-    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-    TRANSFER_RELAY_V2_SOCKET_EVENT,
-    type ExternalSessionTranscriptInvalidationV1,
-    type ExternalSessionOperationSocketCommandV1,
-    type ExternalSessionOperationSocketResponseV1,
-    type ExternalSessionStatusDemandDaemonMessageV1,
-    type MachineLiveStreamRelayEnvelopeV1,
-    type MachineTransferReceiveEnvelope,
-    type MachineTransferSendEnvelope,
-    type PeerTcpTunnelRelayEnvelope,
-    type ExactSessionTurnEndMutationV1,
-    type TransferRelayV2SendEnvelope,
-} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
+import { EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
+import { MACHINE_LIVE_STREAM_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import { TRANSFER_RELAY_V2_SOCKET_EVENT } from '@happier-dev/protocol/transfers/relay/v2/socketEvents';
+import type { ExternalSessionTranscriptInvalidationV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionStatusDemandDaemonMessageV1, MachineLiveStreamRelayEnvelopeV1, MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, PeerTcpTunnelRelayEnvelope, ExactSessionTurnEndMutationV1, TransferRelayV2SendEnvelope } from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
 import { readAccountChangesCursor, writeAccountChangesCursor } from '@/persistence';
 import {
@@ -168,10 +140,7 @@ import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conne
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
-import {
-    readAuthoritativeSessionDeletionChangeV1,
-    TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-} from '@happier-dev/protocol/changes';
+import { readAuthoritativeSessionDeletionChangeV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
     registerMachineRpcHandlers,
     type MachineRpcHandlerDeps,
@@ -229,33 +198,12 @@ import {
 import {
     discoverDaemonSessionClientDurableMutationJournalSessionIds,
 } from './session/client/transport/mutations/sessionClientDurableMutationPersistence';
-import {
-    MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
-    MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
-    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-    SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
-    SESSION_SERVER_START_INGRESS_EVENT_V1,
-    MachineSessionTerminalCaptureResponseV1Schema,
-    MachineSessionTerminalFinalizeResponseV1Schema,
-    SessionPendingEnqueueByMachineRequestV1Schema,
-    SessionPendingEnqueueByMachineResponseV1Schema,
-    SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
-    SessionPendingExecutionRunEnqueueByMachineRequestV2Schema,
-    SessionPendingExecutionRunEnqueueByMachineResponseV2Schema,
-    type SessionPendingExecutionRunEnqueueByMachineRequestV2,
-    SessionServerStartDispatchResultV1Schema,
-    SessionServerStartIngressRequestV1Schema,
-    SessionServerStartIngressResponseV1Schema,
-    type MachineOperationProtocolCapabilitiesV1,
-    ACCOUNT_STORED_CONTENT_SESSION_SPAWN_PLACEMENT_ORIGIN_PROTOCOL_VERSION,
-    type MachineSessionTerminalAuthorityV1,
-    type MachineSessionTerminalCaptureResponseV1,
-    type MachineSessionTerminalFinalizeResponseV1,
-    type SessionPendingEnqueueByMachineRequestV1,
-    type SessionInputAdmissionResultV1,
-    type SessionServerStartDispatchResultV1,
-    type SessionServerStartIngressRequestV1,
-} from '@happier-dev/protocol';
+import { MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1, MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1, MachineSessionTerminalCaptureResponseV1Schema, MachineSessionTerminalFinalizeResponseV1Schema } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
+import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1, SESSION_SERVER_START_INGRESS_EVENT_V1, SessionServerStartDispatchResultV1Schema, SessionServerStartIngressRequestV1Schema, SessionServerStartIngressResponseV1Schema } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema, SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema, SessionPendingExecutionRunEnqueueByMachineResponseV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import type { SessionPendingExecutionRunEnqueueByMachineRequestV2, MachineOperationProtocolCapabilitiesV1, MachineSessionTerminalAuthorityV1, MachineSessionTerminalCaptureResponseV1, MachineSessionTerminalFinalizeResponseV1, SessionPendingEnqueueByMachineRequestV1, SessionInputAdmissionResultV1, SessionServerStartDispatchResultV1, SessionServerStartIngressRequestV1 } from '@happier-dev/protocol';
+import { ACCOUNT_STORED_CONTENT_SESSION_SPAWN_PLACEMENT_ORIGIN_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
 
@@ -413,6 +361,34 @@ function isMachineReplacedSocketError(error: unknown): boolean {
     const statusRaw = data?.statusCode ?? data?.status;
     const statusCode = typeof statusRaw === 'number' && Number.isFinite(statusRaw) ? statusRaw : null;
     return statusCode === 410 && (errorCode === 'machine-replaced' || errorCode === 'machine_replaced' || message === 'machine-replaced');
+}
+
+/** Serialize the consumed machine activity stream through one Account encryption boundary. */
+export function createActionOperationSnapshotPublisher(input: Readonly<{
+    resolveAccountId(): Promise<string | null>;
+    readCredentials?: typeof readStoredCredentials;
+    publishCiphertext(ciphertext: string): void;
+}>) {
+    let pending = Promise.resolve();
+    return (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): Promise<void> => {
+        pending = pending.then(async () => {
+            const credentials = await (input.readCredentials ?? readStoredCredentials)().catch(() => null);
+            if (!credentials?.encryption) return;
+            const accountId = await input.resolveAccountId();
+            if (!accountId || snapshot.scope.accountId !== accountId || readAccountIdFromToken(credentials.token) !== accountId) {
+                logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
+                return;
+            }
+            const material = credentials.encryption.type === 'legacy'
+                ? { type: 'legacy' as const, secret: credentials.encryption.secret }
+                : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
+            input.publishCiphertext(sealAccountScopedBlobCiphertext({
+                kind: 'action_operation_snapshot', material, payload: snapshot,
+                randomBytes: (length) => new Uint8Array(randomBytes(length)),
+            }));
+        }).catch((error) => logger.warn('Failed to publish Action operation snapshot', { error }));
+        return pending;
+    };
 }
 
 export class ApiMachineClient {
@@ -751,31 +727,12 @@ export class ApiMachineClient {
         this.actionOperationRuntime = createHostActionOperationRuntime({
             machineId: this.machine.id,
             resolveAccountId: async () => await this.getAccountId(),
-            publishSnapshot: (() => {
-                let pending = Promise.resolve();
-                return (snapshot) => {
-                    pending = pending.then(async () => {
-                        const credentials = await readStoredCredentials().catch(() => null);
-                        if (!credentials?.encryption) return;
-                        const material = credentials.encryption.type === 'legacy'
-                            ? { type: 'legacy' as const, secret: credentials.encryption.secret }
-                            : { type: 'dataKey' as const, machineKey: credentials.encryption.machineKey };
-                        const ciphertext = sealAccountScopedBlobCiphertext({
-                            kind: 'action_operation_snapshot',
-                            material,
-                            payload: snapshot,
-                            randomBytes: (length) => new Uint8Array(randomBytes(length)),
-                        });
-                        emitActionOperationSnapshotV1({
-                            socket: this.socket,
-                            machineId: this.machine.id,
-                            ciphertext,
-                        });
-                    }).catch((error) => {
-                        logger.warn('Failed to publish Action operation snapshot', { error });
-                    });
-                };
-            })(),
+            publishSnapshot: createActionOperationSnapshotPublisher({
+                resolveAccountId: async () => await this.getAccountId(),
+                publishCiphertext: (ciphertext) => emitActionOperationSnapshotV1({
+                    socket: this.socket, machineId: this.machine.id, ciphertext,
+                }),
+            }),
             supportsCoreCancellation: (actionId, input) => {
                 if (actionId !== 'session.spawn_new') return true;
                 if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -1012,6 +969,7 @@ export class ApiMachineClient {
                     }
                     : {}),
                 actionOperations: {
+                    attachOwner: this.actionOperationRuntime.attachOwner,
                     handlers: this.actionOperationRuntime.handlers,
                     observeExecution: this.actionOperationRuntime.observeExecution,
                 },

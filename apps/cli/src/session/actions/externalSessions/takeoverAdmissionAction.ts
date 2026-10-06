@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  ExternalSessionOperationResumeInputV1Schema,
-  projectExternalSessionOperationProgressV1,
-  type ExternalSessionOperationActionResponseV1,
-  type ExternalSessionOperationRecordV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionOperationResumeInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { projectExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import type { ExternalSessionOperationActionResponseV1, ExternalSessionOperationRecordV1 } from '@happier-dev/protocol';
 
 import {
   ExternalSessionOperationClaimLostError,

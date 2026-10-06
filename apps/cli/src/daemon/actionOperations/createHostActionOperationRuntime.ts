@@ -1,16 +1,11 @@
-import {
-  ActionIdSchema,
-  getActionSpec,
-  type ActionExecuteResult,
-  type ActionOperationDomainRefV1,
-  type ActionOperationSnapshotV1,
-  type ActionOperationDeclarationV1,
-} from '@happier-dev/protocol/actions';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 
 import { createActionOperationRpcHandlers } from './actionOperationRpcHandlers';
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
-import type { ActionOperationProgressUpdate } from './actionOperationTypes';
+import type { ActionOperationDomainOwner, ActionOperationProgressUpdate } from './actionOperationTypes';
 
 function readRequestId(actionId: string, input: unknown): string | undefined {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
@@ -68,7 +63,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     },
     ...(deps.generateOperationId ? { generateOperationId: deps.generateOperationId } : {}),
   });
+  let owner: ActionOperationDomainOwner | null = null;
   const handlers = createActionOperationRpcHandlers({
+    owner: () => owner,
     store,
     runner,
     machineId: deps.machineId,
@@ -168,7 +165,25 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     });
   };
 
-  return Object.freeze({ store, runner, handlers, observeExecution, observePluginExecution });
+  const attachOwner = (next: ActionOperationDomainOwner): (() => void) => {
+    if (owner) throw new Error('action_operation_domain_owner_already_attached');
+    owner = next;
+    const unsubscribe = next.subscribe({
+      resolveScope: async () => {
+        const accountId = await deps.resolveAccountId();
+        return accountId ? { accountId, machineId: deps.machineId } : null;
+      },
+      publishSnapshot: store.project,
+    });
+    return () => {
+      unsubscribe();
+      if (owner === next) {
+        owner = null;
+        store.removeOwnerProjections(next.actionIds);
+      }
+    };
+  };
+  return Object.freeze({ store, runner, handlers, observeExecution, observePluginExecution, attachOwner });
 }
 
 export type HostActionOperationRuntime = ReturnType<typeof createHostActionOperationRuntime>;

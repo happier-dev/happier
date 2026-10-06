@@ -5,7 +5,7 @@ import type {
   ActionOperationFailureV1,
   ActionExecuteResult,
 } from '@happier-dev/protocol/actions';
-import { ActionOperationDomainRefV1Schema } from '@happier-dev/protocol/actions';
+import { ActionOperationDomainRefV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';

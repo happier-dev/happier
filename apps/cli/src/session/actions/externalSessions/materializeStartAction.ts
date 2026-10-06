@@ -1,12 +1,6 @@
-import {
-  ExternalSessionMaterializeStartInputV1Schema,
-  projectExternalSessionOperationProgressV1,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  type ExternalSessionOperationActionResponseV1,
-  type ExternalSessionOperationAuthorIntentV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationSemanticRequestV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionMaterializeStartInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionOperationActionResponseV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationSemanticRequestV1 } from '@happier-dev/protocol';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import {
@@ -35,6 +29,7 @@ import {
 import {
   createExternalSessionSourceGenerationAnchor,
 } from './sourceGenerationAnchor';
+import { acknowledgeExternalSessionOperationAdmission } from './operationAdmission';
 
 type MaterializeStartIntent = Readonly<{
   v: 1;
@@ -109,15 +104,6 @@ function failure(
   return { ok: false, error: { code, message } };
 }
 
-function success(
-  record: ExternalSessionOperationRecordV1,
-): ExternalSessionOperationActionResponseV1 {
-  return {
-    ok: true,
-    progress: projectExternalSessionOperationProgressV1(record),
-  };
-}
-
 function publicIntentForSemanticRequest(
   request: MaterializeSemanticRequest,
 ): MaterializeStartIntent {
@@ -149,20 +135,13 @@ export function createExternalSessionMaterializeStartActionExecutor(
     }>,
     accountScope?: ExternalSessionOperationAccountScope | null,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
-    let admit!: (record: ExternalSessionOperationRecordV1) => void;
-    const admitted = new Promise<ExternalSessionOperationRecordV1>((resolve) => {
-      admit = resolve;
-    });
-    const operation = dependencies.startSemanticRequest({ request }, {
-      ...(context?.signal ? { signal: context.signal } : {}),
-      ...(context?.authorIntent ? { authorIntent: context.authorIntent } : {}),
-      ...(accountScope ? { accountScope } : {}),
-      onAdmitted: admit,
-    });
-    return await Promise.race([
-      admitted.then((record) => success(record)),
-      operation,
-    ]);
+    return await acknowledgeExternalSessionOperationAdmission((onAdmitted) =>
+      dependencies.startSemanticRequest({ request }, {
+        ...(context?.signal ? { signal: context.signal } : {}),
+        ...(context?.authorIntent ? { authorIntent: context.authorIntent } : {}),
+        ...(accountScope ? { accountScope } : {}),
+        onAdmitted,
+      }), 'materialize.start');
   };
 
   const start: ExternalSessionMaterializeStartActionExecutor['start'] =

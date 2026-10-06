@@ -1,18 +1,8 @@
-import {
-  ExternalSessionOperationCancelInputV1Schema,
-  ExternalSessionOperationResumeInputV1Schema,
-  isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
-  projectExternalSessionOperationProgressV1,
-  resolveExternalHistoryImportV1FromMetadata,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  resolveLinkedExternalSessionMetadataV1,
-  pluginSourceCustodyV1Equal,
-  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
-  type ExternalSessionOperationActionResponseV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionDestructiveQuiescenceResultV1,
-  type ExternalSessionsAgentId,
-} from '@happier-dev/protocol';
+import { ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationResumeInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import { canCancelExternalSessionOperationV1, isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1, projectExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginAgentExternalLinkedTakeoverWriterSafetyV1, ExternalSessionOperationActionResponseV1, ExternalSessionOperationRecordV1, ExternalSessionDestructiveQuiescenceResultV1, ExternalSessionsAgentId } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 
 import type {
@@ -129,7 +119,7 @@ function isCommittedExternalLinkedRuntimeBindingCandidate(
 }
 
 export type ExternalSessionPersistedTakeoverPhaseRunner = Readonly<{
-  resume(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
+  resume: ExternalSessionMaterializeActionExecutor['resumePersistedTakeover'];
 }>;
 
 export function createExternalSessionPersistedTakeoverPhaseRunner(input: Readonly<{
@@ -139,8 +129,8 @@ export function createExternalSessionPersistedTakeoverPhaseRunner(input: Readonl
   >;
 }>): ExternalSessionPersistedTakeoverPhaseRunner {
   return Object.freeze({
-    resume: async (resumeInput) =>
-      await input.importExecutor.resumePersistedTakeover(resumeInput),
+    resume: async (resumeInput, context) =>
+      await input.importExecutor.resumePersistedTakeover(resumeInput, context),
   });
 }
 
@@ -1044,20 +1034,7 @@ export function createExternalSessionExternalLinkedTakeoverPhaseRunner(
     }
     if (current.status === 'cancelled') return operationSuccess(current);
     const record = current as ExternalLinkedTakeoverRecord;
-    const safelyCancellable = record.status === 'cancel_requested' || (
-      record.status === 'awaiting_user_resume'
-      && (
-        record.phase === 'validating'
-        || record.phase === 'quiescing'
-        || record.phase === 'admitting'
-      )
-    ) || (
-      record.status === 'failed'
-      && (
-        record.phase === 'quiescing'
-        || record.phase === 'admitting'
-      )
-    );
+    const safelyCancellable = canCancelExternalSessionOperationV1(record);
     if (!safelyCancellable) {
       return operationFailure(
         'not_allowed',

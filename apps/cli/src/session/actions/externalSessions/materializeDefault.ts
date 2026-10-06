@@ -1,16 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import {
-  EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1,
-  pluginSourceCustodyV1Equal,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationSocketCommandV1,
-  type ExternalSessionOperationSocketResponseV1,
-  type ExternalSessionRequiredItemDiagnosticV1,
-  type ExternalSessionRequiredItemFailuresV1,
-  type ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionOperationRecordV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionRequiredItemDiagnosticV1, ExternalSessionRequiredItemFailuresV1, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import {
   ExternalSessionHistoricalImportRequiredItemError,

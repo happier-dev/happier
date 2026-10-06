@@ -18,9 +18,7 @@ import {
     join,
 } from 'node:path';
 
-import {
-    PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES,
-} from '@happier-dev/protocol';
+import { PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/sessions/external/hookManagementV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,

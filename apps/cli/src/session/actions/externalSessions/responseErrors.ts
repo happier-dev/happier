@@ -2,13 +2,9 @@ import type {
     ActionExecuteResult,
     ExternalSessionTakeoverPersistResponse,
 } from '@happier-dev/protocol';
-import { SPAWN_SESSION_ERROR_DETAIL_KINDS, SpawnSessionErrorCodeSchema } from '@happier-dev/protocol';
-import {
-    ExternalSessionTakeoverResultV1Schema,
-    type ExternalSessionTakeoverErrorCodeV1,
-    type ExternalSessionTakeoverResultV1,
-    type ExternalSessionsRpcErrorCode,
-} from '@happier-dev/protocol/sessions';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS, SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
+import { ExternalSessionTakeoverResultV1Schema } from '@happier-dev/protocol/sessions/external/takeoverV1';
+import type { ExternalSessionTakeoverErrorCodeV1, ExternalSessionTakeoverResultV1, ExternalSessionsRpcErrorCode } from '@happier-dev/protocol/sessions';
 
 import { logger } from '@/ui/logger';
 import {

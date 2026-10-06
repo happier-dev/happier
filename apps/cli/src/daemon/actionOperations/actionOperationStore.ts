@@ -1,3 +1,4 @@
+import { canAdvanceActionOperationSnapshotV1, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type {
   ActionOperationDomainRefV1,
   ActionOperationFailureV1,
@@ -104,6 +105,35 @@ export function createActionOperationStore(options?: Readonly<{
   };
 
   return Object.freeze({
+    project(input: ActionOperationSnapshotV1): void {
+      const incoming = ActionOperationSnapshotV1Schema.parse(input);
+      const current = snapshots.get(incoming.operationId);
+      if (current && !canAdvanceActionOperationSnapshotV1(current, incoming)) return;
+      const snapshot = freezeSnapshot(incoming);
+      snapshots.set(snapshot.operationId, snapshot);
+      notify(snapshot);
+      prune();
+    },
+
+    removeOwnerProjections(actionIds: readonly string[], scope?: ActionOperationQueryScope, operationId?: string): void {
+      for (const snapshot of snapshots.values()) {
+        if (actionIds.includes(snapshot.actionId) && (!scope || inScope(snapshot, scope))
+          && (operationId === undefined || snapshot.operationId === operationId)) {
+          snapshots.delete(snapshot.operationId);
+          inputIdentities.delete(snapshot.operationId);
+        }
+      }
+    },
+
+    reconcileOwner(scope: ActionOperationQueryScope, actionIds: readonly string[], incoming: readonly ActionOperationSnapshotV1[]): void {
+      const retainedIds = new Set(incoming.map((snapshot) => snapshot.operationId));
+      for (const snapshot of snapshots.values()) {
+        if (inScope(snapshot, scope) && actionIds.includes(snapshot.actionId) && !retainedIds.has(snapshot.operationId)) {
+          snapshots.delete(snapshot.operationId);
+        }
+      }
+    },
+
     create(input: CreateActionOperationInput): ActionOperationSnapshotV1 {
       if (snapshots.has(input.operationId)) {
         throw new Error(`Duplicate action operation id: ${input.operationId}`);

@@ -1,15 +1,7 @@
-import {
-  getActionSpec,
-  type ActionExecuteResult,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol/actions';
-import {
-  ExternalSessionMaterializeActionInputV1Schema,
-  ExternalSessionOperationActionResultV1Schema,
-  ExternalSessionOperationActionResponseV1Schema,
-  ExternalSessionOperationStatusInputV1Schema,
-  type ExternalSessionOperationAuthorIntentV1,
-} from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { ExternalSessionMaterializeActionInputV1Schema, ExternalSessionOperationActionResultV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationStatusInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ExternalSessionOperationAuthorIntentV1 } from '@happier-dev/protocol';
 
 import {
   authenticateOwnedExternalSessionRecord,
