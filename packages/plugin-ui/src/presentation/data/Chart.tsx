@@ -43,6 +43,15 @@ export function HappierDataChart(props: HappierDataChartProps) {
   const barAxis: BarAxis = width !== null && count > 0 && (width - HAPPIER_DATA_METRICS.barGapPx * (count - 1)) / count < labelWidth ? 'ends' : 'every';
   const hoveredPoint = hovered === null ? null : props.points[hovered] ?? null;
   const baseline = { borderBottomWidth: 1, borderBottomColor: props.theme.colors.divider };
+  const stroke = HAPPIER_DATA_METRICS.lineStrokePx;
+  const linePoints = props.style === 'line' && width !== null
+    ? resolveHappierDataLinePoints(props.points, width, plotHeight - 1, stroke) : [];
+  // The hovered bar's column, so its readout sits over it rather than over whichever bar is at the end.
+  const column = width === null || hovered === null || count === 0 ? null : (() => {
+    const columnWidth = (width - HAPPIER_DATA_METRICS.barGapPx * (count - 1)) / count;
+    const left = hovered * (columnWidth + HAPPIER_DATA_METRICS.barGapPx);
+    return hovered < count / 2 ? { left } : { right: width - (left + columnWidth) };
+  })();
 
   const plot = props.style === 'bar' ? (
     <View style={{ height: plotHeight, flexDirection: 'row', alignItems: 'flex-end', columnGap: HAPPIER_DATA_METRICS.barGapPx, ...baseline }}>
@@ -65,16 +74,24 @@ export function HappierDataChart(props: HappierDataChartProps) {
     </View>
   ) : (
     <View style={{ height: plotHeight, ...baseline }}>
-      {width === null ? null : resolveHappierDataLineSegments(resolveHappierDataLinePoints(props.points, width, plotHeight - 1, HAPPIER_DATA_METRICS.lineStrokePx))
+      {width === null ? null : resolveHappierDataLineSegments(linePoints)
         .map((segment, index) => (
           <View
             key={index}
             testID={props.testID ? `${props.testID}-segment-${index}` : undefined}
-            style={{ position: 'absolute', left: segment.centerX - segment.length / 2, top: segment.centerY - HAPPIER_DATA_METRICS.lineStrokePx / 2,
-              width: segment.length, height: HAPPIER_DATA_METRICS.lineStrokePx, borderRadius: HAPPIER_DATA_METRICS.lineStrokePx / 2,
+            style={{ position: 'absolute', left: segment.centerX - segment.length / 2, top: segment.centerY - stroke / 2,
+              width: segment.length, height: stroke, borderRadius: stroke / 2,
               backgroundColor: props.theme.colors.text, transform: [{ rotate: `${segment.angle}deg` }] }}
           />
         ))}
+      {/* A round joint at every point, so a steep turn reads as one stroke rather than two bars meeting. */}
+      {width === null ? null : linePoints.map((point, index) => (
+        <View
+          key={`joint-${index}`}
+          style={{ position: 'absolute', left: point.x - stroke / 2, top: point.y - stroke / 2, width: stroke, height: stroke,
+            borderRadius: stroke / 2, backgroundColor: props.theme.colors.text }}
+        />
+      ))}
     </View>
   );
 
@@ -105,8 +122,10 @@ export function HappierDataChart(props: HappierDataChartProps) {
       <View aria-hidden importantForAccessibility="no-hide-descendants">
         {plot}
         {axis}
-        {hoveredPoint ? (
-          <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0 }}>
+        {hoveredPoint && column ? (
+          // Above the plot, edge-aligned to the hovered column (toward the chart's middle), so it never
+          // covers the bar it describes or the current one.
+          <View pointerEvents="none" style={{ position: 'absolute', bottom: '100%', marginBottom: HAPPIER_DATA_METRICS.axisGapPx, ...column }}>
             <HappierText testID={props.testID ? `${props.testID}-readout` : undefined} style={text.captionStrong} tabularNumbers>
               {`${formatHappierDataValue(hoveredPoint.x, text.locale)} · ${formatHappierDataValue(hoveredPoint.y, text.locale)}`}
             </HappierText>
