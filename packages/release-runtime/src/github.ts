@@ -3,12 +3,12 @@ import { requestJson } from './http.js';
 
 type FetchImpl = typeof fetch;
 
-function buildGitHubReleaseTagUrl(githubRepo: string, tag: string) {
+function buildGitHubReleaseTagUrl(githubRepo: string, tag: string, apiBaseUrl = 'https://api.github.com') {
   const repo = String(githubRepo ?? '').trim();
   const t = String(tag ?? '').trim();
   if (!repo) throw new Error('[github] githubRepo is required');
   if (!t) throw new Error('[github] tag is required');
-  return `https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(t)}`;
+  return `${apiBaseUrl.replace(/\/$/, '')}/repos/${repo}/releases/tags/${encodeURIComponent(t)}`;
 }
 
 function buildGitHubLatestReleaseUrl(githubRepo: string) {
@@ -53,6 +53,7 @@ function normalizeGitHubRequestError(params: Readonly<{
 
 export async function fetchGitHubReleaseByTag(params: Readonly<{
   githubRepo: string;
+  apiBaseUrl?: string;
   tag: string;
   userAgent?: string;
   githubToken?: string;
@@ -64,7 +65,7 @@ export async function fetchGitHubReleaseByTag(params: Readonly<{
   params.signal?.throwIfAborted();
   const userAgent = String(params.userAgent ?? '').trim() || 'happier-release-runtime';
   const token = String(params.githubToken ?? '').trim();
-  const url = buildGitHubReleaseTagUrl(params.githubRepo, params.tag);
+  const url = buildGitHubReleaseTagUrl(params.githubRepo, params.tag, params.apiBaseUrl);
   const headers: Record<string, string> = {
     'user-agent': userAgent,
     accept: 'application/vnd.github+json',
