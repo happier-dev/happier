@@ -372,7 +372,7 @@ describe('UI testkit mock factories', () => {
 
         expect(routerMock.module.usePathname()).toBe('/settings');
         expect(routerMock.module.useSegments()).toEqual(['(app)', 'settings']);
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b' });
         expect(routerMock.module.useNavigation()).toBe(navigation);
         expect(routerMock.state.router).toBe(providedRouter);
         expect(routerMock.spies.push).toHaveBeenCalledWith('/next');
@@ -392,7 +392,7 @@ describe('UI testkit mock factories', () => {
         });
 
         expect(providedRouter.setParams({ path: '/first' })).toBe('/first');
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-a', path: '/first' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-a', path: '/first' });
 
         providedRouter.setParams.mockClear();
         expect(routerMock.spies.setParams).not.toHaveBeenCalled();
@@ -401,9 +401,9 @@ describe('UI testkit mock factories', () => {
 
         expect(routerMock.spies.setParams).toHaveBeenCalledExactlyOnceWith({ path: '/next' });
         expect(onSetParams).toHaveBeenCalledTimes(2);
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b', path: '/next' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b', path: '/next' });
         routerMock.resetParams();
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b' });
     });
 
     it('fills in missing router methods when only a partial router is supplied', async () => {
@@ -427,7 +427,7 @@ describe('UI testkit mock factories', () => {
         expect(routerMock.spies.back).toHaveBeenCalledTimes(1);
         expect(routerMock.spies.replace).toHaveBeenCalledWith('/replace');
         expect(routerMock.spies.setParams).toHaveBeenCalledWith({ path: '/next' });
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ path: '/next' });
+        expect(routerMock.state.params).toEqual({ path: '/next' });
     });
 
     it('preserves caller-provided router vi.fn methods without wrapping them', async () => {
@@ -463,13 +463,14 @@ describe('UI testkit mock factories', () => {
             params: () => currentParams,
         });
 
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-a' });
+        expect(routerMock.state.params).toEqual({ serverId: 'server-a' });
 
         currentParams = { serverId: 'server-b', path: '/repo' };
-        expect(routerMock.module.useLocalSearchParams()).toEqual({ serverId: 'server-b', path: '/repo' });
+        routerMock.resetParams();
+        expect(routerMock.state.params).toEqual({ serverId: 'server-b', path: '/repo' });
 
         routerMock.state.router.setParams({ draftId: 'draft-1' });
-        expect(routerMock.module.useLocalSearchParams()).toEqual({
+        expect(routerMock.state.params).toEqual({
             serverId: 'server-b',
             path: '/repo',
             draftId: 'draft-1',

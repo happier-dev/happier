@@ -661,8 +661,9 @@ describe('savedSecretResourceOperations', () => {
             }),
         }));
         expect(requestHomeDomain).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            path: '/v1/account/saved-secrets/resources/envelope-census',
-            input: expect.objectContaining({ resourceId: 'resource-a' }),
+            path: '/v1/account/saved-secrets/resources/envelope-census?resourceId=resource-a&limit=100',
+            method: 'GET',
+            input: undefined,
         }));
         expect(requestHomeDomain).toHaveBeenNthCalledWith(2, expect.objectContaining({
             path: '/v1/account/saved-secrets/resources/envelopes/repair',
@@ -741,8 +742,9 @@ describe('savedSecretResourceOperations', () => {
         expect(runTeamAction).not.toHaveBeenCalled();
         expect(requestHomeDomain).toHaveBeenCalledTimes(2);
         expect(requestHomeDomain).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            path: '/v1/account/saved-secrets/resources/envelope-census',
-            input: expect.objectContaining({ resourceId: 'resource-a' }),
+            path: '/v1/account/saved-secrets/resources/envelope-census?resourceId=resource-a&limit=100',
+            method: 'GET',
+            input: undefined,
         }));
         expect(requestHomeDomain).toHaveBeenNthCalledWith(2, expect.objectContaining({
             path: '/v1/account/saved-secrets/resources/envelopes/repair',

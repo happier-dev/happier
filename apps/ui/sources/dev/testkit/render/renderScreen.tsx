@@ -292,13 +292,23 @@ export async function renderScreen(
 
     const getTree = () => rendered.tree as RenderScreenTree;
     const getRoot = () => getTree().root;
+    const resolveComponentQueryType = (type: unknown): unknown => {
+        // Preserve exact SDK matches: custom memo wrappers can have their own fiber.
+        if (getRoot().findAllByType(type as never).length > 0) return type;
+        // React collapses a simple memo wrapper to its inner component fiber.
+        return type !== null && typeof type === 'object'
+            && '$$typeof' in type && type.$$typeof === Symbol.for('react.memo')
+            && 'type' in type
+            ? type.type
+            : type;
+    };
     const helpers: RenderScreenQueryHelpers = {
         get root() {
             return getRoot();
         },
         // The SDK erases props; explicit component queries narrow only this genuine renderer boundary.
-        findByType: ((type: unknown) => getRoot().findByType(type as never)) as ReactTestRenderer['findByType'],
-        findAllByType: ((type: unknown) => getRoot().findAllByType(type as never)) as ReactTestRenderer['findAllByType'],
+        findByType: ((type: unknown) => getRoot().findByType(resolveComponentQueryType(type) as never)) as ReactTestRenderer['findByType'],
+        findAllByType: ((type: unknown) => getRoot().findAllByType(resolveComponentQueryType(type) as never)) as ReactTestRenderer['findAllByType'],
         findByProps: (props) => getRoot().findByProps(props),
         findAllByProps: (props) => getRoot().findAllByProps(props),
         find: (predicate) => getRoot().find(predicate),

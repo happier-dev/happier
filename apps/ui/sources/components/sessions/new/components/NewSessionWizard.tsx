@@ -27,7 +27,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { SecretSatisfactionResult } from '@/utils/secrets/secretSatisfaction';
 import type { CLIAvailability } from '@/agents/machineAgents/machineAgentCliAvailability';
-import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
 import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { InstallableDepInstaller, type InstallableDepInstallerProps } from '@/components/machines/InstallableDepInstaller';
@@ -47,6 +47,7 @@ import type {
     ProviderErrorV1,
     SessionModelSelectionV1,
 } from '@happier-dev/protocol';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
@@ -260,13 +261,18 @@ const WIZARD_AUTO_DROPDOWN_MIN_VISIBLE_ROWS = 5;
 type NewSessionWizardAgentPickerOption = NonNullable<React.ComponentProps<typeof AgentInput>['agentPickerOptions']>[number];
 
 function isWizardBackendPickerOption(option: NewSessionWizardAgentPickerOption): boolean {
-    return option.id.startsWith('backend:');
+    try {
+        parseBackendTargetKeyV2(option.id);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function resolveBuiltInAgentIdFromBackendPickerOptionId(optionId: string): AgentId | null {
-    const match = /^backend:([^:]+)(?::configured:.+)?$/.exec(optionId);
-    const backendId = match?.[1];
-    return backendId && isBundledAgentId(backendId) ? backendId : null;
+    const target = parseBackendTargetKeyV2(optionId);
+    if (target.kind === 'agent') return resolveBundledAgentIdFromContributionIdentity(target.identity);
+    return isBundledAgentId(target.backendId) ? target.backendId : null;
 }
 
 function countVisibleWizardSavedPathRows(params: Readonly<{
@@ -1024,13 +1030,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                                 const row = backendRows.find((candidate) => candidate.id === id);
                                                                 if (row) {
                                                                     row.onPress();
-                                                                    return;
                                                                 }
-                                                                if (onAgentPickerSelect && agentPickerOptions?.some((option) => option.id === id)) {
-                                                                    onAgentPickerSelect(id);
-                                                                    return;
-                                                                }
-                                                                setAgentType(id as AgentId);
                                                             }}
                                                             search={dropdownItems.length >= 10}
                                                             searchPlaceholder={t('subAgentGuidance.ruleEditor.backendPicker.searchPlaceholder')}

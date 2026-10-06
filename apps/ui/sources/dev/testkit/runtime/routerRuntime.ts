@@ -102,7 +102,23 @@ function createTrackedRouterMethod<TArgs extends unknown[], TResult>(
 
 function resolveParamsInput(params: ExpoRouterParamsInput | undefined): ExpoRouterParams {
     const resolved = typeof params === 'function' ? params() : params;
-    return { ...(resolved ?? {}) };
+    const snapshot = { ...(resolved ?? {}) };
+    for (const key of Object.keys(snapshot)) {
+        const value = snapshot[key];
+        if (Array.isArray(value)) snapshot[key] = [...value];
+    }
+    return snapshot;
+}
+
+function paramsEqual(left: ExpoRouterParams, right: ExpoRouterParams): boolean {
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every((key) => {
+        if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+        const leftValue = left[key];
+        const rightValue = right[key];
+        return leftValue === rightValue || (Array.isArray(leftValue) && Array.isArray(rightValue)
+            && leftValue.length === rightValue.length && leftValue.every((value, index) => value === rightValue[index]));
+    });
 }
 
 function resolveSegmentsInput(segments: ExpoRouterSegmentsInput | undefined): string[] {
@@ -169,6 +185,7 @@ export function createExpoRouterRuntime(
     };
 
     let paramsOverrides: ExpoRouterParams = {};
+    const paramsListeners = new Set<() => void>();
     const state = {
         get pathname() {
             return resolvePathnameInput(options.pathname);
@@ -181,20 +198,31 @@ export function createExpoRouterRuntime(
         router,
     };
     const syncParams = () => {
-        state.params = {
+        const next = {
             ...resolveParamsInput(options.params),
-            ...paramsOverrides,
+            ...resolveParamsInput(paramsOverrides),
         };
+        // React's external-store snapshot must retain its identity while route values are unchanged.
+        if (!paramsEqual(state.params, next)) state.params = next;
         return state.params;
     };
     syncParams();
+    const subscribeParams = (listener: () => void) => {
+        paramsListeners.add(listener);
+        return () => { paramsListeners.delete(listener); };
+    };
+    const notifyParams = () => {
+        syncParams();
+        for (const listener of paramsListeners) listener();
+    };
+    const useSearchParams = () => React.useSyncExternalStore(subscribeParams, syncParams, syncParams);
     const createTrackedMethod = adapters.createTrackedMethod ?? createRuntimeTrackedMethod;
     const setParamsMock = createTrackedMethod<[ExpoRouterParams], unknown>((value) => {
         paramsOverrides = {
             ...paramsOverrides,
             ...value,
         };
-        syncParams();
+        notifyParams();
         return trackedSetParams.method(value);
     });
     state.router.setParams = setParamsMock;
@@ -210,7 +238,8 @@ export function createExpoRouterRuntime(
      */
     const resetParams = () => {
         paramsOverrides = {};
-        return syncParams();
+        notifyParams();
+        return state.params;
     };
     spies.push.mockName?.('router.push');
     spies.back.mockName?.('router.back');
@@ -243,8 +272,8 @@ export function createExpoRouterRuntime(
             useNavigation: () => state.navigation,
             useSegments: () => resolveSegmentsInput(options.segments),
             usePathname: () => resolvePathnameInput(options.pathname),
-            useLocalSearchParams: () => syncParams(),
-            useGlobalSearchParams: () => syncParams(),
+            useLocalSearchParams: useSearchParams,
+            useGlobalSearchParams: useSearchParams,
             router: state.router,
         },
     };

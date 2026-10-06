@@ -2,30 +2,30 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
-import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
+import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
-let phone = false;
-let native = false;
+const device = vi.hoisted(() => ({ phone: false, native: false }));
 vi.mock('react-native-safe-area-context', async (importOriginal) => ({
     ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
     initialWindowMetrics: null,
 }));
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: { get OS() { return native ? 'ios' : 'web'; }, isPad: false,
-                select: (values: Record<string, unknown>) => values[native ? 'ios' : 'web'] ?? values.default },
-            useWindowDimensions: () => ({ width: phone ? 390 : 1440, height: phone ? 844 : 900, scale: 1, fontScale: 1 }),
-        });
-    },
+installSessionDetailsPanelNonRnModuleMocks();
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const dimensions = () => ({ width: device.phone ? 390 : 1440, height: device.phone ? 844 : 900, scale: 1, fontScale: 1 });
+    return createReactNativeWebMock({
+        Platform: { get OS() { return device.native ? 'ios' : 'web'; }, isPad: false,
+            select: (values: Record<string, unknown>) => values[device.native ? 'ios' : 'web'] ?? values.default },
+        useWindowDimensions: dimensions,
+        Dimensions: { get: dimensions },
+    });
 });
 const PLUGIN_ID = 'acme.review';
 const DESTINATION_ID = 'project-review-panel';
@@ -34,6 +34,12 @@ let projection = PluginProjectionV2Schema.parse({ v: 2, generation: 4, familiesB
 let deferred: ReturnType<typeof createDeferred<ReturnType<typeof PluginProjectionV2Schema.parse>>> | null = null;
 const runtime = installSessionPaneRuntimeTestHarness({
     scopeId: 'project:wr_1',
+    request: async (url, init) => {
+        if ((init?.method ?? 'GET') === 'GET' && new URL(String(url)).pathname === '/v1/machines/m1') {
+            return Response.json({ machine: { id: 'm1', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        }
+        return null;
+    },
     configureSocket: socket => {
         vi.mocked(socket.connect).mockImplementation(() => {
             socket.connected = true; socket.id = 'project-viewer-socket';
@@ -71,7 +77,7 @@ function createProjection(pluginId = PLUGIN_ID, destinationId = DESTINATION_ID) 
                 renderer: { kind: 'declarative', contributionId: 'project-panel-renderer' },
                 display: { developerFallback: 'Review' },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
-                serverIdentityId: runtime.serverId,
+                serverIdentityId: runtime.serverIdentityId,
                 materializationRef: { pluginId, machineId: 'm1', materializationId: 'project-review-install-a' },
                 headerActions: [],
             },
@@ -79,7 +85,7 @@ function createProjection(pluginId = PLUGIN_ID, destinationId = DESTINATION_ID) 
     });
 }
 beforeEach(async () => {
-    phone = false; native = false; deferred = null;
+    device.phone = false; device.native = false; deferred = null;
     projection = createProjection();
     const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     clearDaemonMergedProjectionCacheForTests();
@@ -111,7 +117,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         expect(screen.tree.findAllByType(ProjectRightPanelServicesView)).toHaveLength(1);
     });
     it('keeps Browser and Services available on phone', async () => {
-        phone = true;
+        device.phone = true;
         const screen = await mount('browser');
         expect(screen.findHostByTestId('project-rightpanel-tab:browser')).not.toBeNull();
         expect(screen.findHostByTestId('project-rightpanel-tab:services')).not.toBeNull();
@@ -195,7 +201,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         expect(runtime.pane.scopeState?.right.activeTabId).toBe(TAB_ID);
     });
     it('keeps a restored desktop Project destination as a native-phone tombstone', async () => {
-        phone = true; native = true;
+        device.phone = true; device.native = true;
         const screen = await mount(TAB_ID);
         const { PluginSurfacePlacementHost } = await import('@/components/plugins/surfaces');
         expect(screen.findHostByTestId(`project-rightpanel-tab:${TAB_ID}`)).toBeNull();

@@ -9,6 +9,7 @@ import {
 
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { setCurrentAuth } from '@/auth/context/currentAuth';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -18,7 +19,7 @@ import {
     setServerProfileIdentityForUrl,
 } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 
 import { createDefaultActionExecutor } from './defaultActionExecutor';
@@ -30,8 +31,10 @@ import { resetAccountSecurityProjectionStoreForTests } from '@/components/settin
 import { renderScreen } from '@/dev/testkit';
 import { nativePasswordTranslations } from '@/text/translations/nativePasswordTranslations';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
 
+installDisconnectedServerSocketBoundary();
 const initialState = getStorage().getState();
 const tokenWithPayload = (payload: object) => `e30.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
 const enrolledSecuritySummary = {
@@ -44,6 +47,8 @@ describe('default Account Security Action transport', () => {
     let securityResponseOverride: Promise<Response> | null;
     let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
     let previousAuth: ReturnType<typeof getCurrentAuth>;
+    let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+    let securityRequest: RuntimeFetch;
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
 
     beforeEach(async () => {
@@ -61,11 +66,12 @@ describe('default Account Security Action transport', () => {
         getStorage().getState().activateProfileScope({ serverId, accountId: 'account-a' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('account-a') });
         requests.length = 0;
-        setRuntimeFetch(async (input, init) => {
+        securityRequest = async (input, init) => {
             const path = new URL(String(input)).pathname;
             const body = init?.body ? JSON.parse(String(init.body)) : null;
             requests.push({ path, method: init?.method ?? 'GET', body });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({ ok: true });
             if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: 'srv_security_actions' } } }));
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
@@ -76,11 +82,14 @@ describe('default Account Security Action transport', () => {
             if (path === '/v1/account/email/change/request') return Response.json({ v: 1, status: 'verification_sent' });
             const status = path.endsWith('/remove') ? 'removed' : path.endsWith('/enroll') ? 'enrolled' : 'updated';
             return Response.json({ v: 1, status });
-        });
+        };
+        setRuntimeFetch(securityRequest);
     });
 
     afterEach(async () => {
         await screen?.unmount();
+        await connection?.dispose();
+        connection = undefined;
         setCurrentAuth(previousAuth);
         await disposeIrohHomeTunnelRuntime();
         screen = null;
@@ -348,6 +357,9 @@ describe('default Account Security Action transport', () => {
     }, 180_000);
 
     it('retires an in-flight Account Security result when the active Home changes', async () => {
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://security-actions.test', accountId: 'account-a', request: securityRequest,
+        });
         let release: ((response: Response) => void) | undefined;
         securityResponseOverride = new Promise<Response>((resolve) => { release = resolve; });
         const execution = createDefaultActionExecutor().execute('account.security.get', {}, {
@@ -355,7 +367,10 @@ describe('default Account Security Action transport', () => {
         });
         await vi.waitFor(() => expect(requests.some(({ path }) => path === '/v1/account/security')).toBe(true));
 
-        await upsertAndActivateServer({ serverUrl: 'https://other-home.test', name: 'Other Home' });
+        await connection.dispose();
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://other-home.test', accountId: 'account-b', request: securityRequest,
+        });
         release?.(Response.json({
             ...enrolledSecuritySummary, nativeEmail: 'must-not-escape@example.test',
             password: { status: 'not_enrolled', revision: null },

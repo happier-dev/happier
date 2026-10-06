@@ -8,6 +8,7 @@ import {
     sealSavedSecretResourceStoredContentV1,
     SharedSavedSecretDeleteOutputV1Schema,
     SharedSavedSecretMutationOutputV1Schema,
+    SavedSecretResourceEnvelopeCensusRequestV1Schema,
     SavedSecretResourceEnvelopeCensusResponseV1Schema,
     SavedSecretResourceEnvelopeRepairOutputV1Schema,
     SharedSavedSecretPromoteOutputV1Schema,
@@ -15,6 +16,7 @@ import {
     type SavedSecretResourceEnvelopeCensusRecipientV1,
     type SavedSecretResourceMaterialV1,
 } from '@happier-dev/protocol';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 
 import { readSavedSecretCatalog } from '@/sync/api/account/apiSavedSecretCatalog';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
@@ -111,12 +113,17 @@ export async function readSavedSecretResourceRecipientReadiness(params: Readonly
     let revision: number | null = null;
     let cursor: string | undefined;
     do {
+        const request = bindHomeDomainHttpRequestV1({
+            transport: { method: 'GET', path: '/v1/account/saved-secrets/resources/envelope-census' },
+            inputSchema: SavedSecretResourceEnvelopeCensusRequestV1Schema,
+            input: { resourceId: params.resourceId, ...(cursor ? { cursor } : {}), limit: 100 },
+        });
         const census = await requestHomeDomain({
             scope: params.scope,
-            path: '/v1/account/saved-secrets/resources/envelope-census',
-            method: 'GET',
+            path: request.path,
+            method: request.method,
             effect: 'read',
-            input: { resourceId: params.resourceId, ...(cursor ? { cursor } : {}), limit: 100 },
+            input: request.body,
             schema: SavedSecretResourceEnvelopeCensusResponseV1Schema,
         });
         // A page from another revision describes a different audience.

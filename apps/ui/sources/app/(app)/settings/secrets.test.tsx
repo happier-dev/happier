@@ -33,6 +33,11 @@ vi.mock('@expo/vector-icons', async () => {
     const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
     return createExpoVectorIconsMock();
 });
+vi.mock('expo-crypto', async (importOriginal) => ({
+    ...await importOriginal<typeof import('expo-crypto')>(),
+    // Node has no Expo native module; keep real randomness at that SDK boundary.
+    randomUUID: () => crypto.randomUUID(),
+}));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { push: vi.fn() } }).module;
@@ -91,17 +96,20 @@ describe('SecretsSettingsScreen shared feature decision', () => {
     it('opens the grant picker for a still-personal secret and converts nothing until it is saved', async () => {
         const { screen, page, account } = await render();
         const secret = page().personalSecrets[0];
+        const settingsWritesBeforeOpening = [...account.settingsWrites];
         await act(async () => { page().onSharePersonal?.(secret); });
         const editor = screen.tree.findByType(AccessComponent).props;
-        expect(editor.target).toEqual({ kind: 'personal', secret, expectedSettingsVersion: 1 });
+        expect(storage.getState().settingsScope).toEqual(account.scope);
+        expect(storage.getState().settingsVersion).not.toBeNull();
+        expect(editor.target).toEqual({ kind: 'personal', secret, expectedSettingsVersion: storage.getState().settingsVersion });
         expect(editor.scope).toEqual(account.scope);
         expect(page().accessEditor?.key).toBe(secret.id);
-        expect(account.settingsWrites).toEqual([]);
+        expect(account.settingsWrites).toEqual(settingsWritesBeforeOpening);
         expect(account.resources).toEqual([]);
         await act(async () => { editor.onClose(); });
         expect(page().accessEditor).toBeNull();
         expect(screen.tree.findAllByType(AccessComponent)).toHaveLength(0);
-        expect(account.settingsWrites).toEqual([]);
+        expect(account.settingsWrites).toEqual(settingsWritesBeforeOpening);
         expect(account.request.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/promote'))).toBe(false);
     });
 
@@ -223,7 +231,7 @@ describe('SecretsSettingsScreen shared feature decision', () => {
         const { page, account } = await renderCorrupt(settings);
         vi.mocked(Modal.confirm).mockResolvedValue(true);
         await act(async () => { page().onDeleteCorruptShared?.(ownerCorrupt); });
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('mcpServersSettingsV1.servers.srv.env.TOKEN')));
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('mcpServersSettingsV1.servers[0].env.TOKEN')));
         expect(account.deletes).toEqual([]);
         expect(account.resources).toHaveLength(2);
     });

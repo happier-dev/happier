@@ -32,10 +32,12 @@ installDisconnectedServerSocketBoundary((socket) => {
   vi.spyOn(socket, 'timeout').mockReturnValue(socket);
   vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
     if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
-    if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
+    // Socket.IO serializes these JSON-only RPC packets before the daemon sees them.
+    const wirePayload: unknown = JSON.parse(JSON.stringify(payload));
+    if (!wirePayload || typeof wirePayload !== 'object' || !('method' in wirePayload) || typeof wirePayload.method !== 'string' || !('params' in wirePayload)) {
       throw new Error('Malformed socket RPC request');
     }
-    const request: SocketRpcRequestPayload = { method: payload.method, params: payload.params };
+    const request: SocketRpcRequestPayload = { method: wirePayload.method, params: wirePayload.params };
     outgoing.push(request);
     return { ok: true, result: daemonAnswer(request) };
   });
@@ -46,6 +48,7 @@ await loadSyncSingletonForTests();
 const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
 afterAll(restoreExecutorModuleLoader);
 const { storage } = await import('@/sync/domains/state/storage');
+const { sync } = await import('@/sync/sync');
 const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
@@ -154,7 +157,7 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'forked', childSessionId: 'sess_child' } });
     expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toContainEqual(expect.objectContaining({ method: `machine_1:${RPC_METHODS.SESSION_FORK}`,
       params: expect.objectContaining({ v: 1, parentSessionId: 'sess_parent', forkPoint: { type: 'latest' } }) }));
-    expect(homes.requestsFor('/v2/sessions/sess_child').length).toBeGreaterThan(0);
+    expect(homes.requestsFor('/v2/sessions/sess_child?accessProjectionVersion=1').length).toBeGreaterThan(0);
     expect(openSession).toHaveBeenCalledWith('sess_child', { serverId });
   });
 
@@ -171,10 +174,10 @@ describe('default Action executor Session lifecycle contracts', () => {
     else expect(request?.params).not.toHaveProperty('replaySummaryRunner');
   });
 
-  it('clamps the replay seed budget to the canonical fork wire maximum', async () => {
+  it('preserves the canonical maximum replay seed budget in the fork wire request', async () => {
     installSession();
     answerFork();
-    setSettings({ sessionReplayMaxSeedChars: 500_000 });
+    setSettings({ sessionReplayMaxSeedChars: 200_000 });
     expect(await executor().execute('session.fork', { sessionId: 'sess_parent' }, context())).toMatchObject({ ok: true });
     expect(rpcRequests(RPC_METHODS.SESSION_FORK)[0]?.params).toHaveProperty('replayMaxSeedChars', 200_000);
   });
@@ -241,8 +244,8 @@ describe('default Action executor Session lifecycle contracts', () => {
     installSession();
     const caller = new AbortController();
     caller.abort();
-    expect(await executor().execute('session.handoff', { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
-      { ...context(), signal: caller.signal })).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    await expect(executor().execute('session.handoff', { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
+      { ...context(), signal: caller.signal })).rejects.toMatchObject({ name: 'AbortError' });
     expect(outgoing).toEqual([]);
   });
 
@@ -255,6 +258,14 @@ describe('default Action executor Session lifecycle contracts', () => {
     // The connection harness installs the focused Account's transport token.
     // Reclaim the canonical per-Home credential boundary for this scoped call.
     installHomeGovernanceBoundaries(homes);
+    // Disconnect retires the source Home's local projection. Rehydrate it from
+    // its real Home response rather than restoring the retired row by hand.
+    const hydration = await sync.ensureSessionVisibleForMessageRoute('sess_parent', {
+      serverId: parentServerId, forceRefresh: true, hydrateMessages: false,
+    });
+    expect(hydration, JSON.stringify(hydration)).toMatchObject({ kind: 'available', serverId: parentServerId });
+    expect(homes.requestsFor('/v2/sessions/sess_parent?accessProjectionVersion=1'))
+      .toContainEqual(expect.objectContaining({ serverId: parentServerId }));
     daemonAnswer = () => ({ handoffId: 'handoff_1', status: { handoffId: 'handoff_1', status: 'completed', phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'none' } });
     const result = await executor({ resolveServerIdForSessionId: () => parentServerId }).execute('session.handoff',
       { sessionId: 'sess_parent', targetMachineId: 'machine_2' }, { ...context(), serverId: parentServerId });

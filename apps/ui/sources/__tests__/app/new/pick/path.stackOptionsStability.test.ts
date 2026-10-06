@@ -15,6 +15,7 @@ const setOptions = vi.fn<(options: PickerStackOptionsInput) => void>();
 const router = createRouterMock();
 const navigation = createNavigationMock();
 let params = { machineId: 'm1', selectedPath: '', spawnServerId: '' };
+let resetRouterParams: (() => void) | undefined;
 
 installPickerCommonModuleMocks({
     reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
@@ -22,6 +23,7 @@ installPickerCommonModuleMocks({
     expoRouter: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const boundary = createExpoRouterMock({ navigation, router, params: () => params });
+        resetRouterParams = () => { boundary.resetParams(); };
         return { ...boundary.module, Stack: {
             Screen: ({ options }: { options: PickerStackOptionsInput }) => {
                 React.useEffect(() => { setOptions(options); }, [options]);
@@ -34,6 +36,7 @@ const runtime = installSessionPaneRuntimeTestHarness();
 
 beforeEach(() => {
     params = { machineId: 'm1', selectedPath: '', spawnServerId: runtime.serverId };
+    resetRouterParams?.();
     storage.getState().applyMachines([createMachineFixture({
         id: 'm1', storageMode: 'plain', metadata: {
             host: 'tester.local', platform: 'darwin', happyCliVersion: '0.0.0-test',
@@ -56,9 +59,29 @@ describe('PathPickerScreen (Stack.Screen options stability)', () => {
         await act(async () => { content.onChangeSelectedPath('/tmp/typing'); });
         expect(screen.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe('/tmp/typing');
 
-        params = { ...params, selectedPath: '/tmp/next' };
+        await act(async () => { router.setParams({ selectedPath: '/tmp/next' }); });
         await screen.update(React.createElement(runtime.Wrapper, null, React.createElement(Screen)));
         expect(screen.findByType(NewSessionPathSelectionContent).props.selectedPath).toBe('/tmp/next');
+        expect(setOptions).toHaveBeenCalledTimes(1);
+
+        // The stable confirm action must still use the latest committed route, not
+        // the closure from the first native header installation.
+        navigation.getState = () => ({ index: 0, routes: [{ key: 'path-picker' }] });
+        await act(async () => { router.setParams({ dataId: 'draft-latest' }); });
+        const updatedContent = screen.findByType<typeof NewSessionPathSelectionContent>(NewSessionPathSelectionContent).props;
+        const confirmPath = updatedContent.onSubmitSelectedPath;
+        if (!confirmPath) throw new Error('Expected path confirmation action');
+        await act(async () => { confirmPath(updatedContent.selectedPath); });
+        expect(router.replace).toHaveBeenCalledWith(expect.objectContaining({
+            pathname: '/new',
+            params: expect.objectContaining({
+                dataId: 'draft-latest',
+                machineId: 'm1',
+                directoryKind: 'path',
+                directory: '/tmp/next',
+                spawnServerId: runtime.serverId,
+            }),
+        }));
         expect(setOptions).toHaveBeenCalledTimes(1);
     });
 });

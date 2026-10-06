@@ -904,7 +904,10 @@ describe('Legend transcript renderer adapter', () => {
         capturedLegendListProps.onScroll(scrollEvent);
         capturedLegendListProps.onScrollBeginDrag(scrollEvent);
         capturedLegendListProps.onStartReached();
-        expect(onLayout).toHaveBeenCalledWith(layoutEvent);
+        // Match the forwarded native event by identity. Generic argument formatting
+        // enumerates geometry-fixture host getters even when the matcher passes.
+        expect(onLayout.mock.calls.length).toBe(1);
+        expect(onLayout.mock.calls[0]?.[0] === layoutEvent).toBe(true);
         expect(onScroll).toHaveBeenCalledWith(scrollEvent);
         expect(onScrollBeginDrag).toHaveBeenCalledWith(scrollEvent);
         capturedLegendListProps.onScrollEndDrag(scrollEvent);

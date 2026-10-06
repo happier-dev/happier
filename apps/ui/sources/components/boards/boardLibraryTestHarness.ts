@@ -27,6 +27,9 @@ export function installBoardLibraryTestHarness() {
             for (const listener of socket.listeners('connect')) listener();
             return socket;
         });
+        // This connected SDK fixture has no Engine.IO transport; presence
+        // teardown stays real while outbound Socket.IO packets stop here.
+        vi.spyOn(socket, 'emit').mockReturnValue(socket);
         vi.spyOn(socket, 'disconnect').mockImplementation(() => {
             socket.connected = false;
             return socket;

@@ -91,6 +91,39 @@ describe('NewSessionWizard real AgentInput composition', () => {
         expect(selectPiImmediately).toHaveBeenCalledOnce();
         expect(onAgentPickerSelect).not.toHaveBeenCalled();
         expect(setAgentType).not.toHaveBeenCalled();
+        await act(async () => { dropdown?.props.onSelect('agent:happier.agent.gemini/gemini'); });
+        expect(onAgentPickerSelect).toHaveBeenCalledExactlyOnceWith('agent:happier.agent.gemini/gemini');
+        onAgentPickerSelect.mockClear();
+        await act(async () => { dropdown?.props.onSelect('unknown-agent'); });
+        expect(onAgentPickerSelect).not.toHaveBeenCalled();
+        expect(setAgentType).not.toHaveBeenCalled();
+    });
+
+    it('preserves the qualified current Agent and producer labels in expanded choices', async () => {
+        const { Item } = await import('@/components/ui/lists/Item');
+        const props = buildProps();
+        const onAgentPickerSelect = vi.fn();
+        const setAgentType = vi.fn();
+        const installedAgentKey = 'agent:example.agent.pi/pi';
+        props.sectionPresentation = { backends: 'list' };
+        props.agent = { ...props.agent, enabledAgentIds: ['gemini', 'pi'], agentType: 'gemini', setAgentType,
+            agentPickerOptions: [
+                { id: 'agent:happier.agent.gemini/gemini', label: 'Gemini' },
+                { id: installedAgentKey, label: 'Workspace Pi' },
+            ], agentPickerSelectedOptionId: installedAgentKey, onAgentPickerSelect };
+        const { screen } = await renderWizard(props);
+        const agentRows = screen.findAllByType(Item).filter((node) => (
+            node.props.testID?.startsWith('new-session-agent:')
+        ));
+        expect(agentRows.map((row) => ({ title: row.props.title, selected: row.props.selected }))).toEqual([
+            { title: 'Gemini', selected: false },
+            { title: 'Workspace Pi', selected: true },
+        ]);
+        const currentAgent = agentRows.find((row) => row.props.testID === `new-session-agent:${installedAgentKey}`);
+        if (!currentAgent?.props.onPress) throw new Error('Expected the selected installed Agent row');
+        await act(async () => { currentAgent.props.onPress?.(); });
+        expect(onAgentPickerSelect).toHaveBeenCalledExactlyOnceWith(installedAgentKey);
+        expect(setAgentType).not.toHaveBeenCalled();
     });
 
     it('renders the real profile list inside its popover and omits redundant environment chips', async () => {

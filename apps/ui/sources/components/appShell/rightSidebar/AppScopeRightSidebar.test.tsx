@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -139,14 +140,15 @@ function executionOrigin(input: Readonly<{
     machineId: string;
     materializationId: string;
 }>): PluginMachineExecutionOriginV1 {
-    return {
-        serverIdentityId: runtime.serverId,
+    return PluginMachineExecutionOriginV1Schema.parse({
+        // An advertised Home identity is not the device-local server profile id.
+        serverIdentityId: runtime.serverIdentityId,
         materializationRef: {
             pluginId: 'acme.preview',
             machineId: input.machineId,
             materializationId: input.materializationId,
         },
-    };
+    });
 }
 
 function withSelectedContributionOrigin(
@@ -702,6 +704,9 @@ describe('AppScopeRightSidebar', () => {
             const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
             await act(async () => {
                 await restoreConnectionToActiveServer({ token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-b' })).toString('base64url')}.signature` });
+                // Transport restoration hydrates caches, not the authenticated profile scope.
+                // Drive the canonical Account producer before checking lifetime retirement.
+                storage.getState().activateProfileScope({ serverId: runtime.serverId, accountId: 'account-b' });
                 accountLifetimeState.lifetime = captureActiveServerAccountScopeLifetime();
             });
             expect(accountA?.isCurrent()).toBe(false);

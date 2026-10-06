@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, createSessionFixture, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
-import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
+import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -18,12 +18,12 @@ import {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const deviceTypeState = vi.hoisted(() => ({ value: 'tablet' as 'phone' | 'tablet' }));
-installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const dimensions = () => ({ width: deviceTypeState.value === 'phone' ? 390 : 1200, height: 800, scale: 1, fontScale: 1 });
-        return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
-    },
+installSessionDetailsPanelNonRnModuleMocks();
+// Register the SDK geometry before the pane/device consumers are collected.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const dimensions = () => ({ width: deviceTypeState.value === 'phone' ? 390 : 1200, height: 800, scale: 1, fontScale: 1 });
+    return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
 });
 const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1', scopeId: 'scope1' });
 let currentScreen: Awaited<ReturnType<typeof renderPanelScreen>>;
@@ -45,7 +45,7 @@ beforeEach(async () => {
 });
 function readLastPaneProp(key: 'rightPane' | 'detailsPane' | 'bottomPane') {
     // The real renderer keeps layout and modal/resize owners mounted beneath this public input.
-    const props: React.ComponentProps<typeof MultiPaneHostWithBottom> = currentScreen.root.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom).props;
+    const props: React.ComponentProps<typeof MultiPaneHostWithBottom> = currentScreen.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom).props;
     return props[key];
 }
 function surfaceHostProps(container: 'rightPane' | 'bottomPane') {
@@ -109,14 +109,15 @@ function createPlacement(input: Readonly<{
             generation: 1,
             phase: 'current',
             interactionEnabled: true,
-            executionOrigin: {
-                serverIdentityId: runtime.serverId,
+            executionOrigin: PluginMachineExecutionOriginV1Schema.parse({
+                // Advertised Home identity is separate from the local profile id.
+                serverIdentityId: runtime.serverIdentityId,
                 materializationRef: {
                     pluginId: 'acme.preview',
                     machineId: 'machine-1',
                     materializationId: `${input.descriptorId}-install-a`,
                 },
-            } satisfies PluginMachineExecutionOriginV1,
+            }),
         },
     };
 }
@@ -206,10 +207,9 @@ describe('AppPaneScopeHost plugin destinations', () => {
             />,
         );
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({
-            type: PluginReactNativeUnavailable,
-            props: expect.objectContaining({ diagnostics: ['pane_destination_platform_unavailable'] }),
-        }));
+        expect(phoneScreen.findAllByType(PluginReactNativeUnavailable)).toHaveLength(1);
+        expect(phoneScreen.findByType<typeof PluginReactNativeUnavailable>(PluginReactNativeUnavailable).props.diagnostics)
+            .toEqual(['pane_destination_platform_unavailable']);
         expect(phoneScreen.root.findAllByType(ActualSurfaceHost)).toHaveLength(0);
 
         deviceTypeState.value = 'tablet';
@@ -395,7 +395,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
         expect(readLastPaneProp('bottomPane')).toBeNull();
 
         const DefaultPane = () => React.createElement('DefaultPane');
-        await renderScreen(
+        const defaultScreen = await renderScreen(
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
@@ -407,7 +407,8 @@ describe('AppPaneScopeHost plugin destinations', () => {
             />,
         );
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({ type: DefaultPane }));
+        expect(defaultScreen.findAllByType(DefaultPane)).toHaveLength(1);
+        expect(defaultScreen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
     });
 
     it('keeps a selected plugin destination unresolved when no scope adapter stamps its target', async () => {
@@ -421,11 +422,10 @@ describe('AppPaneScopeHost plugin destinations', () => {
             },
         });
 
-        await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />} />);
+        const screen = await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />} />);
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({
-            type: PaneLoadingFallback,
-        }));
+        expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+        expect(screen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
     });
 
     it('mounts the exact selected plugin bindings ahead of typed built-in adapters', async () => {
@@ -568,7 +568,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
         });
         const incumbentRightPane = <div data-testid="incumbent-right" />;
 
-        await renderScreen(
+        const screen = await renderScreen(
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
@@ -590,11 +590,11 @@ describe('AppPaneScopeHost plugin destinations', () => {
             />,
         );
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({
-            type: PluginReactNativeUnavailable,
-            props: expect.objectContaining({ diagnostics: ['pane_destination_unavailable'] }),
-        }));
-        expect(readLastPaneProp('rightPane')).not.toBe(incumbentRightPane);
+        expect(screen.findAllByType(PluginReactNativeUnavailable)).toHaveLength(1);
+        expect(screen.findByType<typeof PluginReactNativeUnavailable>(PluginReactNativeUnavailable).props.diagnostics)
+            .toEqual(['pane_destination_unavailable']);
+        expect(screen.findByTestId('incumbent-right')).toBeNull();
+        expect(screen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
     });
 
     it('preserves an unavailable right-sidebar destination reason instead of treating it as a right-pane mismatch', async () => {
@@ -612,7 +612,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             },
         });
 
-        await renderScreen(
+        const screen = await renderScreen(
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
@@ -629,15 +629,16 @@ describe('AppPaneScopeHost plugin destinations', () => {
                 rightPaneBuiltinAdapter={{
                     destinationIds: ['incumbent-right'],
                     defaultDestinationId: 'incumbent-right',
-                    render: () => <div />,
+                    render: () => <div data-testid="incumbent-right" />,
                 }}
             />,
         );
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({
-            type: PluginReactNativeUnavailable,
-            props: expect.objectContaining({ diagnostics: ['feature_disabled'] }),
-        }));
+        expect(screen.findAllByType(PluginReactNativeUnavailable)).toHaveLength(1);
+        expect(screen.findByType<typeof PluginReactNativeUnavailable>(PluginReactNativeUnavailable).props.diagnostics)
+            .toEqual(['feature_disabled']);
+        expect(screen.findByTestId('incumbent-right')).toBeNull();
+        expect(screen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
     });
 
     it('renders only the exact selected built-in adapter', async () => {
@@ -647,21 +648,20 @@ describe('AppPaneScopeHost plugin destinations', () => {
         );
         setPaneState({ right: { kind: 'builtin', id: 'git' } });
 
-        await renderScreen(
+        const screen = await renderScreen(
             <AppPaneScopeHost
                 scopeId="scope1"
                 main={<div />}
                 rightPaneBuiltinAdapter={{
-                    destinationIds: ['git'],
+                    destinationIds: ['git', 'files'],
                     render: ({ destinationId }) => <BuiltinPane destinationId={destinationId} />,
                 }}
             />,
         );
 
-        expect(readLastPaneProp('rightPane')).toEqual(expect.objectContaining({
-            type: BuiltinPane,
-            props: { destinationId: 'git' },
-        }));
+        expect(screen.findAllByType(BuiltinPane)).toHaveLength(1);
+        expect(screen.findByType<typeof BuiltinPane>(BuiltinPane).props).toEqual({ destinationId: 'git' });
+        expect(screen.findAllByType(ActualSurfaceHost)).toHaveLength(0);
     });
 
     it('does not render a pane when no adapter owns the selected built-in id', async () => {

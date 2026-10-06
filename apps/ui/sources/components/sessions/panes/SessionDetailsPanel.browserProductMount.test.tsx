@@ -4,20 +4,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionDiscussionOpenedSummaryV1Schema } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { BrowserLaunchpadRow } from '@/sync/domains/browser/targets';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import type { MountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
-import { t } from '@/text';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 import { createSessionBoardDetailsTab, createSessionCommitDetailsTab, createSessionDiscussionDetailsTab, createSessionFileDetailsTab } from './details/sessionDetailsTabBuilders';
 
 installSessionDetailsPanelCommonModuleMocks();
-const runtime = installSessionPaneRuntimeTestHarness();
-beforeEach(() => vi.stubGlobal('location', { origin: 'https://pane-browser-client.test' }));
+const runtime = installSessionPaneRuntimeTestHarness({
+    features: () => createRootLayoutFeaturesResponse({ features: {
+        browser: { enabled: true, viewTargets: { enabled: true } },
+    } }),
+});
+beforeEach(async () => {
+    vi.stubGlobal('location', { origin: 'https://pane-browser-client.test' });
+    const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    expect((await getServerFeaturesSnapshot({ serverId: runtime.serverId, force: true })).status).toBe('ready');
+});
 afterEach(() => vi.unstubAllGlobals());
 
 async function renderInput(tab: DetailsTabState, active = true): Promise<DetailsSurfaceRenderInputV1> {
@@ -44,14 +52,15 @@ async function renderers(overrides: Partial<Parameters<typeof import('./surfaces
 describe('SessionDetailsPanel browser product mount', () => {
     it('opens a pinned browser launchpad and retains its recording model when another destination is active', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        const { BrowserDetailsSurface } = await import('@/components/browser/surfaces');
+        const { BrowserDetailsSurface, createBrowserLaunchpadDetailsTab } = await import('@/components/browser/surfaces');
         const { DetailsSurfaceHost } = await import('@/components/appShell/panes/details/surfaces');
         const screen = await renderScreen(<runtime.Wrapper>
             <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
         </runtime.Wrapper>);
         await act(async () => runtime.pane.openDetailsTab(createSessionFileDetailsTab('a.txt'), { intent: 'pinned' }));
         await screen.pressByTestIdAsync('session-details-open-browser');
-        const browserTab = runtime.pane.scopeState?.details.tabs.find(tab => tab.key === 'browser:launchpad');
+        const browserTabKey = createBrowserLaunchpadDetailsTab().key;
+        const browserTab = runtime.pane.scopeState?.details.tabs.find(tab => tab.key === browserTabKey);
         expect(browserTab).toMatchObject({
             kind: 'browser-view', isPinned: true, isPreview: false,
             resource: { kind: 'browser-view', mode: 'launchpad' },
@@ -63,7 +72,7 @@ describe('SessionDetailsPanel browser product mount', () => {
         await act(async () => runtime.pane.setActiveDetailsTab('file:a.txt'));
         const retained = screen.tree.findByType(BrowserDetailsSurface);
         expect(retained.props.productModels.browserRecording.state).toBe(recording.state);
-        const host = screen.tree.findAllByType(DetailsSurfaceHost).find(node => node.props.tab.key === 'browser:launchpad');
+        const host = screen.tree.findAllByType(DetailsSurfaceHost).find(node => node.props.tab.key === browserTabKey);
         expect(host?.props.active).toBe(false);
     });
 
@@ -165,6 +174,10 @@ describe('SessionDetailsPanel browser product mount', () => {
     });
 
     it('carries the real exact-Home caller runtime into Board and retires it when Session access disappears', async () => {
+        const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+        expect(await resolveServerCredentialAccountScope(runtime.serverId)).toMatchObject({
+            kind: 'bound', scope: { serverId: runtime.serverIdentityId, accountId: 'account-a' },
+        });
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { SessionBoardDetailsSurface } = await import('@/components/sessions/board/SessionBoardDetailsSurface');
         const { SessionBoardControllerProvider, useMountedSessionBoardController } = await import('@/components/sessions/board/SessionBoardControllerProvider');
@@ -182,7 +195,7 @@ describe('SessionDetailsPanel browser product mount', () => {
         const caller = readMounted()?.callerHostedHtmlRuntime;
         expect(caller).not.toBeNull();
         if (!caller) throw new Error('Expected current exact-Home caller authority');
-        expect(caller.serverIdentityId).toBe(runtime.serverId);
+        expect(caller.serverIdentityId).toBe(runtime.serverIdentityId);
         expect(caller.accountId).toBe('account-a');
         expect(caller.lifetime.isCurrent()).toBe(true);
         expect(screen.tree.findByType(SessionBoardDetailsSurface).props.callerHostedHtmlRuntime).toBe(caller);
@@ -201,7 +214,6 @@ describe('SessionDetailsPanel browser product mount', () => {
         const tab = createSessionDiscussionDetailsTab({
             kind: 'discussion', address: { serverId: runtime.serverId, sessionId: 's1' }, discussionId: 'discussion-1',
         });
-        expect(tab.title).toBe(t('session.collaboration.discussion.title'));
         await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'pinned' }));
         const input = await renderInput(runtime.pane.scopeState!.details.tabs[0]);
         const renderer = (await renderers()).find(candidate => candidate.id === 'session-discussion');

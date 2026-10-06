@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { CurrentCursorResponseSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { beforeEach, afterEach } from 'vitest';
 import { standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -21,6 +22,7 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
     configureSocket?: (socket: Socket) => void;
 }> = {}) {
     const sessionId = params.sessionId ?? 's1';
+    const serverIdentityId = 'srv_session_pane';
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
     let previous: ReturnType<typeof storage.getState>;
     let pane: AppPaneScopeApi;
@@ -38,10 +40,17 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
         previous = storage.getState();
         account = await restoreServerAccountForTest({
             serverUrl: 'https://session-pane.test',
+            serverIdentityId,
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
-                const json = (value: unknown) => new Response(JSON.stringify(value));
-                if (path === '/v1/features' || path === '/v1/features/authenticated') return json(params.features?.() ?? createRootLayoutFeaturesResponse());
+                const json = (value: unknown) => Response.json(value);
+                if (path === '/v1/features' || path === '/v1/features/authenticated') {
+                    const features = params.features?.() ?? createRootLayoutFeaturesResponse();
+                    return json(FeaturesResponseSchema.parse({ ...features, capabilities: {
+                        ...features.capabilities, serverIdentity: { serverIdentityId },
+                    } }));
+                }
+                if ((init?.method ?? 'GET') === 'GET' && path === '/v2/cursor') return json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
                 if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
                 const response = await params.request?.(url, init);
@@ -73,5 +82,14 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
             <Probe />{children}
         </AppPaneProvider></InjectedAuthProvider>;
     }
-    return { Wrapper, get pane() { return pane; }, get serverId() { return account.home.id; } };
+    return {
+        Wrapper,
+        get pane() { return pane; },
+        get serverId() { return account.home.id; },
+        get serverIdentityId() {
+            const identity = account.home.serverIdentityId;
+            if (!identity) throw new Error('Test Home has no advertised server identity');
+            return identity;
+        },
+    };
 }

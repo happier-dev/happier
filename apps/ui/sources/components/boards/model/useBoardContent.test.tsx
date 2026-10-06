@@ -77,7 +77,10 @@ describe('Board shared Run filter membership', () => {
         expect(hook.getCurrent().cards.slice(0, 2).every(card => card.status.tone === 'neutral')).toBe(true);
     });
     it('consumes the definition list scheduler occurrence without deriving a date from its schedule', async () => {
-        const definitions = [123_456, null].map((nextRunAt, index) => ({ definitionId: `scheduled-${index}`, nextRunAt }));
+        const definitions = [
+            { definitionId: '11111111-1111-4111-8111-111111111111', nextRunAt: 123_456 },
+            { definitionId: '22222222-2222-4222-8222-222222222222', nextRunAt: null },
+        ];
         harness.home.answer(homes.activeServerId!, ARTIFACT_LIST_PATH, { body: definitions.map((definition, index) =>
             boardDefinitionArtifact(definition.definitionId, `Schedule ${index}`)) });
         harness.home.answer(homes.activeServerId!, AUTOMATION_LIST_PATH, { body: {

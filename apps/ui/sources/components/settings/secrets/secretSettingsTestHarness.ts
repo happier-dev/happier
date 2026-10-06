@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import {
     AccountSettingsStoredContentEnvelopeSchema,
+    AccountSettingsV2UpdateResponseSchema,
     SavedSecretCatalogEntryV1Schema,
     SavedSecretResourceEnvelopeRepairInputV1Schema,
     SavedSecretResourceMaterialV1Schema,
@@ -81,7 +82,12 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             settingsWrites.push(body);
             if (!body || typeof body !== 'object' || !('expectedVersion' in body) || !('content' in body)) throw new Error('Invalid Settings request');
             if (rejectSettingsWrites || body.expectedVersion !== settingsVersion) {
-                return Response.json({ success: false, version: settingsVersion, content: settingsContent }, { status: 409 });
+                return Response.json(AccountSettingsV2UpdateResponseSchema.parse({
+                    success: false,
+                    error: 'version-mismatch',
+                    currentVersion: settingsVersion,
+                    currentContent: settingsContent,
+                }));
             }
             const content = AccountSettingsStoredContentEnvelopeSchema.parse(body.content);
             if ((mode === 'plain' && content.t !== 'plain') || (mode === 'e2ee' && content.t !== 'encrypted')) {

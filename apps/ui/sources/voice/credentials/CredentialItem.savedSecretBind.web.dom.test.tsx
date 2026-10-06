@@ -15,13 +15,14 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import 'fake-indexeddb/auto';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -113,6 +114,12 @@ const SECRETS: SavedSecret[] = [
 ];
 
 let mounted: Readonly<{ root: Root; container: HTMLElement }> | null = null;
+let webLocks: ReturnType<typeof installWebLockManagerMock> | undefined;
+
+beforeEach(() => {
+    // JSDOM lacks Web Locks; retain the real Home mutation and Account CAS owners.
+    webLocks = installWebLockManagerMock();
+});
 
 afterEach(async () => {
     const current = mounted;
@@ -122,9 +129,14 @@ afterEach(async () => {
         current.container.remove();
     }
     removeExternalVoiceProviderRegistration(registrationToken);
-    await account?.dispose();
-    account = undefined;
-    boundary.log.mockClear();
+    try {
+        await account?.dispose();
+    } finally {
+        account = undefined;
+        webLocks?.restore();
+        webLocks = undefined;
+        boundary.log.mockClear();
+    }
 });
 
 function voiceCredentialGestureRecords(): string[] {

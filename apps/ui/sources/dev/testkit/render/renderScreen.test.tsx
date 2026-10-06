@@ -10,6 +10,37 @@ afterEach(() => {
 });
 
 describe('UI testkit render helpers', () => {
+    it('queries simple memo components through the screen and tree helpers', async () => {
+        const { renderScreen } = await import('./renderScreen');
+        const MemoControl = React.memo(function Control(props: { label: string }) {
+            return React.createElement('Text', null, props.label);
+        });
+        const screen = await renderScreen(React.createElement(MemoControl, { label: 'memo control' }));
+
+        expect(screen.findByType<typeof MemoControl>(MemoControl).props.label).toBe('memo control');
+        expect(screen.findAllByType<typeof MemoControl>(MemoControl)).toHaveLength(1);
+        expect(screen.tree.findByType<typeof MemoControl>(MemoControl).props.label).toBe('memo control');
+        expect(screen.tree.findAllByType<typeof MemoControl>(MemoControl)).toHaveLength(1);
+        expect(screen.root.findAllByType(MemoControl)).toHaveLength(0);
+    });
+
+    it('prefers exact custom memo wrapper matches over their inner components', async () => {
+        const { renderScreen } = await import('./renderScreen');
+        function Control(props: { label: string }) {
+            return React.createElement('Text', null, props.label);
+        }
+        const MemoControl = React.memo(Control, (previous, next) => previous.label === next.label);
+        const screen = await renderScreen(React.createElement(React.Fragment, null,
+            React.createElement(MemoControl, { label: 'memo control' }),
+            React.createElement(Control, { label: 'plain control' }),
+        ));
+
+        expect(screen.findByType<typeof MemoControl>(MemoControl).props.label).toBe('memo control');
+        expect(screen.findAllByType<typeof MemoControl>(MemoControl)).toHaveLength(1);
+        expect(screen.tree.findByType<typeof MemoControl>(MemoControl).props.label).toBe('memo control');
+        expect(screen.tree.findAllByType<typeof MemoControl>(MemoControl)).toHaveLength(1);
+    });
+
     it('renders screens, finds nodes by test id, and invokes press handlers', async () => {
         const { renderScreen } = await import('./renderScreen');
 

@@ -4,7 +4,10 @@ import {
     NO_HOME_CAPABILITIES_V1,
     type HomeGovernanceProjectionV1,
 } from '@happier-dev/protocol/home/governance';
-import { ManagedGitHubAppErrorCodeV1Schema } from '@happier-dev/protocol';
+import {
+    ManagedGitHubAppErrorCodeV1Schema,
+    SavedSecretResourceEnvelopeCensusResponseV1Schema,
+} from '@happier-dev/protocol';
 
 const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
@@ -122,6 +125,51 @@ describe('requestHomeDomain', () => {
         expect(call?.init?.method).toBe('POST');
         expect(JSON.parse(call?.init?.body ?? 'null')).toEqual({});
         // The explicit-Home authority carried it, not the focused-Home fetch.
+        expect(serverFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reads first and next Saved Secret envelope-census pages through encoded GET queries without bodies', async () => {
+        const homeA = await addHome('Home A', 'https://home-a.example');
+        await focusHome(homeA);
+        plainCredentialsFor('account');
+        const resourceId = 'resource/a +&';
+        const firstPage = SavedSecretResourceEnvelopeCensusResponseV1Schema.parse({
+            resourceId, revision: 3,
+            recipients: [{
+                account: { kind: 'account', accountId: 'account-b', firstName: 'Bob', lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'unavailable', reason: 'plain_account' },
+                envelopeStatus: 'missing',
+            }],
+            nextCursor: 'cursor/ +?=',
+        });
+        const nextPage = SavedSecretResourceEnvelopeCensusResponseV1Schema.parse({
+            resourceId, revision: 3,
+            recipients: [{
+                account: { kind: 'account', accountId: 'account-c', firstName: 'Carol', lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'unavailable', reason: 'encryption_setup_required' },
+                envelopeStatus: 'missing',
+            }],
+            nextCursor: null,
+        });
+        runtimeFetchMock.mockResolvedValueOnce(jsonResponse(firstPage, 200));
+        runtimeFetchMock.mockResolvedValueOnce(jsonResponse(nextPage, 200));
+
+        // Exercise the actual operation and its HTTP binding, not an internal transport double.
+        const { readSavedSecretResourceRecipientReadiness } = await import('@/sync/ops/settings/savedSecretResourceOperations');
+        const result = await readSavedSecretResourceRecipientReadiness({
+            scope: createServerAccountScope(homeA, 'account')!,
+            resourceId,
+        });
+
+        expect(result).toEqual({ ok: true, revision: 3, recipients: [...firstPage.recipients, ...nextPage.recipients] });
+        const firstRequest = runtimeFetchMock.mock.calls[0]?.[0];
+        const nextRequest = runtimeFetchMock.mock.calls[1]?.[0];
+        expect(firstRequest?.url).toBe('https://home-a.example/v1/account/saved-secrets/resources/envelope-census?resourceId=resource%2Fa+%2B%26&limit=100');
+        expect(nextRequest?.url).toBe('https://home-a.example/v1/account/saved-secrets/resources/envelope-census?resourceId=resource%2Fa+%2B%26&cursor=cursor%2F+%2B%3F%3D&limit=100');
+        expect(firstRequest?.init?.method).toBe('GET');
+        expect(nextRequest?.init?.method).toBe('GET');
+        expect(firstRequest?.init?.body).toBeUndefined();
+        expect(nextRequest?.init?.body).toBeUndefined();
         expect(serverFetchMock).not.toHaveBeenCalled();
     });
 
