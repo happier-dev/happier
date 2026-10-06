@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -9,6 +9,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+import {
+  REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_FILES,
+  REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS,
+} from '../../../../ui/tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 
 import {
   REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS,
@@ -16,6 +20,26 @@ import {
 } from './remote_dependency_bootstrap.mjs';
 
 const runDependencyRefreshImmediately = async (_options, refresh) => await refresh({});
+
+async function copyColdPreparationSourceGraph(repoDir) {
+  const sourceRepoDir = fileURLToPath(new URL('../../../../../', import.meta.url));
+  for (const relativeDir of ['apps/stack/scripts/utils', 'scripts/workspaces']) {
+    await cp(join(sourceRepoDir, relativeDir), join(repoDir, relativeDir), {
+      recursive: true,
+      filter: (sourcePath) => !sourcePath.endsWith('.test.mjs'),
+    });
+  }
+  const sourceCommonDir = join(sourceRepoDir, 'packages', 'cli-common');
+  const commonDir = join(repoDir, 'packages', 'cli-common');
+  await mkdir(commonDir, { recursive: true });
+  for (const entry of await readdir(sourceCommonDir, { withFileTypes: true })) {
+    if (entry.isFile() && (entry.name === 'package.json'
+      || (/\.(mjs|cjs)$/u.test(entry.name) && !entry.name.endsWith('.test.mjs')))) {
+      await cp(join(sourceCommonDir, entry.name), join(commonDir, entry.name));
+    }
+  }
+  return sourceRepoDir;
+}
 
 test('runtime worker bootstrap retains coherent last-green output in explicit QA mode while release stays strict', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-runtime-bootstrap-qa-'));
@@ -128,24 +152,10 @@ test('scriptless source-test refresh cannot admit changed UI patch inputs as pos
 test('UI dependency preparation owner imports from installed source without compiled workspace outputs', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-ui-preparation-cold-import-'));
   t.after(async () => rm(repoDir, { recursive: true, force: true }));
-  const sourceRepoDir = fileURLToPath(new URL('../../../../../', import.meta.url));
   // Relocate the real authored import graph, not a stub of the preparation
   // owner. No first-party dist or caller node_modules can satisfy the child.
-  for (const relativeDir of ['apps/stack/scripts/utils', 'scripts/workspaces']) {
-    await cp(join(sourceRepoDir, relativeDir), join(repoDir, relativeDir), {
-      recursive: true,
-      filter: (sourcePath) => !sourcePath.endsWith('.test.mjs'),
-    });
-  }
-  const sourceCommonDir = join(sourceRepoDir, 'packages', 'cli-common');
+  await copyColdPreparationSourceGraph(repoDir);
   const commonDir = join(repoDir, 'packages', 'cli-common');
-  await mkdir(commonDir, { recursive: true });
-  for (const entry of await readdir(sourceCommonDir, { withFileTypes: true })) {
-    if (entry.isFile() && (entry.name === 'package.json'
-      || (/\.(mjs|cjs)$/u.test(entry.name) && !entry.name.endsWith('.test.mjs')))) {
-      await cp(join(sourceCommonDir, entry.name), join(commonDir, entry.name));
-    }
-  }
   const installedCommonDir = join(repoDir, 'node_modules', '@happier-dev', 'cli-common');
   await cp(commonDir, installedCommonDir, { recursive: true });
   await writeFile(join(repoDir, 'package.json'), JSON.stringify({
@@ -172,7 +182,7 @@ test('UI dependency preparation owner imports from installed source without comp
   }
 });
 
-test('cold UI source-test bootstrap prepares its patched dependency before admitting the payload without compiling workspaces', {
+test('cold UI source-test bootstrap prepares the real postinstall import closure without compiling the Stack closure', {
   skip: process.platform === 'win32' ? 'This fixture exercises the POSIX worker package-manager executable boundary' : false,
 }, async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-source-test-ui-patch-'));
@@ -192,16 +202,73 @@ test('cold UI source-test bootstrap prepares its patched dependency before admit
   }));
   await writeFile(join(repoDir, 'yarn.lock'), '# fixture\n');
   const uiDir = join(repoDir, 'apps', 'ui');
+  const sourceRepoDir = await copyColdPreparationSourceGraph(repoDir);
+  for (const relativePath of [
+    'apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs',
+    'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs',
+    'apps/ui/tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs',
+  ]) {
+    const destination = join(repoDir, relativePath);
+    await mkdir(join(destination, '..'), { recursive: true });
+    await cp(join(sourceRepoDir, relativePath), destination);
+  }
+  const protocolDir = join(repoDir, 'packages', 'protocol');
+  await cp(join(sourceRepoDir, 'packages', 'protocol', 'src'), join(protocolDir, 'src'), { recursive: true });
+  // Compile the actual public UI import closure, not reconstructed Protocol
+  // exports. Fixture package metadata limits this process-boundary build to
+  // the entrypoint consumed by the real readiness verifier and generator.
+  await writeFile(join(protocolDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', version: '0.0.0', type: 'module',
+    main: './dist/plugins/ui/index.js', types: './dist/plugins/ui/index.d.ts',
+    exports: { './plugins/ui': './dist/plugins/ui/index.js' },
+    scripts: { build: 'node compile.mjs' },
+  }));
+  await writeFile(join(protocolDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+    target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src',
+    declaration: true, strict: true, skipLibCheck: true, types: ['node'],
+  }, include: ['src/plugins/ui/index.ts', 'src/auth/tr46.d.ts'] }));
+  const compiler = resolveTypeScriptCliInvocation({});
+  await writeFile(join(protocolDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
+const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { stdio: 'inherit', env: process.env });
+if (result.error) throw result.error;
+process.exitCode = result.status ?? 1;
+`);
+  await mkdir(join(repoDir, 'node_modules', '@happier-dev'), { recursive: true });
+  for (const entry of await readdir(join(sourceRepoDir, 'node_modules'))) {
+    if (entry === '@happier-dev' || entry === '.bin') continue;
+    await symlink(join(sourceRepoDir, 'node_modules', entry), join(repoDir, 'node_modules', entry));
+  }
+  await symlink(protocolDir, join(repoDir, 'node_modules', '@happier-dev', 'protocol'));
+  await symlink(join(repoDir, 'packages', 'cli-common'), join(repoDir, 'node_modules', '@happier-dev', 'cli-common'));
+  const protocolDependencyDir = join(sourceRepoDir, 'packages', 'protocol', 'node_modules');
+  if (await stat(protocolDependencyDir).then(() => true, (error) => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  })) await symlink(protocolDependencyDir, join(protocolDir, 'node_modules'));
+  await assert.rejects(stat(join(protocolDir, 'dist')), { code: 'ENOENT' });
   await mkdir(join(uiDir, 'patches'));
   const patchPath = join(uiDir, 'patches', 'markdown.patch');
-  const preparedModule = 'export const patched = "source-test-ready";\n';
+  const markersByFile = new Map();
+  for (const [relativePath, marker, count = 1] of REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS) {
+    const markers = markersByFile.get(relativePath) ?? [];
+    markers.push(...Array.from({ length: count }, () => marker));
+    markersByFile.set(relativePath, markers);
+  }
+  const patchInputDir = join(uiDir, 'patches', 'installed-markdown');
+  for (const relativePath of REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_FILES) {
+    const output = join(patchInputDir, relativePath);
+    await mkdir(join(output, '..'), { recursive: true });
+    await writeFile(output, (markersByFile.get(relativePath) ?? []).join('\n'));
+  }
+  const preparedModule = await readFile(join(patchInputDir, 'lib/module/web/streamingReveal.js'), 'utf8');
   await writeFile(patchPath, preparedModule);
   const requiredOutputPath = join(uiDir, 'node_modules', 'react-native-enriched-markdown', 'lib', 'module', 'web', 'streamingReveal.js');
   const binDir = join(repoDir, 'bin');
   await mkdir(binDir);
   // Corepack/Yarn is the OS boundary. A scriptless install creates only the
-  // dependency tree; the UI package-manager task produces its patched module.
-  // Bootstrap, freshness/locking, and the preparation owner remain real.
+  // dependency tree; the UI package-manager task produces its patched module,
+  // and a package build invokes the canonical native compiler. Bootstrap,
+  // source import resolution, workspace publication and readiness stay real.
   const packageManagerFixture = `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
@@ -211,10 +278,11 @@ if (args[0] === '--version') {
   console.log('1.22.22');
 } else if (args[0] === 'install') {
   fs.mkdirSync(path.join(process.cwd(), 'node_modules'), { recursive: true });
+} else if (args.join(' ') === '-s build' && process.cwd() === ${JSON.stringify(protocolDir)}) {
+  require('node:child_process').execFileSync(process.execPath, ['compile.mjs'], { stdio: 'inherit', env: process.env });
 } else if (args.join(' ') === '-s workspace @happier-dev/app postinstall:real'
   || (args.join(' ') === '-s postinstall:real' && process.cwd() === ${JSON.stringify(uiDir)})) {
-  fs.mkdirSync(path.dirname(process.env.HAPPIER_TEST_UI_PATCH_OUTPUT), { recursive: true });
-  fs.copyFileSync(process.env.HAPPIER_TEST_UI_PATCH_INPUT, process.env.HAPPIER_TEST_UI_PATCH_OUTPUT);
+  fs.cpSync(process.env.HAPPIER_TEST_UI_PATCH_INPUT, path.dirname(path.dirname(path.dirname(path.dirname(process.env.HAPPIER_TEST_UI_PATCH_OUTPUT)))), { recursive: true });
 } else {
   throw new Error('Unexpected package-manager command: ' + JSON.stringify(args));
 }
@@ -234,7 +302,7 @@ if (args[0] === '--version') {
       npm_execpath: '',
       HAPPIER_STACK_HOME_DIR: join(repoDir, 'home'),
       HAPPIER_STACK_ENV_FILE: '',
-      HAPPIER_TEST_UI_PATCH_INPUT: patchPath,
+      HAPPIER_TEST_UI_PATCH_INPUT: patchInputDir,
       HAPPIER_TEST_UI_PATCH_OUTPUT: requiredOutputPath,
     },
   });
@@ -242,6 +310,8 @@ if (args[0] === '--version') {
   // This is the payload's dependency read after bootstrap returns, not a
   // postinstall call-count assertion or a separately repaired fixture.
   assert.equal(await readFile(requiredOutputPath, 'utf8'), preparedModule);
+  assert.ok((await stat(join(protocolDir, 'dist/plugins/ui/index.js'))).size > 0);
+  assert.ok((await stat(join(protocolDir, 'dist/plugins/ui/index.d.ts'))).size > 0);
   assert.equal((await inspectDependencyRefresh({
     installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
   })).required, false);

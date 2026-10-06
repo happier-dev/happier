@@ -65,12 +65,17 @@ export async function bootstrapRemoteDependencies({
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   if (validationKind === 'source-test') {
-    // Source tests consume installed tools, not the Stack dependency owner's
-    // compiled closure. UI tests also consume patched dependencies; prepare them
-    // under the same lock without promoting scriptless admission to runtime-ready.
+    // Source tests do not consume the Stack dependency owner's compiled closure.
+    // UI patch readiness imports Protocol's public UI schemas, so prepare that
+    // prerequisite under the same lock without admitting the full runtime closure.
     let refreshed = false;
     const onDependenciesReady = /^apps\/ui(?:\/|$)/u.test(componentPath)
       ? async () => {
+          const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
+          await ensureWorkspacePackagesBuiltByName(repoDir, ['@happier-dev/protocol'], {
+            env,
+            includeDevDependencies: false,
+          });
           const { ensureUiPostinstallOutputs } = await loadDependencyOwner();
           await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, { env, force: refreshed });
         }
