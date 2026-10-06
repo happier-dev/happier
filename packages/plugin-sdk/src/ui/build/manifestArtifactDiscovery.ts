@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep, type win32 } from 'node:path';
 
-import { PluginCollectionMigrationArtifactReferenceV1Schema } from '@happier-dev/protocol';
+import { PluginCollectionMigrationArtifactReferenceV1Schema } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 
 import { PluginUiBuildError } from './errors.js';
 import { UNIVERSAL_PLUGIN_UI_EXPORT_CONDITIONS } from './universalCommonJsCompiler.js';
@@ -137,10 +137,11 @@ export function isManifestArtifactPathWithinProjectRoot(
 
 export async function discoverExecutablePluginUiArtifacts(
     projectRoot: string,
+    manifestPath = resolve(projectRoot, '.happier-plugin/plugin.json'),
 ): Promise<readonly DiscoveredExecutablePluginUiArtifact[]> {
     const packageJson = JSON.parse(await readFile(resolve(projectRoot, 'package.json'), 'utf8')) as UnknownRecord;
     const manifest = JSON.parse(
-        await readFile(resolve(projectRoot, '.happier-plugin/plugin.json'), 'utf8'),
+        await readFile(manifestPath, 'utf8'),
     ) as UnknownRecord;
     const references = discoverReferences(manifest);
     if (references.size === 0) return Object.freeze([]);
@@ -188,9 +189,10 @@ export async function discoverExecutablePluginUiArtifacts(
  */
 export async function discoverHostedStaticPluginUiArtifacts(
     projectRoot: string,
+    manifestPath = resolve(projectRoot, '.happier-plugin/plugin.json'),
 ): Promise<readonly DiscoveredHostedStaticPluginUiArtifact[]> {
     const manifest = JSON.parse(
-        await readFile(resolve(projectRoot, '.happier-plugin/plugin.json'), 'utf8'),
+        await readFile(manifestPath, 'utf8'),
     ) as UnknownRecord;
     const contributes = asRecord(manifest.contributes);
     const ui = asRecord(contributes?.ui);
