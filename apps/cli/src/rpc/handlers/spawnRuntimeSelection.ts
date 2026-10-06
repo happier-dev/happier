@@ -1,8 +1,6 @@
-import {
-  normalizeCodexBackendMode,
-  readRuntimeDescriptorV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 type CanonicalSpawnRuntimeSelectionInput = Readonly<{
   /** Resolved current catalog identity, used only to bind the opaque descriptor. */

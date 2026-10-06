@@ -3,11 +3,8 @@ import type { ResolvedContributionRegistry } from '../../projection/registry/typ
 import type { PluginSourceCustody } from '../sourceAuthority';
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '../automations/automationEventAdoptedDefinitionSetHost';
 import type { AutomationEventAdoptedDefinitionSetWithHistoryGapRecoveryV1 } from '../automations/automationEventAdoptedDefinitionSet';
-import {
-    arePluginMachineMaterializationRefsEqual,
-    type AutomationEventSourcesListTransportV1,
-    type PluginMachineMaterializationRefV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 
 type ConsumerLifecycle = Readonly<{
     isCurrent(): boolean;

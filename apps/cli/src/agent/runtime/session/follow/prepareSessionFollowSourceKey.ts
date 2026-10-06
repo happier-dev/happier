@@ -1,10 +1,6 @@
-import {
-  SessionFollowSourceKeyPrepareResponseV1Schema,
-  buildSessionFollowSourceKeyPrepareRequestV1,
-  resolveSessionFollowSourceKeyPreparationFailureV1,
-  type SessionFollowSourceKeyPreparationResultV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionFollowSourceKeyPrepareResponseV1Schema, buildSessionFollowSourceKeyPrepareRequestV1, resolveSessionFollowSourceKeyPreparationFailureV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { encodeBase64 } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';

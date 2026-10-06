@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import {
-  normalizeDirectPeerTransferEndpointBaseUrl,
-  type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { normalizeDirectPeerTransferEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
 export const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 export const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';

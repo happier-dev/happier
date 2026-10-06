@@ -1,11 +1,6 @@
-import {
-    BrowserContextItemV1Schema,
-    resolveBrowserContextPrivacyDenial,
-    type BrowserContextPrivacyState,
-    type BrowserContextAttachmentV1,
-    type BrowserContextItemV1,
-    type BrowserContextLifecycleStateV1,
-} from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { resolveBrowserContextPrivacyDenial } from '@happier-dev/protocol/browser/context/privacy';
+import type { BrowserContextPrivacyState, BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextLifecycleStateV1 } from '@happier-dev/protocol';
 
 import {
     buildSidecarContextAttachment,

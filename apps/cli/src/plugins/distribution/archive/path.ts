@@ -1,9 +1,6 @@
 import type { ReadEntry } from 'tar';
 
-import {
-  createPortablePathCollisionRegistry,
-  readPortablePathSegmentViolation,
-} from '@happier-dev/protocol/filesystem/portablePathSegment';
+import { createPortablePathCollisionRegistry, readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
 
 import { PortableArchiveError } from './types';
 

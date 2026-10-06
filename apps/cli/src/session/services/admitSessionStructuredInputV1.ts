@@ -1,20 +1,10 @@
-import {
-  buildComposerAttachmentDedupeKeyV1,
-  BrowserContextMessageMetaV1Schema,
-  BrowserContextMessagePayloadV1Schema,
-  ComposerAttachmentDraftV1Schema,
-  ComposerAttachmentInputV1Schema,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  HappierStructuredInputV1Schema,
-  RawIngressStructuredInputV1Schema,
-  readHappierStructuredInputV1FromMeta,
-  sanitizeSessionUserMessageSendMeta,
-  SessionMediaMessageMetaV1Schema,
-  type ComposerAttachmentDraftV1,
-  type ComposerAttachmentInputV1,
-  type HappierStructuredInputV1,
-  type SessionMediaItemV1,
-} from '@happier-dev/protocol';
+import { buildComposerAttachmentDedupeKeyV1, ComposerAttachmentDraftV1Schema, ComposerAttachmentInputV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { HappierStructuredInputV1Schema, RawIngressStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { BrowserContextMessageMetaV1Schema, BrowserContextMessagePayloadV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { sanitizeSessionUserMessageSendMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1, HappierStructuredInputV1, SessionMediaItemV1 } from '@happier-dev/protocol';
 
 type MetadataRecord = Record<string, unknown>;
 

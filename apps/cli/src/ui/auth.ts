@@ -15,9 +15,7 @@ import {
 import { generateWebAuthUrl } from "@/api/webAuth";
 import { sanitizeServerIdForFilesystem } from "@/server/serverId";
 import { openBrowser, BROWSER_NOT_OPENED_NOTE, COPY_LINK_INTO_BROWSER_PROMPT } from '@/ui/openBrowser';
-import { AuthSelector, AuthMethod } from "./ink/AuthSelector";
-import { render } from 'ink';
-import React from 'react';
+import type { AuthMethod } from "./ink/AuthSelector";
 import { randomUUID } from 'node:crypto';
 import { logger } from './logger';
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
@@ -488,7 +486,13 @@ async function doBothAuth(params: InteractiveTerminalAuthContext): Promise<Store
 /**
  * Display authentication method selector and return user choice
  */
-function selectAuthenticationMethod(signal?: AbortSignal): Promise<AuthMethod | null> {
+async function selectAuthenticationMethod(signal?: AbortSignal): Promise<AuthMethod | null> {
+    const [{ AuthSelector }, { render }, { default: React }] = await Promise.all([
+        import('./ink/AuthSelector'),
+        import('ink'),
+        import('react'),
+    ]);
+    if (signal?.aborted) return null;
     return new Promise((resolve) => {
         let hasResolved = false;
         let app: ReturnType<typeof render> | null = null;

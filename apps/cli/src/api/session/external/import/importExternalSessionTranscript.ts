@@ -1,15 +1,8 @@
-import {
-  buildSessionTranscriptMessageProvenanceV1,
-  isMessageStructuredPresentationV1Candidate,
-  makeExternalSessionHistoricalImportLocalId,
-  SESSION_MESSAGE_PROVENANCE_META_KEY,
-  SessionMessageRoleSchema,
-  stripSessionInputProtectedMeta,
-  type ExternalSessionTranscriptRawMessageV1,
-  type SessionMessageRole,
-  type StrictSessionStoredMessageContentEnvelope,
-  type SidechainId,
-} from '@happier-dev/protocol';
+import { buildSessionTranscriptMessageProvenanceV1, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { isMessageStructuredPresentationV1Candidate } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictSessionStoredMessageContentEnvelope, SidechainId } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';

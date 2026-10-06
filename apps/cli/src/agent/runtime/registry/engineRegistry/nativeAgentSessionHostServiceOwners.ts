@@ -1,15 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-    AgentToolExecuteAfterHookPayloadSchema,
-    AgentToolExecuteBeforeHookPayloadSchema,
-    isFeatureId,
-    type PluginExecutionInterceptionCapability,
-    type AccountSettings,
-    type PluginExecutionScopeV1,
-    type PluginSourceCustodyV1,
-    type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { AgentToolExecuteAfterHookPayloadSchema, AgentToolExecuteBeforeHookPayloadSchema } from '@happier-dev/protocol/plugins/hooks';
+import { isFeatureId } from '@happier-dev/protocol/features/catalog';
+import type { PluginExecutionInterceptionCapability, AccountSettings, PluginExecutionScopeV1, PluginSourceCustodyV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     AgentExecutionRunHostServicesV1,

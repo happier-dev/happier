@@ -1,16 +1,8 @@
-import {
-  DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema,
-  DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema,
-  DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema,
-  PluginMachineMaterializationRefV1Schema,
-  pluginPermissionSubjectsEqualV1,
-  type DaemonVoiceClientRawCredentialAuthorizationRequestV1,
-  type DaemonVoiceClientRawCredentialReviewV1,
-  type PluginContributionIdentityV1,
-  type PluginMachineMaterializationRefV1,
-  type PluginPermissionGrantRequestV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema, DaemonVoiceClientRawCredentialAuthorizationRequestResponseV1Schema, DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import type { DaemonVoiceClientRawCredentialAuthorizationRequestV1, DaemonVoiceClientRawCredentialReviewV1, PluginContributionIdentityV1, PluginMachineMaterializationRefV1, PluginPermissionGrantRequestV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isDeepStrictEqual } from 'node:util';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';

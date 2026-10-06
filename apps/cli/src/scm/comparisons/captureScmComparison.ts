@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { readFile, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import {
-  ScmComparisonSchema, ScmComparisonSourceSchema, ScmDiffSummaryMetadataSchema,
-  buildScmComparisonIdentity, classifyScmChangePath, type ScmComparison, type ScmComparisonFile, type ScmComparisonSource,
-  type ScmDiffSummaryMetadata,
-} from '@happier-dev/protocol';
+import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
+import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
 import type { ScmDiffSummaryTurnEvidenceMode } from '@happier-dev/protocol/scm';
 import { configuration } from '@/configuration';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';

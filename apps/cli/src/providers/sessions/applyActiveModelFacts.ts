@@ -1,7 +1,5 @@
-import {
-  applySessionProviderBindingMetadataV1,
-  type SessionActiveModelSelectionV1,
-} from '@happier-dev/protocol';
+import { applySessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { SessionActiveModelSelectionV1 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';

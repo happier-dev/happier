@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 
-import { FeaturesResponseSchema, type SessionAgentTransitionRequestV1 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { SessionAgentTransitionRequestV1 } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { StoredCredentials } from '@/persistence';

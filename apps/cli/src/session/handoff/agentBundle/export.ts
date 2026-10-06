@@ -4,9 +4,7 @@ import {
   readProviderSessionIdSessionState,
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
-import {
-  resolveLinkedExternalSessionAuthorityV1,
-} from '@happier-dev/protocol';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 

@@ -1,14 +1,9 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import {
-  buildQualifiedPluginContributionKey,
-  parseModelPackManifest,
-  type ModelPackManifest,
-  type VoiceModelPackIdentityV1,
-  type VoiceModelPackRuntimeV1,
-  type VoiceModelPackSupportArtifactV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
+import type { ModelPackManifest, VoiceModelPackIdentityV1, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 import {
   buildVoiceModelPackInstallUrlPolicyV1,
   deriveVoiceModelPackManifestDigestV1,

@@ -1,14 +1,7 @@
-import {
-  ProviderConnectionIdSchema,
-  ProviderMachineIdSchema,
-  ProviderModelIdSchema,
-  ProviderModelLoadDescriptorV1Schema,
-  createProviderErrorV1,
-  type AssessedProviderEndpoint,
-  type ProviderErrorV1,
-  type ProviderModelLoadDescriptorV1,
-  type ProviderModelLoadStateV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderModelLoadDescriptorV1Schema } from '@happier-dev/protocol/providers/contributions';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { AssessedProviderEndpoint, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelLoadStateV1 } from '@happier-dev/protocol';
 
 import {
   PROVIDER_MODEL_LOAD_HTTP_LIMITS,

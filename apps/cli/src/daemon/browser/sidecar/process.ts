@@ -1,7 +1,5 @@
-import {
-    BrowserSidecarRuntimeStatusV1Schema,
-    type BrowserSidecarRuntimeStatusV1,
-} from '@happier-dev/protocol';
+import { BrowserSidecarRuntimeStatusV1Schema } from '@happier-dev/protocol/browser/sidecar/v1';
+import type { BrowserSidecarRuntimeStatusV1 } from '@happier-dev/protocol';
 
 import {
     discoverBrowserSidecarCdpEndpoint,

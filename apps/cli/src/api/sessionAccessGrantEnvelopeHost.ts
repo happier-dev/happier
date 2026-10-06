@@ -1,12 +1,9 @@
 import axios from 'axios';
-import {
-  SessionAccessGrantSetActionInputV1Schema,
-  SessionAccessErrorCodeV1Schema,
-  encodeBase64,
-  sealEncryptedDataKeyEnvelopeV1,
-  type SessionAccessErrorCodeV1,
-  type SetSessionAccessGrantRequestV1,
-} from '@happier-dev/protocol';
+import { SessionAccessGrantSetActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import type { SessionAccessErrorCodeV1, SetSessionAccessGrantRequestV1 } from '@happier-dev/protocol';
 
 import { getRandomBytes } from '@/api/encryption';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';

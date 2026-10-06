@@ -1,12 +1,7 @@
-import {
-  ProviderConnectionV1Schema,
-  ProviderSettingsV1Schema,
-  deleteProviderConnectionV1,
-  ensureDefaultProviderConnectionV1,
-  type CustomProviderTemplateV1,
-  type ProviderConnectionV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { deleteProviderConnectionV1, ensureDefaultProviderConnectionV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import type { CustomProviderTemplateV1, ProviderConnectionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export function addProviderContributionConnection(input: Readonly<{
   settings: ProviderSettingsV1;

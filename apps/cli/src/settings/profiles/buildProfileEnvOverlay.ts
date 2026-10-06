@@ -1,12 +1,9 @@
-import {
-  buildBackendTargetKey,
-  buildBackendTargetKeyV2,
-  isLaunchProfileV2,
-  readBackendTargetRefV2,
-  validateLaunchProfileV2ReservedEnvironment,
-  type AIBackendProfile,
-  type LaunchProfileV2,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { validateLaunchProfileV2ReservedEnvironment } from '@happier-dev/protocol/profiles/v2/schema';
+import type { AIBackendProfile, LaunchProfileV2 } from '@happier-dev/protocol';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';

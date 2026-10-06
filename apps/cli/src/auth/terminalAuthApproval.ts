@@ -2,14 +2,10 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
-import {
-  sealTerminalProvisioningV3Payload,
-  sealTerminalProvisioningV3TokenOnlyPayload,
-  normalizeServerIdentityIdCapability,
-  createHomeCredentialDestinationV1,
-  isHomeCredentialDestinationAllowedV1,
-  type HomeCredentialDestinationV1,
-} from '@happier-dev/protocol';
+import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeCredentialDestinationV1 } from '@happier-dev/protocol';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
 import { configuration } from '@/configuration';

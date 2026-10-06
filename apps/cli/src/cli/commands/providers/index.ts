@@ -1,12 +1,7 @@
-import {
-  CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1,
-  CustomProviderAuthoringProtocolV1Schema,
-  CustomProviderCredentialStyleV1Schema,
-  CustomProviderTemplateV1Schema,
-  ProviderModelIdSchema,
-  parseProviderManualModelInput,
-  normalizeCustomProviderTemplateV1,
-} from '@happier-dev/protocol';
+import { CUSTOM_PROVIDER_AUTHORING_PROTOCOLS_V1, CustomProviderAuthoringProtocolV1Schema, CustomProviderCredentialStyleV1Schema, normalizeCustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import { CustomProviderTemplateV1Schema } from '@happier-dev/protocol/providers/connections/customTemplateV1';
+import { parseProviderManualModelInput } from '@happier-dev/protocol/providers/manualModelInput';
+import { ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc';
 
 import { assertNoRawSecretArguments, assertOnlyAllowedFlags, hasFlag, positionalArgs, readFlag, readRawFlag } from './args';

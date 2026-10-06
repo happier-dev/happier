@@ -1,15 +1,9 @@
-import {
-  TeamCredentialProviderModelCatalogEntryV1Schema,
-  TeamCredentialResourceTestApplicationRequestV1Schema,
-  type TeamCredentialResourceTestApplicationRequestV1,
-  type TeamCredentialSourceBindingV1,
-  type TeamCredentialProviderModelCatalogEntryV1,
-} from '@happier-dev/protocol/teams';
-import type {
-  DaemonProviderModelProjectionRequestV1,
-  DaemonProviderModelProjectionResponseV1,
-} from '@happier-dev/protocol/rpc';
-import { pluginJsonValuesEqual, type ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol';
+import { TeamCredentialProviderModelCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialResourceTestApplicationRequestV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import type { TeamCredentialResourceTestApplicationRequestV1, TeamCredentialSourceBindingV1, TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol';
 import {
   createTeamCredentialModelCatalogResolver,
   isSameTeamCredentialBrokerApplication,

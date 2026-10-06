@@ -1,7 +1,5 @@
-import {
-  SessionInitialGoalRequestV1Schema,
-  type SessionInitialGoalRequestV1,
-} from '@happier-dev/protocol';
+import { SessionInitialGoalRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { SessionInitialGoalRequestV1 } from '@happier-dev/protocol';
 
 export const HAPPIER_DAEMON_INITIAL_GOAL_ENV_KEY = 'HAPPIER_DAEMON_INITIAL_GOAL';
 

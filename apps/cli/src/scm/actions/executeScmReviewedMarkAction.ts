@@ -1,4 +1,5 @@
-import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, type ScmComparison, type ScmReviewedMarkResponse } from '@happier-dev/protocol/scm';
+import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort } from '@happier-dev/protocol/scm/reviewedMarks';
+import type { ScmComparison, ScmReviewedMarkResponse } from '@happier-dev/protocol/scm';
 import { createCliAccountKvJsonTransport, type CliAccountKvJsonTransportParams } from '@/api/client/accountKvJsonTransport';
 
 type AccountMarkParams = Omit<CliAccountKvJsonTransportParams, 'key'> & Readonly<{ comparison: ScmComparison }>;

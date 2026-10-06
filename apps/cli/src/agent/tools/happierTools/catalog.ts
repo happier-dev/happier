@@ -1,4 +1,4 @@
-import { listActionSpecs } from '@happier-dev/protocol';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { HappierBuiltInToolDefinition } from './types';
 import {

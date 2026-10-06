@@ -1,11 +1,7 @@
-import {
-  DaemonPluginInvocationLogReadRequestV1Schema,
-  DaemonPluginInvocationLogReadResponseV1Schema,
-  isRpcMethodNotAvailableError,
-  isRpcMethodNotFoundError,
-  type DaemonPluginInvocationLogReadResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonPluginInvocationLogReadRequestV1Schema, DaemonPluginInvocationLogReadResponseV1Schema } from '@happier-dev/protocol/daemon/plugin-invocation-logs';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import type { DaemonPluginInvocationLogReadResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';

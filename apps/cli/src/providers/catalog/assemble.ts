@@ -1,18 +1,8 @@
-import {
-  ProviderAgentTargetKeySchema,
-  type CustomProviderTemplateV1,
-  ProviderEndpointRuntimeStateV1Schema,
-  mergeProviderCatalogV1,
-  readOwnRecordValue,
-  providerCatalogPermitsUnlistedModelIdV1,
-  serializeProviderCatalogRuntimeStateKeyV1,
-  type ProviderCatalogDeclarationV1,
-  type ProviderCatalogTransitionStateV1,
-  type ProviderCatalogRuntimeStateRecordV1,
-  type ProviderMergedCatalogRowV1,
-  type ProviderModelLoadRuntimeStateRecordV1,
-  type ProviderRuntimeStateFileV1,
-} from '@happier-dev/protocol';
+import { ProviderAgentTargetKeySchema } from '@happier-dev/protocol/providers/ids';
+import type { CustomProviderTemplateV1, ProviderCatalogDeclarationV1, ProviderCatalogTransitionStateV1, ProviderCatalogRuntimeStateRecordV1, ProviderMergedCatalogRowV1, ProviderModelLoadRuntimeStateRecordV1, ProviderRuntimeStateFileV1 } from '@happier-dev/protocol';
+import { ProviderEndpointRuntimeStateV1Schema, serializeProviderCatalogRuntimeStateKeyV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import { mergeProviderCatalogV1, providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 
 import type {
   AssembleProviderConnectionCatalogInput,

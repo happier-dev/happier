@@ -1,18 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  HappierRunnerActivationFileV1Schema,
-  type HappierRunnerActivationFileV1,
-} from '@happier-dev/protocol/ephemeralRunner/activationFile';
-import {
-  RunnerActivationBindingV1Schema,
-  type RunnerActivationBindingV1,
-} from '@happier-dev/protocol/ephemeralRunner/activation';
-import {
-  runnerArtifactTargetForPlatform,
-  type RunnerArtifactIdentityV1,
-} from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
+import { HappierRunnerActivationFileV1Schema } from '@happier-dev/protocol/ephemeralRunner/activationFile';
+import type { HappierRunnerActivationFileV1 } from '@happier-dev/protocol/ephemeralRunner/activationFile';
+import { RunnerActivationBindingV1Schema } from '@happier-dev/protocol/ephemeralRunner/activation';
+import type { RunnerActivationBindingV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
+import { runnerArtifactTargetForPlatform } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
+import type { RunnerArtifactIdentityV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import tweetnacl from 'tweetnacl';
 

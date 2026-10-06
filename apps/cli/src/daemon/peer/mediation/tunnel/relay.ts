@@ -1,27 +1,11 @@
-import {
-    PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
-    PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-    DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES,
-    decodePeerTcpTunnelBinaryFrameHeaderV2,
-    decodePeerTcpTunnelBinaryFrameV2,
-    PeerTcpTunnelRelayEnvelopeSchema,
-    verifyPeerTcpTunnelRelayAuthorizationV2,
-    createPeerApplicationAuthorityDigestV1,
-    type PeerTcpTunnelSubstreamCapsV2,
-    type PeerTcpTunnelEncoding,
-    type PeerTcpTunnelFrameV1,
-    type PeerTcpTunnelOpenV1,
-    type PeerTcpTunnelRelayAuthorizationPayloadV2,
-    type PeerTcpTunnelRelayAuthorizationV2,
-    type PeerTcpTunnelRelayAuthorizationTrustRootV1,
-    type PeerTcpTunnelRelayBinaryEnvelopeV2,
-    type PeerTcpTunnelRelayEnvelope,
-    type PeerTcpTunnelRelayEnvelopeV1,
-    type PeerApplicationEncryptionAuthorityBindingV1,
-    type ProviderBrokerRelayApplicationBindingV1,
-} from '@happier-dev/protocol';
+import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, PeerTcpTunnelRelayEnvelopeSchema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import { DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { decodePeerTcpTunnelBinaryFrameHeaderV2, decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import { verifyPeerTcpTunnelRelayAuthorizationV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorization';
+import { createPeerApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
+import type { PeerTcpTunnelSubstreamCapsV2, PeerTcpTunnelEncoding, PeerTcpTunnelFrameV1, PeerTcpTunnelOpenV1, PeerTcpTunnelRelayAuthorizationPayloadV2, PeerTcpTunnelRelayAuthorizationV2, PeerTcpTunnelRelayAuthorizationTrustRootV1, PeerTcpTunnelRelayBinaryEnvelopeV2, PeerTcpTunnelRelayEnvelope, PeerTcpTunnelRelayEnvelopeV1, PeerApplicationEncryptionAuthorityBindingV1, ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol';
 
 import {
     createPeerTcpTunnelApplicationSubstreamSession,

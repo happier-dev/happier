@@ -22,7 +22,8 @@ import { launchBorrowedTerminalProcess, type TerminalSpawnProcess, type Borrowed
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import type { TerminalHostHandle, TerminalHostPreference } from '@happier-dev/agents';
 import type { PreparedTerminalHostOwner } from '@/plugins/runtime/context/terminalHost';
-import { SessionProviderCliAttachPrepareResultV1Schema, type SessionProviderCliAttachPrepareRequestV1 } from '@happier-dev/protocol';
+import { SessionProviderCliAttachPrepareResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1';
+import type { SessionProviderCliAttachPrepareRequestV1 } from '@happier-dev/protocol';
 
 const PROVIDER_ATTACH_STOP_GRACE_MS = 3_000;
 

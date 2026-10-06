@@ -1,15 +1,7 @@
-import {
-  PluginContributionLocalIdSchema,
-  PluginIdSchema,
-  PluginSessionInputRequestV1Schema,
-  SessionInputAdmissionResultV1Schema,
-  derivePluginSessionInputLocalIdV1,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type PluginMachineMaterializationRefV1,
-  type PluginSourceCustodyV1,
-  type SessionInputAdmissionResultV1,
-} from '@happier-dev/protocol';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginSessionInputRequestV1Schema, SessionInputAdmissionResultV1Schema, derivePluginSessionInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { ActionExecuteResult, ActionExecutorContext, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
 
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import { PluginError } from '@happier-dev/plugin-sdk';

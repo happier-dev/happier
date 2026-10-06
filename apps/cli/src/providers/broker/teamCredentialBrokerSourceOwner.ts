@@ -2,13 +2,9 @@ import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol';
 import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
-import {
-  computeTeamCredentialSourceMemberKeyV1,
-  TeamCredentialSourceBindingV1Schema,
-  type TeamCredentialBrokerPlacementV1,
-  type TeamCredentialSourceBindingV1,
-  type TeamCredentialSourceMemberV1,
-} from '@happier-dev/protocol/teams';
+import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
+import type { TeamCredentialBrokerPlacementV1, TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
 
 import type {
   ManagedProviderEndpointAccessProjection,

@@ -1,12 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import {
-  ChangeEntrySchema,
-  ChangesResponseSchema,
-  CursorGoneErrorSchema,
-  type ChangeEntry,
-  type ChangesResponse,
-  type CursorGoneError,
-} from '@happier-dev/protocol/changes';
+import { ChangeEntrySchema, ChangesResponseSchema, CursorGoneErrorSchema } from '@happier-dev/protocol/changes';
+import type { ChangeEntry, ChangesResponse, CursorGoneError } from '@happier-dev/protocol/changes';
 import axios from 'axios';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from './client/httpStatusError';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';

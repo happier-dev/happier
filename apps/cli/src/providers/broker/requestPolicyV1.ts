@@ -1,14 +1,9 @@
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
-import {
-    PROVIDER_ENDPOINT_SAFETY_LIMITS,
-    normalizeProviderPublicHeaders,
-    normalizeProviderOriginRelativePathSyntax,
-} from '@happier-dev/protocol';
-import {
-    TeamCredentialRequestPolicyV1Schema,
-    type TeamCredentialRequestPolicyV1,
-    type TeamCredentialRequestProtocolKindV1,
-} from '@happier-dev/protocol/teams';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
+import { TeamCredentialRequestPolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialRequestPolicyV1, TeamCredentialRequestProtocolKindV1 } from '@happier-dev/protocol/teams';
 
 export type TeamCredentialRequestPolicyFailureCodeV1 =
     | 'request_malformed'

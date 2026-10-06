@@ -1,9 +1,6 @@
 import axios from 'axios';
-import {
-  PendingActivationFailureRequestV1Schema,
-  PendingActivationFailureResponseV1Schema,
-  type PendingActivationFailureCodeV1,
-} from '@happier-dev/protocol';
+import { PendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import type { PendingActivationFailureCodeV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';

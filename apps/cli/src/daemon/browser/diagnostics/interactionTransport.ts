@@ -1,22 +1,5 @@
-import {
-  BrowserDiagnosticsElementPickerRequestV1Schema,
-  BrowserDiagnosticsEvalRequestV1Schema,
-  BrowserDiagnosticsGetPropertiesRequestV1Schema,
-  BrowserDiagnosticsReleaseObjectGroupRequestV1Schema,
-  type BrowserDiagnosticsElementPickerRequestV1,
-  type BrowserDiagnosticsElementPickerResultV1,
-  type BrowserDiagnosticsEvalRequestV1,
-  type BrowserDiagnosticsEvalResultV1,
-  type BrowserDiagnosticsExpandedRemoteObjectV1,
-  type BrowserDiagnosticsGetPropertiesRequestV1,
-  type BrowserDiagnosticsGetPropertiesResultV1,
-  type BrowserDiagnosticsObjectPropertyV1,
-  type BrowserDiagnosticsReleaseObjectGroupRequestV1,
-  type BrowserDiagnosticsReleaseObjectGroupResultV1,
-  type BrowserDiagnosticsRemoteObjectPreviewPropertyV1,
-  type BrowserDiagnosticsRemoteObjectV1,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { BrowserDiagnosticsElementPickerRequestV1Schema, BrowserDiagnosticsEvalRequestV1Schema, BrowserDiagnosticsGetPropertiesRequestV1Schema, BrowserDiagnosticsReleaseObjectGroupRequestV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserDiagnosticsElementPickerRequestV1, BrowserDiagnosticsElementPickerResultV1, BrowserDiagnosticsEvalRequestV1, BrowserDiagnosticsEvalResultV1, BrowserDiagnosticsExpandedRemoteObjectV1, BrowserDiagnosticsGetPropertiesRequestV1, BrowserDiagnosticsGetPropertiesResultV1, BrowserDiagnosticsObjectPropertyV1, BrowserDiagnosticsReleaseObjectGroupRequestV1, BrowserDiagnosticsReleaseObjectGroupResultV1, BrowserDiagnosticsRemoteObjectPreviewPropertyV1, BrowserDiagnosticsRemoteObjectV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type {
   BrowserSidecarCdpEventNotification,

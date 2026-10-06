@@ -1,9 +1,5 @@
-import {
-  MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
-  MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
-  MachineUpdateOperationProtocolCapabilitiesResponseV1Schema,
-  type MachineOperationProtocolCapabilitiesV1,
-} from '@happier-dev/protocol';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
 import type { Socket } from 'socket.io-client';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './socketTypes';

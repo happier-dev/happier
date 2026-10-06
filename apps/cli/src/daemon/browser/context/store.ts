@@ -1,9 +1,5 @@
-import {
-  BrowserContextItemV1Schema,
-  type BrowserAnnotationStrokeV1,
-  type BrowserAnnotationStyleIntentV1,
-  type BrowserContextItemV1,
-} from '@happier-dev/protocol';
+import { BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import type { BrowserAnnotationStrokeV1, BrowserAnnotationStyleIntentV1, BrowserContextItemV1 } from '@happier-dev/protocol';
 
 /**
  * ANNO-4b daemon-local browser-context item store. The headless managed-Chromium agent path has no

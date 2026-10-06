@@ -1,9 +1,5 @@
-import {
-  WorkspaceContentPolicyV1Schema,
-  WorkspaceSyncRelationshipV1Schema,
-  type WorkspaceContentPolicyV1,
-  type WorkspaceSyncRelationshipV1,
-} from '@happier-dev/protocol';
+import { WorkspaceContentPolicyV1Schema, WorkspaceSyncRelationshipV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceContentPolicyV1, WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 
 export const WORKSPACE_SYNC_SETTINGS_KEY = 'workspaceSyncRelationshipsV1' as const;
 

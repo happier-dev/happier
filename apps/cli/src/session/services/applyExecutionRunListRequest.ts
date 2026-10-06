@@ -1,9 +1,6 @@
-import {
-    buildBackendTargetKeyV2,
-    readBackendTargetRefV2,
-    type ExecutionRunListRequest,
-    type ExecutionRunPublicState,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ExecutionRunListRequest, ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import { matchesExecutionRunLegacyBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 

@@ -1,8 +1,6 @@
 import tweetnacl from 'tweetnacl';
-import {
-  deriveAccountMachineKeyFromRecoverySecret,
-  resolveTerminalProvisioningVariantV2,
-} from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveTerminalProvisioningVariantV2 } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import type { StoredCredentials } from '@/persistence';
 

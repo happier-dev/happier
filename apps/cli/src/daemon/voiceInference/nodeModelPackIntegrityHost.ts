@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { filePathParts } from '@happier-dev/protocol';
+import { filePathParts } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
 import type { InstalledModelPackIntegrityHost } from '@happier-dev/voice-modelpacks';
 
 import { assertVoiceInferencePackIdFilesystemSafe } from './voiceInferenceWorker.shared';

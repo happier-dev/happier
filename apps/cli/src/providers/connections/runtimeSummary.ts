@@ -1,8 +1,5 @@
-import {
-  deriveProviderConnectionSummaryHealthV1,
-  type ProviderEndpointRuntimeStateV1,
-  type ProviderEndpointRuntimeStateRecordV1,
-} from '@happier-dev/protocol';
+import { deriveProviderConnectionSummaryHealthV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import type { ProviderEndpointRuntimeStateV1, ProviderEndpointRuntimeStateRecordV1 } from '@happier-dev/protocol';
 
 import type { ProviderConnectionRuntimeSummary } from './service';
 

@@ -29,7 +29,7 @@ import {
   type ContentBlock,
   type Stream,
 } from '@agentclientprotocol/sdk';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -125,7 +125,7 @@ import { handleAcpSessionNotification } from './updates/handleSessionNotificatio
 import type { AcpTurnOutcome } from './turn/outcome';
 import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './turn/completion';
 import { abortPendingAcpPermissionRequests } from './permissions/permissionFinalization';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import {
   readAdvertisedAuthMethodIds,
   readBoundedInitializeMetadata,

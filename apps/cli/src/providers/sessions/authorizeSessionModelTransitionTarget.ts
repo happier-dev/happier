@@ -1,18 +1,9 @@
 import { join } from 'node:path';
 
-import {
-  projectAgentSessionProviderBindingV1,
-  isModelRefGrantedV1,
-  type CallerInputConstraintsV1,
-  ProviderConnectionIdSchema,
-  type ModelSelectionApplyPolicy,
-  type ProviderBoundModelRef,
-  type ProviderModelDescriptorV1,
-  type ProviderRuntimeBindingBasisV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderModelDescriptorV1, ProviderRuntimeBindingBasisV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { configuration } from '@/configuration';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';

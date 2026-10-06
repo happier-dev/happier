@@ -1,15 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  ConnectedServiceBindingsV1Schema,
-  normalizeCodexBackendMode,
-  projectRuntimeDescriptorV1ForPredecessor,
-  SessionHandoffAbortRequestSchema,
-  SessionHandoffCommitRequestSchema,
-  SessionHandoffPrepareTargetResponseSchema,
-  SessionHandoffStartResponseSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { normalizeCodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { projectRuntimeDescriptorV1ForPredecessor } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { SessionHandoffAbortRequestSchema, SessionHandoffCommitRequestSchema, SessionHandoffPrepareTargetResponseSchema, SessionHandoffStartResponseSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 
 import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';

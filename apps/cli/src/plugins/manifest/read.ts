@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import { formatPluginManifestIngestionDiagnostic } from '@happier-dev/protocol';
-import { decodePluginManifestUtf8 } from '@happier-dev/protocol/plugins/manifest';
+import { formatPluginManifestIngestionDiagnostic } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { decodePluginManifestUtf8 } from '@happier-dev/protocol/plugins/manifest/ingest';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { ingestCanonicalPluginManifest } from './ingest';

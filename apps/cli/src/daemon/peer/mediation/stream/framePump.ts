@@ -5,13 +5,10 @@ import type {
     MachineLiveStreamReceiptV1,
     MachineLiveStreamRouteKindV1,
 } from '@happier-dev/protocol';
-import {
-    createMachineLiveStreamMeter,
-    getMachineLiveStreamPayloadDecodedByteLength,
-    MachineLiveStreamControlV1Schema,
-    MachineLiveStreamFrameV1Schema,
-    PEER_MEDIATION_RECEIPTS,
-} from '@happier-dev/protocol';
+import { createMachineLiveStreamMeter } from '@happier-dev/protocol/machines/peer/mediation/stream/metering';
+import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import { MachineLiveStreamControlV1Schema, MachineLiveStreamFrameV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 
 type FramePumpReasonCode =
     | 'invalid_control'

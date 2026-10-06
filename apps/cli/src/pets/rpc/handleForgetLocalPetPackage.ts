@@ -1,7 +1,5 @@
-import {
-  DaemonPetForgetLocalPackageRequestV1Schema,
-  type DaemonPetForgetLocalPackageResponseV1,
-} from '@happier-dev/protocol';
+import { DaemonPetForgetLocalPackageRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
+import type { DaemonPetForgetLocalPackageResponseV1 } from '@happier-dev/protocol';
 
 import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
 import { forgetManagedLocalPetSource } from '../storage/managedLocalPetRegistry';

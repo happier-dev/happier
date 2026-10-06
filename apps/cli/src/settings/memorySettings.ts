@@ -1,12 +1,8 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import {
-  DEFAULT_MEMORY_SETTINGS,
-  normalizeMemorySettings,
-  sealSecretsDeepV1,
-  unsealSecretsDeepWithKeysV1,
-  type MemorySettingsV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_MEMORY_SETTINGS, normalizeMemorySettings } from '@happier-dev/protocol/memory/memorySettings';
+import { sealSecretsDeepV1, unsealSecretsDeepWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import type { MemorySettingsV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -15,11 +11,8 @@ import {
   deriveSettingsSecretsReadKeysForCredentials,
 } from '@/settings/secrets/settingsSecretsKey';
 
-export {
-  DEFAULT_MEMORY_SETTINGS,
-  normalizeMemorySettings,
-  type MemorySettingsV1,
-} from '@happier-dev/protocol';
+export { DEFAULT_MEMORY_SETTINGS, normalizeMemorySettings } from '@happier-dev/protocol/memory/memorySettings';
+export type { MemorySettingsV1 } from '@happier-dev/protocol';
 
 function normalizeEnabledAtMs(value: unknown): number {
   const raw = typeof value === 'number' ? value : Number(value);

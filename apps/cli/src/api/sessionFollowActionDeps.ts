@@ -1,14 +1,9 @@
 import axios from 'axios';
-import {
-  resolveSessionFollowActionRequest,
-  parseSessionFollowActionResponse,
-  SessionFollowSourcesErrorResponseSchema,
-  ReplaceSessionVoiceInclusionsResponseSchema,
-  SESSION_FOLLOW_HTTP_PATHS_V1,
-  projectSessionFollowSourceKeyPreparationAfterSetV1,
-  type SessionFollowSourceKeyPreparationResultV1,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { resolveSessionFollowActionRequest, parseSessionFollowActionResponse } from '@happier-dev/protocol/sessions/follow/actionTransport';
+import { SessionFollowSourcesErrorResponseSchema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
+import { ReplaceSessionVoiceInclusionsResponseSchema, SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
+import { projectSessionFollowSourceKeyPreparationAfterSetV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowSourceKeyPreparationResultV1, ActionExecutorDeps } from '@happier-dev/protocol';
 import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';

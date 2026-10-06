@@ -1,11 +1,6 @@
-import {
-  createEmptyCanonicalTurnDiffSuppressionState,
-  rememberSuppressedEmptyCanonicalTurnDiffCallId,
-  shouldSuppressEmptyCanonicalTurnDiffToolResult,
-  type EmptyCanonicalTurnDiffSuppressionState,
-  readEmptyCanonicalTurnDiffToolCallId,
-  type ConversationTurnOriginV1,
-} from '@happier-dev/protocol';
+import { createEmptyCanonicalTurnDiffSuppressionState, rememberSuppressedEmptyCanonicalTurnDiffCallId, shouldSuppressEmptyCanonicalTurnDiffToolResult } from '@happier-dev/protocol/sessions/messages/emptyCanonicalTurnDiffSuppression';
+import type { EmptyCanonicalTurnDiffSuppressionState, ConversationTurnOriginV1 } from '@happier-dev/protocol';
+import { readEmptyCanonicalTurnDiffToolCallId } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { SessionMessageContentSchema } from '@/api/types';

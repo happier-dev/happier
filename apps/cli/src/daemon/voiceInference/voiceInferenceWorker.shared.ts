@@ -1,10 +1,5 @@
-import {
-  assertPackIdFilesystemSafe,
-  type DaemonVoiceInferenceModelStatus,
-  type ModelPackManifest,
-  type VoiceModelPackRuntimeV1,
-  type VoiceModelPackSupportArtifactV1,
-} from '@happier-dev/protocol';
+import { assertPackIdFilesystemSafe } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
+import type { DaemonVoiceInferenceModelStatus, ModelPackManifest, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 
 import type { VoiceInferenceRuntime } from './voiceInferenceRuntimeTypes';
 

@@ -1,6 +1,6 @@
-import { ComputerInputRequestV1Schema, ComputerTargetRequestV1Schema, ComputerTargetsListRequestV1Schema,
-  ComputerMachineRequestV1Schema, ComputerTargetSelectRequestV1Schema, ComputerOpenSettingsRequestV1Schema, SURFACE_AUTHORITY_AGENT_FLOOR,
-  type ActionExecutorContext, type ComputerTargetV1, type RuntimeActionExecute, type RuntimeActionIdV1 } from '@happier-dev/protocol';
+import { ComputerInputRequestV1Schema, ComputerTargetRequestV1Schema, ComputerTargetsListRequestV1Schema, ComputerMachineRequestV1Schema, ComputerTargetSelectRequestV1Schema, ComputerOpenSettingsRequestV1Schema } from '@happier-dev/protocol/computer/v1';
+import { SURFACE_AUTHORITY_AGENT_FLOOR } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import type { ActionExecutorContext, ComputerTargetV1, RuntimeActionExecute, RuntimeActionIdV1 } from '@happier-dev/protocol';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { computerTargetKey, createComputerCaptureSource } from './source';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';

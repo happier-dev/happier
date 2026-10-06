@@ -1,7 +1,5 @@
-import {
-    PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
-    type PluginHostAccessRequestV2,
-} from '@happier-dev/protocol';
+import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 
 import {
     createDefaultPluginAccessScopeRegistry,

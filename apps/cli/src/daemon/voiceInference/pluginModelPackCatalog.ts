@@ -1,8 +1,5 @@
-import {
-  evaluatePluginFinalPolicy,
-  type PluginSourceCustodyV1,
-  type VoiceModelPackContributionV1,
-} from '@happier-dev/protocol';
+import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
+import type { PluginSourceCustodyV1, VoiceModelPackContributionV1 } from '@happier-dev/protocol';
 import {
   admitVoiceModelPackContributionV1,
   decideInstalledVoiceModelPackLifecycleV1,

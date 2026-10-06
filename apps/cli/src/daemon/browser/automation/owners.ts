@@ -1,8 +1,5 @@
-import {
-  browserViewKey,
-  type BrowserAutomationControllerKindV1,
-  type BrowserAutomationControllerStateV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import type { BrowserAutomationControllerKindV1, BrowserAutomationControllerStateV1 } from '@happier-dev/protocol';
 
 import { createSurfaceInputControl, type SurfaceInputControl } from '../../surfaces/inputControl';
 

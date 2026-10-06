@@ -1,8 +1,5 @@
-import {
-    convertBackendTargetRefV2ToV1,
-    readBackendTargetRefV2,
-    type BackendTargetRefV2Input,
-} from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import { isExecutionRunConcreteBackendTarget } from '@/agent/runtime/bridges/executionRun/backendTargets';
 

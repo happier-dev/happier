@@ -1,14 +1,7 @@
-import {
-  PluginAgentAcpTransportSchema,
-  readNonBlankOpaqueIdentifier,
-  type PluginAgentAcpTransport,
-} from '@happier-dev/protocol';
-import {
-  AgentLaunchEnvironmentV1Schema,
-  AgentRuntimeJsonValueV1Schema,
-  AgentSessionConfigurationSnapshotV1Schema,
-  AgentSessionProviderCheckpointV1Schema,
-} from '@happier-dev/protocol/runtime';
+import { PluginAgentAcpTransportSchema } from '@happier-dev/protocol/plugins/contributions/agentAcpTransport';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
+import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema, AgentSessionProviderCheckpointV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import {
   isWorkflowInteractionCapacityError,
   WORKFLOW_INTERACTION_CAPACITY_EXCEEDED,

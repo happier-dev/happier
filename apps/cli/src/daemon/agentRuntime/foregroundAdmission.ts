@@ -12,10 +12,8 @@ import type {
   ForegroundAgentRuntimeSessionOptionsRequestV1,
   ForegroundAgentRuntimeSessionOptionsResponseV1,
 } from '@/daemon/agentRuntime/foregroundAdmissionContract';
-import {
-  pluginSourceCustodyV1Equal,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type {
   RunnerManagedDependencyRetentionV1,

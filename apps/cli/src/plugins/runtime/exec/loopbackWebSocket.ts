@@ -1,5 +1,5 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { isLiteralLoopbackHostname } from '@happier-dev/protocol';
+import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type {
     PluginWebSocketClose,
     PluginWebSocketConnection,

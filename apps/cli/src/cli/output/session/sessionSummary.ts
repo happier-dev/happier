@@ -1,11 +1,8 @@
 import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionPresentationMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import {
-  readSystemSessionMetadataFromMetadata,
-  type SessionSummary as ProtocolSessionSummary,
-  type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
+import type { SessionSummary as ProtocolSessionSummary, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 
 export type SessionSummary = Readonly<ProtocolSessionSummary>;
 

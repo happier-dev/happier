@@ -1,14 +1,7 @@
-import {
-  buildBackendTargetKeyV2,
-  readBackendTargetRefV2,
-  resolveLinkedExternalSessionAuthorityV1,
-  type SessionAgentTransitionSelectionV1,
-  type SessionContinuationInspectionBatchRequestV1,
-  type SessionContinuationInspectionBatchResultV1,
-  type SessionContinuationInspectionRequestV1,
-  type SessionContinuationInspectionUnavailableReasonV1,
-  type SessionContinuationInspectionV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { SessionAgentTransitionSelectionV1, SessionContinuationInspectionBatchRequestV1, SessionContinuationInspectionBatchResultV1, SessionContinuationInspectionRequestV1, SessionContinuationInspectionUnavailableReasonV1, SessionContinuationInspectionV1 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata, type AgentId } from '@happier-dev/agents';
 
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';

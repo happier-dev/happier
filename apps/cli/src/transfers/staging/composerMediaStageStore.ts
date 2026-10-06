@@ -15,18 +15,11 @@ import {
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
-import {
-  ComposerContentHandleV1Schema,
-  type ComposerContentHandleV1,
-  type ComposerContentMediaKindV1,
-  type ComposerContentMimeTypeV1,
-  ComposerInstanceIdSchema,
-  ComposerRefV1Schema,
-  PendingLocalIdSchema,
-  type ComposerRefV1,
-  type PluginContributionIdentityV1,
-  type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { ComposerInstanceIdSchema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerContentHandleV1, ComposerContentMediaKindV1, ComposerContentMimeTypeV1, ComposerRefV1, PluginContributionIdentityV1, SessionExecutionTargetV1 } from '@happier-dev/protocol';
+import { ComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { PendingLocalIdSchema } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { configuration } from '@/configuration';

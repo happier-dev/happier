@@ -1,4 +1,5 @@
-import { isLiteralLoopbackHostname, type BrowserSidecarErrorCodeV1 } from '@happier-dev/protocol';
+import { isLiteralLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { BrowserSidecarErrorCodeV1 } from '@happier-dev/protocol';
 
 export type BrowserSidecarCdpEndpoint = Readonly<{
     url: string;

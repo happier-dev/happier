@@ -11,8 +11,8 @@ import {
     SESSION_SPAWN_NEW_RPC_SCOPES,
 } from './actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers, type RegisterActionSpecRpcHandlersParams } from './registerActionSpecRpcHandlers';
-import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import {
     awaitSpawnedSessionId,
     type SpawnSessionNonceResolver,

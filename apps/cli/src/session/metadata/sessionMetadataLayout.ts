@@ -1,9 +1,6 @@
-import {
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionSharedMetadataV1Schema,
-  normalizeSessionMetadataForRead,
-  type SessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import type { SessionSharedMetadataV1 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 

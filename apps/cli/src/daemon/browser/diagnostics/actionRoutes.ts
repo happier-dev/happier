@@ -1,8 +1,5 @@
-import {
-  getActionSpec,
-  type BrowserDiagnosticsSnapshotV1,
-  type RuntimeActionIdV1,
-} from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { BrowserDiagnosticsSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsDaemonStore } from './store';
 import { redactBrowserDiagnosticsSnapshotForViewer } from './snapshotEgress';

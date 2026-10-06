@@ -3,12 +3,9 @@ import type {
   AgentSessionModelsSnapshot,
   AgentSessionModelsSource,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import {
-  readExactSessionActiveModelSelectionV1,
-  readSessionProviderBindingMetadataStateV1,
-  type ProviderBoundModelRef,
-  type SessionActiveModelSelectionV1,
-} from '@happier-dev/protocol';
+import { readExactSessionActiveModelSelectionV1 } from '@happier-dev/protocol/providers/active-model-selection';
+import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { ProviderBoundModelRef, SessionActiveModelSelectionV1 } from '@happier-dev/protocol';
 
 type SessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 type SessionModel = SessionModelsState['availableModels'][number];

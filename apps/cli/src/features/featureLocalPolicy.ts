@@ -1,4 +1,5 @@
-import { parseBooleanEnv, type FeatureId } from '@happier-dev/protocol';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import type { FeatureId } from '@happier-dev/protocol';
 
 type FeatureLocalPolicyResolver = (env: NodeJS.ProcessEnv) => boolean;
 

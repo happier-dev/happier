@@ -14,13 +14,9 @@ import {
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 import { processGenerationMatches, readProcessIdentityByPid } from './processIdentity';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
-import {
-  AgentSessionStartupInstructionsMarkerV1Schema,
-  PluginSourceCustodyV1Schema,
-  pluginSourceCustodyV1Equal,
-  type AgentSessionStartupInstructionsMarkerV1,
-  type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { AgentSessionStartupInstructionsMarkerV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { AgentSessionStartupInstructionsMarkerV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import {
   AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema,
   type AgentRuntimeDaemonServiceSessionOpenAttestationV1,

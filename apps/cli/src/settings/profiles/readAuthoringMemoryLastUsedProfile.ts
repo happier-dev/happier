@@ -1,22 +1,11 @@
 import axios from 'axios';
 import { randomBytes } from 'node:crypto';
-import {
-  AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1,
-  AUTHORING_MEMORY_ROUTE_V1,
-  AuthoringMemoryPrivatePayloadV1Schema,
-  AuthoringMemoryReadResponseV1Schema,
-  AuthoringMemoryMutationResponseV1Schema,
-  AccountSettingsV2GetResponseSchema,
-  AccountSettingsV2UpdateResponseSchema,
-  LegacyLastUsedProfileSchema,
-  assertAuthoringMemoryContentForModeV1,
-  openAccountScopedBlobCiphertext,
-  sealAccountScopedBlobCiphertext,
-  importAuthoringMemoryRowAbsent,
-  importLegacyAuthoringMemorySetting,
-  type AuthoringMemoryReadResponseV1,
-  type AuthoringMemoryContentV1,
-} from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ACCOUNT_SCOPED_BLOB_KIND_V1, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryPrivatePayloadV1Schema, AuthoringMemoryReadResponseV1Schema, AuthoringMemoryMutationResponseV1Schema, assertAuthoringMemoryContentForModeV1 } from '@happier-dev/protocol/account/authoringMemory';
+import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { LegacyLastUsedProfileSchema } from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { importAuthoringMemoryRowAbsent, importLegacyAuthoringMemorySetting } from '@happier-dev/protocol/account/authoringMemoryImport';
+import type { AuthoringMemoryReadResponseV1, AuthoringMemoryContentV1 } from '@happier-dev/protocol';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import type { StoredCredentials } from '@/persistence';

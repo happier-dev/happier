@@ -1,7 +1,5 @@
-import {
-    buildQualifiedPluginContributionKey,
-    type PluginRoleContributionV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginRoleContributionV1 } from '@happier-dev/protocol';
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { ResolvedContributionRegistry } from './types';
 

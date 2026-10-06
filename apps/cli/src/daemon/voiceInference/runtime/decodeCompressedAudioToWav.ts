@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 
-import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 
 import { resolveFfmpegStaticBinaryPath } from '@/daemon/runtime/ffmpegStatic';
 

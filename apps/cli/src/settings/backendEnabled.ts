@@ -1,7 +1,5 @@
-import {
-  isBackendTargetDisabledByAccountSettings,
-  type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@happier-dev/agents';
 
 export function assertBackendEnabledByAccountSettings(params: Readonly<{

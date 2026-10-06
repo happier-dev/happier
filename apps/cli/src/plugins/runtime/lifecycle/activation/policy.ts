@@ -1,7 +1,5 @@
-import {
-    listDeclaredPluginContributionFamilies,
-    PluginRuntimeCapabilityFamilyV1Schema,
-} from '@happier-dev/protocol';
+import { listDeclaredPluginContributionFamilies } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PluginRuntimeCapabilityFamilyV1Schema } from '@happier-dev/protocol/plugins/runtime/api';
 import type {
     ParsedPluginEventContributionV1,
     PluginRuntimeCapabilityFamilyV1,

@@ -1,21 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import {
-  AccountApiTokensCreateActionInputV1Schema,
-  AccountApiTokensCreateActionOutputV1Schema,
-  AccountApiTokensListActionOutputV1Schema,
-  AccountApiTokensRevokeActionInputV1Schema,
-  AccountApiTokensServerErrorV1Schema,
-  computeAccountEncryptionMigrateKeyFingerprintV1,
-  deriveAccountMachineKeyFromRecoverySecret,
-  formatAccountApiTokenCredentialV1,
-  openApiTokenEncryptionAccessV1,
-  parseAccountApiTokenBearerV1,
-  isApiTokenGrantRestrictedV1,
-  wrapApiTokenEncryptionAccessV1,
-  type ActionExecuteResult,
-  type AccountApiTokenSummaryV1,
-} from '@happier-dev/protocol';
+import { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensServerErrorV1Schema, formatAccountApiTokenCredentialV1, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { openApiTokenEncryptionAccessV1, wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
+import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ActionExecuteResult, AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { fetchAccountProfile } from '@/api/accountProfile';

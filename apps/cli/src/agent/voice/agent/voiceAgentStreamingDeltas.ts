@@ -1,10 +1,7 @@
-import {
-  VOICE_ACTIONS_BLOCK,
-  fitVoiceAgentOutputTextV1,
-  ingestVoiceAgentOutputEventV1,
-  resolveVoiceSpeechSegmentLength,
-  type VoiceAgentOutputTurnV1,
-} from '@happier-dev/protocol';
+import { VOICE_ACTIONS_BLOCK } from '@happier-dev/protocol/voice/actions';
+import { fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
+import { resolveVoiceSpeechSegmentLength } from '@happier-dev/protocol/voice/speechText';
+import type { VoiceAgentOutputTurnV1 } from '@happier-dev/protocol';
 
 type VoiceOutputDeltaEvent = Readonly<{
   t: 'voice_output';

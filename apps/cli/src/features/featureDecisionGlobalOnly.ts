@@ -1,9 +1,5 @@
-import {
-  applyFeatureDependencies,
-  evaluateFeatureDecisionBase,
-  type FeatureDecision,
-  type FeatureId,
-} from '@happier-dev/protocol';
+import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
+import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
 
 import { getCliFeatureBuildPolicyDecision } from './featureBuildPolicy';
 import { resolveCliLocalFeaturePolicyEnabled } from './featureLocalPolicy';
@@ -45,4 +41,3 @@ export function resolveCliGlobalOnlyFeatureDecision(params: {
 
   return resolve(params.featureId);
 }
-

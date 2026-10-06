@@ -1,9 +1,6 @@
-import {
-  inspectPetAtlasRgbaPixelsV1,
-  PET_ATLAS_V1,
-  type PetAssetMediaTypeV1,
-  type PetPackageValidationIssueV1,
-} from '@happier-dev/protocol';
+import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
+import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { PetAssetMediaTypeV1, PetPackageValidationIssueV1 } from '@happier-dev/protocol';
 
 export type PetAtlasValidationResult =
   | Readonly<{ ok: true; mediaType: PetAssetMediaTypeV1; width: number; height: number }>

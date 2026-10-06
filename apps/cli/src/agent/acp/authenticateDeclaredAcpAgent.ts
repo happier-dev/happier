@@ -1,4 +1,4 @@
-import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol';
+import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/managedDependencies';
 import type { AccountSettings, InstallablesRegistry } from '@happier-dev/protocol';
 
 import { authenticateAcpAgent } from './authenticateAcpAgent';

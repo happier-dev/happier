@@ -4,14 +4,10 @@ import type { ExecutionRunOccurrenceWitnessV1 } from '@/agent/runtime/bridges/ex
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
-import {
-  readSessionMcpSelectionV1FromMetadata,
-  isSharedSavedSecretReferenceV1,
-  SESSION_RUN_PROMPT_READ_ACTION_IDS_V1,
-  type AccountSettings,
-  type ActionExecutorDeps,
-  type SessionRunPromptReadActionIdV1,
-} from '@happier-dev/protocol';
+import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { AccountSettings, ActionExecutorDeps, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 
 import { readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
 import { resolveManagedSessionMcpSelectionForDirectory } from '../servers/resolveManagedSessionMcpSelectionForDirectory';

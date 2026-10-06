@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables';
+import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables/registry';
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 

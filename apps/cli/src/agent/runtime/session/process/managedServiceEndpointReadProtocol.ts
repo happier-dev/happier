@@ -6,12 +6,10 @@ import {
   type ManagedServiceEndpointProjectionV1,
 } from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
-import {
-  ManagedServiceLocalIdSchema,
-  PluginSourceCustodyV1Schema,
-  ProviderRuntimeBindingBasisV1Schema,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 
 import type {

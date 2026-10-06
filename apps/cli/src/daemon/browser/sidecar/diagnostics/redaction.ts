@@ -1,9 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import {
-    redactDiagnosticsHeaders,
-    redactDiagnosticsUrl,
-} from '@happier-dev/protocol';
+import { redactDiagnosticsHeaders, redactDiagnosticsUrl } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 
 export type SidecarDiagnosticsHeaders = Readonly<Record<string, string | readonly string[] | undefined>>;
 

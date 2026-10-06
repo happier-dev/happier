@@ -1,31 +1,8 @@
 import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 
-import {
-  DaemonVoiceInferenceSttUploadAbortRequestSchema,
-  DaemonVoiceInferenceSttUploadAbortResponseSchema,
-  DaemonVoiceInferenceSttUploadChunkRequestSchema,
-  DaemonVoiceInferenceSttUploadChunkResponseSchema,
-  DaemonVoiceInferenceSttUploadFinalizeRequestSchema,
-  DaemonVoiceInferenceSttUploadFinalizeResponseSchema,
-  DaemonVoiceInferenceSttUploadInitRequestSchema,
-  DaemonVoiceInferenceSttUploadInitResponseSchema,
-  DaemonVoiceInferenceSttCancelRequestSchema,
-  DaemonVoiceInferenceSttCancelResponseSchema,
-  DaemonVoiceInferenceSttTranscribeRequestSchema,
-  DaemonVoiceInferenceSttTranscribeResponseSchema,
-  DaemonVoiceInferenceTtsAbortRequestSchema,
-  DaemonVoiceInferenceTtsAbortResponseSchema,
-  DaemonVoiceInferenceTtsCancelRequestSchema,
-  DaemonVoiceInferenceTtsCancelResponseSchema,
-  DaemonVoiceInferenceTtsChunkRequestSchema,
-  DaemonVoiceInferenceTtsChunkResponseSchema,
-  DaemonVoiceInferenceTtsFinalizeRequestSchema,
-  DaemonVoiceInferenceTtsFinalizeResponseSchema,
-  DaemonVoiceInferenceTtsSynthesizeRequestSchema,
-  DaemonVoiceInferenceTtsSynthesizeResponseSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceInferenceSttUploadAbortRequestSchema, DaemonVoiceInferenceSttUploadAbortResponseSchema, DaemonVoiceInferenceSttUploadChunkRequestSchema, DaemonVoiceInferenceSttUploadChunkResponseSchema, DaemonVoiceInferenceSttUploadFinalizeRequestSchema, DaemonVoiceInferenceSttUploadFinalizeResponseSchema, DaemonVoiceInferenceSttUploadInitRequestSchema, DaemonVoiceInferenceSttUploadInitResponseSchema, DaemonVoiceInferenceSttCancelRequestSchema, DaemonVoiceInferenceSttCancelResponseSchema, DaemonVoiceInferenceSttTranscribeRequestSchema, DaemonVoiceInferenceSttTranscribeResponseSchema, DaemonVoiceInferenceTtsAbortRequestSchema, DaemonVoiceInferenceTtsAbortResponseSchema, DaemonVoiceInferenceTtsCancelRequestSchema, DaemonVoiceInferenceTtsCancelResponseSchema, DaemonVoiceInferenceTtsChunkRequestSchema, DaemonVoiceInferenceTtsChunkResponseSchema, DaemonVoiceInferenceTtsFinalizeRequestSchema, DaemonVoiceInferenceTtsFinalizeResponseSchema, DaemonVoiceInferenceTtsSynthesizeRequestSchema, DaemonVoiceInferenceTtsSynthesizeResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { configuration } from '@/configuration';
 import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';

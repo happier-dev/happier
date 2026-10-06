@@ -1,13 +1,10 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderConnectionV1Schema,
-  ProviderSettingsV1Schema,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  createProviderDiscoveryCandidateIdV1,
-  createProviderErrorV1,
-  type ProviderConnectionV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { QualifiedConnectedAccountPurposeBindingsV1, ProviderConnectionV1 } from '@happier-dev/protocol';
+import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
 import { resolveProviderContributionRegistryView } from '@/providers/registry';

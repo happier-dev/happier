@@ -5,7 +5,7 @@ export type ProbeServerVersionResult =
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 function resolveTimeoutMs(): number {
   const raw = Number(process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS ?? '');

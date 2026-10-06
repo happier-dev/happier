@@ -1,8 +1,5 @@
-import {
-  normalizeProviderEndpointUrlSyntax,
-  type ProviderContributionV1,
-  type ProviderEndpointOverrideV1,
-} from '@happier-dev/protocol';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import type { ProviderContributionV1, ProviderEndpointOverrideV1 } from '@happier-dev/protocol';
 
 /**
  * Converts one revalidated listener candidate into machine-scoped overrides

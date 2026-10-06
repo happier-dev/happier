@@ -11,11 +11,7 @@ import type {
     SessionCheckpointRequestV1,
     SessionCheckpointResultV1,
 } from '@happier-dev/protocol';
-import {
-    SessionCheckpointRequestV1Schema,
-    buildCheckpointOperationReceiptV1,
-    sanitizeCheckpointCreationCandidateV1,
-} from '@happier-dev/protocol';
+import { SessionCheckpointRequestV1Schema, buildCheckpointOperationReceiptV1, sanitizeCheckpointCreationCandidateV1 } from '@happier-dev/protocol/sessions/control/checkpoints/v1';
 import type { CheckpointDescriptorV1 } from '@happier-dev/agents';
 
 type MaybePromise<T> = T | Promise<T>;

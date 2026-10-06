@@ -4,7 +4,7 @@ import {
   parseHomeTargetInput,
   type HomeTargetInput,
 } from '@happier-dev/cli-common/homeTarget';
-import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 import { resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 

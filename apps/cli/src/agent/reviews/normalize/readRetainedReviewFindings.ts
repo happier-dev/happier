@@ -1,4 +1,6 @@
-import { ReviewFindingsV1Schema, ReviewFindingsV2Schema, type ReviewFindingsV2 } from '@happier-dev/protocol';
+import { ReviewFindingsV1Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import type { ReviewFindingsV2 } from '@happier-dev/protocol';
 import { buildReviewFindingsV2Payload } from './buildReviewFindingsV2Payload';
 
 /** Read original findings even after the Run's current projection becomes narration. */

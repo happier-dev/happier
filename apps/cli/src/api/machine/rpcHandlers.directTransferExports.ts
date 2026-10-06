@@ -1,19 +1,10 @@
-import {
-    ComposerContentHandleV1Schema,
-    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1,
-    PromptAssetExternalRefV1Schema,
-    PromptAssetScopeV1Schema,
-    PromptRegistryConfiguredSourceV1Schema,
-    WorkspaceContentPolicyV1Schema,
-    WorkspaceSyncTargetConflictStageV1Schema,
-    type ComposerContentHandleV1,
-    type PromptAssetReadRequest,
-    type PromptRegistryFetchItemRequestV1,
-    type TransferEndpointCandidate,
-    type WorkspaceContentPolicyV1,
-    type WorkspaceSyncTargetConflictStageV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ComposerContentHandleV1Schema, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { PromptAssetExternalRefV1Schema } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import { PromptAssetScopeV1Schema } from '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1';
+import { PromptRegistryConfiguredSourceV1Schema } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
+import { WorkspaceContentPolicyV1Schema, WorkspaceSyncTargetConflictStageV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ComposerContentHandleV1, PromptAssetReadRequest, PromptRegistryFetchItemRequestV1, TransferEndpointCandidate, WorkspaceContentPolicyV1, WorkspaceSyncTargetConflictStageV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';

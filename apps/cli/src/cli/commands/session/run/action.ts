@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import type { StoredCredentials } from '@/persistence';
-import { ExecutionRunActionRequestSchema } from '@happier-dev/protocol';
+import { ExecutionRunActionRequestSchema } from '@happier-dev/protocol/execution/runs/index';
 
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readCommandPositionals, readFlagValue } from '@/cli/commands/shared/argvFlags';

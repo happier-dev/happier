@@ -1,7 +1,5 @@
-import {
-    isSupportedBackendSurfaceOperationV1,
-    type BackendSurfaceKindV1,
-} from '@happier-dev/protocol';
+import { isSupportedBackendSurfaceOperationV1 } from '@happier-dev/protocol/plugins/backend-surface-declaration';
+import type { BackendSurfaceKindV1 } from '@happier-dev/protocol';
 
 function normalizeBackendSurfaceOperation(value: unknown): string {
     return String(value ?? '').trim();

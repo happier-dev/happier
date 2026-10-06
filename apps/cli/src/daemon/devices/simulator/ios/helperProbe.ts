@@ -1,4 +1,5 @@
-import { IosSimulatorAdapterHealthV1Schema, type IosSimulatorAdapterHealthV1 } from '@happier-dev/protocol';
+import { IosSimulatorAdapterHealthV1Schema } from '@happier-dev/protocol/devices/simulator/iosV1';
+import type { IosSimulatorAdapterHealthV1 } from '@happier-dev/protocol';
 
 import { createIosSimulatorUnavailableHealth } from './diagnostics';
 

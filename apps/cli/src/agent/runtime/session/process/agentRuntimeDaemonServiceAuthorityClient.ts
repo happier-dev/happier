@@ -11,12 +11,9 @@ import type {
   AgentRuntimeDaemonModelTransitionAuthorizationResultV1,
   AgentRuntimeDaemonTurnContributionsResultV1,
 } from './agentRuntimeRunnerProtocol';
-import {
-  createProviderErrorV1,
-  ProviderErrorCodeV1Schema,
-  type SessionInputAdmissionResultV1,
-} from '@happier-dev/protocol';
-import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
+import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import {
   readAgentRuntimeDaemonServiceAuthority,
   readCurrentRunnerAgentRuntimeDaemonServiceAuthority,

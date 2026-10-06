@@ -1,13 +1,7 @@
-import {
-    buildProviderAccountUsageRecordId,
-    ConnectedAccountServiceKeyIngressSchema,
-    ConnectedServiceUsageSourceV1Schema,
-    ProviderAccountUsageRecordKeyV1Schema,
-    ProviderAccountUsageSnapshotV1Schema,
-    type ConnectedAccountServiceKey,
-    type ConnectedServiceUsageSourceV1,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1Schema, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { ConnectedAccountServiceKeyIngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedAccountServiceKey, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {

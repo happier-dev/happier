@@ -1,9 +1,6 @@
-import {
-  projectProviderBindingCompatibilityForConnectionV1,
-  resolveProviderBindingCompatibilityWithFingerprintV1,
-} from '@happier-dev/protocol';
-import type { DaemonProviderAgentCompatibilitySummaryV1 } from '@happier-dev/protocol/rpc';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
+import { projectProviderBindingCompatibilityForConnectionV1, resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { DaemonProviderAgentCompatibilitySummaryV1 } from '@happier-dev/protocol/rpc/providers';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';

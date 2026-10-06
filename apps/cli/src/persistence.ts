@@ -25,7 +25,7 @@ import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releas
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
-import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import * as z from 'zod';
 import { decodeBase64, encodeBase64 } from './api/encryption';
 import { logger } from './ui/logger';
@@ -35,7 +35,7 @@ import type { MachineReplacementReason } from '@happier-dev/protocol';
 import { reclaimJsonOwnerFileLockSnapshot } from './utils/fs/jsonOwnerFileLock';
 import { readProcessRunState } from './daemon/processRunState';
 import { decodeJwtPayload } from './cloud/decodeJwtPayload';
-import { readAuthTokenProvenance } from '@happier-dev/protocol';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;

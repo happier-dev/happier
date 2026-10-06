@@ -1,13 +1,9 @@
-import {
-  applyFeatureDependencies,
-  createFeatureDecision,
-  evaluateFeatureDecisionBase,
-  isFeatureServerRepresented,
-  isServerFeatureOperationReady,
-  readServerEnabledBit,
-  type FeatureDecision,
-  type FeatureId,
-} from '@happier-dev/protocol';
+import { applyFeatureDependencies, evaluateFeatureDecisionBase } from '@happier-dev/protocol/features/featureDecisionEngine';
+import { createFeatureDecision } from '@happier-dev/protocol/features/decision';
+import { isFeatureServerRepresented } from '@happier-dev/protocol/features/catalog';
+import { isServerFeatureOperationReady } from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
 
 import {
   createCliFeatureDecisionInputs,

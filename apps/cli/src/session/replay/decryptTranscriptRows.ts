@@ -1,4 +1,4 @@
-import { SessionStoredMessageContentSchema } from '@happier-dev/protocol';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 
 import type { SessionStoredContentCryptoContext } from '../transport/encryption/sessionEncryptionContext';
 import { openSessionStoredContent } from '../transport/encryption/sessionEncryptionContext';

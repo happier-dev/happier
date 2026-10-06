@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol';
+import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';

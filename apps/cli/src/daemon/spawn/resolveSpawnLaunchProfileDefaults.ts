@@ -1,8 +1,5 @@
-import {
-  buildBackendTargetKeyV2,
-  type BackendTargetRefV2,
-  type ArtifactSharingResourceV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV2, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';

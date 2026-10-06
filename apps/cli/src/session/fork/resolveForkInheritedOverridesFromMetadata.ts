@@ -1,21 +1,11 @@
 import { isPermissionMode, type Metadata, type PermissionMode } from '@/api/types';
-import {
-  AcpConfigOptionOverridesV1Schema,
-  AcpSessionModeOverrideV1Schema,
-  AgentModelOptionOverrideRuleReadSchema,
-  ConnectedServiceBindingsV2IngressSchema,
-  SessionModelSelectionResolutionError,
-  readSessionModesMetadata,
-  projectSessionModesV1Compatibility,
-  buildBackendTargetKeyV2,
-  sessionModelSelectionIntentRequiresAgentTargetV1,
-  type AcpConfigOptionOverridesV1,
-  type BackendTargetRefV2,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServiceMaterializationIdentityV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema, AcpSessionModeOverrideV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionModelSelectionResolutionError, sessionModelSelectionIntentRequiresAgentTargetV1 } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionModesMetadata, projectSessionModesV1Compatibility } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
 import {
   readAcpSessionModeIntentFromMetadata,

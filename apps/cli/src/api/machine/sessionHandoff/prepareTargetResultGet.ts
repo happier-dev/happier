@@ -1,7 +1,5 @@
-import {
-  SessionHandoffPrepareTargetResultGetRequestSchema,
-  type SessionHandoffStatus,
-} from '@happier-dev/protocol';
+import { SessionHandoffPrepareTargetResultGetRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import type { SessionHandoffStatus } from '@happier-dev/protocol';
 
 import {
   createSessionHandoffPrepareTargetJobStore,

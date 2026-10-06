@@ -1,21 +1,10 @@
 import { vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import {
-    MACHINE_PLAIN_DATA_KEY_MARKER,
-    SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
-    SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
-    SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT,
-    SessionPublisherAuthorityCheckAckSchema,
-    SessionPublisherAuthorityCheckRequestSchema,
-    SessionRuntimeActivityCloseAckSchema,
-    SessionRuntimeActivityCloseRequestSchema,
-    SessionRuntimeActivityProjectionSchema,
-    SessionRuntimeActivitySnapshotAckSchema,
-    SessionRuntimeActivitySnapshotRequestSchema,
-    type SessionRuntimeActivityProjection,
-    type SessionTurnMutationV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT, SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionPublisherAuthorityCheckAckSchema, SessionPublisherAuthorityCheckRequestSchema, SessionRuntimeActivityCloseAckSchema, SessionRuntimeActivityCloseRequestSchema, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
+import { SessionRuntimeActivityProjectionSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import type { SessionRuntimeActivityProjection, SessionTurnMutationV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 type SocketEventHandler = (...args: unknown[]) => void;

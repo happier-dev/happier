@@ -8,10 +8,9 @@ import {
   getAgentStaticModels,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
-import {
-  AsyncTtlCache, ProviderModelDescriptorV1Schema, resolveModelStructuredOutputSupport,
-  type ProviderModelDescriptorV1, type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
+import { ProviderModelDescriptorV1Schema, resolveModelStructuredOutputSupport } from '@happier-dev/protocol/models/descriptor';
+import type { ProviderModelDescriptorV1, BackendTargetRefV1 } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { readAgentStructuredOutputCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { StoredCredentials } from '@/persistence';

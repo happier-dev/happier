@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isSpeechSentenceBoundary, isSpeechClauseBoundary, speechSentenceEnd, speechTextEndAtOrBefore } from '@happier-dev/protocol';
+import { isSpeechSentenceBoundary, isSpeechClauseBoundary, speechSentenceEnd, speechTextEndAtOrBefore } from '@happier-dev/protocol/voice/speechText';
 
 export type VoiceInferenceTtsTextSegment = Readonly<{
   segmentId: string;

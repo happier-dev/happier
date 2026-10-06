@@ -4,43 +4,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES as VOICE_SPEECH_INPUT_MAX_BYTES,
-  DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES as VOICE_SPEECH_OUTPUT_MAX_BYTES,
-  DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES as VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES,
-  DaemonVoiceSpeechCatalogRequestSchema,
-  DaemonVoiceSpeechSettingsActionRequestSchema,
-  DaemonVoiceSpeechSettingsActionResponseSchema,
-  DaemonVoiceSpeechDownloadAbortRequestSchema,
-  DaemonVoiceSpeechDownloadAbortResponseSchema,
-  DaemonVoiceSpeechDownloadChunkRequestSchema,
-  DaemonVoiceSpeechDownloadChunkResponseSchema,
-  DaemonVoiceSpeechDownloadFinalizeRequestSchema,
-  DaemonVoiceSpeechDownloadFinalizeResponseSchema,
-  DaemonVoiceSpeechSynthesizeRequestSchema,
-  DaemonVoiceSpeechSynthesizeResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadAbortRequestSchema,
-  DaemonVoiceSpeechTranscribeUploadAbortResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadChunkRequestSchema,
-  DaemonVoiceSpeechTranscribeUploadChunkResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadFinalizeRequestSchema,
-  DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema,
-  DaemonVoiceSpeechTranscribeUploadInitRequestSchema,
-  DaemonVoiceSpeechTranscribeUploadInitResponseSchema,
-  DaemonVoiceSpeechTranscribeRequestSchema,
-  DaemonVoiceSpeechTranscribeResponseSchema,
-  VoiceProviderCatalogResponseSchema,
-  VoiceProviderSettingsEnvelopeV1Schema,
-  buildQualifiedPluginContributionKey,
-  resolveAccountSettingsVoiceCredentialSource,
-  resolveVoiceSpeechSettingsCorrespondence,
-  resolveVoiceSpeechSynthesisInputLimits,
-  isVoiceSpeechSynthesisInputWithinLimits,
-  resolveVoiceSpeechEndpointPolicy,
-  type VoiceCredentialAccessPhase,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES as VOICE_SPEECH_INPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES as VOICE_SPEECH_OUTPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES as VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES, DaemonVoiceSpeechCatalogRequestSchema, DaemonVoiceSpeechSettingsActionRequestSchema, DaemonVoiceSpeechSettingsActionResponseSchema, DaemonVoiceSpeechDownloadAbortRequestSchema, DaemonVoiceSpeechDownloadAbortResponseSchema, DaemonVoiceSpeechDownloadChunkRequestSchema, DaemonVoiceSpeechDownloadChunkResponseSchema, DaemonVoiceSpeechDownloadFinalizeRequestSchema, DaemonVoiceSpeechDownloadFinalizeResponseSchema, DaemonVoiceSpeechSynthesizeRequestSchema, DaemonVoiceSpeechSynthesizeResponseSchema, DaemonVoiceSpeechTranscribeUploadAbortRequestSchema, DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, DaemonVoiceSpeechTranscribeUploadChunkRequestSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, DaemonVoiceSpeechTranscribeUploadFinalizeRequestSchema, DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeUploadInitRequestSchema, DaemonVoiceSpeechTranscribeUploadInitResponseSchema, DaemonVoiceSpeechTranscribeRequestSchema, DaemonVoiceSpeechTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
+import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
+import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { resolveVoiceSpeechSettingsCorrespondence, resolveVoiceSpeechEndpointPolicy } from '@happier-dev/protocol/plugins/contributions/voice';
+import { resolveVoiceSpeechSynthesisInputLimits, isVoiceSpeechSynthesisInputWithinLimits } from '@happier-dev/protocol/voice/speech';
+import type { VoiceCredentialAccessPhase, VoiceProviderContribution } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { VoiceCredentialAccess } from '@happier-dev/plugin-sdk/voice';
 

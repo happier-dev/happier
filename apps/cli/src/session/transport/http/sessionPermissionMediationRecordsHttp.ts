@@ -1,16 +1,7 @@
 import axios from 'axios';
 
-import {
-  SessionPermissionMediationRecordListResponseSchema,
-  SessionPermissionMediationRecordPruneResponseSchema,
-  SessionPermissionMediationRecordReadResponseSchema,
-  SessionPermissionMediationRecordWriteResponseSchema,
-  type SessionPermissionMediationRecordIdentityV1,
-  type SessionPermissionMediationRecordListQuery,
-  type SessionPermissionMediationRecordPruneRequest,
-  type SessionPermissionMediationRecordStored,
-  type SessionPermissionMediationRecordWriteRequest,
-} from '@happier-dev/protocol';
+import { SessionPermissionMediationRecordListResponseSchema, SessionPermissionMediationRecordPruneResponseSchema, SessionPermissionMediationRecordReadResponseSchema, SessionPermissionMediationRecordWriteResponseSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import type { SessionPermissionMediationRecordIdentityV1, SessionPermissionMediationRecordListQuery, SessionPermissionMediationRecordPruneRequest, SessionPermissionMediationRecordStored, SessionPermissionMediationRecordWriteRequest } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';

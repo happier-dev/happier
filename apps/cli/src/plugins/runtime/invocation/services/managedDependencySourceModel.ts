@@ -1,12 +1,9 @@
-import {
-    InstallableDependencyDescriptorSchema,
-    PluginManagedDependencyContributionV2Schema,
-    PluginSourceSpecV1Schema,
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    type PluginContributionIdentityV1,
-    type PluginManagedDependencyContributionV2,
-} from '@happier-dev/protocol';
+import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol/installables/descriptor';
+import { PluginManagedDependencyContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/managedDependencies';
+import { PluginSourceSpecV1Schema } from '@happier-dev/protocol/plugins/source-spec';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginContributionIdentityV1, PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';

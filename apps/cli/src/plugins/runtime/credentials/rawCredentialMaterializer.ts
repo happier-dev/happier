@@ -3,33 +3,14 @@ import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountMaterialization as PluginConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { VoiceRawCredentialAccess } from '@happier-dev/plugin-sdk/voice';
-import {
-  CredentialAccessDeclarationDigestSchema,
-  CredentialAccessSelectedAuthorityDigestSchema,
-  CredentialAccessSelectedRawAccessDigestSchema,
-  ConnectedAccountMaterializationRequestSchema,
-  ConnectedServiceCredentialRevisionV1Schema,
-  PluginCredentialAccessSlotIdSchema,
-  PluginPermissionGrantListActionInputV1Schema,
-  PluginPermissionGrantListActionOutputV1Schema,
-  PluginMachineMaterializationRefV1Schema,
-  PluginPermissionSubjectV1Schema,
-  pluginPermissionSubjectsEqualV1,
-  QualifiedConnectedAccountRefSchema,
-  deriveVoiceCredentialBindingIdentityV1,
-  resolveAccountSettingsVoiceCredentialSource,
-  type PluginContributionIdentityV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type PluginInstallReviewPrincipalDigest,
-  type PluginInstallReviewPrincipalPresentationV1,
-  type PluginMachineMaterializationRefV1,
-  type PluginPermissionGrantAuthoritySourceV1,
-  type PluginPermissionSubjectV1,
-  type QualifiedConnectedAccountRef,
-  type VoiceCredentialAccessPhase,
-  type VoiceCredentialSource,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { CredentialAccessDeclarationDigestSchema, CredentialAccessSelectedAuthorityDigestSchema, CredentialAccessSelectedRawAccessDigestSchema, PluginCredentialAccessSlotIdSchema, PluginPermissionGrantListActionInputV1Schema, PluginPermissionGrantListActionOutputV1Schema, PluginPermissionSubjectV1Schema, pluginPermissionSubjectsEqualV1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
+import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginMachineMaterializationRefV1, PluginPermissionGrantAuthoritySourceV1, PluginPermissionSubjectV1, QualifiedConnectedAccountRef, VoiceCredentialAccessPhase, VoiceCredentialSource, VoiceProviderContribution } from '@happier-dev/protocol';
 
 import type {
   StablePluginConnectedAccountsOwner,

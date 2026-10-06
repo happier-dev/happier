@@ -4,10 +4,7 @@ import type {
   BugReportFrequency,
   BugReportSeverity,
 } from '@happier-dev/protocol';
-import {
-  BUG_REPORT_DEFAULT_ISSUE_OWNER,
-  BUG_REPORT_DEFAULT_ISSUE_REPO,
-} from '@happier-dev/protocol';
+import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '@happier-dev/protocol/bugs/reports/types';
 
 export type ParsedBugReportArgs = {
   showHelp: boolean;

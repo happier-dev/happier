@@ -1,7 +1,7 @@
 import type {
     PluginSettingsActionDeclarationV2,
 } from '@happier-dev/protocol';
-import { createHostPluginSettingsActionInvoker } from '@happier-dev/protocol';
+import { createHostPluginSettingsActionInvoker } from '@happier-dev/protocol/plugins/settingsActionInvoker';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import type {

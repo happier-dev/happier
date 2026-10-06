@@ -1,7 +1,7 @@
 import { lstat, realpath, rm } from 'node:fs/promises';
 import { relative, resolve, sep } from 'node:path';
 
-import { PluginIdSchema } from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { PluginContextServiceError } from './errors';

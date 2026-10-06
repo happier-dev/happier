@@ -1,8 +1,5 @@
-import {
-  AccountPetCreateResponseV1Schema,
-  type AccountPetCreateRequestV1,
-  type AccountPetCreateResponseV1,
-} from '@happier-dev/protocol';
+import { AccountPetCreateResponseV1Schema } from '@happier-dev/protocol/pets/accountLibrary';
+import type { AccountPetCreateRequestV1, AccountPetCreateResponseV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';

@@ -1,4 +1,4 @@
-import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
+import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import type {
   SessionInputRequest,
   SessionMessageProvenance,

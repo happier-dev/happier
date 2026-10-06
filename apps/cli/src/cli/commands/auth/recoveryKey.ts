@@ -1,4 +1,4 @@
-import { parseRecoveryKey } from '@happier-dev/protocol';
+import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 
 import { assertCommandArguments, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, wantsJson } from '@/cli/output/jsonEnvelope';

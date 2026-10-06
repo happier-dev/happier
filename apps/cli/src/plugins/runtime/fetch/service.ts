@@ -1,11 +1,6 @@
-import {
-    isBaseCredentialDiagnosticKey,
-    splitSensitiveDiagnosticKeySegments,
-} from '@happier-dev/protocol/diagnostics/sensitive-keys';
-import {
-    pluginNetworkOriginPolicyAdmitsOrigin,
-    type PluginRequestInterceptorContributionV1,
-} from '@happier-dev/protocol';
+import { isBaseCredentialDiagnosticKey, splitSensitiveDiagnosticKeySegments } from '@happier-dev/protocol/diagnostics/sensitive-keys';
+import { pluginNetworkOriginPolicyAdmitsOrigin } from '@happier-dev/protocol/plugins/networkHostSuffix';
+import type { PluginRequestInterceptorContributionV1 } from '@happier-dev/protocol';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
     HttpMethod,

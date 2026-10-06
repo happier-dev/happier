@@ -98,4 +98,17 @@ describe('doAuth (Ink raw mode guard)', () => {
     await expect(doAuth()).rejects.toThrow('process.exit:0');
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
+
+  it('does not render a selector cancelled while its renderer is loading', async () => {
+    restoreRawMode?.();
+    restoreRawMode = setRawModeSupportForTest(true);
+    const { doAuth } = await import('./auth');
+    const controller = new AbortController();
+
+    const authentication = doAuth({ callerIntent: 'setup-managed', signal: controller.signal });
+    controller.abort();
+
+    await expect(authentication).rejects.toMatchObject({ code: 'authentication_cancelled' });
+    expect(renderMock).not.toHaveBeenCalled();
+  });
 });

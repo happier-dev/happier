@@ -1,12 +1,9 @@
 import { isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-    resolveProviderManagedRuntimeDeclarationV1,
-    pluginSourceCustodyV1Equal,
-    type ManagedExecutableRef,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ManagedExecutableRef, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     ManagedServiceSpec,

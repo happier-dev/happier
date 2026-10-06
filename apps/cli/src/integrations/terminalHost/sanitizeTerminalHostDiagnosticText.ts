@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 const SECRET_KEY_FRAGMENT_PATTERN = '(?:api[_-]?key|auth[_-]?token|token|secret|password|credentials?|private[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)';
 const SECRET_EQUALS_ASSIGNMENT_PATTERN = new RegExp(

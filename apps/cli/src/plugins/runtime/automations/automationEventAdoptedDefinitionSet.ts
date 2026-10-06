@@ -1,47 +1,16 @@
 import { createHash } from 'node:crypto';
 
-import {
-  AutomationEventAdmitHttpRequestV1Schema,
-  AutomationEventAdmitInputV1Schema,
-  AutomationEventSourceDefinitionV1Schema,
-  AutomationEventStoredDefinitionsReadResultV1Schema,
-  AutomationEventSourcesListInputV1Schema,
-  AutomationEventSourcesListResultV1Schema,
-  PluginEventAutomationHistoryGapResetActionInputV1Schema,
-  MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE,
-  buildAutomationPluginEventOccurrenceEvidenceV1,
-  createCanonicalJsonSigningInput,
-  createServerHttpRequestBodyItemBudgetV1,
-  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
-  deriveAutomationOccurrenceKeyV1,
-  decodeBase64,
-  encodeBase64,
-  evaluateAutomationEventFilterV1,
-  isAutomationEventObservationFreshV1,
-  isAutomationEventSourcesListPageProgressingV1,
-  isSameAutomationEventDeclarationReleaseV1,
-  isValidPluginJsonSchemaValue,
-  sameAutomationAccountContentIdentityV1,
-  sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
-  sealAutomationRunTriggerEvidenceEnvelopeV1,
-  type AutomationEventSourceDefinitionV1,
-  type AutomationEventActionHttpCallerV1,
-  type AutomationEventAdmitEncryptedDefinitionEvidenceV1,
-  type AutomationEventAdmitHttpRequestV1,
-  type AutomationEventAdmitInputV1,
-  type AutomationAccountCurrentnessWitnessV1,
-  type AutomationEventDeclarationReleaseV1,
-  type AutomationEventStoredDefinitionProjectionV1,
-  type AutomationEventStoredDefinitionsReadResultV1,
-  type AutomationEventCheckpointRetirementCandidateV1,
-  type AutomationEventSourcesListInputV1,
-  type AutomationEventSourcesListResultV1,
-  type AutomationEventSourcesListTransportV1,
-  type PluginJsonSchemaValidator,
-  type PluginMachineMaterializationRefV1,
-  type PluginEventAutomationHistoryGapResetActionInputV1,
-  type PluginWebhookInvocationReferenceV1,
-} from '@happier-dev/protocol';
+import { AutomationEventAdmitHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, evaluateAutomationEventFilterV1, isAutomationEventObservationFreshV1, isSameAutomationEventDeclarationReleaseV1 } from '@happier-dev/protocol/automations/event';
+import { AutomationEventAdmitInputV1Schema, AutomationEventSourceDefinitionV1Schema, AutomationEventSourcesListInputV1Schema, AutomationEventSourcesListResultV1Schema, MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
+import { buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
+import { deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1, sealAutomationOccurrenceTriggerEvidenceEnvelopeV1, sealAutomationRunTriggerEvidenceEnvelopeV1 } from '@happier-dev/protocol/automations/automationEventTriggerEvidence';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { AutomationEventSourceDefinitionV1, AutomationEventActionHttpCallerV1, AutomationEventAdmitEncryptedDefinitionEvidenceV1, AutomationEventAdmitHttpRequestV1, AutomationEventAdmitInputV1, AutomationAccountCurrentnessWitnessV1, AutomationEventDeclarationReleaseV1, AutomationEventStoredDefinitionProjectionV1, AutomationEventStoredDefinitionsReadResultV1, AutomationEventCheckpointRetirementCandidateV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListResultV1, AutomationEventSourcesListTransportV1, PluginJsonSchemaValidator, PluginMachineMaterializationRefV1, PluginEventAutomationHistoryGapResetActionInputV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,

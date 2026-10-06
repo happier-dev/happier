@@ -2,11 +2,9 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 
 import { z } from 'zod';
-import {
-  PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
-  PluginIdSchema,
-  type PluginHostAccessRequestV2,
-} from '@happier-dev/protocol';
+import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 
 /**
  * Scope comparison ranks the candidate scope against the previous scope over

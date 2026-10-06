@@ -6,11 +6,7 @@ import type {
   DaemonVoiceInferenceNormalizationDecision,
   ModelPackManifest,
 } from '@happier-dev/protocol';
-import {
-  getModelPackCatalogEntry,
-  isPublishedModelPackCatalogEntry,
-  listModelPackCatalogEntries,
-} from '@happier-dev/protocol';
+import { getModelPackCatalogEntry, isPublishedModelPackCatalogEntry, listModelPackCatalogEntries } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import {
   deriveVoiceModelPackLicenseTextDigestV1,
   deriveVoiceModelPackManifestDigestV1,

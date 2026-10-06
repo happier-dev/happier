@@ -1,12 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    readContributedProviderCatalogParserIds,
-    resolveProviderManagedRuntimeDeclarationV1,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type {
     ResolvedActivationTarget,

@@ -1,5 +1,6 @@
 import type { McpServerConfig } from '@/agent';
-import { RunnerMcpMaterialV1Schema, type RunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
+import { RunnerMcpMaterialV1Schema } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
+import type { RunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
 
 import { materializeMcpServerConfigRecord } from './materializeMcpServerConfigRecord';
 

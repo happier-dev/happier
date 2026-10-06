@@ -5,33 +5,15 @@ import {
   resolvePermissionIntentFromSessionMetadata,
   type PermissionIntent,
 } from '@happier-dev/agents';
-import {
-  readPendingLocalId,
-  resolveLinkedExternalSessionAuthorityV1,
-  SESSION_MESSAGE_PROVENANCE_META_KEY,
-  SessionInputRequestSchema,
-  SessionMessageProvenanceSchema,
-  stripSessionInputProtectedMeta,
-  withSessionMessageModelSelectionV1,
-  type ProviderErrorV1,
-  type SessionInputRequest,
-  type SessionMessageProvenance,
-  SessionInputAdmissionRejectionCodeV1Schema,
-  SessionCreationCorrespondenceV1Schema,
-  type SessionInputAdmissionRejectionCodeV1,
-  type SessionInputAdmissionResultV1,
-  type SessionMessageSendResultV1,
-  type SessionPendingEnqueueByMachineRequestV1,
-  type SessionPendingExecutionRunEnqueueByMachineRequestV2,
-  type PendingRequestedActionV1,
-  type ParticipantRecipientV1,
-  normalizeParticipantRecipientRoutingIdentityV1,
-  withParticipantRecipientV1,
-  ExecutionRunGetResponseSchema,
-  ExecutionRunInputTurnV1Schema,
-  type ExecutionRunInputTurnV1,
-  type ExecutionRunPublicState,
-} from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, SessionMessageProvenanceSchema, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderErrorV1, SessionInputRequest, SessionMessageProvenance, SessionInputAdmissionRejectionCodeV1, SessionInputAdmissionResultV1, SessionMessageSendResultV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingExecutionRunEnqueueByMachineRequestV2, PendingRequestedActionV1, ParticipantRecipientV1, ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
+import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {

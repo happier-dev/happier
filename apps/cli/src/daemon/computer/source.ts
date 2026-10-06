@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { computerTargetKeyV1, normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema,
-  type ComputerTargetV1, type ComputerInputOperationV1, type ComputerActionResultV1, type ComputerAccessV1,
-  type BrowserActiveTargetV1, type ComputerControlStatusResponseV1, type ComputerCaptureGeometryV1, type ComputerAccessibilityNodeV1,
-  type MachineLiveStreamControlSidebandV1, type SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
+import { computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
+import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
+import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
 import { createManagedComputerDriver } from './driver/managedComputerDriver';
 import { createSurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';

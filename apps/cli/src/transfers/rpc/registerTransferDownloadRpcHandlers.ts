@@ -1,7 +1,8 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { parseTransferRecipientPublicKeyBase64 } from '@happier-dev/transfers/node';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionAttachmentDownloadInitRequestV1Schema, type SessionAttachmentDownloadInitRequestV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionAttachmentDownloadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
+import type { SessionAttachmentDownloadInitRequestV1 } from '@happier-dev/protocol';
 
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import {

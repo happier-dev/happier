@@ -1,7 +1,8 @@
 import type { SessionClientPort } from '@/api/session/sessionClientPort'
 import type { PushNotificationDeliveryOptions } from '@/api/pushNotifications'
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog'
-import { buildReadyNotificationContent, type AccountSettings } from '@happier-dev/protocol'
+import { buildReadyNotificationContent } from '@happier-dev/protocol/push/readyNotificationContent';
+import type { AccountSettings } from '@happier-dev/protocol';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification'
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification'
 import { isSessionActivityNotificationEligible, type SessionNotificationContextReader } from '@/notifications/activity/sessionActivityNotificationEligibility'

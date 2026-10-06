@@ -1,13 +1,6 @@
-import {
-  getPluginHookDefinitionV1,
-  readHookEventEnvelopeV1,
-  validatePluginHookPayloadV1,
-  validatePluginHookResultV1,
-  type PluginHookDecisionResultV1,
-  type PluginHookAggregationKindV1,
-  type PluginHookFailureModeV1,
-  type HookEventEnvelopeV1,
-} from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1, validatePluginHookPayloadV1, validatePluginHookResultV1 } from '@happier-dev/protocol/plugins/hooks';
+import { readHookEventEnvelopeV1 } from '@happier-dev/protocol/plugins/hooks/eventEnvelopeV1';
+import type { PluginHookDecisionResultV1, PluginHookAggregationKindV1, PluginHookFailureModeV1, HookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { ResolvedPluginHookHandler } from '@/plugins/runtime/types';

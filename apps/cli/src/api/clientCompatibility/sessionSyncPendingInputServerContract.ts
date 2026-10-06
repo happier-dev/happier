@@ -1,9 +1,5 @@
-import {
-    FeaturesResponseSchema,
-    PENDING_INPUT_PROTOCOL_VERSION_V1,
-    PENDING_INPUT_PROTOCOL_VERSION_V3,
-    SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY,
-} from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PENDING_INPUT_PROTOCOL_VERSION_V1, PENDING_INPUT_PROTOCOL_VERSION_V3, SESSION_SYNC_PROTOCOL_VERSION_RUNTIME_ACTIVITY } from '@happier-dev/protocol/clientCompatibility/primitives';
 import {
     observeServerFeaturesSnapshot,
     type CliServerFeaturesSnapshot,

@@ -1,18 +1,6 @@
-import {
-  EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_CONSUMED_INPUTS_V1,
-  EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1,
-  EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1,
-  ExternalShareableTranscriptPageV1Schema,
-  ExternalShareableActorV1Schema,
-  filterExternalShareableOriginForCallerV1,
-  isExternalShareableTranscriptWirePayloadWithinLimitV1,
-  readSessionInputAuthorityV1,
-  readSessionMessageProvenanceV1,
-  type ExternalShareableOriginV1,
-  type ExternalShareableTranscriptPageV1,
-  type ExternalShareableTranscriptItemV1,
-  type SessionTurnV1,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_CONSUMED_INPUTS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1, ExternalShareableTranscriptPageV1Schema, ExternalShareableActorV1Schema, filterExternalShareableOriginForCallerV1, isExternalShareableTranscriptWirePayloadWithinLimitV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
+import { readSessionInputAuthorityV1, readSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { ExternalShareableOriginV1, ExternalShareableTranscriptPageV1, ExternalShareableTranscriptItemV1, SessionTurnV1 } from '@happier-dev/protocol';
 
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 

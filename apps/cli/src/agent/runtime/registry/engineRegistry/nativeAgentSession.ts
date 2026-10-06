@@ -3,38 +3,23 @@ import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
-import {
-    AgentLaunchEnvironmentV1Schema,
-    AgentRuntimeJsonValueV1Schema,
-    AgentSessionConfigurationSnapshotV1Schema,
-    AgentSessionStartupInstructionsV1Schema,
-    type AgentSessionStartupInstructionsV1,
-} from '@happier-dev/protocol/runtime';
-import {
-    AgentStartSessionCallerV1Schema,
-    applySessionProviderBindingMetadataV1,
-    ExternalSessionsAgentIdSchema,
-    materializeSessionInputCausalPermissionAuthorityV1,
-    projectAgentSessionProviderBindingV1,
-    readLeadingSlashCommandName,
-    readSessionDirectoryKind,
-    readSessionProviderBindingMetadataV1,
-    readSessionWorkspaceWritesV1,
-    isSessionTerminalPermanentlyAbsent,
-    SessionTerminalMetadataSchema,
-    registerSensitiveDiagnosticValues,
-    resolveLinkedExternalSessionMetadataV1,
-    SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY,
-    SessionActivityHeadlineBundleV1Schema,
-    SessionRuntimeIssueSourceV1Schema,
-    type ExternalSessionsSource,
-    type SessionEnvOverlayV1,
-    type SessionRuntimeIssueV1,
-    type SessionInputCausalPermissionAuthorityV1,
-    type PluginMachineMaterializationRefV1,
-    type PluginSourceCustodyV1,
-    type AgentStartSessionCallerV1,
-} from '@happier-dev/protocol';
+import { AgentLaunchEnvironmentV1Schema, AgentRuntimeJsonValueV1Schema, AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol/runtime';
+import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { applySessionProviderBindingMetadataV1, projectAgentSessionProviderBindingV1, readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { materializeSessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readLeadingSlashCommandName } from '@happier-dev/protocol/sessions/slashCommands';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { isSessionTerminalPermanentlyAbsent, SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
+import { SessionActivityHeadlineBundleV1Schema } from '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1';
+import { SessionRuntimeIssueSourceV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1 } from '@happier-dev/protocol';
 import {
     getAgentLocalControlCapability,
     parsePermissionIntentAlias,
@@ -189,7 +174,8 @@ import {
     publishSlashCommandsToMetadata,
 } from '@/agent/acp/commands/publishSlashCommands';
 import { logger } from '@/ui/logger';
-import { createProviderErrorV1, readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import type { UsageObservation } from '@/usage/usageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
@@ -198,13 +184,9 @@ import { createNativeAgentSessionWorkStateService } from './nativeAgentSessionWo
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
 import { createPluginSessionMediaHostAdapter } from './nativeAgentSessionMedia';
 import type { McpServerConfig } from '@/agent/core/AgentTypes';
-import {
-    buildSessionRollbackRangesV1,
-    readSessionRollbackRangesV1FromMetadata,
-    SessionTurnProviderCheckpointV1Schema,
-    type SessionRollbackRpcParams,
-    type SessionRollbackRpcResult,
-} from '@happier-dev/protocol';
+import { buildSessionRollbackRangesV1, readSessionRollbackRangesV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1';
+import { SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import type { SessionRollbackRpcParams, SessionRollbackRpcResult } from '@happier-dev/protocol';
 import { PluginTerminalHostError } from '@/plugins/runtime/context/terminalHost';
 import { createCurrentSessionPresentationService } from '@/session/presentation/currentSessionPresentationService';
 import { registerCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';

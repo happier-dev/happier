@@ -1,15 +1,10 @@
 import { listBuiltInHappierTools, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
-import {
-    createPluginJsonSchemaZodObjectAdapter,
-    zodSchemaToJsonSchemaObject,
-    type ActionId,
-    type ActionsSettingsV1,
-    type ApprovalRequestOriginV1,
-    BrowserScreenshotMediaReferenceV1Schema,
-    type BrowserScreenshotMediaReferenceV1,
-    SessionImageMediaReferenceV1Schema,
-} from '@happier-dev/protocol';
+import { createPluginJsonSchemaZodObjectAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ActionId, ActionsSettingsV1, ApprovalRequestOriginV1, BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
+import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import { createActionToolNameToIdMap } from '@/agent/tools/happierTools/actionToolCatalog';
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { z } from 'zod';

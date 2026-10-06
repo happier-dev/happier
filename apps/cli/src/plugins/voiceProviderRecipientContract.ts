@@ -1,8 +1,5 @@
-import {
-    createVoiceProviderRecipientContractFromCredentialsV1,
-    type RecipientContractV1,
-    type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { createVoiceProviderRecipientContractFromCredentialsV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { RecipientContractV1, VoiceProviderContribution } from '@happier-dev/protocol';
 
 type RecipientPackageSourceKind =
     RecipientContractV1['package']['source']['kind'];

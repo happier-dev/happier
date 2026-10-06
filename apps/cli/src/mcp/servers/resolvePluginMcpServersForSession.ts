@@ -1,11 +1,5 @@
-import {
-  readSessionMcpSelectionV1FromMetadata,
-  type AccountSettings,
-  type McpServerCatalogEntryV1,
-  type PluginExecutionScopeV1,
-  type ResolvedMcpServerV1,
-  type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import type { AccountSettings, McpServerCatalogEntryV1, PluginExecutionScopeV1, ResolvedMcpServerV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import { readMcpServersSettingsFromAccountSettings } from './readMcpServersSettingsFromAccountSettings';
 import { resolveManagedSessionMcpSelectionForDirectory } from './resolveManagedSessionMcpSelectionForDirectory';
 import type {

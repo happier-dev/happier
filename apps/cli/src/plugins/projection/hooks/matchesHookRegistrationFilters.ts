@@ -1,4 +1,5 @@
-import { readNonBlankOpaqueIdentifier, type HookEventEnvelopeV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { HookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 

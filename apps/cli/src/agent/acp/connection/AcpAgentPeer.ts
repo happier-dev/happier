@@ -25,10 +25,7 @@ import {
   type SetSessionModeRequest,
   type SetSessionModeResponse,
 } from '@agentclientprotocol/sdk';
-import {
-  redactBugReportSensitiveText,
-  trimBugReportTextToMaxBytes,
-} from '@happier-dev/protocol';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 const ACP_ERROR_DIAGNOSTIC_MAX_BYTES = 16_384;
 

@@ -1,22 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  DaemonMcpServersDetectRequestSchema,
-  DaemonMcpServersPreviewRequestSchema,
-  type DaemonMcpServersPreviewResponse,
-  DaemonMcpServersTestRequestSchema,
-  type DaemonMcpServersTestErrorCode,
-  type DaemonMcpServersDetectResponse,
-  type DaemonMcpServersDetectWarningV1,
-  type DaemonMcpServersTestRequest,
-  type DaemonMcpServersTestResponse,
-  type McpServerBindingV1,
-  type McpServerCatalogEntryV1,
-  type McpServersSettingsV1,
-  type ResolveEffectiveServersV1Result,
-  isSharedSavedSecretReferenceV1,
-} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonMcpServersDetectRequestSchema, DaemonMcpServersTestRequestSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { DaemonMcpServersPreviewRequestSchema } from '@happier-dev/protocol/mcp/servers/previewV1';
+import type { DaemonMcpServersPreviewResponse, DaemonMcpServersTestErrorCode, DaemonMcpServersDetectResponse, DaemonMcpServersDetectWarningV1, DaemonMcpServersTestRequest, DaemonMcpServersTestResponse, McpServerBindingV1, McpServerCatalogEntryV1, McpServersSettingsV1, ResolveEffectiveServersV1Result } from '@happier-dev/protocol';
+import { isSharedSavedSecretReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import type { McpServerConfig } from '@/agent';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';

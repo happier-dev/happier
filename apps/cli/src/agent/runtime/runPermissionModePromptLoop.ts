@@ -1,25 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  readPendingLocalId,
-  AgentSessionRuntimeEventSchema,
-  AgentSessionStartupInstructionsV1Schema,
-  normalizeStrictJsonValue,
-  readStructuredInputMentionSourcesV1,
-  renderSessionInputContextPromptV1,
-  validatePluginHookPayloadV1,
-  isModelRefGrantedV1,
-  isPermissionModeGrantedV1,
-  type SessionPendingQueueDeliveryTiming,
-  type ProviderBoundModelRef,
-  type SessionModelTransitionResultV1,
-  type ComposerAttachmentValueV1,
-  type ComposerAttachmentResolveRequestV1,
-  type ComposerAttachmentResolveResultV1,
-  type PluginContributionIdentityV1,
-  type AgentSessionStartupInstructionsMarkerV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
+import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, ComposerAttachmentValueV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveResultV1, PluginContributionIdentityV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';

@@ -1,12 +1,6 @@
-import {
-    SCM_BACKEND_CAPABILITY_GROUPS,
-    SCM_OPERATION_ERROR_CODES,
-    ScmBackendCapabilitiesSchema,
-    type ScmBackendCapabilities,
-    type ScmBackendCapabilityLeaf,
-    type ScmOperationErrorCode,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+import { SCM_BACKEND_CAPABILITY_GROUPS, ScmBackendCapabilitiesSchema } from '@happier-dev/protocol/scm/backendCapabilities';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ScmBackendCapabilities, ScmBackendCapabilityLeaf, ScmOperationErrorCode, ScmWorkingSnapshot } from '@happier-dev/protocol';
 import { expect } from 'vitest';
 
 export type ScmOperationResult = Readonly<{

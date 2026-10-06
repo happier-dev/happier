@@ -6,29 +6,24 @@ import { configuration } from '@/configuration';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { getSessionStateFieldDescriptor } from '@happier-dev/agents';
 import { hasSessionStateFieldMetadataBinding } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    SessionRoleIdV1Schema,
-    SessionRoleConfigurationV1Schema,
-    SessionMessageRoleSchema,
-    SessionRunnerRuntimeStateV1Schema,
-    SessionStateAcpConfigOptionValueSchema,
-    SessionStateAcpSessionModeValueSchema,
-    SessionStateFieldDeliveryClassSchema,
-    SessionStateFieldIdSchema,
-    SessionStateModelValueSchema,
-    SessionStatePermissionModeValueSchema,
-    SessionStateProviderSessionIdValueSchema,
-    SessionStateRuntimeDescriptorValueSchema,
-    SessionStateTitleValueSchema,
-    SessionStateUsageLimitRecoveryValueSchema,
-    SessionStateWorkStateValueSchema,
-    SessionStoredMessageContentSchema,
-    SessionTranscriptObservationProvenanceV1Schema,
-    ExactSessionTurnEndMutationV1Schema,
-    SessionTurnMutationV1Schema,
-    type SessionTurnMutationV1,
-} from '@happier-dev/protocol';
-import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions';
+import { SessionRoleIdV1Schema, SessionRoleConfigurationV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionStateAcpConfigOptionValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/acpConfigOption';
+import { AcpSessionModeOverrideV1Schema as SessionStateAcpSessionModeValueSchema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { SessionStateFieldDeliveryClassSchema, SessionStateFieldIdSchema } from '@happier-dev/protocol/sessions/state/fieldRegistrySchema';
+import { SessionStateModelValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/model';
+import { SessionStatePermissionModeValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/permissionMode';
+import { SessionStateProviderSessionIdValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/providerSessionId';
+import { RuntimeDescriptorV1Schema as SessionStateRuntimeDescriptorValueSchema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionStateTitleValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/title';
+import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 
 import type {
     QueuedSessionClientDurableMutation,

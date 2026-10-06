@@ -1,15 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  PluginSettingsAdministrationActionOutputV1Schema,
-  getActionSpec,
-  zodSchemaToJsonSchemaObject,
-  type ActionExecuteResult,
-  type ActionSpec,
-  type PluginSettingsAdministrationActionIdV1,
-  type PluginSettingsAdministrationActionOutputV1,
-  type PluginSettingsAdministrationDaemonTargetV1,
-} from '@happier-dev/protocol';
+import { PluginSettingsAdministrationActionOutputV1Schema } from '@happier-dev/protocol/plugins/settingsAdministration';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import type { ActionExecuteResult, ActionSpec, PluginSettingsAdministrationActionIdV1, PluginSettingsAdministrationActionOutputV1, PluginSettingsAdministrationDaemonTargetV1 } from '@happier-dev/protocol';
 import { renderHelpPage } from '@happier-dev/cli-common/output';
 
 import {

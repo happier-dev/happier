@@ -1,11 +1,8 @@
 import { z } from 'zod';
 import { BUNDLED_PLUGIN_PUBLICATION_DIAGNOSTIC_CODES } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
-import {
-  PluginContributionIdentityV1Schema,
-  PluginDiagnosticStageV1Schema,
-  PluginDiagnosticTextV1Schema,
-  PluginJsonValueV2Schema,
-} from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginDiagnosticStageV1Schema, PluginDiagnosticTextV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 const HostPluginContributionIdentityV1Schema = asHostProtocolZod(

@@ -1,10 +1,7 @@
 import axios from 'axios';
-import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol';
-import {
-  combineTerminalPresentUserPolicies,
-  AUTHORITY_CEILING_HEADER_V1,
-  type TerminalPresentUserPolicy,
-} from '@happier-dev/protocol/actions/invocationAuthority';
+import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { combineTerminalPresentUserPolicies, AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 import { configuration } from '@/configuration';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';

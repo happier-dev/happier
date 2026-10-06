@@ -2,10 +2,8 @@ import type {
   PluginPromptAssetContributionV1,
   PromptBlockV1,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 
 export type PromptAssetContributionOwner = Readonly<{

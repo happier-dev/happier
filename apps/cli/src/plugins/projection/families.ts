@@ -1,12 +1,6 @@
-import {
-    assertPluginProjectionFamilyIdsV2,
-    listPluginProjectionFamilyIdsV2,
-    PluginProjectedFamilyV2Schema,
-    type PluginContributionCatalogEntryV2,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectedFamilyEntryV2,
-    type PluginProjectedFamilyV2,
-} from '@happier-dev/protocol';
+import { assertPluginProjectionFamilyIdsV2, listPluginProjectionFamilyIdsV2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PluginProjectedFamilyV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginContributionCatalogEntryV2, PluginMachineExecutionOriginV1, PluginProjectedFamilyEntryV2, PluginProjectedFamilyV2 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';

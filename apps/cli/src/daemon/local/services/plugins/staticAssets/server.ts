@@ -2,11 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import {
-    isLoopbackHostname,
-    type LocalServicePreviewResourceV1,
-    type LocalServicePreviewTargetV1,
-} from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { LocalServicePreviewResourceV1, LocalServicePreviewTargetV1 } from '@happier-dev/protocol';
 
 import { createHostedWebStaticAssetPreviewResource } from '../hostedWeb';
 import {

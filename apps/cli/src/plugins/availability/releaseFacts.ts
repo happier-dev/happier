@@ -1,10 +1,7 @@
-import {
-  PluginAvailabilityPortableReleaseSourceClassV1Schema,
-  normalizePluginAccountCollectionContractsV1,
-  normalizePluginReleaseFactsV1,
-  type PluginAvailabilityPortableReleaseSourceClassV1,
-  type PackageAssetArchiveDescriptorV1,
-} from '@happier-dev/protocol';
+import { PluginAvailabilityPortableReleaseSourceClassV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import type { PluginAvailabilityPortableReleaseSourceClassV1, PackageAssetArchiveDescriptorV1 } from '@happier-dev/protocol';
 import type { PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';

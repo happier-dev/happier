@@ -12,19 +12,13 @@ import {
 } from '@/agent/runtime/permissions/modeFromMetadata';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  SessionMcpSelectionV1Schema,
-  buildBackendTargetKeyV2,
-  readNonBlankOpaqueIdentifier,
-  readRuntimeDescriptorV1FromMetadata,
-  sessionModelSelectionV2TeamBindingIntent,
-  type ProviderBoundModelRef,
-  type ConnectedServiceMaterializationIdentityV1,
-  type SessionModelSelectionV2,
-  type ConnectedServiceBindingsV2,
-  type SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import type { ProviderBoundModelRef, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV2, ConnectedServiceBindingsV2, SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {

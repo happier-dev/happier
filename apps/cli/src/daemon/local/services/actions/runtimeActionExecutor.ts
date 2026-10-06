@@ -1,25 +1,12 @@
-import {
-    createUnavailableRuntimeActionExecutor,
-    DaemonLocalServiceLauncherLeafRequestV1Schema,
-    DaemonLocalServiceLauncherStartRequestV1Schema,
-    DaemonLocalServicePreviewOpenOrCreateRequestV1Schema,
-    DaemonLocalServicePreviewRevokeRequestV1Schema,
-    DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema,
-    DaemonLocalServicePublicPreviewCreateRequestV1Schema,
-    DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
-    DaemonLocalServicePublicPreviewStatusRequestV1Schema,
-    getActionSpec,
-    isLocalServicePublicPreviewCreateConfirmed,
-    LocalServiceActionRequestV1Schema,
-    redactLocalServicePublicPreviewCreateResponseForAgentEgress,
-    redactLocalServicePublicPreviewRevokeResponseForAgentEgress,
-    redactLocalServicePublicPreviewSnapshotForAgentEgress,
-    requiresAgentEgressRedaction,
-    resolveLocalServiceActionKindForRuntimeActionId,
-    resolveRuntimeActionExecutionFamily,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-} from '@happier-dev/protocol';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
+import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, isLocalServicePublicPreviewCreateConfirmed, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress } from '@happier-dev/protocol/local/services/public/v1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
 import type { LocalServiceActionRoutes } from './routes';
 import type { LocalServicesDaemonFeatureGate, LocalServicesDaemonFeatureGateId } from '../featureGate';

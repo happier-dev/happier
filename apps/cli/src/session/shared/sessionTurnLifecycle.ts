@@ -1,4 +1,4 @@
-import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol';
+import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 
 export const WORKFLOW_STEP_INPUT_EVENT_MESSAGE = 'Workflow step input';
 

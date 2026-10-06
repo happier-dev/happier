@@ -1,12 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import {
-    PEER_MACHINE_RPC_DIRECT_PATH_V2,
-    PEER_MEDIATION_RECEIPTS,
-    createPeerMachineRpcResultHashV1,
-    type PeerMachineRpcCommandReceiptSuccessV1,
-    type PeerMachineRpcDirectResponseV2,
-} from '@happier-dev/protocol';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { PEER_MACHINE_RPC_DIRECT_PATH_V2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { createPeerMachineRpcResultHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
+import type { PeerMachineRpcCommandReceiptSuccessV1, PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrant';

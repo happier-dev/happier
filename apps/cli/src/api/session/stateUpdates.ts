@@ -4,15 +4,9 @@ import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
-import {
-    projectSessionMetadataAgentVocabularyWriteCompatibilityV1,
-    projectSessionMetadataForWire,
-    normalizeSessionMetadataForRead,
-    SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT,
-    SessionRuntimeActivitySnapshotAckSchema,
-    SessionRuntimeActivitySnapshotRequestSchema,
-    readSessionModesMetadata,
-} from '@happier-dev/protocol';
+import { projectSessionMetadataAgentVocabularyWriteCompatibilityV1, readSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
+import { projectSessionMetadataForWire, normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
-import { createPluginContributionIdentity, getPluginHookDefinitionV1 } from '@happier-dev/protocol';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { getPluginHookDefinitionV1 } from '@happier-dev/protocol/plugins/hooks';
 
 import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';

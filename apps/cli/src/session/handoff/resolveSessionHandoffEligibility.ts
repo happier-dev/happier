@@ -2,7 +2,7 @@ import {
   resolveAgentIdFromSessionMetadata,
   type HandoffExportSessionMetadataV1,
 } from '@happier-dev/agents';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { LinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';

@@ -10,10 +10,8 @@ import type {
   ResolvedCommandContribution,
   ResolvedContributionRegistry,
 } from '@/plugins/projection/registry/types';
-import {
-  compilePluginJsonSchema,
-  isValidPluginJsonSchemaValue,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
   resolvePluginCommandProjection,
   type PluginCommandProjection,

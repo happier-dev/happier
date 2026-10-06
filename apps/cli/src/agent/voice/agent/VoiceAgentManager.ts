@@ -7,19 +7,10 @@ import {
   resolveExecutionRunRuntimeBackendId,
 } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import {
-  extractVoiceActionsFromAssistantText,
-  canAppendVoiceAgentOutputEventsV1,
-  createVoiceAgentOutputTurnV1,
-  fitVoiceAgentOutputTextV1,
-  ingestVoiceAgentOutputEventV1,
-  VOICE_OUTPUT_INCOMPLETE_TEXT,
-  readBackendTargetRefV2,
-  type BackendTargetRefV1,
-  type ProviderBoundModelRef,
-  type ExecutionRunResumeHandle,
-  type VoiceAssistantAction,
-} from '@happier-dev/protocol';
+import { extractVoiceActionsFromAssistantText } from '@happier-dev/protocol/voice/actions';
+import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle, VoiceAssistantAction } from '@happier-dev/protocol';
 
 import { appendVoiceAgentHistoryContext, appendVoiceAgentHistoryTurn } from './voiceAgentHistory';
 import {
@@ -46,7 +37,7 @@ import type {
 } from './voiceAgentTypes';
 import type { PermissionIntent } from '@happier-dev/agents';
 import { VoiceAgentError } from './voiceAgentTypes';
-import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import { isSessionProviderInputOutcomeTerminal } from '@/agent/runtime/session/input/providerInputOutcome';
 

@@ -1,13 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import {
-  PluginWebhookAutomationAdmissionUnresolvedV1Schema,
-  PluginWebhookInvocationReferenceV1Schema,
-  type AutomationEventAdmitInputV1,
-  type AutomationEventAdmitResultV1,
-  type PluginWebhookAutomationAdmissionUnresolvedV1,
-  type PluginWebhookInvocationReferenceV1,
-} from '@happier-dev/protocol';
+import { PluginWebhookAutomationAdmissionUnresolvedV1Schema } from '@happier-dev/protocol/plugins/webhooks/statusV1';
+import { PluginWebhookInvocationReferenceV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import type { AutomationEventAdmitInputV1, AutomationEventAdmitResultV1, PluginWebhookAutomationAdmissionUnresolvedV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 type AutomationAdmissionUnresolvedStatusV1 =
   PluginWebhookAutomationAdmissionUnresolvedV1['entries'][number]['status'];

@@ -15,23 +15,10 @@
  * `result` or `error` frame. Streaming STT uses its explicit start/append/finish requests.
  */
 
-import {
-  DaemonVoiceInferenceAudioOutputSchema,
-  DaemonVoiceInferenceModelRuntimeStateSchema,
-  DaemonVoiceInferenceNormalizationDecisionSchema,
-  DaemonVoiceInferenceSttStreamEventSchema,
-  DaemonVoiceInferenceSttStreamPcmFormatSchema,
-  VoiceModelPackRuntimeV1Schema,
-  VoiceModelPackSupportArtifactV1Schema,
-  type DaemonVoiceInferenceAudioOutput,
-  type DaemonVoiceInferenceModelRuntimeState,
-  type DaemonVoiceInferenceNormalizationDecision,
-  type DaemonVoiceInferenceSttStreamEvent,
-  type DaemonVoiceInferenceSttStreamPcmFormat,
-  type ModelPackManifest,
-  type VoiceModelPackRuntimeV1,
-  type VoiceModelPackSupportArtifactV1,
-} from '@happier-dev/protocol';
+import { DaemonVoiceInferenceAudioOutputSchema, DaemonVoiceInferenceModelRuntimeStateSchema, DaemonVoiceInferenceNormalizationDecisionSchema, DaemonVoiceInferenceSttStreamEventSchema, DaemonVoiceInferenceSttStreamPcmFormatSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { VoiceModelPackRuntimeV1Schema } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
+import { VoiceModelPackSupportArtifactV1Schema } from '@happier-dev/protocol/voice/modelPacks/artifactRolesV1';
+import type { DaemonVoiceInferenceAudioOutput, DaemonVoiceInferenceModelRuntimeState, DaemonVoiceInferenceNormalizationDecision, DaemonVoiceInferenceSttStreamEvent, DaemonVoiceInferenceSttStreamPcmFormat, ModelPackManifest, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export const VOICE_INFERENCE_WORKER_IPC_VERSION = 1 as const;

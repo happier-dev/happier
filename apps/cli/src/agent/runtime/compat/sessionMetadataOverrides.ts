@@ -1,4 +1,4 @@
-import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 export type SessionMetadataConfigOptionOverrides = Readonly<{
     v: 1;

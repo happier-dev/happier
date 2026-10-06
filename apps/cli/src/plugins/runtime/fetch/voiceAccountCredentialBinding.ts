@@ -1,16 +1,7 @@
-import {
-    containsProviderRegisteredSensitiveValue,
-    deriveVoiceCredentialBindingIdentityV1,
-    materializeRecipientOperationRequestV1FromOperation,
-    resolveVoiceCredentialOperationAuthorization,
-    resolveRequiredRecipientContractApprovalDigestV1,
-    type RecipientOperationV1,
-    type VoiceCredentialAccessPhase,
-    type VoiceCredentialBindingIdentityV1,
-    type VoiceCredentialOperationAuthorization,
-    type VoiceCredentialOperationSelectedSource,
-    type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
+import { deriveVoiceCredentialBindingIdentityV1, resolveVoiceCredentialOperationAuthorization } from '@happier-dev/protocol/plugins/contributions/voice';
+import { materializeRecipientOperationRequestV1FromOperation, resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { RecipientOperationV1, VoiceCredentialAccessPhase, VoiceCredentialBindingIdentityV1, VoiceCredentialOperationAuthorization, VoiceCredentialOperationSelectedSource, VoiceProviderContribution } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
     PluginContributionRef } from '@happier-dev/plugin-sdk';

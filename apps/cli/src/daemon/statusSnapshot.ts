@@ -1,5 +1,6 @@
 import { isPidPresent } from '@happier-dev/cli-common/process';
-import { createServerUrlComparableKey, type DoctorSnapshot } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
+import type { DoctorSnapshot } from '@happier-dev/protocol';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';

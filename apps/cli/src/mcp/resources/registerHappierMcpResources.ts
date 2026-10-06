@@ -1,5 +1,5 @@
 import type { ActionId, ActionSurfaces } from '@happier-dev/protocol';
-import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol';
+import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { registerMcpWatchSubscriptions, type McpWatchOptions } from './watchSubscriptions';
 
 export const HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI = 'happier://action-specs/catalog';

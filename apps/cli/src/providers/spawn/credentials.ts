@@ -1,11 +1,6 @@
-import {
-  createProviderErrorV1,
-  resolveProviderSecretBindingIdV1,
-  type ProviderConnectionId,
-  type ProviderCredentialTransportV1,
-  type ProviderErrorV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import type { ProviderConnectionId, ProviderCredentialTransportV1, ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { TeamCredentialDirectMaterialPayloadV1 } from '@happier-dev/protocol/teams';
 
 import {

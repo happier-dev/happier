@@ -7,10 +7,8 @@ import type {
     SessionStoredMessageContent,
     SessionTurnMutationV1,
 } from '@happier-dev/protocol';
-import {
-    SessionTranscriptObservationProvenanceV1Schema,
-    type SessionTranscriptObservationProvenanceV1,
-} from '@happier-dev/protocol';
+import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 export type SessionClientDurableMutationDependency = Readonly<{
     mutationId: string;

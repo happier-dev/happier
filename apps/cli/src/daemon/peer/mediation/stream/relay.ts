@@ -1,18 +1,9 @@
-import {
-    getMachineLiveStreamPayloadDecodedByteLength,
-    isMachineLiveStreamTerminalReceiptV1,
-    MachineLiveStreamStartRequestV1Schema,
-    PEER_MEDIATION_RECEIPTS,
-    validateMachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlSourceV1,
-    type MachineLiveStreamCaptureSourceKindV1,
-    type MachineLiveStreamControlV1,
-    type MachineLiveStreamFrameV1,
-    type MachineLiveStreamRelayEnvelopeV1,
-    type MachineLiveStreamReceiptV1,
-    type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import { isMachineLiveStreamTerminalReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
+import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type { MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
 import { startMachineLiveStreamFramePump } from './framePump';
 import {

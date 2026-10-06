@@ -1,19 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import {
-  GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
-  evaluatePluginFinalPolicy,
-  ReviewCommentProposalsV1Schema,
-  REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-  stringifyReviewCommentPrincipalCanonicalJsonV1,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type PluginPermissionGrantRequestActionInputV1,
-  type PluginSourceCustodyV1,
-  type ReviewCommentCreateRequestV1,
-  type ReviewCommentProposalV1,
-  type ReviewCommentSnapshotV1,
-} from '@happier-dev/protocol';
+import { GENERAL_PLUGIN_PERMISSION_SUBJECT_V1 } from '@happier-dev/protocol/plugins/permissions/grants';
+import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
+import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
+import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ActionExecuteResult, ActionExecutorContext, PluginPermissionGrantRequestActionInputV1, PluginSourceCustodyV1, ReviewCommentCreateRequestV1, ReviewCommentProposalV1, ReviewCommentSnapshotV1 } from '@happier-dev/protocol';
 
 import {
   resolvePluginFinalPolicyAuthorizationFacts,

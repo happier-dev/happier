@@ -1,7 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import { TurnChangeSetSchema, type TurnChangeSet } from '@happier-dev/protocol';
+import { TurnChangeSetSchema } from '@happier-dev/protocol/sessions/changes/schemas';
+import type { TurnChangeSet } from '@happier-dev/protocol';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';
 import { buildRepositoryCheckpointScopePrefix, encodeRepositoryCheckpointScope } from './refs';

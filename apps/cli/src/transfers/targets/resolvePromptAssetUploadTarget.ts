@@ -1,10 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
-import {
-  PromptAssetMutationResponseV1Schema,
-  PromptAssetWriteRequestSchema,
-  type PromptAssetMutationResponseV1,
-} from '@happier-dev/protocol';
+import { PromptAssetMutationResponseV1Schema, PromptAssetWriteRequestSchema } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';

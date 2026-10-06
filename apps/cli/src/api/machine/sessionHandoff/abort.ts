@@ -1,4 +1,5 @@
-import { SessionHandoffAbortRequestSchema, type SessionHandoffStatus } from '@happier-dev/protocol';
+import { SessionHandoffAbortRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import type { SessionHandoffStatus } from '@happier-dev/protocol';
 
 import {
   createSessionHandoffPrepareTargetJobStore,

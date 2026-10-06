@@ -1,13 +1,8 @@
-import {
-  ProviderConnectionIdSchema,
-  SESSION_PROVIDER_BINDING_METADATA_KEY_V1,
-  createProviderErrorV1,
-  readSessionModelSelectionIntentSourceV1,
-  readSessionProviderBindingMetadataStateV1,
-  type ProviderErrorV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { SESSION_PROVIDER_BINDING_METADATA_KEY_V1, readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readSessionModelSelectionIntentSourceV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 
 export class PersistedProviderResumeBindingError extends Error {
   readonly providerError: ProviderErrorV1;

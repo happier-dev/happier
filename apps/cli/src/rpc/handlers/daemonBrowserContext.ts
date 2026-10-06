@@ -1,10 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonBrowserContextDispatchRequestV1Schema,
-    DaemonBrowserContextDispatchResponseV1Schema,
-    type DaemonBrowserContextDispatchResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonBrowserContextDispatchRequestV1Schema, DaemonBrowserContextDispatchResponseV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import type { DaemonBrowserContextDispatchResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
 

@@ -1,7 +1,7 @@
 import { lstat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 import {
   readProtectedLocalStateFile,

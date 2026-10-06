@@ -1,7 +1,5 @@
-import {
-  DaemonPetReadPreviewAssetRequestV1Schema,
-  type DaemonPetReadPreviewAssetResponseV1,
-} from '@happier-dev/protocol';
+import { DaemonPetReadPreviewAssetRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
+import type { DaemonPetReadPreviewAssetResponseV1 } from '@happier-dev/protocol';
 
 import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
 import { resolveManagedLocalPetSourceBySourceKey } from '../storage/managedLocalPetRegistry';

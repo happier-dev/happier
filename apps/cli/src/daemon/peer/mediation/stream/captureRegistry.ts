@@ -1,9 +1,5 @@
-import {
-    MachineLiveStreamCaptureSourceV1Schema,
-    MachineLiveStreamCaptureUnavailableV1Schema,
-    type MachineLiveStreamCaptureSourceV1,
-    type MachineLiveStreamCaptureUnavailableV1,
-} from '@happier-dev/protocol';
+import { MachineLiveStreamCaptureSourceV1Schema, MachineLiveStreamCaptureUnavailableV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/captureV1';
+import type { MachineLiveStreamCaptureSourceV1, MachineLiveStreamCaptureUnavailableV1 } from '@happier-dev/protocol';
 import type { PluginLiveStreamReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { MachineLiveStreamCaptureAdapter } from './captureAdapter';

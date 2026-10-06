@@ -1,7 +1,5 @@
-import {
-    PluginRuntimeCapabilityFamilyV1Schema,
-    type PluginRuntimeCapabilityFamilyV1,
-} from '@happier-dev/protocol';
+import { PluginRuntimeCapabilityFamilyV1Schema } from '@happier-dev/protocol/plugins/runtime/api';
+import type { PluginRuntimeCapabilityFamilyV1 } from '@happier-dev/protocol';
 
 export type PluginRuntimeAuthoritySnapshotV1 = Readonly<{
     runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];

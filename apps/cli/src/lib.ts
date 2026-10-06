@@ -12,4 +12,5 @@ export { ApiSessionClient } from '@/api/session/sessionClient'
 export { logger } from '@/ui/logger'
 export { configuration } from '@/configuration'
 
-export { RawJSONLinesSchema, type RawJSONLines } from '@happier-dev/protocol/agents/claude/transcripts'
+export { RawJSONLinesSchema } from '@happier-dev/protocol/agents/claude/transcripts';
+export type { RawJSONLines } from '@happier-dev/protocol/agents/claude/transcripts';

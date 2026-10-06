@@ -6,13 +6,8 @@ import {
   startDirectHomeQrLifecycle,
   type DirectHomeQrLifecycleAdapters,
 } from '@happier-dev/cli-common/homeEnrollment';
-import {
-  deriveHomeQrBindingKeyV2,
-  encodeHomeQrInviteV2Payload,
-  parseHomeQrInviteV2Payload,
-  sealTerminalProvisioningV3Payload,
-  sealTerminalProvisioningV3TokenOnlyPayload,
-} from '@happier-dev/protocol';
+import { deriveHomeQrBindingKeyV2, encodeHomeQrInviteV2Payload, parseHomeQrInviteV2Payload } from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import qrcode from 'qrcode-terminal';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

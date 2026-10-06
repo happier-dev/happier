@@ -31,7 +31,7 @@ import { createReadStream } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
-import { filePathParts } from '@happier-dev/protocol';
+import { filePathParts } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
 import type {
   ModelPackDownloadRequest,
   ModelPackDownloadStream,

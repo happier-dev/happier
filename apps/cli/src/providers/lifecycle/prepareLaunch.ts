@@ -1,23 +1,11 @@
-import {
-  BackendTargetKeyV2InputSchema,
-  ConnectedServiceBindingsV2Schema,
-  SessionModelSelectionV1Schema,
-  SessionProviderBindingSecurityChangeConfirmationV1Schema,
-  buildBackendTargetKeyV2,
-  createProviderErrorV1,
-  isModelRefGrantedV1,
-  isPermissionModeGrantedV1,
-  type CallerInputConstraintsV1,
-  readBackendTargetRefV2,
-  type BackendTargetRefV2Input,
-  type ConnectedServiceBindingsV2,
-  type ProviderErrorV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type SessionModelSelectionV1,
-  type SessionPermissionMode,
-  type SessionProviderBindingMetadataV1,
-  type SessionProviderBindingSecurityChangeConfirmationV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2InputSchema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { CallerInputConstraintsV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionPermissionMode, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 import {
   filterSuppressedConnectedServiceBindings,

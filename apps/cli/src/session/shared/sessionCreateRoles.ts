@@ -1,4 +1,5 @@
-import { SessionRolesV1Schema, type SessionRolesV1 } from '@happier-dev/protocol';
+import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { SessionRolesV1 } from '@happier-dev/protocol';
 
 export const HAPPIER_SESSION_CREATE_ROLES_ENV_KEY = 'HAPPIER_SESSION_CREATE_ROLES_V1_JSON';
 

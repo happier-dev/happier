@@ -32,7 +32,7 @@ import {
   isLocalishServerUrl,
   isLoopbackHttpServerUrl,
 } from '@/server/serverUrlClassification';
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import {
   completeServerSelectionMutation,
   readServerSelectionBackgroundServiceFollowUp,

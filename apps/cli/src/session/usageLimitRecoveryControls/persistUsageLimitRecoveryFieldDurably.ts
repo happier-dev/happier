@@ -1,7 +1,4 @@
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionStateUsageLimitRecoveryValueSchema,
-} from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import type {
   DaemonUsageLimitRecoveryFieldMutation,
   RegisteredSessionStateFieldMutationV1,

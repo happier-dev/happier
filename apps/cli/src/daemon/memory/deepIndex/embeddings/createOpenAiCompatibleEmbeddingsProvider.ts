@@ -1,9 +1,7 @@
 import { z } from 'zod';
 
-import {
-  decryptSecretValueWithKeysV1,
-  type MemoryEmbeddingsOpenAiCompatibleConfig,
-} from '@happier-dev/protocol';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import type { MemoryEmbeddingsOpenAiCompatibleConfig } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { withAbortTimeout } from '@/diagnostics/httpClient';

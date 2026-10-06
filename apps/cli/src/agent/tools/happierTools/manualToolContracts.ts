@@ -1,14 +1,10 @@
 import { z } from 'zod';
-import {
-  AcpConfigOptionOverridesV1Schema,
-  BackendTargetRefV2InputSchema,
-  ExecutionRunIntentSchema,
-  ExecutionRunStartRequestSchema,
-  SpawnConfigOptionValueSchema,
-  findSpawnConfigOptionAliasConflicts,
-  mergeSpawnConfigOptionAliases,
-  normalizeConnectedServiceSelectionInput,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { BackendTargetRefV2InputSchema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ExecutionRunIntentSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { SpawnConfigOptionValueSchema, findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { normalizeConnectedServiceSelectionInput } from '@happier-dev/protocol/connect/normalizeConnectedServiceSelectionInput';
 import {
   defaultIoModeForExecutionRunIntent,
   defaultPermissionModeForExecutionRunIntent,

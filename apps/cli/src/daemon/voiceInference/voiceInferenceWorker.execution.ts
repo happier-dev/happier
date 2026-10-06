@@ -2,9 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 
-import {
-  DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH,
-} from '@happier-dev/protocol';
+import { DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH } from '@happier-dev/protocol/daemon/voiceInference';
 import type {
   DaemonVoiceInferenceAudioOutput,
   DaemonVoiceInferenceNormalizationDecision,

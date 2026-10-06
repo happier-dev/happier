@@ -2,7 +2,7 @@ import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTake
 import { spawn as spawnChildProcess } from 'node:child_process';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 
-import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type { ChildExit } from '../sessions/onChildExited';
 import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';

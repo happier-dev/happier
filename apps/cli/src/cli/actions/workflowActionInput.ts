@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { getActionSpec, type ActionId } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol';
 
 import { assertCommandArguments, invalidCommandArguments } from '@/cli/commands/shared/argvFlags';
 

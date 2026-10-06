@@ -1,12 +1,7 @@
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  ConnectedServiceIdSchema,
-  SessionRuntimeIssueV1Schema,
-  SessionUsageLimitRecoveryV1Schema,
-  type ConnectedServiceId,
-  type SessionRuntimeIssueV1,
-  type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { ConnectedServiceId, SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
 import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
 import type {

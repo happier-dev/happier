@@ -1,9 +1,6 @@
-import { readSessionDirectoryKind, SessionCreationCorrespondenceV1Schema,
-  type SessionHandoffMetadataV2,
-  type SessionHandoffStartRequest,
-  type SessionHandoffStatus,
-  type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { createWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';

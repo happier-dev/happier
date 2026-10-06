@@ -6,12 +6,8 @@ import { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeeded
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import {
-    SpawnSessionErrorCodeSchema,
-    type BackendTargetRefV2Input,
-    type LlmTaskRunnerConfigV1,
-    type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
+import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {
     createStableSpawnNonce,

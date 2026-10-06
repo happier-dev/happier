@@ -1,8 +1,5 @@
-import {
-  submitBugReportToService as submitBugReportToSharedService,
-  type BugReportArtifactPayload,
-  type BugReportFormPayload,
-} from '@happier-dev/protocol';
+import { submitBugReportToService as submitBugReportToSharedService } from '@happier-dev/protocol/bugs/reports/submit';
+import type { BugReportArtifactPayload, BugReportFormPayload } from '@happier-dev/protocol';
 
 export type SubmitBugReportInput = {
   providerUrl: string;

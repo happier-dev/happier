@@ -1,14 +1,6 @@
-import {
-  BrowserAutomationActionResultV1Schema,
-  BrowserAutomationTimelineEntryV1Schema,
-  isBrowserAutomationMutatingActionKind,
-  redactBrowserAutomationActionResultDetails,
-  redactBrowserAutomationTimelineDetails,
-  type BrowserAutomationActionRequestV1,
-  type BrowserAutomationActionResultV1,
-  type BrowserAutomationActionStatusV1,
-  type BrowserAutomationTimelineEntryV1,
-} from '@happier-dev/protocol';
+import { BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineEntryV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
+import { redactBrowserAutomationActionResultDetails, redactBrowserAutomationTimelineDetails } from '@happier-dev/protocol/browser/automation/redaction';
+import type { BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationActionStatusV1, BrowserAutomationTimelineEntryV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationAdapter, BrowserAutomationAdapterExecutionContext, BrowserAutomationAdapterExecuteResult } from './adapters/types';
 

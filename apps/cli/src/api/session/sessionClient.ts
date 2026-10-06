@@ -14,7 +14,9 @@ import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { shouldSyncSessionSnapshotOnConnect, type OpenedSessionStateSnapshot, type OpenedSessionStateVersions } from './snapshotSync';
 import { createSessionTranscriptStoredContentUnavailableError } from './sessionTranscriptStoredContentUnavailable';
-import { TranscriptOpenedAgentStateV1Schema, TranscriptOpenedSharedMetadataV1Schema, projectSessionSharedMetadataV1, type TranscriptOpenedSharedMetadataV1 } from '@happier-dev/protocol';
+import { TranscriptOpenedAgentStateV1Schema, TranscriptOpenedSharedMetadataV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { TranscriptOpenedSharedMetadataV1 } from '@happier-dev/protocol';
 import {
     updateSessionAgentStateWithAck,
     updateSessionMetadataWithAck,
@@ -158,39 +160,17 @@ import {
     notifyComposerAttachmentsAfterMessageAccepted,
     type ComposerAttachmentMessageAcceptedNotifier,
 } from '@/session/composer/notifyComposerAttachmentsAfterMessageAccepted';
-import {
-    AccountSettingsV2GetResponseSchema,
-    readPendingLocalId,
-    SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT,
-    SessionAppliedModelV1Schema,
-    SESSION_METADATA_LAYOUT_VERSION_V1,
-    SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
-    SessionPublisherAuthorityCheckAckSchema,
-    SessionPublisherAuthorityCheckRequestSchema,
-    SessionRuntimeActivityCloseAckSchema,
-    SessionRuntimeActivityCloseRequestSchema,
-    SessionRuntimeActivitySnapshotSchema,
-    SessionActionConfirmationsV1Schema,
-    SessionActionConfirmationResponseTargetV1Schema,
-    SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1,
-    SESSION_FOLLOW_ACKNOWLEDGE_EVENT_V1,
-    SESSION_DISCUSSION_AGENT_POST_EVENT_V1,
-    SessionDiscussionAgentPostRequestV1Schema,
-    SessionDiscussionAgentPostResponseV1Schema,
-    SessionFollowObservePendingRequestV1Schema,
-    SessionFollowObservePendingResponseV1Schema,
-    SessionFollowAcknowledgeRequestV1Schema,
-    SessionFollowAcknowledgeResponseV1Schema,
-    type SessionFollowAcknowledgeRequestV1,
-    ACCOUNT_VOICE_FOLLOW_OBSERVE_PENDING_EVENT_V1,
-    ACCOUNT_VOICE_FOLLOW_ACKNOWLEDGE_EVENT_V1,
-    AccountVoiceFollowObservePendingRequestV1Schema,
-    AccountVoiceFollowObservePendingResponseV1Schema,
-    AccountVoiceFollowAcknowledgeRequestV1Schema,
-    AccountVoiceFollowAcknowledgeResponseV1Schema,
-    type AccountVoiceFollowAcknowledgeRequestV1,
-    type SessionDiscussionAgentPostRequestV1,
-} from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT, SessionPublisherAuthorityCheckAckSchema, SessionPublisherAuthorityCheckRequestSchema, SessionRuntimeActivityCloseAckSchema, SessionRuntimeActivityCloseRequestSchema } from '@happier-dev/protocol/sessions/runtime/activity/transport';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionActionConfirmationsV1Schema, SessionActionConfirmationResponseTargetV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
+import { SessionAppliedModelV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1, SESSION_FOLLOW_ACKNOWLEDGE_EVENT_V1, SessionFollowObservePendingRequestV1Schema, SessionFollowObservePendingResponseV1Schema, SessionFollowAcknowledgeRequestV1Schema, SessionFollowAcknowledgeResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { ACCOUNT_VOICE_FOLLOW_OBSERVE_PENDING_EVENT_V1, ACCOUNT_VOICE_FOLLOW_ACKNOWLEDGE_EVENT_V1, AccountVoiceFollowObservePendingRequestV1Schema, AccountVoiceFollowObservePendingResponseV1Schema, AccountVoiceFollowAcknowledgeRequestV1Schema, AccountVoiceFollowAcknowledgeResponseV1Schema } from '@happier-dev/protocol/sessions/follow/accountVoiceFollowTransportV1';
+import { SESSION_DISCUSSION_AGENT_POST_EVENT_V1, SessionDiscussionAgentPostRequestV1Schema, SessionDiscussionAgentPostResponseV1Schema } from '@happier-dev/protocol/sessions/discussions/api';
+import type { SessionFollowAcknowledgeRequestV1, AccountVoiceFollowAcknowledgeRequestV1, SessionDiscussionAgentPostRequestV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
 import type {
@@ -223,12 +203,9 @@ import {
     fetchSessionByIdCompat,
     fetchSessionTurnsProjection,
 } from '@/session/transport/http/sessionsHttp';
-import {
-    buildTrustedHostSessionInputAdmissionV1,
-    isPendingDeliveryArchivedUncertaintyReasonV1,
-    isPendingDeliveryProviderEffectPossibleV1,
-    type SessionTurnsProjectionV1,
-} from '@happier-dev/protocol';
+import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { isPendingDeliveryArchivedUncertaintyReasonV1, isPendingDeliveryProviderEffectPossibleV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import type { SessionTurnsProjectionV1 } from '@happier-dev/protocol';
 import {
     fetchSessionSystemRecord as fetchSessionSystemRecordHttp,
     upsertSessionSystemRecord as upsertSessionSystemRecordHttp,

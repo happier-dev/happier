@@ -3,15 +3,11 @@ import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-    decryptSecretValueV1,
-    encryptSecretStringV1,
-    PluginDirectSecretDeclarationV1Schema,
-    readManagedServiceEndpointUrl,
-    SecretStringV1Schema,
-    type PluginSettingManagedServiceOriginV1,
-    type SecretStringV1,
-} from '@happier-dev/protocol';
+import { decryptSecretValueV1, encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { SecretStringV1Schema } from '@happier-dev/protocol/crypto/settingsSecretStringSchemasV1';
+import { PluginDirectSecretDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/settings';
+import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
+import type { PluginSettingManagedServiceOriginV1, SecretStringV1 } from '@happier-dev/protocol';
 import { isPluginError, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { type SecretsService } from '@happier-dev/plugin-sdk/secrets';
 

@@ -1,7 +1,5 @@
-import {
-    SPAWN_SESSION_ERROR_DETAIL_KINDS,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
 import {
     SPAWN_SESSION_ERROR_CODES,

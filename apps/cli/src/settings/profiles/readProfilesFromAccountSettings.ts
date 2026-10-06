@@ -1,16 +1,10 @@
-import {
-  readAiLaunchProfileCollection,
-  readProviderSettingsFromAccountSettingsV1,
-  resolveVisibleBuiltInAiLaunchProfilesV1,
-  projectHistoricalBuiltInAiLaunchProfileV1,
-  getBuiltInBackendProfile,
-  isCanonicalProviderSavedSecretIdV1,
-  type AIBackendProfile,
-  type AiLaunchProfile,
-  type AiLaunchProfileReadDiagnostic,
-  type ArtifactSharingResourceV1,
-  loadAiLaunchProfileArtifacts,
-} from '@happier-dev/protocol';
+import { readAiLaunchProfileCollection, loadAiLaunchProfileArtifacts } from '@happier-dev/protocol/profiles/read';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { isCanonicalProviderSavedSecretIdV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { resolveVisibleBuiltInAiLaunchProfilesV1 } from '@happier-dev/protocol/profiles/visibilityV1';
+import { projectHistoricalBuiltInAiLaunchProfileV1 } from '@happier-dev/protocol/profiles/historicalCompatibilityV1';
+import { getBuiltInBackendProfile } from '@happier-dev/protocol/profiles/builtInBackendProfiles';
+import type { AIBackendProfile, AiLaunchProfile, AiLaunchProfileReadDiagnostic, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { StoredCredentials } from '@/persistence';
 import { readAuthoringMemoryLastUsedProfile } from './readAuthoringMemoryLastUsedProfile';

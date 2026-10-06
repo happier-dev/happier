@@ -2,12 +2,11 @@ import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/fea
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { logger } from '@/ui/logger';
-import { localServiceListenerGroupKey, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory';
-import {
-    DEFAULT_LOCAL_SERVICE_CAPABILITIES,
-    type FeatureDecision,
-    isLocalServiceActionConfirmationNonceV1,
-} from '@happier-dev/protocol';
+import { localServiceListenerGroupKey } from '@happier-dev/protocol/local/services/inventory/listeners';
+import type { LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory';
+import { DEFAULT_LOCAL_SERVICE_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/localServiceCapabilities';
+import type { FeatureDecision } from '@happier-dev/protocol';
+import { isLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 
 import { createLocalServiceInventoryAnnotationsFileStore } from './inventory/annotationsFile';
 import {

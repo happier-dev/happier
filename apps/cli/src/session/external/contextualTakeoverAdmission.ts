@@ -1,15 +1,7 @@
-import {
-  ExternalSessionOperationAuthorIntentV1Schema,
-  ExternalSessionRefSchema,
-  ExternalSessionTakeoverStartInputV1Schema,
-  type ExternalSessionOperationAuthorIntentV1,
-  type ExternalSessionOperationReferenceV1,
-  type ExternalSessionTakeoverStartInputV1,
-  type ExternalSessionsAgentId,
-  type ExternalSessionsSource,
-  type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionOperationAuthorIntentV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionRefSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { ExternalSessionTakeoverStartInputV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationReferenceV1, ExternalSessionTakeoverStartInputV1, ExternalSessionsAgentId, ExternalSessionsSource, PluginAgentExternalLinkedTakeoverWriterSafetyV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {

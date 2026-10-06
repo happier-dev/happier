@@ -1,14 +1,8 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
-import {
-    DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS,
-    DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS,
-    DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS,
-} from '@happier-dev/protocol';
+import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginResourceContextV1 } from '@happier-dev/protocol';
-import {
-    PluginUiResourceSubscriptionEventV1Schema,
-    type PluginUiResourceSubscriptionEventV1,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginUiResourceSubscriptionEventV1Schema } from '@happier-dev/protocol/plugins/ui/subscriptions';
+import type { PluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 

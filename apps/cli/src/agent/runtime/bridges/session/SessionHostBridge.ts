@@ -7,8 +7,8 @@ import type {
   RuntimeDescriptorV1,
   SessionStateCapabilitiesV1,
 } from '@happier-dev/protocol';
-import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol';
-import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol';
+import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol/sessions/state/capabilitySchema';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import {
   resolveBackendEngineAdapterResolution,
@@ -48,11 +48,7 @@ import type {
   SessionHostBridgeContract,
 } from './sessionBridgeContract';
 import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
-import {
-  isHostSessionRuntimePlan,
-  runHostSessionRuntimePlan,
-  type HostSessionRuntimePlan,
-} from '@/agent/runtime/session/loop/lifecycle';
+import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { withHostSessionRuntimeIdentityPublication } from '@/agent/runtime/identity/publication/withHostSession';
 import {
@@ -97,7 +93,8 @@ type SessionHostRunOptions = Readonly<{
  * session-loop lifecycle and session-control helpers.
  */
 export class SessionHostBridge implements SessionHostBridgeContract {
-  private requireCanonicalSessionRuntime(runtime: unknown, backendId: string) {
+  private async requireCanonicalSessionRuntime(runtime: unknown, backendId: string) {
+    const { isHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/lifecycle');
     if (isHostSessionRuntimePlan(runtime)) {
       return runtime;
     }
@@ -274,7 +271,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       : params;
     const injectedParams = this.injectProviderMessageMetaEnricher(hostScopedParams, resolution.engineAdapter.messageMeta);
     const runtime = await resolution.engineAdapter.runtimeCore.createSessionRuntime(injectedParams);
-    const canonicalRuntime = this.requireCanonicalSessionRuntime(runtime, backendId);
+    const canonicalRuntime = await this.requireCanonicalSessionRuntime(runtime, backendId);
     const sessionStateFacet = resolution.engineAdapter.facets?.sessionState;
     const planWithSessionState = sessionStateFacet
       ? {
@@ -341,6 +338,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       hostOptions,
     );
     await hostOptions?.beforeRuntimePlanCommit?.();
+    const { runHostSessionRuntimePlan } = await import('@/agent/runtime/session/loop/lifecycle');
     await runHostSessionRuntimePlan(runtime);
   }
 

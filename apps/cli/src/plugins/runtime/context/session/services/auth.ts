@@ -3,14 +3,8 @@ import type {
     SessionRuntimeAuthRefreshRequest,
     SessionRuntimeAuthRefreshResult,
 } from '@happier-dev/plugin-sdk/sessions';
-import {
-    AgentSessionAuthRefreshErrorV1Schema,
-    AgentSessionAuthRefreshPayloadV1Schema,
-    AgentSessionAuthRefreshRecoveryV1Schema,
-    normalizeAgentSessionAuthRefreshErrorV1,
-    type AgentSessionAuthRefreshErrorV1,
-    type AgentSessionAuthRefreshRecoveryV1,
-} from '@happier-dev/protocol';
+import { AgentSessionAuthRefreshErrorV1Schema, AgentSessionAuthRefreshPayloadV1Schema, AgentSessionAuthRefreshRecoveryV1Schema, normalizeAgentSessionAuthRefreshErrorV1 } from '@happier-dev/protocol/runtime/authRefresh';
+import type { AgentSessionAuthRefreshErrorV1, AgentSessionAuthRefreshRecoveryV1 } from '@happier-dev/protocol';
 
 import {
     type CatalogAgentId,

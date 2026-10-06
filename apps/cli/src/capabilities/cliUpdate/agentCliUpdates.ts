@@ -9,7 +9,7 @@ import {
   type AgentInstallProgressCallback,
 } from '@happier-dev/cli-common/agents';
 import { compareVersions } from '@happier-dev/cli-common/update';
-import { AsyncTtlCache } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 
 import { configuration } from '@/configuration';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';

@@ -1,8 +1,6 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-  readAcpConfiguredBackendV1FromMetadata,
-  readLegacyConfiguredAcpBackendId,
-} from '@happier-dev/protocol';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 
 function normalizeString(value: unknown): string | null {
   if (typeof value !== 'string') return null;

@@ -1,10 +1,6 @@
-import {
-  evaluateActionInputPredicate,
-  readActionCliDerivedDefault,
-  readActionInputPath,
-  type ActionCliBindContext,
-  type ActionCliBindInput,
-} from '@happier-dev/protocol';
+import { evaluateInputPredicate as evaluateActionInputPredicate, readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
+import { readActionCliDerivedDefault } from '@happier-dev/protocol/actions/actionCliProjection';
+import type { ActionCliBindContext, ActionCliBindInput } from '@happier-dev/protocol';
 
 import { z } from 'zod';
 

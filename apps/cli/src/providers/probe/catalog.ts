@@ -1,25 +1,10 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  applyProviderCatalogRefreshV1,
-  createProviderCatalogFingerprintV1,
-  createProviderEndpointFingerprintV1,
-  createProviderErrorV1,
-  createProviderProbeRequestFingerprintV1,
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  createProviderManagedProbeRequestFingerprintV1,
-  ProviderConnectionIdSchema,
-  ProviderMachineIdSchema,
-  type ProviderCatalogProbeV1,
-  type ProviderCatalogCommandFallbackV1,
-  type ProviderErrorV1,
-  type ProviderModelDescriptorV1,
-  type ProviderObservationAuthorizationFingerprintV1,
-  type ProviderRuntimeStateFileV1,
-  type ProviderWireProtocol,
-  type ResolvedProviderManagedRuntimeDeclarationV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type AssessedProviderEndpoint,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { applyProviderCatalogRefreshV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { createProviderCatalogFingerprintV1, createProviderEndpointFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { ProviderCatalogProbeV1, ProviderCatalogCommandFallbackV1, ProviderErrorV1, ProviderModelDescriptorV1, ProviderObservationAuthorizationFingerprintV1, ProviderRuntimeStateFileV1, ProviderWireProtocol, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, AssessedProviderEndpoint } from '@happier-dev/protocol';
 
 import {
   replaceProviderRuntimeStateRecord,

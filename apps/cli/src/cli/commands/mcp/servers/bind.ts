@@ -4,7 +4,7 @@ import { hasFlag, readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 
-import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
+import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import type { McpCommandDeps } from '../deps';
 import {

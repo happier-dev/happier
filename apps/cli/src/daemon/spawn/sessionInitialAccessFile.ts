@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { SessionInitialAccessDraftV1Schema, type SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
 import {
   consumeProtectedLocalStateFile,
   createProtectedLocalStateFileExclusive,

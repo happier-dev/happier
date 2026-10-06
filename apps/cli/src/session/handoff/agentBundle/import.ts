@@ -2,10 +2,8 @@ import type { ImportedSessionHandoffBundle, SessionHandoffAgentBundle } from '..
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
-import {
-  ExternalSessionsSourceSchema,
-  readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 
 export type SessionHandoffTypedImportFailureCode =
   | 'target_identity_conflict'

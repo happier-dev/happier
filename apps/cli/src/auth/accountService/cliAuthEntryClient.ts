@@ -1,9 +1,5 @@
-import {
-  AUTH_ENTRY_RESPONSE_MAX_UTF8_BYTES_V1,
-  AuthEntryProjectionV1Schema,
-  AuthEntryRequestV1Schema,
-  type AuthEntryProjectionV1,
-} from '@happier-dev/protocol';
+import { AUTH_ENTRY_RESPONSE_MAX_UTF8_BYTES_V1, AuthEntryProjectionV1Schema, AuthEntryRequestV1Schema } from '@happier-dev/protocol/auth/entry';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
 
 import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
 import { decodeBoundedJsonResponseBody } from '@/features/serverFeaturesParse';

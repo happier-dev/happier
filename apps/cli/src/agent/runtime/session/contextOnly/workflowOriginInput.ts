@@ -1,14 +1,11 @@
-import {
-  composeWorkflowRunWorkerUpdateV1, deriveWorkflowSessionInputLocalIdV2,
-  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, WorkflowAuthoredInputV1Schema,
-  WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema,
-  openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1,
-  openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
-  resolveWorkflowRunDataKeyV1, WorkflowRunRecipientCensusResponseV1Schema,
-  type WorkflowAcceptedSnapshotV1, type WorkflowRunSummaryV1, type WorkflowRunInvocationIndexV1,
-  type WorkflowProgressEnvelopeV1, type WorkflowRunEncryptionV1,
-  type ValidatedAutomationAccountEncryptionV1,
-} from '@happier-dev/protocol';
+import { composeWorkflowRunWorkerUpdateV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { WorkflowAuthoredInputV1Schema, WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowAcceptedSnapshotV1, WorkflowRunSummaryV1, WorkflowRunInvocationIndexV1, WorkflowProgressEnvelopeV1, WorkflowRunEncryptionV1, ValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol';
 import type { WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
 import { readSessionFollowWakeInvalidationGeneration, waitForSessionFollowWakeInvalidation } from '../follow/sessionFollowWakeSignal';
 import type { HostContextOnlyInputPort, PreparedWorkerContextItem } from './hostContextOnlyInput';

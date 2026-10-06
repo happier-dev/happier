@@ -17,15 +17,17 @@ import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './serve
 import packageJson from '../package.json'
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings'
 import { resolveIntEnvWithBounds } from './configuration/resolveIntEnvWithBounds'
-import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol/sessions/replay-seed-budget'
+import { HAPPIER_REPLAY_SEED_MAX_CHARS, HAPPIER_REPLAY_SEED_MIN_CHARS } from '@happier-dev/protocol/sessions/replay-seed-budget';
 import { resolveCliHappyHomeDir } from './configuration/resolveCliHappyHomeDir'
 import {
   readActiveServerFromSettingsFile,
   resolveServerSelection,
 } from './configuration/serverSelection'
-import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, type ClientEncryptionRequirement } from '@happier-dev/protocol'
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
+import type { ClientEncryptionRequirement } from '@happier-dev/protocol';
 import { readFiniteTransferConfig } from '@happier-dev/transfers/node'
-import { TerminalPresentUserPolicySchema, type TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
+import { TerminalPresentUserPolicySchema } from '@happier-dev/protocol/actions/invocationAuthority';
+import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
 export const DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS = 60_000;

@@ -1,16 +1,8 @@
-import {
-  accountSettingsParse,
-  type AttentionDeliveryDecision,
-  type AttentionDeliveryEventId,
-  type PluginNotificationChannelKindV1,
-  BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-  isPushNotificationBundledSoundId,
-  resolveExpoNotificationSoundName,
-  resolveAttentionDeliveryPolicyDecision,
-  resolveNotificationChannelsV1FromAccountSettings,
-  type AccountSettings,
-  type ExpoPushNotificationChannelV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse, resolveNotificationChannelsV1FromAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AttentionDeliveryDecision, AttentionDeliveryEventId, PluginNotificationChannelKindV1, AccountSettings, ExpoPushNotificationChannelV1 } from '@happier-dev/protocol';
+import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 
 import type { PushNotificationClient, PushNotificationDeliveryOptions } from '@/api/pushNotifications';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';

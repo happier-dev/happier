@@ -1,8 +1,6 @@
-import {
-  ProviderSettingsLimitError,
-  createProviderErrorV1,
-} from '@happier-dev/protocol';
-import type { DaemonProviderConnectionsDescribeRequestV1 } from '@happier-dev/protocol/rpc';
+import { ProviderSettingsLimitError } from '@happier-dev/protocol/providers/settings/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { DaemonProviderConnectionsDescribeRequestV1 } from '@happier-dev/protocol/rpc/providers';
 import { ZodError } from 'zod';
 
 import { createProviderAuthoringOperations } from './service/authoringOperations';

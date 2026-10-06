@@ -1,4 +1,4 @@
-import { ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderContributionRegistryView } from '@/providers/registry';

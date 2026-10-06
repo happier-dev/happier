@@ -1,10 +1,6 @@
-import {
-  evaluateFeatureBuildPolicy,
-  resolveEmbeddedFeaturePolicyEnv,
-  resolveFeatureBuildPolicyFromEnvOrEmbedded,
-  type FeatureBuildPolicyEvaluation,
-  type FeatureId,
-} from '@happier-dev/protocol';
+import { evaluateFeatureBuildPolicy } from '@happier-dev/protocol/features/buildPolicy';
+import { resolveEmbeddedFeaturePolicyEnv, resolveFeatureBuildPolicyFromEnvOrEmbedded } from '@happier-dev/protocol/features/embeddedFeaturePolicy';
+import type { FeatureBuildPolicyEvaluation, FeatureId } from '@happier-dev/protocol';
 
 export function getCliFeatureBuildPolicyDecision(featureId: FeatureId, env: NodeJS.ProcessEnv): FeatureBuildPolicyEvaluation {
   const embeddedEnv = resolveEmbeddedFeaturePolicyEnv(

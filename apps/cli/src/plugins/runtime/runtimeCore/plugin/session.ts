@@ -34,19 +34,14 @@ import {
     resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    buildBackendTargetKeyV2,
-    buildUnsupportedSessionPendingInputInterruptAndRunResult,
-    buildUnsupportedSessionTerminalComposerClearResult,
-    readBackendTargetRefV2,
-    readPendingLocalId,
-    SessionModelSelectionResolutionError,
-    SessionModelSelectionV1Schema,
-    resolveSessionModelSelectionInputRefV1,
-    type SessionModelSelectionV1,
-    type AgentSessionStartupInstructionsV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildUnsupportedSessionPendingInputInterruptAndRunResult } from '@happier-dev/protocol/sessions/control/pendingInputInterruptAndRunV1';
+import { buildUnsupportedSessionTerminalComposerClearResult } from '@happier-dev/protocol/sessions/control/terminalComposerClearV1';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { SessionModelSelectionResolutionError, SessionModelSelectionV1Schema, resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelectionV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type {
   AgentSessionConfigurationSnapshot,

@@ -1,37 +1,15 @@
 import axios from 'axios';
 
-import {
-  ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1,
-  ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1,
-  AccountProfileResponseSchema,
-  AccountExternalAuthProofV1Schema,
-  AccountEmailChangeRequestV1Schema,
-  AccountPasswordEnrollRequestV1Schema,
-  AccountPasswordEnrollEmailRequestV1Schema,
-  AccountEmailChangeRequestResponseV1Schema,
-  AccountPasswordChangeRequestV1Schema,
-  AccountPasswordRemoveRequestV1Schema,
-  AccountSecurityGetResponseV1Schema,
-  AccountTerminalPresentUserPolicySetRequestV1Schema,
-  AccountTerminalPresentUserPolicySetResponseV1Schema,
-  AccountSecurityRouteErrorV1Schema,
-  PasswordMutationPreparationRequestV1Schema,
-  PasswordMutationPreparationResponseV1Schema,
-  AuthEntryProjectionV1Schema,
-  AuthEntryRequestV1Schema,
-  ExternalOAuthParamsResponseSchema,
-  buildE2eeAccountPasswordChangeRequestV1,
-  buildE2eeAccountPasswordEnrollRequestV1,
-  buildE2eeAccountPasswordRemoveRequestV1,
-  canonicalizeKeyChallengeV2AudienceOrigin,
-  createPasswordCredentialMutationDigestV1,
-  createPasswordCredentialTargetDigestV1,
-  normalizeVerifiedEmail,
-  type ActionExecuteResult,
-  type ActionId,
-  type AccountSecurityGetResponseV1,
-  type AccountTerminalPresentUserPolicySetResponseV1,
-} from '@happier-dev/protocol';
+import { ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, AccountEmailChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, AccountSecurityRouteErrorV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { AccountExternalAuthProofV1Schema } from '@happier-dev/protocol/auth/accountExternalAuthProof';
+import { AuthEntryProjectionV1Schema, AuthEntryRequestV1Schema } from '@happier-dev/protocol/auth/entry';
+import { ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
+import { buildE2eeAccountPasswordChangeRequestV1, buildE2eeAccountPasswordEnrollRequestV1, buildE2eeAccountPasswordRemoveRequestV1 } from '@happier-dev/protocol/auth/accountSecurityCrypto';
+import { canonicalizeKeyChallengeV2AudienceOrigin } from '@happier-dev/protocol/auth/keyChallenge';
+import { createPasswordCredentialMutationDigestV1, createPasswordCredentialTargetDigestV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
+import type { ActionExecuteResult, ActionId, AccountSecurityGetResponseV1, AccountTerminalPresentUserPolicySetResponseV1 } from '@happier-dev/protocol';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
@@ -79,6 +57,7 @@ async function createAccountSecurityActionRuntime(
     '@/session/actions/createCliActionExecutorFromCredentials'
   );
   const serverId = configuration.activeServerId;
+  const serverUrl = configuration.serverUrl;
   const serverApiUrl = configuration.apiServerUrl;
   const context = {
     surface: 'cli' as const,
@@ -88,6 +67,7 @@ async function createAccountSecurityActionRuntime(
   };
   return {
     serverId,
+    serverUrl,
     serverApiUrl,
     executor: createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl }),
     context,
@@ -156,7 +136,7 @@ async function resolveMutationAudience(
   credentials: StoredCredentials,
   signal?: AbortSignal,
 ) {
-  const origin = canonicalizeKeyChallengeV2AudienceOrigin(runtime.serverApiUrl);
+  const origin = canonicalizeKeyChallengeV2AudienceOrigin(runtime.serverUrl);
   const snapshot = await fetchServerFeaturesSnapshot({
     serverUrl: runtime.serverApiUrl,
     token: credentials.token,

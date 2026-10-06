@@ -1,7 +1,5 @@
-import {
-  projectTranscriptBodySemanticContent,
-  type TranscriptBodySemanticProjection,
-} from '@happier-dev/protocol';
+import { projectTranscriptBodySemanticContent } from '@happier-dev/protocol/sessions/messages/transcriptBodySemanticProjection';
+import type { TranscriptBodySemanticProjection } from '@happier-dev/protocol';
 
 export type DecodedTranscriptBody = TranscriptBodySemanticProjection;
 

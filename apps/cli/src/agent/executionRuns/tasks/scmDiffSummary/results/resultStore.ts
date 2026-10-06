@@ -2,19 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { readdir, stat } from 'node:fs/promises';
 import { z } from 'zod';
-import {
-  ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema,
-  ScmDiffSummaryOutputKindSchema, normalizeScmDiffSummaryModelOutput,
-  type ScmDiffSummaryGenerateOutput, type ScmDiffSummaryModelOutput, type ScmDiffSummaryOutputKind,
-  type ScmDiffSummaryOutputs, type ScmDiffSummaryResult, type ScmDiffSummaryResultEdit,
-  type ScmDiffSummaryResultResponse, type ScmDiffSummaryResultFailure, type ScmDiffSummaryResultDeleteResponse,
-  type ScmDiffSummaryGeneratorSelection,
-  type ScmDiffSummarySavedResultItem,
-  ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked,
-  ScmReviewExplanationTargetsSchema, ScmReviewExplanationRequesterSchema, ScmDiffSummaryModelOutputSchema,
-  ScmWalkthroughProvenanceSchema,
-  type ScmCommitPlanAcceptance, type ScmCommitPlanApplication,
-} from '@happier-dev/protocol';
+import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema, normalizeScmDiffSummaryModelOutput, ScmReviewExplanationTargetsSchema, ScmReviewExplanationRequesterSchema, ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ScmDiffSummaryResultSchema, ScmDiffSummaryResultEditSchema, ScmWalkthroughProvenanceSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResult, ScmDiffSummaryResultEdit, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryGeneratorSelection, ScmDiffSummarySavedResultItem, ScmCommitPlanAcceptance, ScmCommitPlanApplication } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { reviewFindingCitationsSchema, publishReviewFindingCitations, publishFindingCitationMarkdown, validatePublishedFindingCitationMarkdown,
   type ReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';

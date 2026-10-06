@@ -1,11 +1,8 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios, { type AxiosResponse } from 'axios';
-import {
-    SessionMessagesPageV1Schema,
-    buildSessionMessagesPath,
-    type SessionMessageV1,
-    readPendingLocalId,
-} from '@happier-dev/protocol';
+import { SessionMessagesPageV1Schema, buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import type { SessionMessageV1 } from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { drainSessionMessagesAfter, openSessionStoredContent, SessionMessageGapError, type SessionStoredContentContext } from '@happier-dev/sync-client';
 
 import { type Update } from '../types';

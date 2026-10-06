@@ -1,11 +1,6 @@
-import {
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  sessionProviderBindingMetadataMatchesRuntimeBasisV1,
-  type ModelSelectionApplyPolicy,
-  type ProviderBoundModelRef,
-  type ProviderRuntimeBindingBasisV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { sessionProviderBindingMetadataMatchesRuntimeBasisV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 
 import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { projectProviderRuntimeBindingBasis } from '../spawn/runtimeBindingBasis';

@@ -18,13 +18,8 @@ import type { SemanticTranscriptItem } from './transcript/semanticTranscriptItem
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { projectCliSessionAwarenessV1 } from '@/cli/output/session/sessionAwareness';
 import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
-import {
-  buildSessionAwarenessListResultV1,
-  markSessionListQueryResultV1,
-  type SessionAwarenessListResultV1,
-  type SessionListQueryV1,
-  type SessionListViewV1,
-} from '@happier-dev/protocol';
+import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
+import type { SessionAwarenessListResultV1, SessionListQueryV1, SessionListViewV1 } from '@happier-dev/protocol';
 
 const LIST_SESSION_PREVIEW_TEXT_LIMIT = 200;
 

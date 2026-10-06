@@ -1,17 +1,8 @@
 import type { Credentials } from '@/persistence';
-import {
-  createProviderErrorV1,
-  LegacyProfileMigrationSourceNotFoundError,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
-import type {
-  DaemonProviderProfileMigrationConfirmRequestV1,
-  DaemonProviderProfileMigrationConfirmResponseV1,
-  DaemonProviderProfileMigrationPreviewRequestV1,
-  DaemonProviderProfileMigrationPreviewResponseV1,
-  DaemonProviderProfileMigrationConflictConfirmRequestV1,
-  DaemonProviderProfileMigrationConflictConfirmResponseV1,
-} from '@happier-dev/protocol/rpc';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { LegacyProfileMigrationSourceNotFoundError } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { DaemonProviderProfileMigrationConfirmRequestV1, DaemonProviderProfileMigrationConfirmResponseV1, DaemonProviderProfileMigrationPreviewRequestV1, DaemonProviderProfileMigrationPreviewResponseV1, DaemonProviderProfileMigrationConflictConfirmRequestV1, DaemonProviderProfileMigrationConflictConfirmResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { ProviderSettingsMigrationError } from '../settings/migration';
 import { confirmLegacyProfileMigration, confirmLegacyProfileMigrationConflict, previewLegacyProfileMigration } from './runtime';

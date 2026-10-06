@@ -1,13 +1,8 @@
 import { join } from 'node:path';
 
-import {
-  getModelPackCatalogEntry,
-  resolveVoiceModelPackArtifactsV1,
-  type ModelPackManifest,
-  type ModelPackRuntimeFamily,
-  type VoiceModelPackRuntimeV1,
-  type VoiceModelPackSupportArtifactV1,
-} from '@happier-dev/protocol';
+import { getModelPackCatalogEntry } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { resolveVoiceModelPackArtifactsV1 } from '@happier-dev/protocol/voice/modelPacks/artifactRolesV1';
+import type { ModelPackManifest, ModelPackRuntimeFamily, VoiceModelPackRuntimeV1, VoiceModelPackSupportArtifactV1 } from '@happier-dev/protocol';
 
 import { createVoiceInferenceError } from '../voiceInferenceWorker.shared';
 

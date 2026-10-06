@@ -1,4 +1,4 @@
-import { normalizeProviderPublicHeaders } from '@happier-dev/protocol';
+import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
 
 export function serializeManagedServiceEndpointReadRequestHeaders(
     value: ConstructorParameters<typeof Headers>[0],

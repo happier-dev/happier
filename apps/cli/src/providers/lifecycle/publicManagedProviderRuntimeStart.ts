@@ -7,12 +7,10 @@ import type {
   ManagedServiceHandle,
   ManagedServices,
 } from '@happier-dev/plugin-sdk/managed-services';
-import {
-  PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
-  ProviderConnectionIdSchema,
-  pluginSourceCustodyV1Equal,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { ResolvedManagedProviderRuntime } from '@/plugins/projection/registry/types';
 

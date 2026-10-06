@@ -1,17 +1,7 @@
-import {
-  applyProviderCatalogRefreshV1,
-  createProviderProbeRequestFingerprintV1,
-  mergeProviderCatalogV1,
-  qualifiedPurposeKey,
-  type OAuthBearerLeaseV1,
-  type PluginContributionIdentityV1,
-  type ProviderContributionV1,
-  type ProviderCatalogTransitionStateV1,
-  type ProviderModelDescriptorV1,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountRequestAuthUseV1,
-} from '@happier-dev/protocol';
+import { applyProviderCatalogRefreshV1, mergeProviderCatalogV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { OAuthBearerLeaseV1, PluginContributionIdentityV1, ProviderContributionV1, ProviderCatalogTransitionStateV1, ProviderModelDescriptorV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 import type {
   ConnectedAccountPurposeBindingOwner,

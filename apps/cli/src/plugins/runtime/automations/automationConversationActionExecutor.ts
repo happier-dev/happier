@@ -2,29 +2,15 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
 import axios from 'axios';
 
-import {
-  AutomationConversationActionHttpPathsV1,
-  AutomationConversationActionHttpRequestSchemasV1,
-  AutomationConversationActionInputSchemasV1,
-  AutomationConversationActionOutputSchemasV1,
-  AutomationConversationAdmitEncryptedHttpRequestV1Schema,
-  AutomationConversationAdmitInputV1Schema,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginMachineMaterializationRefV1Schema,
-  buildAutomationConversationOccurrenceEvidenceV1,
-  deriveAutomationOccurrenceKeyV1,
-  deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1,
-  isAutomationConversationAdmitScopedCorrespondenceV1,
-  sealAutomationConversationReplyContextStoredEnvelopeV1,
-  sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
-  sealAutomationRunTriggerEvidenceEnvelopeV1,
-  type AccountEncryptionCurrentnessResponse,
-  type AccountScopedCryptoMaterialSnapshotV1,
-  type ActionExecutorDeps,
-  type AutomationConversationActionHttpRequestByIdV1,
-  type AutomationConversationActionIdV1,
-  type PluginMachineMaterializationRefV1,
-} from '@happier-dev/protocol';
+import { AutomationConversationActionHttpPathsV1, AutomationConversationActionHttpRequestSchemasV1, AutomationConversationAdmitEncryptedHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
+import { AutomationConversationActionInputSchemasV1, AutomationConversationActionOutputSchemasV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationConversationAdmitInputV1Schema, isAutomationConversationAdmitScopedCorrespondenceV1 } from '@happier-dev/protocol/automations/result-delivery';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { buildAutomationConversationOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1, sealAutomationOccurrenceTriggerEvidenceEnvelopeV1, sealAutomationRunTriggerEvidenceEnvelopeV1 } from '@happier-dev/protocol/automations/automationEventTriggerEvidence';
+import { sealAutomationConversationReplyContextStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, ActionExecutorDeps, AutomationConversationActionHttpRequestByIdV1, AutomationConversationActionIdV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { fetchChangesAccountId } from '@/api/changes';

@@ -2,38 +2,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-  PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1,
-  PEER_APPLICATION_ENCRYPTION_SUITE_V1,
-  createPeerApplicationEncryptionAadV1,
-  createPeerApplicationEncryptionNonceV1,
-  createSpeechTranscriptionApplicationAuthorityDigestV1,
-  decodeBase64,
-  decodePeerApplicationEncryptedFrameV1,
-  deriveBoxPublicKeyFromSeed,
-  encodeBase64,
-  encodePeerApplicationEncryptedFrameV1,
-  openEncryptedDataKeyEnvelopeV1,
-  type DaemonVoiceInferenceError,
-  type DaemonVoiceInferenceSttStreamCancelRequest,
-  type DaemonVoiceInferenceSttStreamCancelResponse,
-  type DaemonVoiceInferenceSttStreamChunkRequest,
-  type DaemonVoiceInferenceSttStreamChunkResponse,
-  type DaemonVoiceInferenceSttStreamEvent,
-  type DaemonVoiceInferenceSttStreamFinishRequest,
-  type DaemonVoiceInferenceSttStreamFinishResponse,
-  type DaemonVoiceInferenceSttStreamStartRequest,
-  type DaemonVoiceInferenceSttStreamStartResponse,
-  type DaemonVoiceInferenceSttStreamStatusRequest,
-  type DaemonVoiceInferenceSttStreamStatusResponse,
-  type VoiceSpeechDiagnosticsCaptureContextV1,
-  type PeerApplicationEncryptionAuthorityBindingV1,
-  type PeerApplicationEncryptionPhaseV1,
-  type VoiceMediaApplicationAuthorityV1,
-} from '@happier-dev/protocol';
+import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/protocol/daemon/voiceInference';
+import { PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1, PEER_APPLICATION_ENCRYPTION_SUITE_V1, createPeerApplicationEncryptionAadV1, createPeerApplicationEncryptionNonceV1, createSpeechTranscriptionApplicationAuthorityDigestV1, decodePeerApplicationEncryptedFrameV1, encodePeerApplicationEncryptedFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import type { DaemonVoiceInferenceError, DaemonVoiceInferenceSttStreamCancelRequest, DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkRequest, DaemonVoiceInferenceSttStreamChunkResponse, DaemonVoiceInferenceSttStreamEvent, DaemonVoiceInferenceSttStreamFinishRequest, DaemonVoiceInferenceSttStreamFinishResponse, DaemonVoiceInferenceSttStreamStartRequest, DaemonVoiceInferenceSttStreamStartResponse, DaemonVoiceInferenceSttStreamStatusRequest, DaemonVoiceInferenceSttStreamStatusResponse, VoiceSpeechDiagnosticsCaptureContextV1, PeerApplicationEncryptionAuthorityBindingV1, PeerApplicationEncryptionPhaseV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { toVoiceInferenceError } from '@/api/machine/voiceInferenceRpcResponses';

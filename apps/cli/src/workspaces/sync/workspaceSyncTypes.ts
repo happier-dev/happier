@@ -1,21 +1,5 @@
-import {
-  computeWorkspaceSyncPolicyDigest as computeCanonicalWorkspaceSyncPolicyDigest,
-  type WorkspaceSyncConflictResolutionResultV1,
-  type WorkspaceSyncConflictResolutionV1,
-  type ReadWorkspaceSyncFileResultV1,
-  type ReadWorkspaceSyncFileV1,
-  type WorkspaceContentPolicyV1,
-  type WorkspaceSyncConflictPageRequestV1,
-  type WorkspaceSyncConflictPageV1,
-  type WorkspaceSyncConflictInspectRpcRequestV1,
-  type WorkspaceSyncConflictInspectRpcResultV1,
-  type WorkspaceSyncCopyOnceV1,
-  type WorkspaceSyncRelationshipV1,
-  type WorkspaceSyncRelationshipsListRpcRequestV1,
-  type WorkspaceSyncRelationshipsListRpcResultV1,
-  type WorkspaceSyncStatusV1,
-  type HandoffTargetReplacementApprovalV1,
-} from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest as computeCanonicalWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, ReadWorkspaceSyncFileResultV1, ReadWorkspaceSyncFileV1, WorkspaceContentPolicyV1, WorkspaceSyncConflictPageRequestV1, WorkspaceSyncConflictPageV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceRootOwnershipHandle } from './workspaceSyncRootOwnership';
 
 export type {

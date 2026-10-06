@@ -4,7 +4,7 @@ import type {
     IosSimulatorAdapterHealthV1,
     SimulatorDeviceResourceV1,
 } from '@happier-dev/protocol';
-import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol';
+import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import { defaultSimulatorToolRunner, type SimulatorToolRunner } from '../process';
 import { createIosSimulatorUnavailableHealth } from './diagnostics';

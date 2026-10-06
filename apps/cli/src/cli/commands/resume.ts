@@ -24,13 +24,11 @@ import type {
   ConnectedServiceBindingsV2,
 } from '@happier-dev/protocol';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  SessionTerminalMetadataSchema,
-  readAcpConfiguredBackendV1FromMetadata,
-  readLegacyConfiguredAcpBackendId,
-  serializeSessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { serializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import {
   PersistedProviderResumeBindingError,
   readPersistedProviderResumeState,

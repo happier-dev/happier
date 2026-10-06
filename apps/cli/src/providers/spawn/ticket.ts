@@ -1,9 +1,6 @@
-import {
-  ProviderBindingAuthorizationTicketV1Schema,
-  createProviderErrorV1,
-  type ProviderBindingAuthorizationTicketV1,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { ProviderBindingAuthorizationTicketV1Schema } from '@happier-dev/protocol/providers/grants/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderBindingAuthorizationTicketV1, ProviderErrorV1 } from '@happier-dev/protocol';
 
 export type ProviderBindingAuthorizationState = ProviderBindingAuthorizationTicketV1;
 

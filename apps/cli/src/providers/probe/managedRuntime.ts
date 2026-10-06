@@ -1,8 +1,6 @@
-import {
-  createProviderManagedProbeRequestFingerprintV1,
-  createProviderErrorV1,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
 import type {
   ManagedProviderEndpointHttpAccess,

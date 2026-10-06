@@ -1,9 +1,6 @@
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
-import {
-  parseReplaceRemoteBackgroundServicesPromptData,
-  parseSshTrustPromptData,
-  type SystemTaskJsonObject,
-} from '@happier-dev/protocol';
+import { parseReplaceRemoteBackgroundServicesPromptData, parseSshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol';
 
 /** The two host-identity prompts an SSH system task can raise. */
 export type SshHostTrustPromptKind = 'ssh.trustHost' | 'ssh.replaceHostKey';

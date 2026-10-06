@@ -1,8 +1,5 @@
-import {
-  DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  type BrowserRecordingCapabilities,
-  type DaemonBrowserRecordingStartInputV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_BROWSER_RECORDING_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type { BrowserRecordingCapabilities, DaemonBrowserRecordingStartInputV1 } from '@happier-dev/protocol';
 
 import type { BrowserRecordingStartContext } from './routes';
 

@@ -1,17 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  accountSettingsParse,
-  areWorkspaceSyncRelationshipDefinitionsEqual,
-  assertAccountWorkspaceSettingsTransition,
-  type AccountSettingsMutationResult,
-  type WorkspaceContentPolicyV1,
-  type WorkspaceRefV1,
-  type WorkspaceSyncPersistentModeV1,
-  type WorkspaceSyncRelationshipV1,
-  type WorkspaceSyncStatusV1,
-  type HandoffTargetReplacementApprovalV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse, assertAccountWorkspaceSettingsTransition } from '@happier-dev/protocol/account/settings/accountSettings';
+import { areWorkspaceSyncRelationshipDefinitionsEqual } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { AccountSettingsMutationResult, WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentModeV1, WorkspaceSyncRelationshipV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 
 import { materializeWorkspaceRefForMachineRoot } from '@/settings/accountSettings/workspaceRefsV1';
 import {

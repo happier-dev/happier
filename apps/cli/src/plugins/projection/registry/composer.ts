@@ -1,17 +1,8 @@
-import {
-    buildQualifiedPluginContributionKey,
-    type DaemonPluginUiComposerSurfaceCatalogEntryV1,
-    type DaemonPluginUiTargetedSurfaceSelectedRendererV1,
-    DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema,
-    type PluginMachineExecutionOriginV1,
-    type PluginProjectionV2,
-    type PluginUiResourceBindingCapabilityV1,
-} from '@happier-dev/protocol';
-import {
-    selectPluginUiRendererChainMemberV1,
-    type PluginUiRendererChainBindingV1,
-    type PluginUiTargetedContributionsV1,
-} from '@happier-dev/protocol/plugins/ui';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { DaemonPluginUiComposerSurfaceCatalogEntryV1, DaemonPluginUiTargetedSurfaceSelectedRendererV1, PluginMachineExecutionOriginV1, PluginProjectionV2, PluginUiResourceBindingCapabilityV1 } from '@happier-dev/protocol';
+import { DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { selectPluginUiRendererChainMemberV1 } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
+import type { PluginUiRendererChainBindingV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';

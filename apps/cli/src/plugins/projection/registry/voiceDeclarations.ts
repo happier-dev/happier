@@ -1,8 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createRecipientContractDigestV1,
-    type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import type { VoiceProviderContribution } from '@happier-dev/protocol';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import {

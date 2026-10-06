@@ -329,7 +329,7 @@ describe('real-loader External Session hook aggregate conformance', () => {
                 resolvedVersion: '1.0.0',
             },
         }];
-        const registered = createTargetAgentRuntimeRegistry({
+        const registered = await createTargetAgentRuntimeRegistry({
             agents,
             activationTargets: [target(manifest)],
             targetRegistrations: result.registrations.map((registration) => ({
@@ -342,7 +342,7 @@ describe('real-loader External Session hook aggregate conformance', () => {
             retirementSignal: retirement.signal,
             onDuplicate: vi.fn(),
         });
-        const registry = createDeclarativeAcpAgentRuntimeRegistry({
+        const registry = await createDeclarativeAcpAgentRuntimeRegistry({
             agents,
             registered,
             occurrenceId: 'generation-7',
@@ -457,7 +457,7 @@ describe('real-loader External Session hook aggregate conformance', () => {
                 };
             mutableCommand.timeoutMs = 99;
             const retirement = new AbortController();
-            const registry = createTargetAgentRuntimeRegistry({
+            const registry = await createTargetAgentRuntimeRegistry({
                 agents: [{
                     id: AGENT_ID,
                     identity: { pluginId: PLUGIN_ID, localId: AGENT_ID },

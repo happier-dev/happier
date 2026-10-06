@@ -1,8 +1,5 @@
-import {
-  ComposerAttachmentPrepareRequestV1Schema,
-  type ComposerAttachmentDraftV1,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ComposerAttachmentPrepareRequestV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
+import type { ComposerAttachmentDraftV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { createTargetComposerAttachmentRegistry } from '@/plugins/runtime/lifecycle/contributions/targetComposerAttachments';

@@ -1,10 +1,6 @@
-import {
-  PromptAssetDeleteRequestSchema,
-  PromptAssetDiscoverRequestSchema,
-  PromptAssetListTypesResponseV1,
-  RPC_METHODS,
-  type PromptAssetMutationResponseV1,
-} from '@happier-dev/protocol';
+import { PromptAssetDeleteRequestSchema, PromptAssetDiscoverRequestSchema } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
+import type { PromptAssetListTypesResponseV1, PromptAssetMutationResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';

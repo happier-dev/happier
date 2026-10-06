@@ -1,18 +1,7 @@
-import {
-    SessionAgentTransitionBriefPreviewRequestV1Schema,
-    SessionAgentTransitionBriefPreviewV1Schema,
-    SessionAgentTransitionRequestV1Schema,
-    SessionAgentTransitionResultV1Schema,
-    SessionContinuationInspectionBatchRequestV1Schema,
-    SessionContinuationInspectionBatchResultV1Schema,
-    SessionContinuationInspectionRequestV1Schema,
-    SessionContinuationInspectionV1Schema,
-    rejectUndispatchedSessionAgentTransition,
-    type SessionAgentTransitionBriefPreviewV1,
-    type SessionAgentTransitionResultV1,
-    type SessionContinuationInspectionV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionAgentTransitionBriefPreviewRequestV1Schema, SessionAgentTransitionBriefPreviewV1Schema, SessionAgentTransitionRequestV1Schema, SessionAgentTransitionResultV1Schema, SessionContinuationInspectionBatchRequestV1Schema, SessionContinuationInspectionBatchResultV1Schema, SessionContinuationInspectionRequestV1Schema, SessionContinuationInspectionV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
+import { rejectUndispatchedSessionAgentTransition } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
+import type { SessionAgentTransitionBriefPreviewV1, SessionAgentTransitionResultV1, SessionContinuationInspectionV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';

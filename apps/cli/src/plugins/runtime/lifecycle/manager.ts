@@ -7,7 +7,7 @@ import type {
     PluginToolContributionV2,
     PluginCommandContributionV2,
 } from '@happier-dev/protocol';
-import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import type {

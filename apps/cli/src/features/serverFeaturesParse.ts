@@ -1,8 +1,6 @@
-import {
-  FEATURES_RESPONSE_MAX_UTF8_BYTES_V1,
-  FeaturesResponseSchema,
-  type FeaturesResponse as ServerFeatures,
-} from '@happier-dev/protocol';
+import { FEATURES_RESPONSE_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/features/payload/responseLimits';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
 export function parseServerFeatures(raw: unknown): ServerFeatures | null {
   const parsed = FeaturesResponseSchema.safeParse(raw);

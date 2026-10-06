@@ -16,10 +16,8 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import tweetnacl from 'tweetnacl';
-import {
-    MachineInstallationIdentityV1Schema,
-    type MachineInstallationIdentityV1,
-} from '@happier-dev/protocol';
+import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 
 import { encodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';

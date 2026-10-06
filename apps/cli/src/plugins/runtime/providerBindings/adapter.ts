@@ -1,19 +1,13 @@
 import { z } from 'zod';
-import {
-    AgentProviderBindingMaterializationV1Schema,
-    AgentProviderRequirementsV1Schema,
-    ProviderAdapterBindingKeyV1Schema,
-    ProviderAgentTargetKeySchema,
-    ProviderConnectionIdSchema,
-    ProviderContributionKeySchema,
-    ProviderCredentialTransportV1Schema,
-    ProviderEndpointUrlSyntaxSchema,
-    ProviderLocalIdSchema,
-    ProviderModelDescriptorV1Schema,
-    ProviderWireProtocolSchema,
-    type AgentProviderBindingMaterializationV1,
-    type AgentProviderRequirementsV1,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
+import { ProviderAdapterBindingKeyV1Schema } from '@happier-dev/protocol/providers/sessions/adapterBindingKeyV1';
+import { ProviderCredentialTransportV1Schema } from '@happier-dev/protocol/providers/credentials/v1';
+import { ProviderWireProtocolSchema } from '@happier-dev/protocol/providers/capabilities/v1';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import type { AgentProviderBindingMaterializationV1, AgentProviderRequirementsV1 } from '@happier-dev/protocol';
 import type {
     AgentProviderBindingAdapter,
     AgentProviderBindingCredential,

@@ -1,7 +1,5 @@
-import {
-    SessionUsageLimitRecoveryV1Schema,
-    type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
 type UsageLimitRecoveryIdentity = Pick<
     SessionUsageLimitRecoveryV1,

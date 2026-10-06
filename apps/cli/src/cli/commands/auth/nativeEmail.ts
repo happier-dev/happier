@@ -2,44 +2,15 @@ import axios from 'axios';
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 
-import {
-  NATIVE_AUTH_EMAIL_PRELOGIN_PATH_V1,
-  NATIVE_AUTH_EMAIL_LOGIN_PATH_V1,
-  NATIVE_AUTH_EMAIL_UNLOCK_PATH_V1,
-  NATIVE_AUTH_EMAIL_PROVISION_PATH_V1,
-  NATIVE_AUTH_EMAIL_VERIFY_REQUEST_PATH_V1,
-  NATIVE_AUTH_PASSWORD_RESET_REQUEST_PATH_V1,
-  NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1,
-  NativeAuthEmailAcceptedResponseV1Schema,
-  NativeEmailVerifyRequestV1Schema,
-  NativePasswordResetRequestV1Schema,
-  NativeEmailPasswordLoginResponseV1Schema,
-  NativeEmailPasswordErrorResponseV1Schema,
-  NativeEmailPasswordLoginRequestV1Schema,
-  NativeEmailPasswordPreloginRequestV1Schema,
-  NativeEmailPasswordPreloginResponseV1Schema,
-  NativeEmailPasswordUnlockRequestV1Schema,
-  NativeEmailPasswordUnlockResponseV1Schema,
-  NativeEmailPasswordProvisionRequestV1Schema,
-  NativeEmailPasswordProvisionResponseV1Schema,
-  PlainPasswordResetSubmitResponseV1Schema,
-  PlainPasswordResetSubmitRequestV1Schema,
-  normalizeVerifiedEmail,
-  parseRecoveryKey,
-  ACCOUNT_EMAIL_CHANGE_PATH_V1,
-  AccountSecurityRouteErrorV1Schema,
-  AccountPasswordMutationResponseV1Schema,
-  AccountEmailChangeCompleteRequestV1Schema,
-  KeyChallengeV2AuthRequestSchema,
-  KeyChallengeV2IssueResponseSchema,
-  canonicalizeKeyChallengeV2AudienceOrigin,
-  createKeyChallengeV2SigningInput,
-  deriveAccountMachineKeyFromRecoverySecret,
-  encodeBase64,
-  encodePasswordCredentialFieldV1,
-  formatRecoveryKey,
-  signAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+import { NATIVE_AUTH_EMAIL_PRELOGIN_PATH_V1, NATIVE_AUTH_EMAIL_LOGIN_PATH_V1, NATIVE_AUTH_EMAIL_UNLOCK_PATH_V1, NATIVE_AUTH_EMAIL_PROVISION_PATH_V1, NATIVE_AUTH_EMAIL_VERIFY_REQUEST_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_REQUEST_PATH_V1, NativeAuthEmailAcceptedResponseV1Schema, NativeEmailVerifyRequestV1Schema, NativePasswordResetRequestV1Schema, NativeEmailPasswordLoginResponseV1Schema, NativeEmailPasswordErrorResponseV1Schema, NativeEmailPasswordLoginRequestV1Schema, NativeEmailPasswordPreloginRequestV1Schema, NativeEmailPasswordPreloginResponseV1Schema, NativeEmailPasswordUnlockRequestV1Schema, NativeEmailPasswordUnlockResponseV1Schema, NativeEmailPasswordProvisionRequestV1Schema, NativeEmailPasswordProvisionResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
+import { NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1, PlainPasswordResetSubmitResponseV1Schema, PlainPasswordResetSubmitRequestV1Schema, ACCOUNT_EMAIL_CHANGE_PATH_V1, AccountSecurityRouteErrorV1Schema, AccountPasswordMutationResponseV1Schema, AccountEmailChangeCompleteRequestV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
+import { parseRecoveryKey, formatRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
+import { KeyChallengeV2AuthRequestSchema, KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin, createKeyChallengeV2SigningInput } from '@happier-dev/protocol/auth/keyChallenge';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -136,6 +107,7 @@ function projectNativeCommandFailure(error: unknown, fallback: string): Readonly
 
 type CapturedNativeAttempt = Readonly<{
   serverId: string;
+  serverUrl: string;
   serverApiUrl: string;
   serverIdentityId: string;
   normalizedEmail: string;
@@ -165,7 +137,11 @@ function assertStillCaptured(captured: CapturedNativeAttempt): void {
   // Server selection is process-global; a concurrent selection change between
   // prelogin and credential persistence must not land credentials for the
   // wrong Home.
-  if (configuration.activeServerId !== captured.serverId || resolveServerHttpBaseUrl() !== captured.serverApiUrl) {
+  if (
+    configuration.activeServerId !== captured.serverId
+    || configuration.serverUrl !== captured.serverUrl
+    || resolveServerHttpBaseUrl() !== captured.serverApiUrl
+  ) {
     throw new NativeEmailCommandError(
       'cancelled',
       'The selected Home changed during sign-in. Credentials were not changed; run the command again for the intended Home.',
@@ -177,6 +153,7 @@ async function captureNativeAttempt(args: readonly string[], email: string): Pro
   const normalized = normalizeVerifiedEmail(email);
   if (!normalized) throw new NativeEmailCommandError('invalid_arguments', NATIVE_EMAIL_USAGE);
   const serverId = configuration.activeServerId;
+  const serverUrl = configuration.serverUrl;
   const serverApiUrl = resolveServerHttpBaseUrl();
   const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: serverApiUrl });
   const serverIdentityId =
@@ -185,6 +162,7 @@ async function captureNativeAttempt(args: readonly string[], email: string): Pro
   const invitationToken = readFlagValue(args, '--invitation-token');
   return {
     serverId,
+    serverUrl,
     serverApiUrl,
     serverIdentityId,
     normalizedEmail: normalized.normalizedEmail,
@@ -215,7 +193,7 @@ async function redeemNativePasswordChallenge(input: Readonly<{
   secret: Uint8Array;
   signal?: AbortSignal;
 }>): Promise<string> {
-  const expectedOrigin = canonicalizeKeyChallengeV2AudienceOrigin(input.captured.serverApiUrl);
+  const expectedOrigin = canonicalizeKeyChallengeV2AudienceOrigin(input.captured.serverUrl);
   if (
     !expectedOrigin
     || input.challenge.audience.origin !== expectedOrigin
@@ -269,6 +247,7 @@ export async function authenticateExistingAccountWithLegacySecret(input: Readonl
 }>): Promise<string> {
   const captured: CapturedNativeAttempt = {
     serverId: configuration.activeServerId,
+    serverUrl: configuration.serverUrl,
     serverApiUrl: input.serverApiUrl,
     serverIdentityId: input.serverIdentityId,
     normalizedEmail: '',
@@ -563,7 +542,7 @@ async function handleNativeProvision(args: string[], signal?: AbortSignal): Prom
       });
       if (issued.status < 200 || issued.status >= 300) throwNativeResponseFailure(issued.data, 'challenge_unavailable');
       const challenge = KeyChallengeV2IssueResponseSchema.parse(issued.data);
-      const expectedOrigin = canonicalizeKeyChallengeV2AudienceOrigin(captured.serverApiUrl);
+      const expectedOrigin = canonicalizeKeyChallengeV2AudienceOrigin(captured.serverUrl);
       if (
         !expectedOrigin
         || challenge.audience.origin !== expectedOrigin
@@ -874,6 +853,7 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
         signal?.throwIfAborted();
         const serverApiUrl = resolveServerHttpBaseUrl();
         const serverId = configuration.activeServerId;
+        const serverUrl = configuration.serverUrl;
         const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: serverApiUrl, ...(signal ? { signal } : {}) });
         const serverIdentityId = snapshot.status === 'ready'
           ? snapshot.features.capabilities.serverIdentity.serverIdentityId?.trim() ?? ''
@@ -881,6 +861,7 @@ async function handleRecoveryKey(args: string[], signal?: AbortSignal): Promise<
         if (!serverIdentityId) throw new NativeEmailCommandError('unsupported');
         const captured: CapturedNativeAttempt = {
           serverId,
+          serverUrl,
           serverApiUrl,
           serverIdentityId,
           normalizedEmail: '',

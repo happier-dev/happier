@@ -3,7 +3,10 @@ import type {
     UserMessage,
 } from '../types';
 import { SessionMessageContentSchema, UserMessageSchema } from '../types';
-import { AgentSessionRuntimeEventSchema, SessionInputAdmissionReceiptV1Schema, coerceSessionUserPromptV1, readPendingLocalId } from '@happier-dev/protocol';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { coerceSessionUserPromptV1 } from '@happier-dev/protocol/sessions/messages/coerceSessionUserPromptV1';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 import {
     detectSessionTurnLifecycleEvent,

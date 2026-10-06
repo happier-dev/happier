@@ -7,7 +7,7 @@ import type {
 } from '@/plugins/runtime/exec/privateContract';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import {
   resolveAgentCliLaunchSpecForRuntime,
   type AgentCliLaunchSpec,

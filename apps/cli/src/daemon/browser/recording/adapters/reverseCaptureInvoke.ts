@@ -1,9 +1,6 @@
-import {
-  UiBrowserRecordingCaptureFrameRequestV1Schema,
-  UiBrowserRecordingCaptureFrameResponseV1Schema,
-  type UiBrowserRecordingCaptureFrameRequestV1,
-} from '@happier-dev/protocol';
-import { isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
+import { UiBrowserRecordingCaptureFrameRequestV1Schema, UiBrowserRecordingCaptureFrameResponseV1Schema } from '@happier-dev/protocol/browser/recording/reverseCaptureV1';
+import type { UiBrowserRecordingCaptureFrameRequestV1 } from '@happier-dev/protocol';
+import { isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 
 import type {
   DesktopBrowserRecordingFrameCaptureInvoke,

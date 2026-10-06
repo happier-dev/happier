@@ -23,16 +23,13 @@ import type {
   PromptAssetReadRequest,
   PromptRegistryFetchItemRequestV1,
 } from '@happier-dev/protocol';
-import {
-    createProviderErrorV1,
-    HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
-    parseHostEventPayloadV1,
-    readServerEnabledBit,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SessionUsageLimitRecoveryV1Schema,
-  SessionExecutionRunBrokerAuthorityResponseV1Schema,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
+import { parseHostEventPayloadV1 } from '@happier-dev/protocol/plugins/events/hostV1';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
@@ -82,11 +79,8 @@ import { createNpmRegistryProfileService } from '@/plugins/distribution/npm/prof
 import { createNpmRegistryProfileProbe } from '@/plugins/distribution/npm/profiles/probe';
 import { triggerLegacyProfileMigration as triggerLegacyProfileMigrationRuntime } from '@/providers/migrations/runtime';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import {
-  PeerLoopbackEndpointCandidateV1Schema,
-  type FeaturesResponse,
-  type PeerLoopbackEndpointCandidateV1,
-} from '@happier-dev/protocol';
+import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import {
   startPeerMediationLoopback,

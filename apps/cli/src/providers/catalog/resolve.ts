@@ -1,7 +1,5 @@
-import {
-  ProviderBoundModelRefSchema,
-  resolveProviderCatalogReferenceV1,
-} from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { resolveProviderCatalogReferenceV1 } from '@happier-dev/protocol/providers/catalog/merge';
 
 import type {
   ProviderCatalogModelReferenceResolution,

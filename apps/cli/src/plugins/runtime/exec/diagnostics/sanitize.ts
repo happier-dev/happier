@@ -1,4 +1,4 @@
-import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports';
+import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type { ExecClientDiagnosticSanitizerV1 } from '../privateContract';
 

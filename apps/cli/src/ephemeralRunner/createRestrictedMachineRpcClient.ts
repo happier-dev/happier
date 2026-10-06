@@ -6,14 +6,10 @@ import {
   type ReadinessProbeResult,
 } from '@happier-dev/connection-supervisor';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/rpc';
-import {
-  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
-  PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-  type MachineInstallationProofV1,
-  type IrohEndpointDescriptorV1,
-  type PeerTcpTunnelRelayEnvelope,
-} from '@happier-dev/protocol';
+import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import type { MachineInstallationProofV1, IrohEndpointDescriptorV1, PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol';
 import type { VerifiedEphemeralSessionRunnerPrincipal } from '@happier-dev/protocol/ephemeralRunner/principal';
 import { classifyTransportErrorToProbeResult } from '@/api/connection/classifyTransportErrorToProbeResult';
 import type { Socket } from 'socket.io-client';

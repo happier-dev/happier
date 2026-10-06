@@ -4,9 +4,9 @@ import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
-import { DaemonWorkspaceFileSearchRequestSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
-    type DaemonWorkspaceFileSearchResponse, type WorkspaceFileSearchFileV1 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonWorkspaceFileSearchRequestSchema, WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
+import type { DaemonWorkspaceFileSearchResponse, WorkspaceFileSearchFileV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 // Native rg owns this external JSON record contract. Its optional statistics are
 // deliberately not part of the workspace search DTO.

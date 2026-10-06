@@ -3,7 +3,7 @@ import type {
   DeferredSessionBufferLimits,
   DeferredSessionBufferStats,
 } from './deferredSessionBuffer';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { AgentState, Metadata, UserMessage } from '@/api/types';
 import type {

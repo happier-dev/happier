@@ -1,5 +1,7 @@
-import { accountSettingsParse, readSessionRolesV1, resolveRoleSelectionV1,
-  type ResolvedRoleV1, type RoleEngineV1 } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { ResolvedRoleV1, RoleEngineV1 } from '@happier-dev/protocol';
 
 /** All run intents consume the same role selection as review. The snapshot is
  * host admission output, never an authored RPC input. */

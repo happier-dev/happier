@@ -1,16 +1,6 @@
-import {
-  ReviewScmScopeV1Schema,
-  ReviewStartInputSchema,
-  type ReviewBase,
-  type ReviewChangeType,
-  type ReviewScmScopeBaseRefV1,
-  type ReviewScmScopeDiagnosticCodeV1,
-  type ReviewScmScopeDiagnosticV1,
-  type ReviewScmScopePathV1,
-  type ReviewScmScopeV1,
-  type ScmWorkingEntry,
-  type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import type { ReviewBase, ReviewChangeType, ReviewScmScopeBaseRefV1, ReviewScmScopeDiagnosticCodeV1, ReviewScmScopeDiagnosticV1, ReviewScmScopePathV1, ReviewScmScopeV1, ScmWorkingEntry, ScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';

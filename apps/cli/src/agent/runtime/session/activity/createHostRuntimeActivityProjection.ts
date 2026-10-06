@@ -1,7 +1,5 @@
-import {
-  SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX,
-} from '@happier-dev/protocol';
-import { SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/runtime';
+import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
 import {
   createRegisteredSessionStateFieldMutation,

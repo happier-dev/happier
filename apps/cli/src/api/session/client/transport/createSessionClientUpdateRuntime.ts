@@ -7,10 +7,8 @@ import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extr
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import {
-    ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
-    type ParticipantExecutionRunRecipientRoutingIdentityV1,
-} from '@happier-dev/protocol';
+import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type { ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol';
 
 export type SessionClientUpdateRuntime = Readonly<{
     handleUpdate: (data: Update, opts: {

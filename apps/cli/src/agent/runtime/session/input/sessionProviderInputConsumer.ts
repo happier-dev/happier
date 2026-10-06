@@ -1,10 +1,8 @@
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { logger } from '@/ui/logger';
-import {
-  isSessionPendingQueueHoldBlockingPendingDrain,
-  type SessionPendingQueueDeliveryTiming,
-} from '@happier-dev/protocol';
+import { isSessionPendingQueueHoldBlockingPendingDrain } from '@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1';
+import type { SessionPendingQueueDeliveryTiming } from '@happier-dev/protocol';
 import {
   DEFAULT_SESSION_METADATA_WAIT_RETRY_BACKOFF_MS,
   waitForSessionMetadataRetryBackoff,

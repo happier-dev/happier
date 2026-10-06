@@ -1,7 +1,5 @@
-import {
-    PluginDomainChangeEntrySchema,
-    type ChangeEntry,
-} from '@happier-dev/protocol/changes';
+import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
+import type { ChangeEntry } from '@happier-dev/protocol/changes';
 
 export type PluginAccountSettingsWatchInvalidation =
     | Readonly<{

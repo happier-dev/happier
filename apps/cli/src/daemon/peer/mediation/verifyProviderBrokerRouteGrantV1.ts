@@ -1,9 +1,5 @@
-import {
-    SignedProviderBrokerRouteGrantV1Schema,
-    createProviderBrokerRouteGrantSigningInputV1,
-    type ProviderBrokerRouteGrantPayloadV1,
-    type SignedProviderBrokerRouteGrantV1,
-} from '@happier-dev/protocol';
+import { SignedProviderBrokerRouteGrantV1Schema, createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerRouteGrantPayloadV1, SignedProviderBrokerRouteGrantV1 } from '@happier-dev/protocol';
 import { findRouteGrantTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from './verifyRouteGrantSignature';
 
 export type ProviderBrokerRouteGrantExpectedBindingV1 = Pick<ProviderBrokerRouteGrantPayloadV1,

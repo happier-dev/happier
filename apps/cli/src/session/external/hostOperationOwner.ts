@@ -1,8 +1,6 @@
-import {
-    ExternalSessionRefSchema,
-    ExternalSessionsSourceSchema,
-    type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+import { ExternalSessionRefSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 

@@ -1,15 +1,6 @@
 import type { Credentials } from '@/persistence';
-import {
-  migrateLegacyAiLaunchProfilesV1,
-  confirmLegacyAiLaunchProfileMigrationV1,
-  createLegacyProfileMigrationSourceFingerprintV1,
-  type AccountSettings,
-  type ProviderAccountSettingsMigrationContextV1,
-  type ProviderSettingsMigrationSourceOutcomeV1,
-  type LegacyProfileReviewedMappingV1,
-  type LegacyProfileMigrationConflictResolutionV1,
-  type LegacyProfileAuthoringMemoryClearV1,
-} from '@happier-dev/protocol';
+import { migrateLegacyAiLaunchProfilesV1, confirmLegacyAiLaunchProfileMigrationV1, createLegacyProfileMigrationSourceFingerprintV1 } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
+import type { AccountSettings, ProviderAccountSettingsMigrationContextV1, ProviderSettingsMigrationSourceOutcomeV1, LegacyProfileReviewedMappingV1, LegacyProfileMigrationConflictResolutionV1, LegacyProfileAuthoringMemoryClearV1 } from '@happier-dev/protocol';
 
 import {
   requireAccountSettingsMutationSuccess,

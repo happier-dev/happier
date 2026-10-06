@@ -1,8 +1,5 @@
-import {
-  normalizeActionsSettingsV1,
-  type AccountSettings,
-  type ActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import { getActiveAccountSettingsSnapshot } from './accountSettings/activeAccountSettingsSnapshot';
 import { resolveActionsSettingsWithEnvironmentOverride } from './actionsSettings';

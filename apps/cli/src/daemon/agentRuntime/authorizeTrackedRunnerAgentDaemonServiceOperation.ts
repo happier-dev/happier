@@ -8,7 +8,7 @@ import type {
 import type {
   AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
 } from './sessionBridgeAuthorization';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 
 export function authorizeTrackedRunnerAgentDaemonServiceOperation(

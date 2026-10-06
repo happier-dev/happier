@@ -201,7 +201,7 @@ describe('two plugins declaring the same local Agent id', () => {
         const registry = await resolveTwoAssistantPluginRegistry();
         const onDuplicate = vi.fn<(duplicate: AgentRuntimeOwnerDuplicate) => void>();
 
-        const runtimes = createTargetAgentRuntimeRegistry({
+        const runtimes = await createTargetAgentRuntimeRegistry({
             agents: [...registry.agentDefinitionsById.values()],
             activationTargets: [activationTarget('acme.alpha'), activationTarget('acme.beta')],
             targetRegistrations: [

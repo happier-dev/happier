@@ -1,4 +1,4 @@
-import { LOCAL_SERVICE_INVENTORY_WATCH_WINDOW_MS } from '@happier-dev/protocol';
+import { LOCAL_SERVICE_INVENTORY_WATCH_WINDOW_MS } from '@happier-dev/protocol/local/services/inventory/v1';
 
 import type { LocalServiceInventoryLabelSource } from './labels';
 import type {

@@ -2,11 +2,8 @@ import { Buffer } from 'node:buffer';
 import { stripCliApiTokenEnvironment } from '@/auth/cliApiToken';
 import { randomUUID } from 'node:crypto';
 
-import {
-  TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
-  TERMINAL_STREAM_MAX_FRAMES,
-  terminalInputEventToPtyAction,
-} from '@happier-dev/protocol';
+import { TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES, TERMINAL_STREAM_MAX_FRAMES } from '@happier-dev/protocol/terminal/stream';
+import { terminalInputEventToPtyAction } from '@happier-dev/protocol/terminal/inputEncoding';
 import type {
   DaemonTerminalErrorCode,
   DaemonTerminalListEntryV1,

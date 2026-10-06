@@ -2,9 +2,8 @@ import { isAbsolute } from 'node:path';
 
 import { z } from 'zod';
 
-import { ComputerAccessibilityNodeV1Schema, ComputerCaptureGeometryV1Schema,
-  type ComputerAccessibilityNodeV1, type ComputerCaptureGeometryV1,
-  type ComputerTargetV1, type ComputerInputOperationV1, type ComputerTargetsListResponseV1 } from '@happier-dev/protocol';
+import { ComputerAccessibilityNodeV1Schema, ComputerCaptureGeometryV1Schema } from '@happier-dev/protocol/computer/v1';
+import type { ComputerAccessibilityNodeV1, ComputerCaptureGeometryV1, ComputerTargetV1, ComputerInputOperationV1, ComputerTargetsListResponseV1 } from '@happier-dev/protocol';
 
 import { getArchiveDownloadInstallableAdapter } from '../../../packagedRuntime/installables/registry';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY } from '../../../packagedRuntime/installables/sourceAdapters/computerCuaDriver';

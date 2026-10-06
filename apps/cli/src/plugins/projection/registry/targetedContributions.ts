@@ -1,16 +1,9 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    isValidPluginJsonSchemaValue,
-    preparePluginJsonSchema,
-    rehydratePluginContributionPointSemanticsV1,
-    type JsonValue,
-    type PluginActionSurfaceV2,
-    type PreparedPluginJsonSchema,
-    type RehydratedPluginContributionPointOperationV1,
-    type RehydratedPluginContributionPointSemanticsV1,
-    type RehydratedPluginContributionPointSurfaceV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
+import type { JsonValue, PluginActionSurfaceV2, PreparedPluginJsonSchema, RehydratedPluginContributionPointOperationV1, RehydratedPluginContributionPointSemanticsV1, RehydratedPluginContributionPointSurfaceV1 } from '@happier-dev/protocol';
 import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import type {

@@ -2,12 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import tweetnacl from 'tweetnacl';
 
-import {
-    createPluginInstallationManifestPublisherSigningInputV1,
-    decodeBase64,
-    stringifyPluginInstallationManifestCanonicalJsonV1,
-    type MachineInstallationIdentityV1,
-} from '@happier-dev/protocol';
+import { createPluginInstallationManifestPublisherSigningInputV1, stringifyPluginInstallationManifestCanonicalJsonV1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 

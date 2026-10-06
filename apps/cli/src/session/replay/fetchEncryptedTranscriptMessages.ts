@@ -3,13 +3,9 @@ import axios from 'axios';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import {
-  buildSessionMessagesPath,
-  SessionMessagesPageV1Schema,
-  SessionExternalShareableMessagesPageV1Schema,
-  isExternalShareableTranscriptWirePayloadWithinLimitV1,
-  type ExternalShareableTranscriptSnapshotV1,
-} from '@happier-dev/protocol';
+import { buildSessionMessagesPath, SessionMessagesPageV1Schema, SessionExternalShareableMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { isExternalShareableTranscriptWirePayloadWithinLimitV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
+import type { ExternalShareableTranscriptSnapshotV1 } from '@happier-dev/protocol';
 import {
   createSessionTranscriptStoredContentUnavailableError,
   throwIfSessionTranscriptStoredContentUnavailableResponse,

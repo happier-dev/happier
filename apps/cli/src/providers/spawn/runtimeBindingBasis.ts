@@ -1,7 +1,5 @@
-import {
-  ProviderRuntimeBindingBasisV1Schema,
-  type ProviderRuntimeBindingBasisV1,
-} from '@happier-dev/protocol';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { ProviderRuntimeBindingBasisV1 } from '@happier-dev/protocol';
 
 import type { ProviderSpawnAuthorization } from './resolve';
 

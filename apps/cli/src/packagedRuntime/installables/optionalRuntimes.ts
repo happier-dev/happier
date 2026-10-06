@@ -7,7 +7,9 @@ import {
   ensureInstalledFirstPartyComponent,
   resolveFirstPartyVersionInstallPath,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { BUILT_IN_INSTALLABLES_REGISTRY, INSTALLABLE_KEYS, type InstallableDependencyDescriptor } from '@happier-dev/protocol';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readSettings } from '@/persistence';

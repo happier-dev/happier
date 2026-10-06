@@ -4,7 +4,8 @@ import path, { delimiter as PATH_DELIMITER } from 'node:path';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
 import type { BackendCommandRunInput } from '@happier-dev/plugin-sdk/scm/backend';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 

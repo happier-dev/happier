@@ -1,4 +1,4 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { processIdentityMatches, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { ALLOWED_HAPPY_SESSION_PROCESS_TYPES } from './pidSafety';

@@ -1,31 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
-  CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY,
-  CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD,
-  CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,
-  CurrentSessionPresentationAckV1Schema,
-  CurrentSessionPresentationBindV1Schema,
-  CurrentSessionPresentationUnbindV1Schema,
-  CurrentSessionPresentationIntentResultV1Schema,
-  CurrentSessionPresentationOwnerV1Schema,
-  CurrentSessionPresentationStateV1Schema,
-  sameCurrentSessionPresentationOwnerV1,
-  type CurrentSessionPresentationAckV1,
-  type CurrentSessionPresentationBindV1,
-  type CurrentSessionPresentationIntentResultV1,
-  type CurrentSessionPresentationIntentV1,
-  type CurrentSessionPresentationOwnerV1,
-  type CurrentSessionPresentationStateV1,
-} from '@happier-dev/protocol/sessions';
-import {
-  isSocketRpcCurrentSessionPresentationOriginAuthorizationContext,
-  type SocketRpcCurrentSessionPresentationOriginAuthorizationContext,
-} from '@happier-dev/protocol/rpc';
+import { CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD, CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY, CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD, CurrentSessionPresentationAckV1Schema, CurrentSessionPresentationBindV1Schema, CurrentSessionPresentationUnbindV1Schema, CurrentSessionPresentationIntentResultV1Schema, CurrentSessionPresentationOwnerV1Schema, CurrentSessionPresentationStateV1Schema, sameCurrentSessionPresentationOwnerV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
+import type { CurrentSessionPresentationAckV1, CurrentSessionPresentationBindV1, CurrentSessionPresentationIntentResultV1, CurrentSessionPresentationIntentV1, CurrentSessionPresentationOwnerV1, CurrentSessionPresentationStateV1 } from '@happier-dev/protocol/sessions';
+import { isSocketRpcCurrentSessionPresentationOriginAuthorizationContext } from '@happier-dev/protocol/rpc';
+import type { SocketRpcCurrentSessionPresentationOriginAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import type { AgentState } from '@/api/types';
-import { ComposerTransactionResultV1Schema, type ComposerTransactionResultV1 } from '@happier-dev/protocol';
+import { ComposerTransactionResultV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerTransactionResultV1 } from '@happier-dev/protocol';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type {
   HostCurrentSessionPresentationService,

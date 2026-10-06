@@ -1,11 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonBrowserDiagnosticsSnapshotRequestV1Schema,
-    DaemonBrowserDiagnosticsSnapshotResponseV1Schema,
-    type DaemonBrowserDiagnosticsSnapshotRequestV1,
-    type DaemonBrowserDiagnosticsSnapshotResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonBrowserDiagnosticsSnapshotRequestV1Schema, DaemonBrowserDiagnosticsSnapshotResponseV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { DaemonBrowserDiagnosticsSnapshotRequestV1, DaemonBrowserDiagnosticsSnapshotResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/routes';
 import {

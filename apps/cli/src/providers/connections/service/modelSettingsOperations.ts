@@ -1,13 +1,7 @@
-import {
-  addOrUpdateProviderManualModelsV1,
-  areProviderContributionKeysEqualV1,
-  createProviderErrorV1,
-  parseBackendTargetKeyV2,
-  removeProviderManualModelV1,
-  resetProviderModelVisibilityV1,
-  setProviderExperimentalConfirmationV1,
-  setProviderModelVisibilityV1,
-} from '@happier-dev/protocol';
+import { addOrUpdateProviderManualModelsV1, removeProviderManualModelV1, resetProviderModelVisibilityV1, setProviderExperimentalConfirmationV1, setProviderModelVisibilityV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type { ProviderConnectionServiceContext } from './context';
 import { readSettings, replaceSettings } from './settings';

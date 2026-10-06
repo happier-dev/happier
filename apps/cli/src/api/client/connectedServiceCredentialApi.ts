@@ -2,23 +2,12 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import axios from 'axios';
 import { z } from 'zod';
 
-import {
-  AccountEncryptionCurrentnessResponseSchema,
-  AccountEncryptionCurrentnessErrorResponseSchema,
-  assertConnectedServiceCredentialRecordBinding,
-  ConnectedServiceCredentialRecordV1Schema,
-  ConnectedServiceIdSchema,
-  SealedConnectedServiceCredentialV1Schema,
-  StoredJsonContentEnvelopeSchema,
-  readConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceId,
-  type SealedConnectedServiceCredentialV1,
-  type AccountEncryptionCurrentnessResponse,
-  type AccountEncryptionCurrentnessErrorResponse,
-} from '@happier-dev/protocol';
+import { AccountEncryptionCurrentnessResponseSchema, AccountEncryptionCurrentnessErrorResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
+import { ConnectedServiceCredentialRecordV1Schema, SealedConnectedServiceCredentialV1Schema, readConnectedServiceCredentialRevisionBoundaryV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import type { ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceCredentialRevisionBoundaryV1, ConnectedServiceId, SealedConnectedServiceCredentialV1, AccountEncryptionCurrentnessResponse, AccountEncryptionCurrentnessErrorResponse } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';

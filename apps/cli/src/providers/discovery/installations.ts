@@ -1,12 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import {
-  canonicalizeProviderContributionKeyV1,
-  ProviderInstallationRuntimeStateRecordV1Schema,
-  ProviderLocalInstallationSummaryV1Schema,
-  serializeProviderInstallationRuntimeStateKeyV1,
-  type ProviderLocalInstallationSummaryV1,
-} from '@happier-dev/protocol';
+import { canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { ProviderInstallationRuntimeStateRecordV1Schema, serializeProviderInstallationRuntimeStateKeyV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import { ProviderLocalInstallationSummaryV1Schema } from '@happier-dev/protocol/providers/detection/v1';
+import type { ProviderLocalInstallationSummaryV1 } from '@happier-dev/protocol';
 
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import {

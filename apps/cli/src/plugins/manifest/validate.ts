@@ -1,13 +1,11 @@
 import { extname } from 'node:path';
 import semver from 'semver';
 
-import {
-  derivePluginDaemonContributionRegistrationRights,
-  isReservedHappierPluginId,
-  PluginManifestV2Schema,
-  validatePublicPluginManifestPolicy,
-  type ParsedPluginManifestV2,
-} from '@happier-dev/protocol';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
 import { configuration } from '../../configuration';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';

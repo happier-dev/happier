@@ -1,12 +1,7 @@
-import {
-  readServerEnabledBit,
-  resolveLinkedExternalSessionAuthorityV1,
-  type SessionHandoffMetadataV2,
-  type SessionHandoffStartRequest,
-  SessionHandoffStartRequestSchema,
-  type SessionHandoffStatus,
-  type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { SessionHandoffMetadataV2, SessionHandoffStartRequest, SessionHandoffStatus, TransferEndpointCandidate } from '@happier-dev/protocol';
+import { SessionHandoffStartRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { resolveMachineTransferRoute } from '@happier-dev/transfers';
 
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

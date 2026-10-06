@@ -1,4 +1,4 @@
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 

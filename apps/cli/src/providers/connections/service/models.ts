@@ -1,7 +1,5 @@
-import {
-  addOrUpdateProviderManualModelV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { addOrUpdateProviderManualModelV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export function addInitialProviderManualModels(input: Readonly<{
   settings: ProviderSettingsV1;

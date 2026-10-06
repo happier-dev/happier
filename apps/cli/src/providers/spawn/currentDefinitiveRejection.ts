@@ -1,8 +1,6 @@
-import {
-  AcpConfigOptionOverridesV1Schema,
-  ProviderBoundModelRefSchema,
-  type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 import {
   getAgentModelConfig,
   getAgentSessionModeDescriptor,

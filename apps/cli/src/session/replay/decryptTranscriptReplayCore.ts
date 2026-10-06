@@ -1,9 +1,7 @@
-import {
-  SessionStoredMessageContentSchema,
-  SessionSynopsisV1Schema,
-  TranscriptRawRecordV1Schema,
-  isAgentThreadTextConversationTurnMeta,
-} from '@happier-dev/protocol';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
+import { TranscriptRawRecordV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import { collectReferencedSessionMediaWorkspacePaths } from '@/session/media/referencedPaths';
 import { decodeTranscriptBody } from '@/session/services/transcript/transcriptBodyDecoder';

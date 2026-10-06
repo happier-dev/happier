@@ -1,11 +1,5 @@
-import {
-  DaemonNpmRegistryProfileMutationRequestV1Schema,
-  DaemonNpmRegistryProfileMutationResponseV1Schema,
-  DaemonNpmRegistryProfileSnapshotV1Schema,
-  type DaemonNpmRegistryProfileMutationRequestV1,
-  type DaemonNpmRegistryProfileMutationResponseV1,
-  type DaemonNpmRegistryProfileSnapshotV1,
-} from '@happier-dev/protocol/rpc';
+import { DaemonNpmRegistryProfileMutationRequestV1Schema, DaemonNpmRegistryProfileMutationResponseV1Schema, DaemonNpmRegistryProfileSnapshotV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
+import type { DaemonNpmRegistryProfileMutationRequestV1, DaemonNpmRegistryProfileMutationResponseV1, DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import { createHash, randomUUID } from 'node:crypto';
 
 import {

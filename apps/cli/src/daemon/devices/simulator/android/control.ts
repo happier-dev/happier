@@ -2,7 +2,7 @@ import type {
     MachineLiveStreamControlSidebandV1,
     MachineLiveStreamInputControlKindV1,
 } from '@happier-dev/protocol';
-import { MachineLiveStreamControlSidebandV1Schema } from '@happier-dev/protocol';
+import { MachineLiveStreamControlSidebandV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import { parseAndroidSerialFromSimulatorSourceId } from './source';
 

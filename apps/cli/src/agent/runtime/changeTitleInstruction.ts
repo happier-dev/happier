@@ -1,9 +1,5 @@
-import {
-  CHANGE_TITLE_INSTRUCTION_V1,
-  buildChangeTitleInstructionV1,
-  shouldAppendChangeTitleInstructionV1,
-  type ChangeTitleInstructionV1Options,
-} from '@happier-dev/protocol';
+import { CHANGE_TITLE_INSTRUCTION_V1, buildChangeTitleInstructionV1, shouldAppendChangeTitleInstructionV1 } from '@happier-dev/protocol/prompts/changeTitleInstructionV1';
+import type { ChangeTitleInstructionV1Options } from '@happier-dev/protocol';
 
 export type ChangeTitleInstructionOptions = ChangeTitleInstructionV1Options;
 

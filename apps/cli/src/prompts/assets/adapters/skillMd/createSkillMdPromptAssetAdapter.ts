@@ -1,19 +1,8 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 
-import {
-  PromptAssetDeleteRequest,
-  PromptAssetDiscoverRequest,
-  type PromptAssetDiscoveryItemV1,
-  PromptAssetMutationResponseV1,
-  PromptAssetReadRequest,
-  PromptAssetReadResponseV1,
-  PromptAssetTypeDescriptorV1,
-  PromptAssetWriteDocRequest,
-  PromptAssetWriteBundleRequest,
-  type PromptAssetCapabilitiesV1,
-  validatePromptBundleBodyV1AgainstSchemaId,
-} from '@happier-dev/protocol';
+import type { PromptAssetDeleteRequest, PromptAssetDiscoverRequest, PromptAssetDiscoveryItemV1, PromptAssetMutationResponseV1, PromptAssetReadRequest, PromptAssetReadResponseV1, PromptAssetTypeDescriptorV1, PromptAssetWriteDocRequest, PromptAssetWriteBundleRequest, PromptAssetCapabilitiesV1 } from '@happier-dev/protocol';
+import { validatePromptBundleBodyV1AgainstSchemaId } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { toPromptAssetMutationError, toPromptAssetReadError } from '@/prompts/assets/shared/promptAssetResponses';

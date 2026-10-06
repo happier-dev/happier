@@ -1,12 +1,7 @@
-import {
-  buildBackendTargetKeyV2,
-  BackendTargetRefV2InputSchema,
-  readBackendTargetRefV2,
-  resolveSessionModelSelectionInputRefV1,
-  SessionModelSelectionResolutionError,
-  SessionModelSelectionV1Schema,
-  type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetRefV2InputSchema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveSessionModelSelectionInputRefV1, SessionModelSelectionResolutionError, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 /** Canonicalizes the CLI child-process ingress before the host runtime sees it. */
 export function resolveSessionStartModelSelection(params: Readonly<{

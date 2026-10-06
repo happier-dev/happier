@@ -1,26 +1,16 @@
-import {
-  CustomProviderTemplateV1Schema,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderConnectionV1Schema,
-  ProviderSettingsLimitError,
-  ProviderSettingsV1Schema,
-  areProviderContributionKeysEqualV1,
-  canonicalizeProviderContributionKeyV1,
-  compareProviderCanonicalStringsV1,
-  createProviderDiscoveryCandidateIdV1,
-  createProviderErrorV1,
-  createProviderFingerprintV1,
-  isBundledProviderCatalogParserV1,
-  readOwnRecordValue,
-  type ProviderConnectionV1,
-  type ProviderDiscoveryCandidateV1,
-  type ProviderEndpointOverrideV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
-import type {
-  DaemonProviderConnectionMutationRequestV1,
-  DaemonProviderContributionAuthoringPreviewV1,
-} from '@happier-dev/protocol/rpc';
+import { CustomProviderTemplateV1Schema } from '@happier-dev/protocol/providers/connections/customTemplateV1';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderSettingsLimitError, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
+import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderFingerprintV1 } from '@happier-dev/protocol/providers/fingerprints';
+import { isBundledProviderCatalogParserV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { ProviderConnectionV1, ProviderDiscoveryCandidateV1, ProviderEndpointOverrideV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import type { DaemonProviderConnectionMutationRequestV1, DaemonProviderContributionAuthoringPreviewV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
 import {

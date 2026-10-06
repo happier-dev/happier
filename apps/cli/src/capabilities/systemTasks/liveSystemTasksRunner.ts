@@ -1,11 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-import {
-  SSH_TUNNEL_SYSTEM_TASK_KINDS,
-  type SystemTaskJsonValue,
-  SystemTaskSpecSchema,
-} from '@happier-dev/protocol';
+import { SSH_TUNNEL_SYSTEM_TASK_KINDS } from '@happier-dev/protocol/ssh/tunnels';
+import type { SystemTaskJsonValue } from '@happier-dev/protocol';
+import { SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
 import {
   createDaemonServiceRestartTaskKind,
   createDaemonServiceStartTaskKind,

@@ -1,7 +1,5 @@
-import {
-    WorkspaceRefV1Schema,
-    type WorkspaceRefV1,
-} from '@happier-dev/protocol';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol';
 
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 

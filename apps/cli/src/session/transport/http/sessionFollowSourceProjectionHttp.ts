@@ -1,9 +1,6 @@
 import axios from 'axios';
-import {
-  SessionFollowSourceProjectionRequestV1Schema,
-  SessionFollowSourceProjectionResponseV1Schema,
-  type SessionFollowSourceProjectionResponseV1,
-} from '@happier-dev/protocol';
+import { SessionFollowSourceProjectionRequestV1Schema, SessionFollowSourceProjectionResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
+import type { SessionFollowSourceProjectionResponseV1 } from '@happier-dev/protocol';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 

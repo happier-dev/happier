@@ -1,11 +1,6 @@
-import {
-  DaemonMcpServersDetectWarningV1Schema,
-  McpDetectedProviderV1Schema,
-  PluginMcpServerTransportV1Schema,
-  type DaemonMcpServersDetectWarningV1,
-  type DetectedMcpServerV1,
-  type McpDetectedProviderV1,
-} from '@happier-dev/protocol';
+import { DaemonMcpServersDetectWarningV1Schema, McpDetectedProviderV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import { PluginMcpServerTransportV1Schema } from '@happier-dev/protocol/plugins/contributions/mcp';
+import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1, McpDetectedProviderV1 } from '@happier-dev/protocol';
 import type {
   McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
   McpDiscoveryRequest as PluginMcpDiscoveryRequest,

@@ -1,8 +1,5 @@
-import {
-  SessionHandoffPrepareTargetResumeRequestSchema,
-  type SessionHandoffPrepareTargetResumeErrorCode,
-  type SessionHandoffPrepareTargetResumeResponse,
-} from '@happier-dev/protocol';
+import { SessionHandoffPrepareTargetResumeRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import type { SessionHandoffPrepareTargetResumeErrorCode, SessionHandoffPrepareTargetResumeResponse } from '@happier-dev/protocol';
 
 import {
   createSessionHandoffPrepareTargetJobStore,

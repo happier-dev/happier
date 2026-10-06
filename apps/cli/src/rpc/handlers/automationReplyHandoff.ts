@@ -1,28 +1,13 @@
-import {
-    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
-    AutomationReplyHandoffDispatchRequestV1Schema,
-    AutomationReplyHandoffDispatchResultV1Schema,
-    AutomationResultDeliveryInputV1Schema,
-    AutomationResultDeliveryResultV1Schema,
-    isAutomationReplyHandoffIdForRunV1,
-    openAutomationConversationReplyContextStoredEnvelopeV1,
-    openAutomationRunResultStoredEnvelopeV1,
-    sameAutomationAccountContentIdentityV1,
-    sameAutomationAccountCurrentnessWitnessV1,
-    type AccountEncryptionCurrentnessResponse,
-    type AccountScopedCryptoMaterialSnapshotV1,
-    type AutomationAccountCurrentnessWitnessV1,
-    type AutomationConversationReplyContextCorrespondenceV1,
-    type AutomationReplyHandoffDispatchResultV1,
-    type AutomationReplyHandoffSettlementV1,
-    type AutomationRunResultCorrespondenceV1,
-} from '@happier-dev/protocol';
-import {
-    openWorkflowFinalResultStoredEnvelopeV1,
-    resolveWorkflowRunDataKeyV1,
-    WorkflowRunRecipientCensusResponseV1Schema,
-    type WorkflowRunRecipientCensusResponseV1,
-} from '@happier-dev/protocol/workflows';
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1, AutomationReplyHandoffDispatchRequestV1Schema, AutomationReplyHandoffDispatchResultV1Schema } from '@happier-dev/protocol/automations/event';
+import { AutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1Schema } from '@happier-dev/protocol/automations/result-delivery';
+import { isAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
+import { openAutomationConversationReplyContextStoredEnvelopeV1, openAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import { sameAutomationAccountContentIdentityV1, sameAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, AutomationAccountCurrentnessWitnessV1, AutomationConversationReplyContextCorrespondenceV1, AutomationReplyHandoffDispatchResultV1, AutomationReplyHandoffSettlementV1, AutomationRunResultCorrespondenceV1 } from '@happier-dev/protocol';
+import { openWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';

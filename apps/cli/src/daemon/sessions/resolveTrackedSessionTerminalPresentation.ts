@@ -1,4 +1,4 @@
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { resolveBackendExecutionSurfaces, type BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { TerminalHostHandle } from '@happier-dev/agents';

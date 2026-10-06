@@ -1,5 +1,7 @@
-import { compareTurnChangeSetChronology, extractCanonicalDiffFiles, readTurnChangeToolMetadata,
-    TurnChangeSetSchema, type TurnChangeSet } from '@happier-dev/protocol';
+import { compareTurnChangeSetChronology } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
+import { extractCanonicalDiffFiles, readTurnChangeToolMetadata } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
+import { TurnChangeSetSchema } from '@happier-dev/protocol/sessions/changes/schemas';
+import type { TurnChangeSet } from '@happier-dev/protocol';
 import { decodeTranscriptBody } from '@/session/services/transcript/transcriptBodyDecoder';
 import { parseRepositoryCheckpointRef } from './refs';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';

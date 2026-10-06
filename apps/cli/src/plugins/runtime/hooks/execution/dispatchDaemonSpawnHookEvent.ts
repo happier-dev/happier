@@ -1,9 +1,6 @@
-import {
-  getPluginHookDefinitionV1,
-  buildBackendTargetKeyV2,
-  type DaemonSpawnHookEventIdV1,
-  type HookEventEnvelopeV1,
-} from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1 } from '@happier-dev/protocol/plugins/hooks';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { DaemonSpawnHookEventIdV1, HookEventEnvelopeV1 } from '@happier-dev/protocol';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';

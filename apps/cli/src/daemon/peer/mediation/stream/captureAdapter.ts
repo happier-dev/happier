@@ -7,7 +7,7 @@ import type {
   MachineLiveStreamStartRequestV1,
   PeerMediationObservabilityEventKindV1,
 } from '@happier-dev/protocol';
-import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 
 import type { MachineLiveStreamCaptureRegistry } from './captureRegistry';
 

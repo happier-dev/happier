@@ -1,20 +1,11 @@
-import {
-  RPC_ERROR_CODES,
-  RPC_ERROR_MESSAGES,
-  isSocketRpcActionApiServerOriginAuthorizationContext,
-  parseSocketRpcAuthorizationContext,
-  resolveEphemeralRunnerMachineRpcAuthority,
-  type SocketRpcAuthorizationContext,
-} from '@happier-dev/protocol/rpc';
-import {
-  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
-  ExternalActionDaemonPlacementV1Schema,
-} from '@happier-dev/protocol/actions';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { isSocketRpcActionApiServerOriginAuthorizationContext, parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, ExternalActionDaemonPlacementV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { VerifiedEphemeralSessionRunnerPrincipal } from '@happier-dev/protocol/ephemeralRunner/principal';
-import {
-  SessionFollowSourceKeyPrepareAuthorizationV1Schema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcAuthorizationResult } from '@/api/rpc/types';
 

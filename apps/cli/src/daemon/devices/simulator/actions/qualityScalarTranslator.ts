@@ -1,7 +1,5 @@
-import {
-    createSimulatorPreviewSetQualityEventV1,
-    type SimulatorPreviewActionV1,
-} from '@happier-dev/protocol';
+import { createSimulatorPreviewSetQualityEventV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
+import type { SimulatorPreviewActionV1 } from '@happier-dev/protocol';
 
 /**
  * The two encoder-reconfiguration runtime actions whose public input is a bare positive SCALAR

@@ -1,4 +1,4 @@
-import { readServerEnabledBit } from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';

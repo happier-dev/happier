@@ -1,8 +1,5 @@
-import {
-  readServerEnabledBit,
-  type FeaturesResponse,
-  type PeerTcpTunnelRelayEnvelope,
-} from '@happier-dev/protocol';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse, PeerTcpTunnelRelayEnvelope } from '@happier-dev/protocol';
 
 import {
   registerPeerTcpTunnelRelayTerminator,

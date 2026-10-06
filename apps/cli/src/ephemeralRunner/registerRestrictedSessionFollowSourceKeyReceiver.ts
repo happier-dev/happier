@@ -1,11 +1,5 @@
-import {
-  decodeSessionFollowSourceDataEncryptionKeyV1,
-  SESSION_FOLLOW_SOURCE_KEY_PREPARATION_REJECTION_CODE_V1,
-  SessionFollowSourceKeyPrepareAuthorizationV1Schema,
-  SessionFollowSourceKeyPrepareRequestV1Schema,
-  SessionFollowSourceKeyPrepareResponseV1Schema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { decodeSessionFollowSourceDataEncryptionKeyV1, SESSION_FOLLOW_SOURCE_KEY_PREPARATION_REJECTION_CODE_V1, SessionFollowSourceKeyPrepareAuthorizationV1Schema, SessionFollowSourceKeyPrepareRequestV1Schema, SessionFollowSourceKeyPrepareResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';

@@ -1,11 +1,8 @@
-import {
-  ProviderDiscoveryCandidateV1Schema,
-  ProviderConnectionIdSchema,
-  areProviderContributionKeysEqualV1,
-  createProviderDiscoveryCandidateIdV1,
-  normalizeProviderEndpointUrlSyntax,
-  type ProviderDiscoveryCandidateV1,
-} from '@happier-dev/protocol';
+import { ProviderDiscoveryCandidateV1Schema, createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol';
 
 import type { NormalizedLocalServiceInventorySnapshot } from '@/daemon/local/services/inventory/scanner';
 import type { ProviderContributionRegistryView } from '@/providers/registry';

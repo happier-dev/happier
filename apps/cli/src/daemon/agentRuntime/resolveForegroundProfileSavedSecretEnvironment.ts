@@ -1,13 +1,7 @@
-import {
-  isCanonicalProviderSavedSecretIdV1,
-  listSecretReferenceOverlayV1BindingNames,
-  parseSavedSecretRefV1,
-  readSecretReferenceOverlayV1Reference,
-  type AIBackendProfile,
-  type LaunchProfileV2,
-  type AiLaunchProfileSourceV1,
-  type SecretReferenceOverlayV1,
-} from '@happier-dev/protocol';
+import { isCanonicalProviderSavedSecretIdV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { AIBackendProfile, LaunchProfileV2, AiLaunchProfileSourceV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import {

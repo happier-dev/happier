@@ -1,4 +1,5 @@
-import { FeaturesResponseSchema, readServerEnabledBit } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 
 type FeaturePayload = Readonly<{
     features?: unknown;

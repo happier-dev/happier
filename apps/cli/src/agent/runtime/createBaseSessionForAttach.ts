@@ -1,10 +1,6 @@
 import type { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import { readSessionAttachFromEnv, readSessionAttachFromFile, type SessionAttachSecret } from '@/agent/runtime/sessionAttach';
-import {
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionSharedMetadataV1Schema,
-  projectSessionOwnerCompatibilityViewV1,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 export async function createBaseSessionForAttach(opts: Readonly<{
   existingSessionId: string;

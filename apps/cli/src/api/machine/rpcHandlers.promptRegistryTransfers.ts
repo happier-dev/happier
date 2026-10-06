@@ -1,8 +1,6 @@
-import {
-  PromptRegistryFetchItemRequestV1Schema,
-  RPC_METHODS,
-  type PromptRegistryFetchItemRequestV1,
-} from '@happier-dev/protocol';
+import { PromptRegistryFetchItemRequestV1Schema } from '@happier-dev/protocol/prompts/library/promptRegistriesV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { PromptRegistryFetchItemRequestV1 } from '@happier-dev/protocol';
 
 import type { PromptRegistryRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import { type TransferSessionStore } from '@happier-dev/transfers/node';

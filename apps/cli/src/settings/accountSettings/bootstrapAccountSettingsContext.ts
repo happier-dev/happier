@@ -2,13 +2,9 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import axios from 'axios';
 
 import type { AgentId } from '@happier-dev/agents';
-import {
-  accountSettingsParse,
-  AccountSettingsV2GetResponseSchema,
-  type AccountSettings,
-  type AccountSettingsV2GetResponse,
-  type BackendTargetRefV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import type { AccountSettings, AccountSettingsV2GetResponse, BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { Credentials, StoredCredentials } from '@/persistence';

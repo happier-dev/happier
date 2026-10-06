@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { resolveAgentIdFromSessionMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { parseSessionPermissionModeAlias, readSessionWorkspaceWritesV1, SessionAccessGrantSetActionInputV1Schema, SessionModelSelectionV2Schema, type AccountSettings, type ActionExecutorDeps, type TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { SessionAccessGrantSetActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import type { AccountSettings, ActionExecutorDeps, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { notifyDaemonConnectedServiceUsageLimitWaitResumeCancel } from '@/daemon/controlClient';
 import { createExecutionBudgetRegistry } from '@/daemon/executionBudget/createExecutionBudgetRegistry';
@@ -15,14 +19,13 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { applyRunnerMcpSessionContext, type RunnerMcpSessionWithContext } from '@/mcp/runtime/applyRunnerMcpSessionContext';
-import { toAgentSessionMcpLaunchConfigs } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { NativeAgentSessionRunToolBindingRequest } from '@/agent/runtime/registry/engineRegistryTypes';
 
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerSessionRoleConfigurationHandler } from '@/rpc/handlers/sessionRoleConfiguration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
-import { ROLE_ACTION_IDS_V1 } from '@happier-dev/protocol';
+import { ROLE_ACTION_IDS_V1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
 import type { RoleSourceReader } from '@/session/roles/roleSources';
 import type { RoleWorkspaceWritesPolicyPreparer } from '@/session/actions/roleActions';
 import type { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
@@ -63,12 +66,9 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
 import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
-import {
-    deriveVoiceAgentTurnLocalId,
-    readAcpConfiguredBackendV1FromMetadata,
-    readVoiceAgentTurnPayloadFromMeta,
-    type SessionTranscriptObservationProvenanceV1,
-} from '@happier-dev/protocol';
+import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
+import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
@@ -346,6 +346,7 @@ export function registerSessionClientRuntimeHandlers(
                     supportedSessionReadActions: [],
                     dispose: () => undefined,
                 };
+                const { toAgentSessionMcpLaunchConfigs } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSession');
                 const accountSettingsSnapshot = ownerCredentials
                     ? await resolveOwnerAccountSettingsSnapshot()
                     : null;

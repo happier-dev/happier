@@ -3,7 +3,8 @@ import {
   type AgentId,
   type AttachSessionMetadataV1,
 } from '@happier-dev/agents';
-import { compareMachineHosts, type AccountSettings } from '@happier-dev/protocol';
+import { compareMachineHosts } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { configuration } from '@/configuration';

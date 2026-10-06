@@ -22,21 +22,18 @@ import type {
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
 } from '@/capabilities/types';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
 import { configuration } from '@/configuration';
 import { getAgentModelConfig } from '@happier-dev/agents';
-import {
-    CodexPassiveRealtimeSetupResultV1Schema,
-    ConnectedServiceBindingsV2IngressSchema,
-    PluginScaffoldUiModeSchema,
-    PluginScaffoldTemplateSchema,
-    qualifiedPurposeKey,
-    type CapabilityId,
-  PluginUpdatePolicyV1Schema,
-} from '@happier-dev/protocol';
+import { CodexPassiveRealtimeSetupResultV1Schema } from '@happier-dev/protocol/capabilities/codexPassiveRealtimeSetup';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { CapabilityId } from '@happier-dev/protocol';
+import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import {
     isDynamicModelProbeEnabled,

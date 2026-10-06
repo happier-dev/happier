@@ -1,5 +1,5 @@
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { DirectTransferImportOpenRequestSchema } from '@/machines/transfer/directTransferImportOpenRequest';

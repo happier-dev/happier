@@ -1,6 +1,6 @@
 import type { Credentials, StoredCredentials } from '@/persistence';
 
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { getRandomBytes } from '../encryption';
 
 export type EncryptionContext = {

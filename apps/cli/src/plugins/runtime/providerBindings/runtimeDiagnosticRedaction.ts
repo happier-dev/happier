@@ -1,8 +1,6 @@
-import {
-    AgentProviderRequirementsV1Schema,
-    registerSensitiveDiagnosticValues,
-    type SensitiveDiagnosticValuesLease,
-} from '@happier-dev/protocol';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { SensitiveDiagnosticValuesLease } from '@happier-dev/protocol';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 

@@ -4,21 +4,13 @@ import {
   AgentExternalSessionTranscriptRawRecordSchema,
   resolveExternalSessionCandidateIdentityKey,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import {
-  ExternalSessionUserProjectionSchema,
-  ExternalSessionAgentIdSchema,
-  ExternalSessionRefSchema,
-  ExternalSessionTranscriptItemIdV1Schema,
-  ExternalSessionTerminalSourceObservationV1Schema,
-  ExternalSessionTranscriptSourceTimestampV1Schema,
-  MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
-  resolveTranscriptBodySemanticEvent,
-  SidechainIdSchema,
-  type ExternalSessionAgentId,
-  type ExternalSessionSourceId,
-  type ExternalSessionsSource,
-  type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
+import { ExternalSessionAgentIdSchema, ExternalSessionRefSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
+import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from '@happier-dev/protocol/plugins/contributionLimits';
+import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { ExternalSessionAgentId, ExternalSessionSourceId, ExternalSessionsSource, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { randomUUID } from 'node:crypto';
 

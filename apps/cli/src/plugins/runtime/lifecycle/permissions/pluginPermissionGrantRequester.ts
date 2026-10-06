@@ -1,12 +1,8 @@
 import axios from 'axios';
 
-import {
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginPermissionGrantRequestActionInputV1Schema,
-  PluginPermissionGrantRequestActionOutputV1Schema,
-  type PluginPermissionGrantRequestActionInputV1,
-  type PluginPermissionGrantRequestActionOutputV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginPermissionGrantRequestActionInputV1Schema, PluginPermissionGrantRequestActionOutputV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
+import type { PluginPermissionGrantRequestActionInputV1, PluginPermissionGrantRequestActionOutputV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';

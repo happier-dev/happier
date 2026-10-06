@@ -1,7 +1,4 @@
-import {
-    readPluginSettingManagedServiceOrigin,
-    readPluginSettingSecretCustody,
-} from '@happier-dev/protocol';
+import { readPluginSettingManagedServiceOrigin, readPluginSettingSecretCustody } from '@happier-dev/protocol/plugins/contributions/settings';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { notificationChannelSettingFieldId } from '@/plugins/settings/notificationChannelSettings';

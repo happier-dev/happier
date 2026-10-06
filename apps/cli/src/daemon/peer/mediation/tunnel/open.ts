@@ -1,22 +1,11 @@
 import { connect as connectSocket } from 'node:net';
 
-import {
-    PEER_MEDIATION_RECEIPTS,
-    PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
-    PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
-    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-    PEER_TCP_TUNNEL_STREAM_PATH,
-    PeerTcpTunnelOpenResponseV1Schema,
-    PeerTcpTunnelOpenV2Schema,
-    isLiteralLoopbackHostname,
-    normalizeHostnameForLoopbackCheck,
-    type PeerTcpTunnelDestinationV1,
-    type PeerTcpTunnelOpenResponseV1,
-    type PeerTcpTunnelOpenV2,
-    type PeerFlowKindV1,
-    type VoiceMediaApplicationAuthorityV1,
-    type LocalServicePreviewDirectBindingV1,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES, PEER_TCP_TUNNEL_STREAM_PATH, PeerTcpTunnelOpenResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import { PeerTcpTunnelOpenV2Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
+import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { PeerTcpTunnelDestinationV1, PeerTcpTunnelOpenResponseV1, PeerTcpTunnelOpenV2, PeerFlowKindV1, VoiceMediaApplicationAuthorityV1, LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol';
 
 import {
     verifyDirectRouteGrantV2,

@@ -1,9 +1,5 @@
-import {
-  PluginScaffoldUiModeSchema,
-  PluginScaffoldTemplateSchema,
-  type ActionExecutorContext,
-  type PluginDevLoopActionIdV1,
-} from '@happier-dev/protocol';
+import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorContext, PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
 
 import { installPluginFromLocator } from '@/plugins/projection/catalog/installed';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';

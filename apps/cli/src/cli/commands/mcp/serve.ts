@@ -1,5 +1,5 @@
 import { assertResolvedHomeTargetIdentity } from '@happier-dev/cli-common/homeTarget';
-import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { reloadConfiguration } from '@/configuration';

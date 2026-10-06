@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
-import { readSessionModesMetadata, type SessionOwnerModeCatalogV2 } from '@happier-dev/protocol';
+import { readSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { SessionOwnerModeCatalogV2 } from '@happier-dev/protocol';
 import type { AgentSessionModesSnapshot, AgentSessionModesSource } from '@happier-dev/plugin-sdk/agents/runtime';
 import { publishSessionControlsMetadataBestEffort } from './publishSessionControlsMetadataBestEffort';
 

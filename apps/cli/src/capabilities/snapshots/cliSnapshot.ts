@@ -12,7 +12,8 @@ import {
     resolveAgentCliJavaScriptRuntimeOnDaemonPath as resolveJavaScriptRuntimeExecutableForCliSnapshot,
 } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
-import { AsyncTtlCache, buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol';
 import { resolveAgentSetupInstall, resolveAgentSetupPlatform } from '@happier-dev/protocol/agents/setup';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';

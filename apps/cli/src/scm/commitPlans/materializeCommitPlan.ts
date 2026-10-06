@@ -1,5 +1,6 @@
 import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporaryIndex';
-import { buildScmComparisonIdentity, type ScmChangeOccurrence, type ScmComparison } from '@happier-dev/protocol';
+import { buildScmComparisonIdentity } from '@happier-dev/protocol/scm/comparison';
+import type { ScmChangeOccurrence, ScmComparison } from '@happier-dev/protocol';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { readGitCheckpointDiffOutput } from '../checkpoints/gitCheckpointDiffOutput';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';

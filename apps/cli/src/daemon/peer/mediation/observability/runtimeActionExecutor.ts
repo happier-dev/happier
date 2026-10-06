@@ -1,14 +1,7 @@
-import {
-    createUnavailableRuntimeActionExecutor,
-    getActionSpec,
-    PeerMediationObservabilitySubscribeRequestV1Schema,
-    PeerMediationObservabilityUnsubscribeRequestV1Schema,
-    resolveRuntimeActionExecutionFamily,
-    type PeerMediationObservabilityDeltaV1,
-    type PeerMediationObservabilityScopeV1,
-    type RuntimeActionExecute,
-    type RuntimeActionExecuteArgs,
-} from '@happier-dev/protocol';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PeerMediationObservabilitySubscribeRequestV1Schema, PeerMediationObservabilityUnsubscribeRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
+import type { PeerMediationObservabilityDeltaV1, PeerMediationObservabilityScopeV1, RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
 import { isDaemonPeerMediationObservabilityReadAvailable } from './access';
 import type { DaemonPeerMediationObservabilityStore } from './store';

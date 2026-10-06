@@ -74,13 +74,11 @@ import { ConnectedServiceRuntimeRegistry } from './connectedServices/runtimeRegi
 import type { DaemonServerWorkScheduler } from './serverWork';
 import type { ConnectedServiceQuotasLoopHandle } from './connectedServices/quotas/startConnectedServiceQuotasLoop';
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  buildBackendTargetKeyV2,
-  createProviderErrorV1,
-  readServerEnabledBit,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { readIrohRelayConfigFromEnv } from '@happier-dev/iroh-native/node';
 import { readHomeApplicationCarrierEligibilityFromEnv } from '@happier-dev/cli-common/homeEnrollment';
 import { readOrCreateInstallationIdentity } from './identity/store';
@@ -183,17 +181,12 @@ import {
 } from './connectedServices/directMaterial/daemonTeamCredentialDirectMaterialReconciler';
 import { createHttpTeamCredentialDirectMaterialClient } from './connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  pluginJsonValuesEqual,
-  readProviderSettingsFromAccountSettingsV1,
-  type ProviderBrokerApplicationBindingV1,
-  type ProviderBrokerRelayApplicationBindingV1,
-} from '@happier-dev/protocol';
-import {
-  TeamCredentialResourceEntitledPageV1Schema,
-  type TeamCredentialResourceSummaryV1,
-} from '@happier-dev/protocol/teams';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol';
+import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import {
   daemonExternalProviderRequestPolicyAcceptsResource,
   revalidateExternalProviderBrokerAuthorization,

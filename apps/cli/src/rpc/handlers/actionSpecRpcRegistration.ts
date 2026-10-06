@@ -1,4 +1,5 @@
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export type ActionSpecRpcRegistrationScope = Readonly<{
     id: string;

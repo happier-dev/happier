@@ -1,4 +1,4 @@
-import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol';
+import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
 
 export type ProviderRedactionLease = Readonly<{
   redact: (value: string) => string;

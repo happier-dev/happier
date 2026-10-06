@@ -1,19 +1,6 @@
-import {
-  BrowserRecordingSessionV1Schema,
-  resolveBrowserRecordingProfileUnavailableReason,
-  type BrowserRecordingCaptureSourceV1,
-  type BrowserDiagnosticFidelityV1,
-  type BrowserEvidenceSessionMediaReferenceV1,
-  type BrowserRecordingCapabilities,
-  type BrowserRecordingCaptureKindV1,
-  type BrowserRenderEngineKindV1,
-  type BrowserRecordingOutcomeReasonV1,
-  type BrowserRecordingPolicyStateV1,
-  type BrowserRecordingRetentionClassV1,
-  type BrowserRecordingSessionV1,
-  type BrowserSemanticAdapterKindV1,
-  type BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+import { BrowserRecordingSessionV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import { resolveBrowserRecordingProfileUnavailableReason } from '@happier-dev/protocol/browser/recording/captureProfiles';
+import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 
 const RECORDING_ID_PREFIX = 'browser_recording';

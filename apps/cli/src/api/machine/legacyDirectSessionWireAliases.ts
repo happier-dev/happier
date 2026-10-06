@@ -1,12 +1,7 @@
-import {
-  ExternalSessionLinkEnsureRequestSchema as DirectSessionLinkEnsureRequestSchema,
-  ExternalSessionTakeoverPersistRequestSchema as DirectSessionTakeoverPersistRequestSchema,
-  ExternalSessionTakeoverRequestSchema as DirectSessionTakeoverRequestSchema,
-  type ExternalSessionLinkEnsureResponse as DirectSessionLinkEnsureResponse,
-  type ExternalSessionTakeoverPersistResponse as DirectSessionTakeoverPersistResponse,
-  type ExternalSessionTakeoverResponse as DirectSessionTakeoverResponse,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExternalSessionLinkEnsureRequestSchema as DirectSessionLinkEnsureRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionTakeoverPersistRequestSchema as DirectSessionTakeoverPersistRequestSchema, ExternalSessionTakeoverRequestSchema as DirectSessionTakeoverRequestSchema } from '@happier-dev/protocol/sessions/external/legacyDirectSessionWireSchemasV1';
+import type { ExternalSessionLinkEnsureResponse as DirectSessionLinkEnsureResponse, ExternalSessionTakeoverPersistResponse as DirectSessionTakeoverPersistResponse, ExternalSessionTakeoverResponse as DirectSessionTakeoverResponse } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { externalSessionsError as directSessionsError } from '@/session/actions/externalSessions';
 

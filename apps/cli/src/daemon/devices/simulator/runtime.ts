@@ -1,19 +1,8 @@
-import {
-    SimulatorDeviceResourceV1Schema,
-    SimulatorPreviewActionResultV1Schema,
-    SimulatorPreviewActionV1Schema,
-    isBackedSimulatorSidebandKindV1,
-    normalizeSimulatorDeviceResourceVisibleCapabilitiesV1,
-    validateMachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlSidebandV1,
-    type SimulatorCaptureCapabilitiesV1,
-    type SimulatorDeviceResourceV1,
-    type SimulatorPreviewActionResultV1,
-    type SimulatorPreviewActionTypeV1,
-    type SimulatorPreviewActionV1,
-    type SimulatorPreviewSnapshotV1,
-    type SimulatorStreamControlsV1,
-} from '@happier-dev/protocol';
+import { SimulatorDeviceResourceV1Schema, normalizeSimulatorDeviceResourceVisibleCapabilitiesV1 } from '@happier-dev/protocol/devices/simulator/v1';
+import { SimulatorPreviewActionResultV1Schema, SimulatorPreviewActionV1Schema } from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
+import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type { MachineLiveStreamControlSidebandV1, SimulatorCaptureCapabilitiesV1, SimulatorDeviceResourceV1, SimulatorPreviewActionResultV1, SimulatorPreviewActionTypeV1, SimulatorPreviewActionV1, SimulatorPreviewSnapshotV1, SimulatorStreamControlsV1 } from '@happier-dev/protocol';
 
 import {
     createSimulatorPreviewDaemonAdapter,

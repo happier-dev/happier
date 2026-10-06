@@ -1,15 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  projectBuiltInLegacyConnectedServiceCredentialRecordV1,
-  sealConnectedServiceCredentialCiphertext,
-  type ConnectedServiceCredentialCompatibleMutationResponseV1,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRevisionBoundaryV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type SealedConnectedServiceCredentialV1,
-} from '@happier-dev/protocol';
+import { projectBuiltInLegacyConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { sealConnectedServiceCredentialCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import type { ConnectedServiceCredentialCompatibleMutationResponseV1, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionBoundaryV1, ConnectedServiceCredentialRevisionV1, SealedConnectedServiceCredentialV1 } from '@happier-dev/protocol';
 
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import {

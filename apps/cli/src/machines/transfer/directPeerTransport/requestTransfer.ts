@@ -9,12 +9,9 @@ import {
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR } from '../inMemoryTransferSizeLimit';
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
-import {
-  isSafeDirectTransferEndpointCandidate,
-  TransferChunkEnvelopeSchema,
-  TransferEndpointCandidateSchema,
-  type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { isSafeDirectTransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import {

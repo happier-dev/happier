@@ -1,11 +1,7 @@
-import {
-  ProviderMachineIdSchema,
-  createProviderErrorV1,
-} from '@happier-dev/protocol';
-import {
-  DaemonProviderModelLoadRequestV1Schema,
-  type DaemonProviderModelLoadRequestV1,
-} from '@happier-dev/protocol/rpc';
+import { ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { DaemonProviderModelLoadRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderModelLoadRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ProviderModelLoadRequest, ProviderModelLoadResult } from './load';
 

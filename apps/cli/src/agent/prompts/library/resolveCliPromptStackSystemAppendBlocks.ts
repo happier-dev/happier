@@ -1,13 +1,10 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
-import {
-  decodePlainArtifactStoredContent,
-  isPlainArtifactDataKeyMarker,
-  PromptStacksV1Schema,
-  openEncryptedDataKeyEnvelopeV1,
-  resolvePromptStackSystemAppendBlocksV1,
-} from '@happier-dev/protocol';
+import { decodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PromptStacksV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { resolvePromptStackSystemAppendBlocksV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ArtifactEncryptionMaterialUnavailableError } from '@/api/artifacts/accountArtifactStore';

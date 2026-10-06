@@ -1,11 +1,8 @@
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { isDeepStrictEqual } from 'node:util';
-import {
-  readRuntimeDescriptorV1,
-  readAgentRuntimeFacetsV1,
-  type AgentRuntimeFacetsV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { readAgentRuntimeFacetsV1 } from '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1';
+import type { AgentRuntimeFacetsV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 export type NormalizedRuntimeEventPublication = Readonly<{
   runtimeDescriptor: RuntimeDescriptorV1 | null;

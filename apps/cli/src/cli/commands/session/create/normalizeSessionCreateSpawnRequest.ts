@@ -1,15 +1,12 @@
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
-import {
-  SessionSpawnNewInputV2Schema,
-  buildBackendTargetKeyV2,
-  findSpawnConfigOptionAliasConflicts,
-  mergeSpawnConfigOptionAliases,
-  parseBackendTargetKeyV2,
-  readBackendTargetRefV2,
-  parseAgentPermissionIntentV1Alias,
-  resolveSessionModelSelectionInputRefV1,
-  type SessionSpawnNewInputV2,
-} from '@happier-dev/protocol';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
+import { resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';

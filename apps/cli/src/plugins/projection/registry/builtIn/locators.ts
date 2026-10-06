@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
-import { formatPluginManifestIngestionDiagnostics, type PluginSourceSpecV1 } from '@happier-dev/protocol';
+import { formatPluginManifestIngestionDiagnostics } from '@happier-dev/protocol/plugins/manifest/ingest';
+import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';

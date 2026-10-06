@@ -4,9 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import type {
     ExternalAgentObservationWatchFileChangesV1,
 } from '@happier-dev/protocol';
-import {
-    ExternalAgentObservationWatchFileChangesV1Schema,
-} from '@happier-dev/protocol';
+import { ExternalAgentObservationWatchFileChangesV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
 import type {
     AgentExternalSessionsResolvedIdentity,
 } from '@happier-dev/plugin-sdk/sessions/external';

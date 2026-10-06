@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { draftMarketplaceRegistryProfileV1 } from '@happier-dev/protocol/marketplace';
+import { draftMarketplaceRegistryProfileV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 import type { DaemonNpmRegistryProfileMutationResponseV1 } from '@happier-dev/protocol/rpc';
 
 import type { PluginRegistryProfileRequirement } from '@/plugins/daemon/changeContract';

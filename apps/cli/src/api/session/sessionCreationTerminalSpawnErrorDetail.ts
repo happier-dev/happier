@@ -1,7 +1,5 @@
-import {
-  SessionCreationTerminalSpawnErrorDetailSchema,
-  type SessionCreationTerminalSpawnErrorDetail,
-} from '@happier-dev/protocol';
+import { SessionCreationTerminalSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
+import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
 
 import { isSessionCreationCorrespondenceConflictError } from './sessionCreationCorrespondenceConflictError';
 import {
