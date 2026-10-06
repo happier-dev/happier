@@ -22,6 +22,37 @@ function createSessionBoardActionAdapter(options: Omit<Parameters<typeof createA
 }
 
 describe('Session Board Action adapter', () => {
+    it('reads additive stored items and layouts, then writes only canonical content', async () => {
+        const canonicalLayout = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'status', width: 'wide' }] }] };
+        const storedItem = { ...installed, extra: true, source: { ...installed.source, extra: true,
+            instance: { ...installed.source.instance, extra: true, definition: { ...installed.source.instance.definition,
+                surface: { ...installed.source.instance.definition.surface, extra: true } } } } };
+        const storedLayout = { ...canonicalLayout, extra: true, tabs: [{ ...canonicalLayout.tabs[0], extra: true,
+            items: [{ ...canonicalLayout.tabs[0].items[0], extra: true }] }] };
+        const writes: unknown[] = [];
+        const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' },
+            capabilities: { readTranscript: true, editSessionRecords: true }, request: async (path, init) => {
+                if (init?.method === 'PUT') {
+                    writes.push(JSON.parse(String(init.body)));
+                    return new Response(JSON.stringify({ operation: 'upsert_item', itemId: 'status', outcome: 'updated', itemRevision: revision, layoutRevision: revision }));
+                }
+                const kind = new URL(path, 'https://home-a').searchParams.get('kind');
+                return new Response(JSON.stringify({ record: { id: kind === 'layout.v1' ? 'layout-row' : 'item-row',
+                    address: { owner: 'host', namespace: 'surface', kind, localId: kind === 'layout.v1' ? 'layout' : 'status' },
+                    content: { t: 'plain', v: kind === 'layout.v1' ? storedLayout : storedItem }, revision,
+                    createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } }));
+            } });
+        await expect(execute({ actionId: 'session.board.get', context: {}, input: { sessionId: session.sessionId, itemIds: ['status'] } }))
+            .resolves.toMatchObject({ layout: { document: canonicalLayout }, items: [{ item: installed }], incomplete: false });
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: { sessionId: session.sessionId,
+            itemId: 'status', expectedItemRevision: revision, item: installed, placement: { tabId: 'overview', width: 'wide' } } }))
+            .resolves.toMatchObject({ result: { outcome: 'updated' } });
+        expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: installed },
+            placement: { expectedLayoutRevision: revision, layoutContent: { t: 'plain', v: canonicalLayout } } })]);
+        await expect(execute({ actionId: 'session.board.item.upsert', context: {}, input: { sessionId: session.sessionId,
+            itemId: 'status', expectedItemRevision: revision, item: storedItem } })).resolves.toMatchObject({ errorCode: 'session_board_invalid' });
+        expect(writes).toHaveLength(1);
+    });
     it('stores current widget references and rejects the retired installed-surface shape', async () => {
         let writes = 0;
         const execute = createSessionBoardActionAdapter({ scope, session, contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },

@@ -7,8 +7,8 @@ import {
     projectSessionBoardAdapterFailureV1,
     SessionBoardGetInputV1Schema,
     SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema,
-    SessionBoardItemUpsertInputV1Schema, SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema,
-    SessionBoardMutationActionResultV1Schema, SessionSurfaceItemV1Schema,
+    SessionBoardItemUpsertInputV1Schema, SessionBoardLayoutV1StoredSchema, SessionBoardMutationV1Schema,
+    SessionBoardMutationActionResultV1Schema, SessionSurfaceItemV1StoredSchema,
     type SessionBoardGetResultV1, type SessionBoardItemPlacementParticipantV1,
     type SessionBoardLayoutV1, type SessionBoardReadProjectionEntryV1,
 } from '@happier-dev/protocol/sessions/board';
@@ -90,7 +90,7 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
         const stored = await records.read(session, { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' });
         if (stored.status === 'not_found') return { ok: true as const, layout: null };
         if (stored.status !== 'ok') return projectRecordOwnerFailure(actionId, stored.status);
-        const opened = await open(stored.value, { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' }, SessionBoardLayoutV1Schema);
+        const opened = await open(stored.value, { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' }, SessionBoardLayoutV1StoredSchema);
         if (opened.status !== 'ready') return createSessionBoardFailureV1(opened.status);
         return { ok: true as const, layout: { revision: stored.value.revision, document: opened.value } };
     }
@@ -173,7 +173,7 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
                 if (entry.status === 'not_found') { projectedEntries.push({ status: 'unavailable' }); continue; }
                 if (entry.status !== 'ok') return projectRecordOwnerFailure(actionId, entry.status);
                 const record = entry.value;
-                const opened = await open(record, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: record.address.localId }, SessionSurfaceItemV1Schema);
+                const opened = await open(record, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: record.address.localId }, SessionSurfaceItemV1StoredSchema);
                 if (opened.status !== 'ready') { projectedEntries.push({ status: 'unavailable' }); continue; }
                 projectedEntries.push({ status: 'ready', itemId: record.address.localId, revision: record.revision, item: opened.value });
             }
@@ -242,7 +242,7 @@ export function createSessionBoardActionAdapter(options: SessionSystemRecordTran
             });
         }
         if (current.status === 'ok') {
-            const opened = await open(current.value, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: args.itemId }, SessionSurfaceItemV1Schema);
+            const opened = await open(current.value, { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: args.itemId }, SessionSurfaceItemV1StoredSchema);
             if (opened.status !== 'ready') return createSessionBoardFailureV1(opened.status);
             if (!isSessionSurfaceItemSourceCompatible(opened.value, args.item)) return createSessionBoardFailureV1('session_board_source_conflict');
         }

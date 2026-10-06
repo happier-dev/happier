@@ -86,7 +86,7 @@ export const BoardCardView = React.memo(function BoardCardView(props: Readonly<{
     const { card } = props;
     const unavailable = card.availability !== 'ready';
     const body = unavailable
-        ? (card.availability === 'home_unavailable' ? t('boards.card.unavailableBody') : null)
+        ? (card.unavailableReason ?? (card.availability === 'home_unavailable' ? t('boards.card.unavailableBody') : null))
         : describeBody(card.body, Date.now());
     return (
         <View

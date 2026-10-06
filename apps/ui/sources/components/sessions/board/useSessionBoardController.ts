@@ -534,10 +534,10 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
     const continuity = useSessionBoardContinuity(boardAddress);
     const localRequestedView = React.useState<string | null>(null);
     const requestedViewState = continuity?.controller.requestedViewId ?? localRequestedView;
-    const requestedViewId = requestedViewState[0];
+    const [requestedViewId, setRequestedViewState] = requestedViewState;
     const setRequestedViewId = React.useCallback((viewId: string | null) => {
-        requestedViewState[1](viewId);
-    }, [requestedViewState]);
+        setRequestedViewState(viewId);
+    }, [setRequestedViewState]);
     const localViewRemovalFocusRequest = React.useState<Readonly<{
         removedViewId: string;
         requestId: number;
@@ -700,6 +700,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
 
     const installedWidgetsAvailable = input.installedWidgetsAvailable === true;
     const callerHostedHtmlAvailable = input.callerHostedHtmlAvailable === true;
+    const canAskAgent = canEdit && askAgent !== undefined;
     const addIntents = React.useMemo((): readonly SessionBoardAddIntent[] => {
         const intents: SessionBoardAddIntent[] = [];
         if (mutationsBlockedReason === null) intents.push('note', 'walkthrough');
@@ -707,9 +708,9 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
         // **From plugins…** appears only when this Session's exact projection
         // actually admits a `widget`.
         if (mutationsBlockedReason === null && installedWidgetsAvailable) intents.push('fromPlugins');
-        if (canEdit && askAgent) intents.push('askAgent');
+        if (canAskAgent) intents.push('askAgent');
         return Object.freeze(intents);
-    }, [askAgent, callerHostedHtmlAvailable, canEdit, installedWidgetsAvailable, mutationsBlockedReason]);
+    }, [canAskAgent, callerHostedHtmlAvailable, installedWidgetsAvailable, mutationsBlockedReason]);
 
     const supports = React.useCallback((kind: SessionBoardCommandKind): boolean => {
         const settled = !mutationInFlightRef.current
@@ -1665,7 +1666,12 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
         [suppliedAvailability],
     );
 
-    return {
+    const controllerBusy = busy || input.approvalPending === true || approvalPendingRef.current;
+    const visibleHostedHtmlDraft = callerHostedHtmlAvailable ? hostedHtmlDraft : null;
+    const recoveryKind = retainedMutationState && retainedMutationState.kind !== 'approvalPending'
+        ? retainedMutationState.kind : null;
+    const recoveryReady = recoveryKind !== null && retainedMutationState?.ready === true;
+    return React.useMemo(() => ({
         snapshot,
         activeViewId,
         activeView,
@@ -1674,7 +1680,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
         recoveredItemIds: snapshot?.unplacedItemIds ?? EMPTY_IDS,
         addIntents,
         mutationsBlockedReason,
-        busy: busy || input.approvalPending === true || approvalPendingRef.current,
+        busy: controllerBusy,
         get noteDraft() { return noteDraftRef.current; },
         closeNoteDraft,
         onNoteSaved,
@@ -1684,20 +1690,24 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
         // retire it from mounted consumers until that same runtime is available
         // again. This neither leaks source into an unavailable host nor strands
         // focus/guards on an editor that cannot render.
-        hostedHtmlDraft: callerHostedHtmlAvailable ? hostedHtmlDraft : null,
+        hostedHtmlDraft: visibleHostedHtmlDraft,
         closeHostedHtmlDraft,
         onHostedHtmlSaved,
         get lastOutcome() { return lastOutcomeRef.current; },
-        mutationRecovery: retainedMutationState && retainedMutationState.kind !== 'approvalPending'
-            ? { kind: retainedMutationState.kind, ready: retainedMutationState.ready }
-            : null,
+        mutationRecovery: recoveryKind !== null ? { kind: recoveryKind, ready: recoveryReady } : null,
         retryLastMutation,
         announcement,
         supports,
         supportsItemEdit,
         run,
         resolveSourceAvailability,
-    };
+    }), [
+        snapshot, activeViewId, activeView, viewRemovalFocusRequest, acknowledgeViewRemovalFocus,
+        addIntents, mutationsBlockedReason, controllerBusy, noteDraftState, closeNoteDraft, onNoteSaved,
+        headingFocusRequest, acknowledgeHeadingFocus, visibleHostedHtmlDraft, closeHostedHtmlDraft,
+        onHostedHtmlSaved, lastOutcomeState, recoveryKind, recoveryReady, retryLastMutation,
+        announcement, supports, supportsItemEdit, run, resolveSourceAvailability,
+    ]);
 }
 
 const EMPTY_IDS: readonly string[] = Object.freeze([]);

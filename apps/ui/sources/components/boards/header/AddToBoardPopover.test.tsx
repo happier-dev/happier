@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WorkflowDefinitionListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 import { SelectionList, type SelectionListOption } from '@/components/ui/selectionList';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -25,8 +26,11 @@ let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getAc
 let serverId: string;
 let previousStorage = storage.getState();
 
-const definition = (id: string) => ({ kind: 'workflow-definition.v1', definitionId: id,
-    revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${id}` }, stepCount: 1, triggers: [] });
+const definition = (id: string) => WorkflowDefinitionListResultV1Schema.parse({ definitions: [{
+    kind: 'workflow-definition.v1', definitionId: id,
+    revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${id}` },
+    contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+}] }).definitions[0]!;
 const run = createWorkflowRunSummaryFixture({ id: 'run-picker' });
 const runPage = { ok: true, result: { runs: [run], metadataByRunId: {} } };
 

@@ -116,7 +116,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
         testID,
         onRename: (next) => {
             const displayName = next.length > 0 && next !== widget?.title ? next : undefined;
-            if (displayName !== instance.displayName) void rename(instance.id, displayName);
+            if (displayName !== instance.displayName) return rename(instance.id, displayName);
         },
     });
     // "Open <plugin>" is the card's footer; the menu keeps Edit inputs, Rename, width, hide, move and Customize.
@@ -211,7 +211,7 @@ export const HomeHub = React.memo(function HomeHub() {
                 const ref = widgetEntitySourceRef(item);
                 if (!ref) return widgetMovementRefused('unsupported_widget_surface');
                 return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref, to: { surface, index: 0 } },
-                    preview: { verb: t('sessionBoard.item.moveTargetView', { title: t('common.home') }), target: t('common.home') } } };
+                    preview: { glyph: 'move', verb: t('sessionBoard.item.moveTargetView', { title: t('common.home') }), target: t('common.home') } } };
             },
             execute: async () => ({ status: 'refused', reason: { code: 'invalid_parameters', message: t('entityDragDrop.reasons.generic') } }),
         },

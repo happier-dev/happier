@@ -26,7 +26,7 @@ import { Typography } from '@/constants/Typography';
 import type { FocusReturnRef, FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
 import { WidgetInstanceActionInputSchemasV1, type WidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
-import { runBoardWidgetSetupCommand } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { runAcknowledgedWidgetSetupCommand } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { measureWindowBounds, readWindowBounds, useTreeDropAutoscroll, useEntityDragDropRuntime, type WindowBounds } from '@/components/ui/treeDragDrop';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -1071,10 +1071,13 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     : {})}
                 {...(mutationControls && supportsEdit ? { onEdit: () => { void controller.run({ kind: 'item.edit', itemId }); } } : {})}
                 {...(mutationControls && controller.supports('item.rename')
-                    ? { onRename: (title: string) => { void controller.run({ kind: 'item.rename', itemId, title }); } }
+                    ? { onRename: async (title: string) => {
+                        const result = await runAcknowledgedWidgetSetupCommand(() => controller.run({ kind: 'item.rename', itemId, title }), t('widgetAdd.saveFailed'));
+                        if (!result.ok) throw new Error('widget_rename_refused');
+                    } }
                     : {})}
                 {...(mutationControls && controller.supports('item.inputs')
-                    ? { onSetInputs: (bindings: WidgetInputBindingsV1) => runBoardWidgetSetupCommand(
+                    ? { onSetInputs: (bindings: WidgetInputBindingsV1) => runAcknowledgedWidgetSetupCommand(
                         () => controller.run({ kind: 'item.inputs', itemId, bindings }),
                         t('widgetAdd.saveFailed'),
                     ) }
@@ -1104,7 +1107,6 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                     }
                     : {})}
                 {...(props.navigationOnly ? { openActionLabel: t('sessionBoard.sidebar.openInDetails') } : {})}
-                {...(props.companionItemIds?.has(itemId) ? { inCompanion: true } : {})}
                 {...(props.navigationOnly && props.onOpenItemHere
                     ? { onPressCard: () => props.onOpenItemHere?.(itemId) }
                     : {})}

@@ -17,7 +17,7 @@ const NO_READS: readonly InputOptionsRead[] = Object.freeze([]);
 
 function fieldKey(field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'inputType'> & { path?: string }, context?: InputFieldOptionsContext): string {
     return JSON.stringify([field.path, field.optionsSourceId, field.inputType, context?.actionId, context?.consumer,
-        projectInputOptionsDependencies(context?.draftInput ?? {})]);
+        projectInputOptionsDependencies(context?.draftInput ?? {}, context?.consumer)]);
 }
 
 /** Demand projection over Action discovery, including cancellation and exact Account/target identity. */
@@ -39,7 +39,7 @@ export function useInputFieldOptions(params: Readonly<{
         ? resolveUiAccountActionFallbackMachineId({ serverId: optionServerId }) : null);
     const signature = JSON.stringify([scope?.accountId, optionServerId, machineId,
         params.sessionId, params.requests.map((request) => ({ ...request,
-            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}) }))]);
+            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer) }))]);
     const { reads, keys, defaultContexts } = React.useMemo(() => {
         const keys = new Map<string, string>();
         const defaultContexts = new Map<string, InputFieldOptionsContext>();
@@ -49,7 +49,7 @@ export function useInputFieldOptions(params: Readonly<{
             const input = { ...(request.field.optionsSourceId ? { optionsSourceId: request.field.optionsSourceId } : {}),
                 ...(request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
                 ...(request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
-                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}),
+                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer),
                     ...(machineId ? { machineId } : {}),
                     ...(params.sessionId ? { sessionId: params.sessionId } : {}) },
             };

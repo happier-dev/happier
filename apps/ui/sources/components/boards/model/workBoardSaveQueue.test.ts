@@ -93,11 +93,16 @@ describe('WorkBoard Account Artifact save queue', () => {
         expect(b.store.getReadState()).toMatchObject({ status: 'ready', hasSnapshot: true });
     });
 
-    it('publishes an initially demanded readable neighbor when one Board has malformed JSON', async () => {
+    it.each(['malformed_json', 'content_unavailable'] as const)('publishes an initially demanded readable neighbor when one Board has %s', async failure => {
         const persistence = createWorkBoardArtifactBoundary(WorkBoardsV1Schema.parse({ v: 1, boards: [...base.boards, createWorkBoardV1({ id: 'b2', name: 'Other' })] }));
         const broken = { ...persistence.rows.get('b1')!, body: '{ invalid-json' };
         persistence.rows.set('b1', broken);
-        const store = createWorkBoardAccountStore(persistence.transport, () => true);
+        const store = createWorkBoardAccountStore({ ...persistence.transport, read: async (id, options) => {
+            if (id === 'b1' && failure === 'content_unavailable') {
+                throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
+            }
+            return persistence.transport.read(id, options);
+        } }, () => true);
         const release = store.retainView(() => () => {}, 'all');
         try {
             await store.refresh();
@@ -113,12 +118,12 @@ describe('WorkBoard Account Artifact save queue', () => {
         const store = createWorkBoardAccountStore(persistence.transport, () => true);
         await store.refresh();
         const row = persistence.rows.get('b1')!;
-        const future = { ...row, body: JSON.stringify({ ...base.boards[0], futureField: true }), revision: { headerVersion: 2, bodyVersion: 2 } };
-        persistence.rows.set('b1', future);
+        const invalid = { ...row, body: JSON.stringify({ ...base.boards[0], name: 42 }), revision: { headerVersion: 2, bodyVersion: 2 } };
+        persistence.rows.set('b1', invalid);
         await store.refresh();
         expect(store.getReadState().status).toBe('ready');
         expect(store.getBoards().boards.map(board => board.id)).toEqual(['b2']);
-        expect(persistence.rows.get('b1')).toBe(future);
+        expect(persistence.rows.get('b1')).toBe(invalid);
     });
 
     it('keeps a newer write acknowledgement when an older refresh returns later', async () => {

@@ -49,6 +49,11 @@ vi.mock('@react-navigation/native', async (importOriginal) => ({
     },
 }));
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit');
+    return createExpoRouterMock({ navigation: { dispatch: navigationHarness.dispatch } }).module;
+});
+
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: {

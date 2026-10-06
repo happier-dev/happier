@@ -92,15 +92,19 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => ({
 
 const storedPreference = { value: undefined as unknown };
 const mutate = vi.fn();
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSessionCompanionPreferenceSlot: () => ({
-        stored: storedPreference.value,
-        storageKey: 'server-a account-a session-1',
-    }),
-    useMutateSessionCompanionPreference: () => mutate,
-    // The Companion's Appearance frame default (Widgets); unset falls back to the placement default.
-    useLocalSetting: () => undefined,
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit');
+    // Substitute device persistence while retaining the real preference/controller logic.
+    return createStorageModuleStub({
+        useSessionCompanionPreferenceSlot: () => ({
+            stored: storedPreference.value,
+            storageKey: 'server-a account-a session-1',
+        }),
+        useMutateSessionCompanionPreference: () => mutate,
+        // The Companion's Appearance frame default (Widgets); unset falls back to the placement default.
+        useLocalSetting: () => undefined,
+    });
+});
 
 vi.mock('@/components/sessions/board/SessionWidgetHost', () => ({
     SessionWidgetHost: () => null,

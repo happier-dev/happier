@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { WorkBoardIntentV1, WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import type { WorkBoardIntentV1, WorkBoardV1, WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
+import { captureWorkBoardWidgetMoveV1 } from '@happier-dev/protocol/widgets';
 
 import { useSessionBoardArrivals } from '@/components/sessions/board/useSessionBoardArrivals';
 
@@ -19,11 +20,6 @@ export function resolveBoardWidgetArrivals(input: Readonly<{
         && !input.ownAdds.has(placement.instance.id) && !input.dismissed.has(placement.instance.id));
 }
 
-/** Undo for exactly the copies that arrived, each only while it is still the copy that arrived. */
-export function buildBoardWidgetUndoIntents(boardId: string, arrived: readonly WorkBoardWidgetPlacementV1[]): readonly WorkBoardIntentV1[] {
-    return arrived.map(placement => ({ kind: 'widget_remove', boardId, ref: placement.ref, expectedInstance: placement.instance }));
-}
-
 /**
  * Widgets that arrived while this Board was on screen from somewhere else — an agent's acknowledged
  * Action, another device (lab `dashboards` G1): each gets the frame's one-shot ring, and one line
@@ -36,10 +32,31 @@ export function useBoardWidgetArrivals(
     dispatch: (intent: WorkBoardIntentV1) => Promise<unknown>,
 ) {
     const acknowledged = useAcknowledgedWorkBoard(boardId);
+    return useAcknowledgedBoardWidgetArrivals(boardId, acknowledged, ownAdds, dispatch);
+}
+
+export function useAcknowledgedBoardWidgetArrivals(
+    boardId: string,
+    acknowledged: WorkBoardV1 | null,
+    ownAdds: ReadonlySet<string>,
+    dispatch: (intent: WorkBoardIntentV1) => Promise<unknown>,
+) {
     const placements = acknowledged?.widgets;
     const ready = acknowledged !== null;
     const ids = React.useMemo(() => (ready ? (placements ?? []).map(placement => placement.instance.id) : null), [ready, placements]);
     const seen = useSessionBoardArrivals(ids);
+    const captured = React.useRef(new Map<string, Readonly<{
+        placement: WorkBoardWidgetPlacementV1;
+        capture: NonNullable<ReturnType<typeof captureWorkBoardWidgetMoveV1>>;
+    }>>());
+    if (acknowledged) {
+        for (const placement of placements ?? []) {
+            const id = placement.instance.id;
+            if (!seen.has(id) || ownAdds.has(id) || captured.current.has(id)) continue;
+            const capture = captureWorkBoardWidgetMoveV1(acknowledged, placement.ref.surface, id);
+            if (capture) captured.current.set(id, { placement, capture });
+        }
+    }
     const [dismissed, setDismissed] = React.useState<ReadonlySet<string>>(() => new Set());
     const arrived = React.useMemo(() => new Set([...seen].filter(id => !ownAdds.has(id))), [ownAdds, seen]);
     const pending = React.useMemo(() => resolveBoardWidgetArrivals({ placements: placements ?? [], seen, ownAdds, dismissed }),
@@ -49,7 +66,14 @@ export function useBoardWidgetArrivals(
     }, [pending]);
     const undo = React.useCallback(async () => {
         dismiss();
-        await Promise.all(buildBoardWidgetUndoIntents(boardId, pending).map(dispatch));
+        const removals = pending.flatMap(placement => {
+            const arrival = captured.current.get(placement.instance.id);
+            return arrival ? [arrival] : [];
+        }).sort((left, right) => right.capture.expectedPresentation.nativeIndex - left.capture.expectedPresentation.nativeIndex);
+        // Removing from the end preserves the captured indices of the remaining arrivals.
+        for (const { placement, capture } of removals) {
+            await dispatch({ kind: 'widget_remove', boardId, ref: placement.ref, ...capture });
+        }
     }, [boardId, dismiss, dispatch, pending]);
     return { arrived, pending, dismiss, undo };
 }

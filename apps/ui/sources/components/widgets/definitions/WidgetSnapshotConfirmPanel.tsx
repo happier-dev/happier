@@ -1,18 +1,19 @@
 import * as React from 'react';
 import { AccessibilityInfo, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { projectWidgetSnapshotPreviewV1, type WidgetSnapshotPreviewV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { SessionBoardDeclarativeContent } from '@/components/sessions/board/SessionBoardDeclarativeContent';
-import { Icon } from '@/components/ui/icons/Icon';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
+import { WidgetFlowPanel, WidgetPreviewWell, widgetFlowText } from '@/components/widgets/flow/WidgetFlowPanel';
+
 import { runWidgetDefinitionCommand } from './widgetDefinitionCommands';
-import { WidgetDefinitionPanel, widgetPanelText } from './WidgetDefinitionPanel';
 import { WidgetSnapshotNote } from './WidgetSnapshotNote';
 import type { WidgetSnapshotCapture } from './widgetSnapshotCapture';
 
@@ -35,27 +36,61 @@ export function buildWidgetSnapshotPreview(capture: WidgetSnapshotCapture | null
 
 /**
  * Post a snapshot (lab `dashboards` dscope VS): who will see it, the exact card they will see with
- * its "as of", and that it will not update and the connection stays the poster's. One primary
- * action; Cancel writes nothing. Publication goes through `widgets.snapshot.post`, whose existing
- * approval policy may hold it for the Inbox — then this says so instead of claiming it posted.
+ * its "as of" and its own mark, and that it will not update and the connection stays the poster's.
+ * One primary action; Cancel writes nothing. Publication goes through `widgets.snapshot.post`, whose
+ * existing approval policy may hold it for the Inbox — then this says so instead of claiming it posted.
+ *
+ * A card that is refreshing, stale or failed has no current numbers to post, so the confirm offers
+ * the card's own Refresh rather than a dead end; once its reads are current the preview freezes in
+ * place and Post is offered.
  */
 export function WidgetSnapshotConfirmPanel(props: Readonly<{
     /** The Session Board it posts to. */
     surface: WidgetSurfaceRefV1;
     title: string;
     sourceLabel: string;
+    /** The card's own mark. */
+    mark?: IconName;
     capture: () => WidgetSnapshotCapture | null;
+    /** What the card shows changed (its reads finished refreshing). */
+    watch?: (listener: () => void) => () => void;
     onDone: () => void;
     onCancel: () => void;
     testID: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const [opened] = React.useState(() => {
-        const at = Date.now();
-        return { at, preview: buildWidgetSnapshotPreview(props.capture(), props.sourceLabel, at) };
-    });
-    const [state, setState] = React.useState<'idle' | 'busy' | 'pending' | 'failed'>('idle');
+    const [opened, setOpened] = React.useState(() => freeze(props.capture(), props.sourceLabel));
+    const [state, setState] = React.useState<'idle' | 'refreshing' | 'busy' | 'pending' | 'failed'>('idle');
     const time = formatHappierAsOfTime(opened.at);
+    const { capture, sourceLabel, watch } = props;
+    // Only while it waits on a refresh it asked for: the first current capture freezes the preview.
+    React.useEffect(() => {
+        if (state !== 'refreshing' || !watch) return;
+        const settle = () => {
+            const next = capture();
+            if (next?.current) {
+                setOpened(freeze(next, sourceLabel));
+                setState('idle');
+            }
+        };
+        const stop = watch(settle);
+        settle();
+        return stop;
+    }, [capture, sourceLabel, state, watch]);
+    const refresh = React.useCallback(async () => {
+        const current = capture();
+        if (!current || state === 'refreshing') return;
+        setState('refreshing');
+        try {
+            await current.refresh();
+        } catch {
+            // The card's own freshness line says why; the confirm stays where it was.
+        }
+        const after = capture();
+        if (after?.current) {
+            setOpened(freeze(after, sourceLabel));
+        }
+        setState('idle');
+    }, [capture, sourceLabel, state, watch]);
     const post = React.useCallback(async () => {
         if (!opened.preview || state === 'busy') return;
         setState('busy');
@@ -71,7 +106,7 @@ export function WidgetSnapshotConfirmPanel(props: Readonly<{
     }, [opened.preview, props, state]);
 
     return (
-        <WidgetDefinitionPanel
+        <WidgetFlowPanel
             title={t('widgetDefinition.snapshotTitle')}
             hint={t('widgetDefinition.snapshotHint', { widget: props.title, time })}
             testID={props.testID}
@@ -85,18 +120,18 @@ export function WidgetSnapshotConfirmPanel(props: Readonly<{
                     onPress: () => { void post(); },
                     disabled: opened.preview === null,
                     busy: state === 'busy',
-                    blockedReason: opened.preview === null ? t('widgetDefinition.snapshotNotCurrent') : null,
+                    // The body's own line says why, with Refresh; the footer does not repeat it.
                 }}
         >
             {opened.preview ? (
-                <View style={styles.preview} testID={`${props.testID}.preview`}>
+                <WidgetPreviewWell testID={`${props.testID}.preview`}>
                     <WidgetFrame
                         testID={`${props.testID}.card`}
                         frameStyle="card"
                         placement="board"
-                        mark="squares-four"
+                        mark={props.mark ?? 'squares-four'}
                         title={props.title}
-                        meta={<Text style={widgetPanelText.secondary}>{t('widgetDefinition.asOf', { time })}</Text>}
+                        meta={<Text style={widgetFlowText.secondary}>{t('widgetDefinition.asOf', { time })}</Text>}
                         body={{ kind: 'content', children: (
                             <View>
                                 <SessionBoardDeclarativeContent document={opened.preview.document} testID={`${props.testID}.document`} />
@@ -104,18 +139,28 @@ export function WidgetSnapshotConfirmPanel(props: Readonly<{
                             </View>
                         ) }}
                     />
-                </View>
+                </WidgetPreviewWell>
             ) : (
-                <View style={styles.blocked}>
-                    <Icon name="arrow-clockwise" size={16} color={theme.colors.text.tertiary} />
-                    <Text style={widgetPanelText.secondary}>{t('widgetDefinition.snapshotNotCurrent')}</Text>
-                </View>
+                <SurfaceStateCard
+                    testID={`${props.testID}.notCurrent`}
+                    kind="warning"
+                    size="line"
+                    title={t('widgetDefinition.snapshotNotCurrent')}
+                    {...(capture() ? { action: {
+                        label: t('common.refresh'),
+                        onPress: () => refresh(),
+                        busy: state === 'refreshing',
+                        disabled: state === 'refreshing',
+                        testID: `${props.testID}.refresh`,
+                    } } : {})}
+                />
             )}
-        </WidgetDefinitionPanel>
+        </WidgetFlowPanel>
     );
 }
 
-const styles = StyleSheet.create((theme) => ({
-    preview: { borderRadius: 12, backgroundColor: theme.colors.surface.inset, padding: 10, marginBottom: 4 },
-    blocked: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 16 },
-}));
+/** The confirm's frozen preview at one moment: what the card shows now, or nothing when it is not current. */
+function freeze(capture: WidgetSnapshotCapture | null, sourceLabel: string): Readonly<{ at: number; preview: WidgetSnapshotPreviewV1 | null }> {
+    const at = Date.now();
+    return { at, preview: buildWidgetSnapshotPreview(capture, sourceLabel, at) };
+}

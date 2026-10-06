@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
-import { AccountProfileSchema, PluginProjectionV2Schema, PluginUiViewV2Schema, tryWriteServerEnabledBitInPlace, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { AccountProfileSchema, PluginProjectionV2Schema, PluginUiViewV2Schema, tryWriteServerEnabledBitInPlace, type ActionExecutorDeps, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginWidgetAreaHostPortV1 } from '@happier-dev/protocol/plugins/ui';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -24,6 +24,119 @@ import { createPluginDeclaredResourceStore } from '@/components/plugins/surfaces
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { buildConnectedAccountPurposeSetupRoute, readConnectedAccountPurposeSetupRequest,
+    isConnectedAccountPurposeSetupTargetCurrent } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
+import { useApplyConnectedAccountPurposeTarget } from '@/sync/store/settingsWriters';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+
+it('repairs a shared mounted viewer purpose through the existing Account settings mutation without changing shared inputs', async () => {
+    await import('@/sync/syncEngine');
+    // Bridge Metro's call-time require to the same real Sync singleton; no settings logic is replaced.
+    const syncBridge = await loadVitestModuleForNodeRequire(new URL('../../sync.ts', import.meta.url), () => import('@/sync/sync'));
+    const http = createHomeHubArtifactHttpBoundary('viewer');
+    let raw: Record<string, unknown> = {};
+    let version = 1;
+    let reject = false;
+    const writes: Record<string, unknown>[] = [];
+    const connection = await restoreServerAccountForTest({ serverUrl: 'http://viewer-purpose-recovery.test', accountId: 'viewer', request: async (input, init) => {
+        if (new URL(String(input)).pathname === '/v2/sessions/named-session')
+            return Response.json({ error: 'Session not found' }, { status: 404 });
+        if (new URL(String(input)).pathname !== '/v2/account/settings') return http.request(input, init);
+        if (init?.method !== 'POST') return Response.json({ content: { t: 'plain', v: raw }, version });
+        if (reject) return Response.json({ error: 'denied' }, { status: 403 });
+        const body: unknown = JSON.parse(String(init.body));
+        if (!body || typeof body !== 'object' || Reflect.get(body, 'expectedVersion') !== version) throw new Error('Expected exact Account CAS');
+        const content: unknown = Reflect.get(body, 'content');
+        if (!content || typeof content !== 'object' || Reflect.get(content, 't') !== 'plain') throw new Error('Expected explicit plain Account envelope');
+        const value: unknown = Reflect.get(content, 'v');
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected Account settings object');
+        raw = Object.fromEntries(Object.entries(value)); writes.push(raw); version += 1;
+        return Response.json({ success: true, version });
+    } });
+    const previous = storage.getState();
+    try {
+        const { useConfiguredWidgetTarget } = await import('@/sync/domains/widgets/useConfiguredWidgetTarget');
+        const surface = { pluginId: 'com.acme.recovery', localId: 'status' };
+        const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
+        const service = { pluginId: surface.pluginId, localId: 'cloud' };
+        const ref = { service, accountId: 'mine' };
+        const connected = AccountProfileSchema.parse({ id: 'viewer', connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'token',
+            configurationReady: true, configurationRevision: null, revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }] });
+        storage.setState({ profile: AccountProfileSchema.parse({ id: 'viewer' }), profileScope: { serverId: connection.home.id, accountId: 'viewer' } });
+        const widget = { ...widgetProjectionEntry({ ...surface, entryId: 'recovery-widget', target: 'app', occurrenceId: 'current', inputs: { fields: [
+            { path: 'connection', title: 'Cloud account', widget: 'select', connectedAccountOptions: true },
+        ] }, inputSchema: { type: 'object', properties: { connection: { type: 'object', required: ['service', 'accountId'],
+            properties: { service: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } }, required: ['pluginId', 'localId'], additionalProperties: false },
+                accountId: { type: 'string' } }, additionalProperties: false } }, additionalProperties: false } }),
+            resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }] };
+        const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [surface.pluginId]: { ...widgetInstalledPackage(surface.pluginId, 'Recovery'), occurrenceId: 'current',
+                source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { 'recovery-widget': widget } } },
+            resourcesById: { metrics: { id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config', scope: 'global',
+                connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [service] }] } },
+        }));
+        const descriptor = readWidgetDescriptor(projection, surface)!;
+        const scope = { serverId: connection.home.id, accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'shared' } };
+        const instance = { v: 1 as const, id: 'shared', definition: { kind: 'installed' as const, surface }, bindings: { connection: { kind: 'viewer' as const, purpose: 'read' } } };
+        let runtime = { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true,
+            machineId: 'machine', serverId: connection.home.id, platform: 'web' as const };
+        const hook = await renderHook(() => ({ resolution: useConfiguredWidgetTarget({ scope, instance, descriptor, providedContext: {}, appRuntime: runtime }),
+            select: useApplyConnectedAccountPurposeTarget() }));
+        const initial = hook.getCurrent().resolution;
+        if (initial.status === 'ready' || !initial.repair?.connection) throw new Error(`Expected admitted viewer-purpose Connect recovery: ${JSON.stringify(initial)}`);
+        const request = readConnectedAccountPurposeSetupRequest(buildConnectedAccountPurposeSetupRoute(initial.repair.connection).params)!;
+        expect(request.purpose).toEqual({ consumer, purpose: 'read' });
+        // Authentication adds a profile, but it does not choose this Resource's purpose.
+        await act(async () => { storage.setState({ profile: connected }); });
+        expect(hook.getCurrent().resolution).toMatchObject({ status: 'selection_required', repair: { kind: 'connect' } });
+        expect(isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: storage.getState().profileScope,
+            runtime, profile: connected, target: null })).toBe(false);
+        const next = { kind: 'account' as const, account: ref };
+        const isCurrent = () => isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: storage.getState().profileScope,
+            runtime, profile: storage.getState().profile, target: next });
+        reject = true;
+        await act(async () => { await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow(); });
+        expect(writes).toHaveLength(0);
+        expect(hook.getCurrent().resolution.status).toBe('selection_required');
+        reject = false;
+        await act(async () => { await hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent }); });
+        expect(writes).toHaveLength(1);
+        expect(hook.getCurrent().resolution).toMatchObject({ status: 'ready', input: { connection: ref } });
+        expect(instance.bindings).toEqual({ connection: { kind: 'viewer', purpose: 'read' } });
+        expect(isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: { serverId: scope.serverId, accountId: 'other' },
+            runtime, profile: connected, target: next })).toBe(false);
+        const validSettingsScope = storage.getState().settingsScope;
+        await act(async () => {
+            storage.setState({ settingsScope: { serverId: scope.serverId, accountId: 'other' } });
+            await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow();
+            storage.setState({ settingsScope: validSettingsScope });
+        });
+        expect(writes).toHaveLength(1);
+        runtime = { ...runtime, pluginUiProjection: { ...projection, resourcesById: {} } };
+        await act(async () => { await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow(); });
+        expect(writes).toHaveLength(1);
+        await hook.unmount();
+        const deniedSession = createSessionFixture({ id: 'named-session', serverId: scope.serverId,
+            metadata: { name: 'Build release', path: '/private/release', host: 'machine' } });
+        deniedSession.access = { ...deniedSession.access!, capabilities: { ...deniedSession.access!.capabilities, readTranscript: false } };
+        await act(async () => { storage.setState({ sessions: { [deniedSession.id]: deniedSession } }); });
+        const nativeDefinition = { kind: 'builtin' as const, id: 'session_summary' };
+        const nativeDescriptor = readWidgetDescriptor(null, nativeDefinition)!;
+        const named = await renderHook(() => useConfiguredWidgetTarget({ scope, providedContext: {}, descriptor: nativeDescriptor,
+            instance: { v: 1, id: 'named', definition: nativeDefinition, bindings: {
+                session: { kind: 'value', value: { serverId: scope.serverId, sessionId: deniedSession.id } },
+            } }, appRuntime: runtime }));
+        expect(named.getCurrent()).toMatchObject({ status: 'denied', reasonCode: 'widget_session_access_denied',
+            repair: { kind: 'session_denied', field: { selectedLabel: 'Build release' } } });
+        await act(async () => { storage.setState({ sessions: {} }); });
+        // A removed render-cache row is not terminal absence; retain the repair
+        // assertion after the exact Session's real HTTP hydration returns 404.
+        await vi.waitFor(() => expect(named.getCurrent()).toMatchObject({ status: 'unavailable', reasonCode: 'widget_session_unavailable',
+            repair: { kind: 'session_unavailable', field: { selectedLabel: deniedSession.id } } }));
+        await named.unmount();
+    } finally { storage.setState(previous, true); await connection.dispose(); syncBridge.dispose(); }
+});
 
 it('admits a personal connection pin only from the current Account and refuses shared pins', async () => {
     await import('@/sync/syncEngine');
@@ -42,18 +155,18 @@ it('admits a personal connection pin only from the current Account and refuses s
         const valueSchema = { type: 'object' as const, required: ['service', 'accountId'], additionalProperties: false, properties: {
                 service: { type: 'object', required: ['pluginId', 'localId'], additionalProperties: false,
                     properties: { pluginId: { type: 'string' }, localId: { type: 'string' } } }, accountId: { type: 'string' },
-            } };
+            } } satisfies PluginJsonSchemaV2;
         const inputs = { fields: [{ path: 'connection', title: 'Connection', widget: 'select' as const, connectedAccountOptions: true as const }] };
-        const inputSchema = { type: 'object' as const, properties: { connection: valueSchema }, additionalProperties: false };
+        const inputSchema = { type: 'object' as const, properties: { connection: valueSchema }, additionalProperties: false } satisfies PluginJsonSchemaV2;
         const consumer = { pluginId: surface.pluginId, localId: 'metrics' };
         const purposes = { resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }] };
         const admitted = PluginUiViewV2Schema.parse({ id: surface.localId, renderer: 'widget-native', container: 'widget', target: { kind: 'app' }, inputs, inputSchema, ...purposes });
         expect(admitted).toMatchObject({ inputs, inputSchema });
-        const widget = { ...widgetProjectionEntry({ ...surface, target: 'app', inputs, inputSchema, occurrenceId: 'current' }), ...purposes };
+        const widget = { ...widgetProjectionEntry({ ...surface, entryId: 'connection-widget', target: 'app', inputs, inputSchema, occurrenceId: 'current' }), ...purposes };
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { [surface.pluginId]: { id: surface.pluginId, displayName: 'Binding', enabled: true, occurrenceId: 'current',
                 source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } } },
-            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { 'connection-widget': widget } } },
             resourcesById: { metrics: { id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config', scope: 'global',
                 connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [selected.service] }] } },
         }));
@@ -68,7 +181,7 @@ it('admits a personal connection pin only from the current Account and refuses s
         }), { initialProps: { value: selected, shared: false }, wrapper: ({ children }) => React.createElement(AppShellPluginUiProjectionValueProvider,
             { value: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
                 machineId: 'machine', serverId: home.serverId, platform: 'web', reloadConnectedAccountProjection: () => {},
-                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} } }, children) });
+                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} }, children }) });
         const { callWorkflowAction } = await import('@/sync/domains/workflows/callWorkflowAction');
         expect(await callWorkflowAction({ actionId: 'action.options.resolve', input: { consumer: { kind: 'widget', surface: home,
             definition: { kind: 'installed', surface } }, fieldPath: 'connection' }, parseResult: value => value }))
@@ -95,7 +208,7 @@ it('validates a mounted schema-only typed pin from its selected origin before ex
         const typeOrigin = { serverIdentityId: 'srv_types', materializationRef: {
             machineId: 'machine', materializationId: 'types-materialization', pluginId: inputType.pluginId,
         } };
-        const widget = widgetProjectionEntry({ ...surface, target: 'app', inputs: { fields: [
+        const widget = widgetProjectionEntry({ ...surface, entryId: 'typed-widget', target: 'app', inputs: { fields: [
             { path: 'repository', title: 'Repository', widget: 'select', inputType },
         ] }, inputSchema: { type: 'object', properties: { repository: { type: 'object' } }, additionalProperties: false } });
         const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
@@ -103,7 +216,7 @@ it('validates a mounted schema-only typed pin from its selected origin before ex
                 source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } },
                 [inputType.pluginId]: { id: inputType.pluginId, displayName: 'Types', enabled: true, occurrenceId: 'current',
                     source: { kind: 'local', locator: `/plugins/${inputType.pluginId}` } } },
-            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } },
+            familiesById: { pluginUi: { family: 'pluginUi', entriesById: { 'typed-widget': widget } },
                 inputTypes: { family: 'inputTypes', entriesById: { [`${inputType.pluginId}/${inputType.localId}`]: {
                     id: `${inputType.pluginId}/${inputType.localId}`, pluginId: inputType.pluginId, pluginVersion: '1.0.0', occurrenceId: 'current',
                     ...typeOrigin,

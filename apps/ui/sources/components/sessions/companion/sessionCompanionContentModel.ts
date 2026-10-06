@@ -233,6 +233,9 @@ export function canAddSessionCompanionItem(
         const definition = item.instance.definition;
         return SESSION_COMPANION_BUILTIN_ITEM_IDS.some((id) => id === definition.id);
     }
+    // Keeping an Account definition reference grants no read authority. Its body and each data
+    // read are admitted by WidgetSurface in the viewer's captured Account scope.
+    if (item.kind === 'instance' && (item.instance.definition.kind === 'artifact' || item.instance.definition.kind === 'inline')) return true;
     if (item.kind === 'pane' && RIGHT_SIDEBAR_BUILTIN_TABS.some((tab) => tab.id === item.paneId && tab.scopes.includes('session'))) return true;
     if (runtime?.phase !== 'current' || !runtime.pluginUiProjection) return false;
     if (item.kind === 'instance') {

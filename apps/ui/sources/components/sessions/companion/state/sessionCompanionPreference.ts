@@ -1,4 +1,4 @@
-import { SessionCompanionPresentationItemRefV1Schema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
+import { SessionCompanionPresentationItemRefV1Schema, SessionCompanionPresentationItemRefV1StoredSchema, SESSION_COMPANION_BUILTIN_ITEM_IDS, type SessionCompanionPresentationItemRefV1 } from '@happier-dev/protocol/sessions';
 import { z } from 'zod';
 import type { WidgetExpectedPresentationV1, WidgetInputBindingsV1, WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { sameStrictJsonValue } from '@happier-dev/protocol';
@@ -66,7 +66,7 @@ export const AGENT_PLAN_COMPANION_ITEM: SessionCompanionItemRefV1 = Object.freez
     id: 'agent_plan',
 });
 
-const sessionCompanionItemRefSchema = SessionCompanionPresentationItemRefV1Schema;
+const sessionCompanionItemRefSchema = SessionCompanionPresentationItemRefV1StoredSchema;
 
 const sessionCompanionPreferenceV1Schema = z.object({
     v: z.literal(1),
@@ -75,7 +75,7 @@ const sessionCompanionPreferenceV1Schema = z.object({
     edge: z.enum(['leading', 'trailing']),
     density: z.enum(['compact', 'comfortable']),
     items: z.array(sessionCompanionItemRefSchema),
-}).strict();
+});
 
 /**
  * Entries are admitted independently. One corrupt Session preference must not

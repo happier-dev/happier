@@ -28,6 +28,7 @@ import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entity
 import type { WorkBoardEntityBinding } from '@/components/boards/model/workBoardEntityBinding';
 import { resolveDeclarativeDataResourceBinding } from './declarativeDataSource';
 import { HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
+import { createWidgetSnapshotCaptureSlot, WidgetSnapshotCaptureContext } from '@/components/widgets/definitions/widgetSnapshotCapture';
 
 installDisconnectedServerSocketBoundary();
 const connections: Awaited<ReturnType<typeof restoreServerAccountForTest>>[] = [];
@@ -322,7 +323,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             expect(b.http.writes).toHaveLength(0);
         } finally { await act(async () => { screenA.tree.unmount(); screenB?.tree.unmount(); }); }
     });
-    it('keeps the same data node and its last good value through a failed refresh, says so once and retries', async () => {
+    it.each(['transport failure', 'malformed success'] as const)('keeps the same data node and its last good value through %s, says so once and retries', async (failure) => {
         installLiveResourceRpc();
         const a = await createAccountLifetime({ accountId: 'account-a' });
         const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'metric', label: 'Checks',
@@ -334,9 +335,12 @@ describe('PluginContextualResourceStoreProvider', () => {
                 contentType: 'application/json', scope: 'session' } });
         const runtime = { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current' as const,
             interactionEnabled: true, machineId: 'machine-1', serverId: a.lifetime.scope.serverId, platform: 'web' as const };
+        const captureSlot = createWidgetSnapshotCaptureSlot();
         const screen = await renderScreen(<WidgetFrame testID="kept-frame" frameStyle="card" placement="home" title="Checks" source="Composer"
-            meta="As of today" body={{ kind: 'content', children: <DeclarativeWidgetDocument document={document} input={{}} runtime={runtime}
-                accountLifetime={a.lifetime} sessionId="session-1" isCurrent={a.lifetime.isCurrent} testID="kept" /> }} />);
+            meta="As of today" body={{ kind: 'content', children: <WidgetSnapshotCaptureContext.Provider value={captureSlot}>
+                <DeclarativeWidgetDocument document={document} input={{}} runtime={runtime}
+                    accountLifetime={a.lifetime} sessionId="session-1" isCurrent={a.lifetime.isCurrent} testID="kept" />
+            </WidgetSnapshotCaptureContext.Provider> }} />);
         const lease = acquirePluginContextualResourceStore(binding(a.lifetime))!;
         try {
             await vi.waitFor(() => { expect(JSON.stringify(screen.tree.toJSON())).toContain('"1"'); });
@@ -349,10 +353,12 @@ describe('PluginContextualResourceStoreProvider', () => {
             await act(async () => { refreshing = lease.store.getEntry(RESOURCE_ID).refresh(); });
             await vi.waitFor(() => expect(screen.findAllByTestId('kept-frame.refreshing').length).toBeGreaterThan(0));
             expect(screen.tree.root.findByType(HappierDataMetric)).toBe(metric);
-            expect(screen.getTextContent()).toContain('As of today');
+            expect(screen.getTextContent()).toContain('Refreshing');
             expect(screen.getTextContent()).toContain('Composer');
             await act(async () => {
-                finishRead({ supported: true, result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } });
+                finishRead(failure === 'transport failure'
+                    ? { supported: true, result: { ok: false, reason: 'unavailable', code: 'plugin_resource_unavailable' } }
+                    : { ...resourceResponse('b'), result: { ...resourceResponse('b').result, bytesBase64: 'Indyb25nIg==' } });
                 await refreshing;
             });
             expect(screen.findAllByTestId('kept-frame.refreshing')).toHaveLength(0);
@@ -361,6 +367,8 @@ describe('PluginContextualResourceStoreProvider', () => {
             expect(screen.tree.root.findByType(HappierDataMetric)).toBe(metric);
             expect(JSON.stringify(screen.tree.toJSON())).toContain('"1"');
             expect(screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.testID === 'kept-freshness')).toHaveLength(1);
+            expect(captureSlot.capture()).toMatchObject({ current: false, digests: [`sha256:${'a'.repeat(64)}`] });
+            expect([...captureSlot.capture()!.frozenByPath.values()]).toMatchObject([{ data: { kind: 'value', value: 1 } }]);
 
             machineResourceRpc.read.mockResolvedValue({ ...resourceResponse('c'), result: { ...resourceResponse('c').result, bytesBase64: 'Mw==' } });
             const retry = screen.tree.root.findAll(node => node.props.testID === 'kept-freshness-action')[0]!;
@@ -368,6 +376,51 @@ describe('PluginContextualResourceStoreProvider', () => {
             await vi.waitFor(() => { expect(JSON.stringify(screen.tree.toJSON())).toContain('"3"'); });
             expect(screen.tree.root.findAll(node => node.props.testID === 'kept-freshness')).toHaveLength(0);
             expect(screen.tree.root.findByType(HappierDataMetric)).toBe(metric);
+        } finally { lease.dispose(); await act(async () => { screen.tree.unmount(); }); }
+    });
+
+    it('removes private typed content on server authority loss before the local projection retires', async () => {
+        installLiveResourceRpc();
+        const a = await createAccountLifetime({ accountId: 'account-a' });
+        const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'metric', label: 'Checks',
+            data: { kind: 'resource', resource: { pluginId: 'acme.composer', localId: RESOURCE_ID },
+                inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'number' } },
+            value: { path: [], type: 'number' } } });
+        const projection = widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app' }],
+            { 'acme.composer': { ...widgetInstalledPackage('acme.composer', 'Composer'), occurrenceId: 'occurrence-42' } },
+            { state: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config', contentType: 'application/json', scope: 'session' } });
+        const runtime = { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current' as const,
+            interactionEnabled: true, machineId: 'machine-1', serverId: a.lifetime.scope.serverId, platform: 'web' as const };
+        const captureSlot = createWidgetSnapshotCaptureSlot();
+        const renderDocument = (sessionId: string) => <WidgetFrame testID="private-frame" frameStyle="card" placement="home" title="Checks"
+            body={{ kind: 'content', children: <WidgetSnapshotCaptureContext.Provider value={captureSlot}>
+                <DeclarativeWidgetDocument document={document} input={{}} runtime={runtime}
+                    accountLifetime={a.lifetime} sessionId={sessionId} isCurrent={a.lifetime.isCurrent} testID="private-data" />
+            </WidgetSnapshotCaptureContext.Provider> }} />;
+        const screen = await renderScreen(renderDocument('session-1'));
+        const lease = acquirePluginContextualResourceStore(binding(a.lifetime))!;
+        try {
+            await vi.waitFor(() => expect(screen.tree.root.findAllByType(HappierDataMetric)).toHaveLength(1));
+            // The contextual adapter exposes this exact daemon refusal code;
+            // the Account and local declaration remain current.
+            machineResourceRpc.read.mockResolvedValue({ supported: true,
+                result: { ok: false, reason: 'unavailable', code: 'plugin_resource_session_access_unavailable' } });
+            await act(async () => { await lease.store.getEntry(RESOURCE_ID).refresh(); });
+            expect(a.lifetime.isCurrent()).toBe(true);
+            expect(screen.tree.root.findAllByType(HappierDataMetric)).toHaveLength(0);
+            expect(screen.findAllByTestId('private-frame').length).toBeGreaterThan(0);
+            expect(captureSlot.capture()?.frozenByPath.size).toBe(0);
+            expect(captureSlot.capture()?.digests).toEqual([]);
+
+            machineResourceRpc.read.mockResolvedValue(resourceResponse('c'));
+            await act(async () => { await lease.store.getEntry(RESOURCE_ID).refresh(); });
+            await vi.waitFor(() => expect(screen.tree.root.findAllByType(HappierDataMetric)).toHaveLength(1));
+            // An exact Session identity change must also clear validated LKG
+            // immediately, before the new authority's first read settles.
+            machineResourceRpc.read.mockImplementation(() => new Promise(() => {}));
+            await act(async () => { screen.tree.update(renderDocument('session-2')); });
+            expect(screen.tree.root.findAllByType(HappierDataMetric)).toHaveLength(0);
+            expect(captureSlot.capture()?.frozenByPath.size).toBe(0);
         } finally { lease.dispose(); await act(async () => { screen.tree.unmount(); }); }
     });
     it('refreshes an actual Home instance through the public Action front door and reports real Resource failure', async () => {
@@ -471,7 +524,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             await vi.waitFor(() => { expect(tree!.root.findAll(node => node.props.testID === 'native-frame.refreshing').length).toBeGreaterThan(0); });
             expect(readSnapshot()?.digest).toBe(`sha256:${'a'.repeat(64)}`);
             expect(tree.root.findByType(NativeResourceBody)).toBe(body);
-            expect(JSON.stringify(tree.toJSON())).toContain('As of today');
+            expect(JSON.stringify(tree.toJSON())).toContain('Refreshing');
             expect(JSON.stringify(tree.toJSON())).toContain('Composer');
             await act(async () => { finishRead(resourceResponse('b')); });
             await vi.waitFor(() => { expect(snapshot?.digest).toBe(`sha256:${'b'.repeat(64)}`); });

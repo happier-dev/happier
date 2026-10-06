@@ -4,11 +4,14 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 import { WorkBoardActionInputSchemasV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
-import { resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
+import { describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { EntityDragGrip, EntityStagedMoveDock } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { EntityDragGripTrigger, EntityStagedMoveDock, useEntityStagedMoveHints } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
+import { EntityDropSettledFeedback } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
+import type { EntityDragItemV1 } from '@happier-dev/protocol/plugins/ui';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { createEntityDragGestureAdapter, useEntityDragSource, useEntityDragSourceState, useEntityDragDomBinding,
     useEntityDropTargetState, type EntityDragCarry } from '@/components/ui/treeDragDrop';
@@ -180,7 +183,7 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
     const spoken = member.kind === 'work' ? member.card.status.word : t('boards.widgets.kind');
     const { runtime } = binding;
     const sourceId = 'work-board-card:' + React.useId();
-    const pressable = React.useRef<View | null>(null);
+    const pressable = React.useRef<Readonly<{ focus: () => void }> | null>(null);
     const latest = React.useRef(props); latest.current = props;
     const origin = React.useRef<BoardCanvasPoint>(props.position ?? { x: props.flowX, y: 0 });
     const staged = React.useRef<BoardCanvasPoint | null>(null);
@@ -218,7 +221,7 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
             canvas.setGrab(member.key, { x: event.clientX, y: event.clientY });
             return true;
         } });
-    const ref = React.useCallback((node: View | null) => { pressable.current = node; dom(node); }, [dom]);
+    const ref = React.useCallback((node: Readonly<{ focus: () => void }> | null) => { pressable.current = node; dom(node); }, [dom]);
     React.useLayoutEffect(() => { if (props.position) origin.current = props.position; }, [props.position]);
     React.useEffect(() => { if (props.placing) pressable.current?.focus?.(); }, [props.placing]);
     // Restore the item's focus on a flow→XY remount, not when focus enters its chooser grip.
@@ -261,8 +264,8 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
             latest.current.onPlaced?.();
         });
     };
-    const onKeyDown = (event: { key?: string; repeat?: boolean; shiftKey?: boolean; nativeEvent?: { key?: string; shiftKey?: boolean }; preventDefault?: () => void; stopPropagation?: () => void }) => {
-        if (chooser.onMenuKeyDown(event)) return;
+    const onKeyDown = (event: { key?: string; repeat?: boolean; shiftKey?: boolean; nativeEvent?: { key?: string; shiftKey?: boolean }; preventDefault?: () => void; stopPropagation?: () => void }): boolean => {
+        if (chooser.onMenuKeyDown(event)) return true;
         const key = event.key ?? event.nativeEvent?.key ?? '';
         const active = runtime.getSnapshot().sourceId === sourceId && runtime.getSnapshot().phase === 'carrying';
         // XY arrows are physical directions, not logical sibling order in an RTL list.
@@ -273,6 +276,8 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
             event.preventDefault?.(); event.stopPropagation?.();
             void carry.current?.release().then(outcome => { if (outcome?.status === 'applied') latest.current.onPlaced?.(); }); carry.current = null;
         } else if (ARROWS[key]) { event.preventDefault?.(); event.stopPropagation?.(); move(ARROWS[key]!, active); }
+        else return false;
+        return true;
     };
     const ownLayout = React.useRef<Readonly<{ y: number; height: number }> | null>(null);
     const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
@@ -300,17 +305,15 @@ const CanvasCard = React.memo(function CanvasCard(props: Readonly<{
         items={sections.flatMap(section => section.options.map(option => ({ id: option.id, title: option.label,
             subtitle: option.detail, disabled: option.disabled, category: section.title })))}
         onSelect={id => chooser.select(destinations[Number(id)])}
-        trigger={({ toggle }) => <GestureDetector gesture={gesture}><Pressable testID={'board-canvas-organize:' + member.key} accessibilityRole="button"
+        trigger={({ toggle }) => <GestureDetector gesture={gesture}><EntityDragGripTrigger testID={'board-canvas-organize:' + member.key}
             accessibilityLabel={t('entityDragDrop.organize.grip', { item: member.title })}
             accessibilityHint={t('entityDragDrop.keyboard.hintsA11y')}
-            onFocus={() => { setFocused(true); props.onFocused(member.key); }} onBlur={() => setFocused(false)}
+            onFocusChange={focused => { setFocused(focused); if (focused) props.onFocused(member.key); }}
             // A widget's body has its own controls, so no card-wide button: its grip takes focus, the grid moves and the drag.
-            {...(member.kind === 'widget' ? { ref, accessibilityActions: moveActions, onAccessibilityAction: onMoveAction } : {})}
-            onPress={toggle} {...keyboardProps}>
-            <EntityDragGrip active={state.active}
+            {...(member.kind === 'widget' ? { controlRef: ref, accessibilityActions: moveActions, onAccessibilityAction: onMoveAction } : {})}
+            onPress={toggle} onKeyDown={onKeyDown} expanded={chooserOpen} active={state.active}
                 revealed={member.kind === 'widget' || !isHoverCapablePrimaryPointer() || hovered || focused || chooserOpen}
-                accessibilityLabel={t('entityDragDrop.organize.grip', { item: member.title })} />
-        </Pressable></GestureDetector>} />;
+            /></GestureDetector>} />;
     const lifted = state.active || props.placing;
     const width = memberWidthPx(member.span);
     return <View onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)}
@@ -351,18 +354,17 @@ function CanvasWidgetBody(props: Readonly<{
 
 function CanvasMoveFeedback(props: Readonly<{ binding: WorkBoardEntityBinding; targetId: string }>) {
     const selected = useEntityDropTargetState(props.binding.runtime, props.targetId);
-    if (!selected || props.binding.runtime.getPointer() !== null || !selected.admission) return null;
-    const admission = selected.admission;
-    const outcome = selected.outcome?.status === 'unknown'
-        ? { tone: 'pending' as const, title: t('entityDragDrop.preview.unknownTitle'), detail: t('entityDragDrop.preview.unknownDetail') }
-        : selected.outcome?.status === 'refused' || admission.status === 'refused'
-        ? { tone: 'refused' as const, glyph: 'refused' as const, title: t('entityDragDrop.preview.cantMoveHere'), detail: selected.outcome?.status === 'refused' ? selected.outcome.reason.message : admission.status === 'refused' ? admission.reason.message : '' }
-        : { tone: selected.phase === 'pending' ? 'pending' as const : 'allowed' as const, glyph: 'here' as const,
-            title: admission.effect.preview.verb, detail: selected.phase === 'pending' ? t('entityDragDrop.preview.pendingDetail') : [admission.effect.preview.target, admission.effect.preview.consequence].filter(Boolean).join(' · ') };
-    return <View>
-        <EntityStagedMoveDock outcome={outcome} hints={[{ keys: ['↵'], label: t('entityDragDrop.keyboard.drop') }, { keys: [t('entityDragDrop.keyboard.escapeKey')], label: t('entityDragDrop.keyboard.cancel') }]} testID="board-canvas-move-preview" />
-        <PoliteAccessibilityStatus announcement={[outcome.title, outcome.detail].filter(Boolean).join(' · ')} transitionKey={JSON.stringify(admission)} statusTestID="board-canvas-move-status" />
-    </View>;
+    const hints = useEntityStagedMoveHints();
+    const staged = selected && props.binding.runtime.getPointer() === null && (selected.phase === 'carrying' || selected.phase === 'pending') ? selected : null;
+    const outcome = staged ? describeEntityDropOutcome(staged) : null;
+    const latest = React.useRef(props); latest.current = props;
+    // A move the Board owner refused late or could not confirm stays here in words (lab ST4).
+    const settledMatch = React.useMemo(() => ({ item: (item: EntityDragItemV1) => (item.kind === 'work-board-item' || item.kind === 'work-board-widget')
+        && item.boardId === latest.current.binding.getContext().board.id }), []);
+    return <EntityDropSettledFeedback runtime={props.binding.runtime} match={settledMatch} testID="board-canvas-move">
+        {outcome ? <EntityStagedMoveDock outcome={outcome} hints={hints} testID="board-canvas-move-preview" /> : null}
+        <PoliteAccessibilityStatus announcement={describeHappierDropAnnouncement(outcome)} transitionKey={JSON.stringify(staged?.admission ?? null)} statusTestID="board-canvas-move-status" />
+    </EntityDropSettledFeedback>;
 }
 
 const styles = StyleSheet.create(() => ({

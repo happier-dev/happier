@@ -239,21 +239,23 @@ function QualifiedSessionBoardContinuityProvider(props: React.PropsWithChildren<
             },
         };
     }, [
-        announcement,
+        // React state tuples are fresh on every render; their values and stable
+        // setters define the published continuity, not the tuple wrappers.
+        announcement[0],
         activeEditorOwnerId,
         activateEditor,
-        busy,
+        busy[0],
         deactivateEditor,
-        focusedItemId,
-        hostedHtmlDraft,
-        headingFocusRequest,
-        lastOutcome,
-        retainedMutation,
-        noteDraft,
+        focusedItemId[0],
+        hostedHtmlDraft[0],
+        headingFocusRequest[0],
+        lastOutcome[0],
+        retainedMutation[0],
+        noteDraft[0],
         props.address,
         registerEditorFlush,
-        requestedViewId,
-        viewRemovalFocusRequest,
+        requestedViewId[0],
+        viewRemovalFocusRequest[0],
     ]);
 
     return (

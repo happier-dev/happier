@@ -16,6 +16,8 @@ import { SessionBoardDeclarativeContent } from '@/components/sessions/board/Sess
 import { widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useYourWidgetCandidates } from '@/components/widgets/definitions/useYourWidgetCandidates';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 import { WidgetAddPopover } from './WidgetAddPopover';
 import { buildCompanionWidgetAddSections } from './widgetAddSections';
@@ -35,7 +37,7 @@ export type CompanionWidgetAddSource = Readonly<{
     pluginProjection: PluginUiProjectionModel | null | undefined;
     /** The Session's plugin runtime: compact plugin glances are offered only while it is current. */
     pluginRuntime?: SessionPluginRuntimeState | null;
-    addItem: (ref: SessionCompanionItemRefV1) => void;
+    addItem: (ref: SessionCompanionItemRefV1) => void | Promise<void>;
     /** What the Companion fills on its own ("This session"); Set up offers it first. */
     context?: WidgetSurfaceContext;
     /** A glance's live preview, by built-in id (supplied by the glance owners). */
@@ -76,10 +78,13 @@ function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof Compan
             ? { serverId: session.ref.serverId, accountId: account.accountId, owner: { kind: 'companion', sessionId: session.ref.sessionId } }
             : null
     ), [account, session]);
+    const appRuntime = useAppShellPluginUiProjection();
+    const yours = useYourWidgetCandidates(scope, pluginRuntime?.pluginUiProjection ?? appRuntime.pluginUiProjection);
+    const candidates = React.useMemo(() => yours.length ? [...glanceCandidates, ...yours] : glanceCandidates, [glanceCandidates, yours]);
     const sections = React.useMemo(() => buildCompanionWidgetAddSections({
         refs,
         snapshot,
-        glanceCandidates,
+        glanceCandidates: candidates,
         pluginProjection,
         addItem,
         context: context ?? NO_CONTEXT,
@@ -98,7 +103,7 @@ function OpenCompanionWidgetAddPopover(props: React.ComponentProps<typeof Compan
         } : {}),
         ...(renderGlancePreview ? { renderGlancePreview } : {}),
         renderNotePreview,
-    }), [addItem, context, glanceCandidates, pluginProjection, props.testID, refs, renderGlancePreview, scope, snapshot]);
+    }), [addItem, candidates, context, pluginProjection, props.testID, refs, renderGlancePreview, scope, snapshot]);
 
     return (
         <WidgetAddPopover

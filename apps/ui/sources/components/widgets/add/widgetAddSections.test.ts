@@ -52,6 +52,16 @@ const BOARD = projectSessionBoard({
 const ids = (entries: ReadonlyArray<{ id: string }>) => entries.map((entry) => entry.id);
 
 describe('buildBoardWidgetAddContent', () => {
+    it('keeps required-input gallery tiles inert and previews sufficiently bound candidates lazily', () => {
+        const preview = vi.fn((_candidate: WidgetCandidate) => 'admitted preview');
+        const content = buildBoardWidgetAddContent({ intents: ['fromPlugins'], candidates: [
+            candidate('app', 'App widget'), configurable('missing', 'Needs period'),
+        ], snapshot: BOARD, run: vi.fn(), context: SESSION_A, renderPluginPreview: preview, openPlugins: vi.fn() });
+        const entries = content.sections.flatMap(section => section.entries);
+        expect(entries.find(entry => entry.title === 'Needs period')?.renderPreview).toBeUndefined();
+        entries.find(entry => entry.title === 'App widget')!.renderPreview!();
+        expect(preview.mock.calls[0]?.[0]).toMatchObject({ target: 'app' });
+    });
     it('adds a live walkthrough through the Board controller rather than saving preview counts', () => {
         const run = vi.fn();
         const content = buildBoardWidgetAddContent({ intents: ['walkthrough'], candidates: [], snapshot: BOARD, run, openPlugins: vi.fn() });
@@ -102,6 +112,20 @@ describe('buildBoardWidgetAddContent', () => {
 });
 
 describe('buildCompanionWidgetAddSections', () => {
+    it('offers saved definitions as independent personal copies under Your widgets, preserving shared Board refs', async () => {
+        const addItem = vi.fn();
+        const { surface: _surface, ...metadata } = candidate('saved', 'Signups');
+        const yours: WidgetCandidate = { ...metadata, definition: { kind: 'artifact', artifactId: 'signups' },
+            inputs: { fields: [{ path: 'period', title: 'Period', widget: 'text', required: true }] } };
+        const sections = buildCompanionWidgetAddSections({ refs: [{ kind: 'widget', widgetId: 'note' }], snapshot: BOARD,
+            glanceCandidates: [candidate('pr', 'PR'), yours], pluginProjection: null, addItem });
+        expect(sections.find(section => section.id === 'glances')!.entries.map(entry => entry.title)).toEqual(['PR']);
+        const entry = sections.find(section => section.id === 'yours')!.entries[0]!;
+        await expect(entry.setup!().submit({ bindings: { period: { kind: 'value', value: '7d' } } })).resolves.toEqual({ ok: true });
+        expect(addItem.mock.calls[0]?.[0]).toMatchObject({ kind: 'instance', instance: { definition: { kind: 'artifact', artifactId: 'signups' },
+            bindings: { period: { kind: 'value', value: '7d' } } } });
+        expect(sections.find(section => section.id === 'board')!.entries.find(entry => entry.id === 'board-note')?.added).toBe(true);
+    });
     it('counts native configured copies only on this surface and creates an independent followed copy', () => {
         const addItem = vi.fn();
         const native = selectBuiltinWidgetCandidates().find(row => row.definition?.kind === 'builtin' && row.definition.id === 'changes')!;

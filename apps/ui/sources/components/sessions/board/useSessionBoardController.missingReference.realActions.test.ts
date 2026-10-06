@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
 import { SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board';
 
 import { renderHook } from '@/dev/testkit';
@@ -49,11 +50,24 @@ describe('missing-reference recovery through the real Board Actions', () => {
             contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },
         });
         // Only the Home HTTP boundary is substituted; controller, executor, reducer and codec are real.
-        const executorDeps = { sessionBoardAction: adapter } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction'>;
+        // Direct recovery is exercised with the user's explicit policy waiver;
+        // shared Board writes otherwise require approval even on the UI surface.
+        const settings = ActionsSettingsV1Schema.parse({
+            v: 1, approvalWaivedSurfaces: { 'session.board.layout.update': ['ui'] },
+        });
+        const executorDeps = {
+            sessionBoardAction: adapter,
+            isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+        } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired'>;
         // This Board-only fixture never dispatches the executor's unrelated required host ports.
         const executor = createActionExecutor(executorDeps as ActionExecutorDeps);
+        let actionResult: Awaited<ReturnType<typeof executor.execute>> | undefined;
         const actions = createSessionBoardActionsPort({ ...session,
-            execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, authority: 'present_user' }),
+            execute: async (actionId, input, context) => {
+                const result = await executor.execute(actionId, input, { ...context, authority: 'present_user' });
+                actionResult = result;
+                return result;
+            },
         });
         const snapshot = projectSessionBoard({
             layout: { revision, outcome: { status: 'ready', value: originalLayout } }, items: new Map(),
@@ -69,6 +83,9 @@ describe('missing-reference recovery through the real Board Actions', () => {
         await act(async () => { await hook.getCurrent().run({ kind: 'item.remove', itemId: 'missing' }); });
         await hook.rerender();
 
+        expect(actionResult, JSON.stringify(actionResult)).toMatchObject(conflict
+            ? { ok: false, errorCode: 'session_board_revision_conflict' }
+            : { ok: true });
         expect(writes).toBe(1);
         expect(storedLayout).toEqual(conflict ? originalLayout : {
             v: 1,

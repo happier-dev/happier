@@ -42,6 +42,9 @@ function realBoardActions(
     const settings = ActionsSettingsV1Schema.parse({
         v: 1,
         actions: approvalsCreate ? { 'session.board.item.upsert': { approvalRequiredSurfaces: ['ui'] } } : {},
+        // The direct-write cases represent a deliberate user waiver. An empty
+        // override does not disable the shared Board mutation approval default.
+        approvalWaivedSurfaces: approvalsCreate ? {} : { 'session.board.item.upsert': ['ui'] },
     });
     const deps: Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired' | 'approvalsCreate'> = {
         sessionBoardAction: adapter,

@@ -76,6 +76,7 @@ function snapshot(input: Readonly<{
 
 function Harness(props: Readonly<{
     snapshot: SessionBoardSnapshot;
+    serverId?: string;
     actions?: SessionBoardActionsPort | null;
     companionItemIds?: ReadonlySet<string>;
     onAddToCompanion?: (itemId: string) => void;
@@ -87,7 +88,7 @@ function Harness(props: Readonly<{
 }>): React.ReactElement {
     const controller = useSessionBoardController({
         sessionId: 'session-1',
-        serverId: 'home-1',
+        serverId: props.serverId ?? 'home-1',
         binding: { status: 'ready', snapshot: props.snapshot, refresh: props.refresh ?? (() => {}) },
         actions: props.actions === undefined ? OK_ACTIONS : props.actions,
         ...(props.onAskAgent ? { onAskAgent: props.onAskAgent } : {}),
@@ -96,6 +97,7 @@ function Harness(props: Readonly<{
     return (
         <SessionBoardSurface
             sessionId="session-1"
+            serverId={props.serverId ?? 'home-1'}
             controller={controller}
             host={props.host ?? 'details'}
             resolvePrimaryHost={() => props.host ?? 'details'}
@@ -466,8 +468,8 @@ describe('SessionBoardSurface', () => {
         expect(screen.findByTestId('session-board-add-trigger')).not.toBeNull();
         expect(screen.findHostByTestId('session-board-add-note')).toBeNull();
         const popover = await openAddPopover(screen, 'session-board-add-trigger');
-        // Only the sources with a producer: a note to make, and the agent to ask; no plugins here.
-        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['note']);
+        // Both built-in producers are available; no installed or hosted source exists here.
+        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['walkthrough', 'note']);
         expect(popover.ask).toBeDefined();
         await act(async () => { popover.ask?.onPick(); });
         expect(onAskAgent).toHaveBeenCalledOnce();
@@ -475,6 +477,13 @@ describe('SessionBoardSurface', () => {
     });
 
     it('starts direct manipulation only from a visible move handle', async () => {
+        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const home = await upsertServerProfileOnly({ serverUrl: 'https://board-grip.test', name: 'Board Home' });
+        // Secure credential storage is the boundary; keep qualified scope admission real.
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'board-viewer' })).toString('base64url')}.signature`,
+        });
         const screen = await renderScreen(
             <Harness snapshot={snapshot({
                 layout: MOVABLE,
@@ -482,33 +491,34 @@ describe('SessionBoardSurface', () => {
                     { itemId: 'note-1', item: note('Plan') },
                     { itemId: 'note-2', item: note('Review') },
                 ],
-            })} />,
+            })} serverId={home.id} />,
         );
-
-        const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
-        const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
-        expect(firstHandle).not.toBeNull();
-        expect(secondHandle).not.toBeNull();
-        expect(firstHandle?.props.accessibilityLabel).toContain('Plan');
-        // The value is an authored phrase, not "1 / 2": a screen reader reads a
-        // slash aloud, and no locale ever saw that shape.
-        expect(firstHandle?.props.accessibilityValue).toEqual({
-            text: t('sessionBoard.item.movePosition', { position: 1, total: 2 }),
-        });
-        expect(secondHandle?.props.accessibilityValue).toEqual({
-            text: t('sessionBoard.item.movePosition', { position: 2, total: 2 }),
-        });
-        expect(screen.findHostByTestId('session-board-item-note-1-body')?.props.gesture).toBeUndefined();
+        try {
+            await vi.waitFor(() => { expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull(); });
+            const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
+            const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
+            expect(secondHandle).not.toBeNull();
+            expect(firstHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Plan' }));
+            expect(secondHandle?.props.accessibilityLabel).toBe(t('entityDragDrop.organize.grip', { item: 'Review' }));
+            expect(firstHandle?.props.accessibilityHint).toBe(t('entityDragDrop.keyboard.hintsA11y'));
+            expect(firstHandle?.props['aria-haspopup']).toBe('menu');
+            expect(screen.findHostByTestId('session-board-item-note-1-body')?.props.gesture).toBeUndefined();
+            await screen.pressByTestIdAsync('session-board-item-note-1-move-handle');
+            // The canonical DropdownMenu opens on its scheduled interaction frame.
+            await vi.waitFor(() => {
+                expect(screen.findHostByTestId('session-board-item-note-1-move-handle')?.props.accessibilityState.expanded).toBe(true);
+            });
+        } finally { await screen.unmount(); credentials.mockRestore(); }
     });
 
-    it('renders no Add control for a source this build cannot create', async () => {
+    it('offers the available built-in sources on an empty Board without advertising unavailable sources', async () => {
         const screen = await renderScreen(<Harness snapshot={snapshot({})} />);
 
-        // The empty state still invites the person in, with the one source this build can create…
+        // The empty-state shortcut still creates a note; the chooser offers both producers.
         expect(screen.findByTestId('session-board-empty-action')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('sessionBoard.empty.editor.addNote'));
-        // …and no chooser for sources whose producer does not exist.
-        expect(screen.findByTestId('session-board-add-trigger')).toBeNull();
+        const popover = await openAddPopover(screen, 'session-board-add-trigger');
+        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['walkthrough', 'note']);
         expect(screen.getTextContent()).not.toContain(t('sessionBoard.add.interactiveView'));
     });
 
@@ -811,7 +821,7 @@ describe('SessionBoardSurface', () => {
         expect(openBoard).toHaveBeenCalledOnce();
     });
 
-    it('opens a tapped sidebar card on the Details board and marks the ones kept in Companion', async () => {
+    it('opens a tapped sidebar card on the Details board and keeps Companion membership out of its header', async () => {
         const openItem = vi.fn();
         const screen = await renderScreen(
             <PaneHarness
@@ -825,8 +835,9 @@ describe('SessionBoardSurface', () => {
             />,
         );
 
-        expect(screen.findHostByTestId('session-board-item-note-1-companion-mark')).not.toBeNull();
+        expect(screen.findHostByTestId('session-board-item-note-1-companion-mark')).toBeNull();
         expect(screen.findHostByTestId('session-board-item-note-2-companion-mark')).toBeNull();
+        expect(screen.findHostByTestId('session-board-item-note-1-title')).not.toBeNull();
         await screen.pressByTestIdAsync('session-board-item-note-2-open');
         expect(openItem).toHaveBeenCalledWith('note-2');
     });

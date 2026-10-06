@@ -10,7 +10,7 @@ const source: SessionSurfaceItemV1['source'] = {
 
 describe('configured Session widget presentation', () => {
     it('does not exclude pinned B because physical A has no plugin projection', () => {
-        const resolveSourceAvailability = createSessionBoardSourceAvailabilityResolver(null);
+        const resolveSourceAvailability = createSessionBoardSourceAvailabilityResolver();
         expect(resolveSourceAvailability(source)).toEqual({ kind: 'available' });
         const item: SessionSurfaceItemV1 = { v: 1, title: 'Review status', frame: 'card', height: { mode: 'auto', fallback: 'regular' }, source };
         expect(resolveSessionBoardItemPresentation({

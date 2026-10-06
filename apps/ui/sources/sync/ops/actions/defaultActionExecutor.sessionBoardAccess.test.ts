@@ -305,9 +305,11 @@ describe('Session Board Action access gate', () => {
                 inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'object', properties: { passed: { type: 'number' } } } },
             value: { path: ['passed'], type: 'number' } } });
         // What the card shows now, and what it would show later: the confirm must freeze the first.
+        if (document.root.kind !== 'metric') throw new Error('expected a metric document');
+        const root = document.root;
         let shown = 7;
-        const capture = () => ({ document, current: true, digests: ['source-version-1'],
-            frozenByPath: new Map([['root', freezePluginDeclarativeDataNodeV1(document.root as never, { passed: shown, secret: 'never' })]]) });
+        const capture = () => ({ document, current: true, digests: ['source-version-1'], refresh: async () => {},
+            frozenByPath: new Map([['root', freezePluginDeclarativeDataNodeV1(root, { passed: shown, secret: 'never' })]]) });
         let done = 0;
         const screen = await renderScreen(createElement(WidgetSnapshotConfirmPanel, {
             surface: { serverId, accountId: ACCOUNT_ID, owner: { kind: 'sessionBoard', sessionId: SESSION_ID } },

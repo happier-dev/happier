@@ -189,7 +189,7 @@ describe('SessionCompanionContent (mounted)', () => {
                 resolvePrimaryHost={() => 'details'}
                 pluginRuntime={pluginRuntime}
                 callerHostedHtmlRuntime={callerHostedHtmlRuntime}
-                resolveSourceAvailability={createSessionBoardSourceAvailabilityResolver(pluginRuntime, {
+                resolveSourceAvailability={createSessionBoardSourceAvailabilityResolver({
                     hostedHtmlRendererAvailable: true,
                 })}
             />,
@@ -559,7 +559,7 @@ describe('SessionCompanionContent (mounted)', () => {
         expect(readPresentationNotice()).toMatchObject({ key: 'widgets.instance.move', severity: 'error' });
     });
 
-    it('renames a personal widget copy in place through the Companion owner; an empty name goes back to the widget’s own', async () => {
+    it('keeps a refused personal rename draft and treats the unchanged empty name as a no-op', async () => {
         const instance = { kind: 'instance' as const, instance: { v: 1 as const, id: 'personal-summary', definition: { kind: 'builtin' as const, id: 'session_summary' },
             bindings: { session: { kind: 'context' as const, slot: 'session' } } } };
         const renameInstance = vi.fn((_instanceId: string, _displayName: string | null) => null);
@@ -576,7 +576,9 @@ describe('SessionCompanionContent (mounted)', () => {
         };
         await rename('Release soak');
         expect(renameInstance).toHaveBeenLastCalledWith('personal-summary', 'Release soak');
-        expect(renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')).toBeNull();
+        const refused = renderer.findByTestId('session-companion-content-item-instance:personal-summary-title-input')!;
+        expect(refused.props.value).toBe('Release soak');
+        await act(async () => { refused.props.onKeyPress({ nativeEvent: { key: 'Escape' } }); });
         await rename('  ');
         // Nothing to clear yet: the copy still has the widget's own name.
         expect(renameInstance).toHaveBeenCalledTimes(1);

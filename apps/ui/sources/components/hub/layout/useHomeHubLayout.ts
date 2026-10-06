@@ -35,7 +35,8 @@ export function useHomeHubLayout(): HomeHubLayout {
     const widgets = useHomeWidgetCandidates();
     const layout = state.layout;
     const resolved = React.useMemo(() => resolveHomeHubLayout(layout, HOME_HUB_BUILTIN_DEFINITIONS, widgets), [layout, widgets]);
-    const dispatch = state.dispatch;
+    const write = state.dispatch;
+    const dispatch = React.useCallback((intent: HomeHubLayoutIntent) => write(intent, { rethrow: true }), [write]);
     return React.useMemo(() => ({
         sections: resolved.sections, available: resolved.available,
         isDefault: layout.order.length === 0 && layout.hidden.length === 0 && layout.instances.length === 0 && !layout.sections,
@@ -43,7 +44,7 @@ export function useHomeHubLayout(): HomeHubLayout {
         status: state.status, ...(state.errorCode ? { errorCode: state.errorCode } : {}), retry: state.retry,
         canCancelFailedIntent: Boolean(state.failedIntent), cancelFailedIntent: state.cancelFailedIntent,
         move: (sectionId, step) => dispatch({ kind: 'move', sectionId, step }),
-        moveTo: (sectionId, position) => dispatch({ kind: 'move_to', sectionId, position }, { rethrow: true }),
+        moveTo: (sectionId, position) => dispatch({ kind: 'move_to', sectionId, position }),
         reorder: sectionIds => dispatch({ kind: 'reorder', sectionIds: [...sectionIds] }),
         setHidden: (sectionId, hidden) => dispatch({ kind: 'visibility', sectionId, hidden }),
         setFrameStyle: (sectionId, frameStyle) => dispatch({ kind: 'frameStyle', sectionId, frameStyle }),
