@@ -3,31 +3,36 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { computeSourceDevSharedDepsSignature } from '../../cli/scripts/buildSharedDeps.mjs';
+import { resolveBundledPluginUiArtifactsOutputPath } from './generateBundledPluginUiArtifacts.mjs';
 
-test('hasUsableUiWorkspaceLastGreen delegates availability to the canonical structural publication owner', async () => {
+test('hasUsableUiWorkspaceLastGreen requires both recorded workspace outputs and target-owned UI artifacts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-ui-last-green-'));
   const uiPackageDir = join(root, 'apps', 'ui');
   try {
     await mkdir(uiPackageDir, { recursive: true });
     const { hasUsableUiWorkspaceLastGreen } = await import('./ensureWorkspacePackagesBuilt.mjs');
-    const calls = [];
-    const inspectUsableSourceDevSharedDepsLastGreen = async (repoRoot, options) => {
-      calls.push([repoRoot, options]);
-      return { usable: calls.length > 1, reason: 'fixture' };
-    };
-
-    assert.equal(await hasUsableUiWorkspaceLastGreen({
-      uiPackageDir,
-      inspectUsableSourceDevSharedDepsLastGreen,
-    }), false);
-    assert.equal(await hasUsableUiWorkspaceLastGreen({
-      uiPackageDir,
-      inspectUsableSourceDevSharedDepsLastGreen,
-    }), true);
-    assert.deepEqual(calls, [
-      [root, { workspaceNames: ['plugin-sdk'] }],
-      [root, { workspaceNames: ['plugin-sdk'] }],
-    ]);
+    await mkdir(join(root, 'apps', 'cli', 'scripts'), { recursive: true });
+    await writeFile(join(root, 'apps', 'cli', 'scripts', 'buildSharedDeps.mjs'),
+      `export { inspectUsableSourceDevSharedDepsLastGreen } from ${JSON.stringify(new URL('../../cli/scripts/buildSharedDeps.mjs', import.meta.url).href)};\n`);
+    const sdkDir = join(root, 'packages', 'plugin-sdk');
+    await mkdir(join(sdkDir, 'dist'), { recursive: true });
+    await writeFile(join(sdkDir, 'package.json'), JSON.stringify({
+      name: '@happier-dev/plugin-sdk', type: 'module', exports: { '.': './dist/index.js' },
+    }));
+    await writeFile(join(sdkDir, 'dist', 'index.js'), 'export {};\n');
+    const signature = computeSourceDevSharedDepsSignature({ repoRoot: root, workspaceNames: ['plugin-sdk'] });
+    await mkdir(join(root, '.project', 'tmp'), { recursive: true });
+    await writeFile(join(root, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json'), JSON.stringify({
+      version: signature.version, entries: { sdk: { signature, syncedAtMs: 1 } },
+    }));
+    assert.equal(await hasUsableUiWorkspaceLastGreen({ uiPackageDir }), false);
+    const outputPath = resolveBundledPluginUiArtifactsOutputPath(root);
+    await mkdir(join(outputPath, '..'), { recursive: true });
+    await writeFile(outputPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n');
+    assert.equal(await hasUsableUiWorkspaceLastGreen({ uiPackageDir }), true);
+    await rm(join(sdkDir, 'dist', 'index.js'));
+    assert.equal(await hasUsableUiWorkspaceLastGreen({ uiPackageDir }), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -68,14 +73,14 @@ test('ensureUiWorkspacePackagesBuilt publishes rebuilt plugin artifacts before E
   assert.match(String(calls[1][1]), /apps\/ui$/);
   assert.deepEqual(calls[1][2], {
     quiet: false,
-    env,
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
     publicationMode: 'live',
     isolatePluginFailures: true,
   });
   assert.equal(calls[2][0], 'publish');
   assert.equal(calls[2][1], resolve(String(calls[1][1]), '../..'));
   assert.deepEqual(calls[2][2], {
-    env,
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
     includeRuntimeDependencies: true,
     quiet: false,
     workspaceNames: ['plugins-inspector'],
@@ -130,7 +135,7 @@ test('ensureUiWorkspacePackagesBuilt leaves complete remote publication policy w
   });
 
   assert.deepEqual(calls, [{
-    env,
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
     includeRuntimeDependencies: true,
     quiet: false,
     workspaceNames: ['plugins-inspector'],

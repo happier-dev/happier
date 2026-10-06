@@ -112,6 +112,27 @@ const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
 });
 
+// Expo's transform cache key does not include the app Babel config. Invalidate
+// pre-existing web transforms when enabling its import.meta script transform.
+config.cacheVersion = `${config.cacheVersion ?? '1.0'}-web-script-import-meta-v1`;
+
+// Web development's large presentation entries overlap almost entirely with
+// index. Lazy bundling retains another transitive graph (including raw maps)
+// for each entry. Include dynamic imports in the initial web graph instead;
+// inlineRequires still defers their evaluation. HTTP, source maps and HMR all
+// consume this canonical rewrite hook. Native and production keep Expo's mode.
+const rewriteExpoRequestUrl = config.server.rewriteRequestUrl;
+config.server.rewriteRequestUrl = (requestUrl) => {
+  const rewritten = rewriteExpoRequestUrl(requestUrl);
+  const url = new URL(rewritten, 'http://localhost');
+  const isDev = !url.searchParams.has('dev') || ['true', '1'].includes(url.searchParams.get('dev'));
+  if (url.searchParams.get('platform') !== 'web' || !isDev || !/\.(bundle|map|delta)$/.test(url.pathname)) {
+    return rewritten;
+  }
+  url.searchParams.set('lazy', 'false');
+  return rewritten.startsWith('/') ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+};
+
 const existingSerializer = config.serializer || {};
 const existingGetModulesRunBeforeMainModule = existingSerializer.getModulesRunBeforeMainModule;
 const existingCreateModuleIdFactory = existingSerializer.createModuleIdFactory;

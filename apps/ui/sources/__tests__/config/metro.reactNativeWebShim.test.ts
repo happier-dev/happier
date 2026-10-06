@@ -861,6 +861,7 @@ describe('metro.config.js (web)', () => {
 
         vi.doMock('@sentry/react-native/metro', () => ({
             getSentryExpoConfig: () => ({
+                server: { rewriteRequestUrl: (requestUrl: string) => requestUrl },
                 resolver: {
                     assetExts: [],
                     blockList: null,
