@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { beginSessionReminderViewing } from '@/sync/ops/sessionOrganization/sessionReminderViewing';
 
 import {
     beginSessionViewingActivation,
@@ -36,6 +37,7 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
     const activationIdRef = React.useRef<number | null>(null);
     const visibleReadSeqRef = React.useRef<number | null>(null);
     const activeViewingSeqRef = React.useRef<{
+        serverId: string;
         sessionId: string;
         activationId: number;
         visibleReadSeq: number | null;
@@ -72,19 +74,21 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
 
     React.useLayoutEffect(() => {
         const active = activeViewingSeqRef.current;
-        if (active?.sessionId === sessionId) {
+        if (active?.serverId === serverId && active.sessionId === sessionId) {
             active.visibleReadSeq = currentVisibleReadSeq;
         }
-    }, [currentVisibleReadSeq, sessionId]);
+    }, [currentVisibleReadSeq, serverId, sessionId]);
 
     React.useEffect(() => {
         if (!input.surfaceFocused || demoModeActive) return;
 
         if (!serverId || !sessionId) return;
         const activationId = beginSessionViewingActivation(sessionId);
+        const endReminderViewing = beginSessionReminderViewing({ serverId, sessionId });
         activationIdRef.current = activationId;
         const initialVisibleSeq = visibleReadSeqRef.current;
         activeViewingSeqRef.current = {
+            serverId,
             sessionId,
             activationId,
             visibleReadSeq: initialVisibleSeq,
@@ -97,8 +101,10 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
             });
 
         return () => {
+            endReminderViewing();
             const activeViewingSeq = activeViewingSeqRef.current;
-            const activeViewingSeqMatches = activeViewingSeq?.sessionId === sessionId
+            const activeViewingSeqMatches = activeViewingSeq?.serverId === serverId
+                && activeViewingSeq.sessionId === sessionId
                 && activeViewingSeq.activationId === activationId;
             const sessionSeqAtBlur = activeViewingSeqMatches ? activeViewingSeq.visibleReadSeq : initialVisibleSeq;
             if (activeViewingSeqMatches) {

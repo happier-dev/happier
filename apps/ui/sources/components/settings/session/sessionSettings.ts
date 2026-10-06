@@ -116,6 +116,11 @@ export const SESSION_SETTINGS = defineSettingsPage({
                     descriptionKey: 'settingsSession.sessionList.attentionPromotionModeSubtitle',
                     storage: { scope: 'account', key: 'sessionListAttentionPromotionModeV1', access: 'read_write' },
                 },
+                reminderAutoClearOnOpen: {
+                    titleKey: 'settingsSession.sessionList.reminderAutoClearOnOpenTitle',
+                    descriptionKey: 'settingsSession.sessionList.reminderAutoClearOnOpenSubtitle',
+                    storage: { scope: 'account', key: 'sessionReminderAutoClearOnOpen', access: 'read_write' },
+                },
                 attentionStandingDefault: { titleKey: 'settingsSession.sessionList.attentionStandingDefaultTitle', storage: { scope: 'account', key: 'sessionListAttentionStandingDefaultV1', access: 'read_write' } },
                 workingPlacement: {
                     titleKey: 'settingsSession.sessionList.workingPlacementModeTitle',

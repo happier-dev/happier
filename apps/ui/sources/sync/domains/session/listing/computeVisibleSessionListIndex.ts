@@ -1144,10 +1144,9 @@ function computeVisibleSessionListIndexUnmeasured(
             ? {
                 ...params.attentionPlacement,
                 includeArchived: (params.corpusStorage ?? 'active') === 'archived',
-                retainSessionKeys: canonicalizeSessionKeyReferences(
-                    params.attentionPlacement.retainSessionKeys,
-                    sessionKeyAliases,
-                ),
+                retainPlacements: params.attentionPlacement.retainPlacements?.flatMap((placement) =>
+                    canonicalizeSessionKeyReferences([placement.key], sessionKeyAliases)
+                        .map((key) => ({ ...placement, key }))),
             }
             : undefined,
         workingPlacement: params.workingPlacement

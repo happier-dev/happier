@@ -1184,6 +1184,46 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         ]);
     });
 
+    it.each(['global', 'withinGroups'] as const)('keeps an opened reminder in its %s position across repeated projections until leaving', async (mode) => {
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = mode;
+        viewState.selection = { enabled: false, presentation: 'grouped', activeServerId: 's1', allowedServerIds: ['s1'], explicit: false, activeTarget: { kind: 'server', id: 's1', serverId: 's1' } };
+        viewState.source = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'day' },
+            ...['kept', 'reminded', 'unread', 'quiet'].map((sessionId) => ({
+                type: 'session' as const, sessionId, serverId: 's1', section: 'inactive' as const, groupKey: 'day', groupKind: 'date' as const,
+            })),
+        ];
+        viewState.rowsByServerId = { s1: Object.fromEntries(['kept', 'reminded', 'unread', 'quiet'].map((id) => [id, makeSessionRow(id, {
+            seq: id === 'unread' ? 5 : 4, lastViewedSessionSeq: 4, hasUnreadMessages: id === 'unread',
+        })])) };
+        setSessionOrganizationProjection({});
+        viewState.sessionOrganizationProjection = { ...viewState.sessionOrganizationProjection, attentionStandingsBySessionId: {
+            kept: { sessionId: 'kept', standing: true, updatedAt: 1 },
+            reminded: { sessionId: 'reminded', standing: false, remindAt: 1, updatedAt: 1 },
+        } };
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        const positions = () => hook.getCurrent()?.visibleSessionListIndex?.filter((item) => item.type === 'session')
+            .map((item) => `${item.sessionId}:${item.attentionPlacementReason ? 'attention' : 'normal'}`);
+        const before = positions();
+        expect(before).toEqual(['unread:attention', 'kept:attention', 'reminded:attention', 'quiet:normal']);
+        viewState.focusedSessionId = 'reminded';
+        viewState.pathname = '/session/reminded';
+        viewState.sessionOrganizationProjection = { ...viewState.sessionOrganizationProjection, attentionStandingsBySessionId: {
+            kept: { sessionId: 'kept', standing: true, updatedAt: 1 },
+        } };
+        await hook.rerender();
+        expect(positions()).toEqual(before);
+        await hook.rerender();
+        expect(positions()).toEqual(before);
+        viewState.focusedSessionId = null;
+        viewState.pathname = '/session/none';
+        await hook.rerender();
+        expect(positions()).not.toEqual(before);
+        expect(positions()).toContain('reminded:normal');
+        await hook.unmount();
+    });
+
     it('retains the selected attention session after acknowledgement catches up', async () => {
         viewState.orderingMode = 'custom';
         viewState.attentionPromotionMode = 'global';
@@ -1301,7 +1341,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
             },
         };
         viewState.pathname = '/';
-        const remountOptions: Parameters<typeof useVisibleSessionListViewState>[1] & Readonly<{
+        let remountOptions: Parameters<typeof useVisibleSessionListViewState>[1] & Readonly<{
             retainedPathname: string;
             retainedVisibleSessionListIndex: typeof retainedVisibleSessionListIndex;
         }> = {
@@ -1318,6 +1358,12 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
             expect.objectContaining({ type: 'header', headerKind: 'date' }),
             expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
         ]);
+        await remountedHook.rerender();
+        expect(remountedHook.getCurrent()?.visibleSessionListIndex?.some((item) => item.type === 'session' && item.sessionId === 'done' && item.groupKind === 'attention')).toBe(true);
+        remountOptions = { ...remountOptions, retainedPathname: '/' };
+        await remountedHook.rerender();
+        expect(remountedHook.getCurrent()?.visibleSessionListIndex?.some((item) => item.type === 'session' && item.sessionId === 'done' && item.groupKind === 'attention')).toBe(false);
+        await remountedHook.unmount();
     });
 
     it('uses an explicit pathname override for retained root session-list state', async () => {
