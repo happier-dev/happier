@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { admitActionAgentStartV1, resolveActionAgentStartRequestsV1 } from './agentStartAdmission.js';
+import { admitActionAgentStartV1, resolveActionAgentStartRequestsV1, resolveRunStartModelAndConfig } from './agentStartAdmission.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 
@@ -7,6 +7,19 @@ const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.age
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('normalizes shorthand scalar configuration through the shared alias contract', () => {
+    expect(resolveRunStartModelAndConfig({ modelId: '  model  ', configOptions: {
+      text: 'value', count: 3, enabled: false, unset: null,
+    } })).toMatchObject({ ok: true, options: { modelId: 'model', sessionConfigOptionOverrides: {
+      overrides: { text: { value: 'value' }, count: { value: 3 }, enabled: { value: false }, unset: { value: null } },
+    } } });
+    for (const value of [NaN, Infinity, undefined, {}]) {
+      expect(resolveRunStartModelAndConfig({ configOptions: { invalid: value } })).toEqual({ ok: true, options: {} });
+    }
+    expect(resolveRunStartModelAndConfig({ configOptions: { text: 'alias' },
+      sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { text: { updatedAt: 1, value: 'canonical' } } },
+    })).toEqual({ ok: false });
+  });
   it('passes deferred workflow selection to the owner and returns a typed frozen-depth child refusal', () => {
     const request = { kind: 'workflow_run_leaf', selection: 'deferred', leaf: {
       blockId: 'panel', kind: 'action', actionId: 'subagents.plan.start',
