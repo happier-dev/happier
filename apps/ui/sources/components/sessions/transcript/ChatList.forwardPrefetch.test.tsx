@@ -125,14 +125,24 @@ async function prepareHistory() {
     await sync.refreshSessionMessages(SESSION_ID);
     expect(messageRouteIds()).toContain('server:m10');
     storage.setState({ settings: { ...settingsDefaults, transcriptGroupingMode: 'linear', transcriptMotionPreset: 'off' } });
+    const home = connection.home;
 
     return {
-        home: connection.home,
+        home,
         forwardRequests,
         async deferNewer() {
             serverSeq = 600;
             await act(async () => {
                 await sync.refreshSessions({ awaitSessionListHydration: true });
+                // A seq-only list refresh does not rehydrate an unchanged metadata
+                // tuple. Catch-up reads the exact Session shell's durable seq hint.
+                const hydration = await sync.ensureSessionVisibleForMessageRoute(SESSION_ID, {
+                    serverId: home.id,
+                    forceRefresh: true,
+                    hydrateMessages: false,
+                });
+                expect(hydration.kind).toBe('available');
+                expect(storage.getState().sessions[SESSION_ID]?.seq).toBe(serverSeq);
                 await sync.refreshSessionMessages(SESSION_ID);
             });
             expect(sync.hasDeferredNewerMessages(SESSION_ID)).toBe(true);

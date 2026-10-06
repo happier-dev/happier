@@ -141,11 +141,22 @@ describe('visible session-list retained attention through real state', () => {
 
         storage.getState().applySessions([completedSession(3, serverId)]);
         route.pathname = '/';
-        const remountOptions = { pathname: '/', retainedPathname: '/session/done', retainedVisibleSessionListIndex };
+        let remountOptions = { pathname: '/', retainedPathname: '/session/done', retainedVisibleSessionListIndex };
         const remountedHook = await renderHook(() => useVisibleSessionListViewState('all', remountOptions));
         await flushHookEffects();
         expect(remountedHook.getCurrent()?.visibleSessionListIndex).toEqual(expectedIndex);
         await remountedHook.rerender();
         expect(remountedHook.getCurrent()?.visibleSessionListIndex).toEqual(expectedIndex);
+
+        // Acknowledgement must not move the foreground row while it is being
+        // read, but leaving that retained route must release its attention seat.
+        remountOptions = { ...remountOptions, retainedPathname: '/' };
+        await remountedHook.rerender();
+        expect(remountedHook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+        await remountedHook.unmount();
     });
 });
