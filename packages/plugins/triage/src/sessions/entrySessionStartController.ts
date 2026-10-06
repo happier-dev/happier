@@ -70,6 +70,9 @@ import {
     submitTriageEntrySessionStart,
     type TriageSessionStartHostV1,
 } from '../ui/header/startEntrySessionCommand.js';
+import type { TriageConfiguredStartRecoveryV1 } from '../actions/configuredActionRunProtocol.js';
+
+type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'single' }>;
 
 /**
  * The transient single-entry Session-start controller shared by UI and Actions.
@@ -478,7 +481,7 @@ function sameEntry(left: TriageEntryRefV1, right: TriageEntryRefV1): boolean {
 export function createTriageEntrySessionStartController(
     host: TriageStartHostV1,
     options?: TriageEntrySessionStartOptionsV1,
-): Readonly<{ getSnapshot: () => TriageEntrySessionStartControllerV1; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageEntrySessionStartControllerV1> }> {
+): Readonly<{ getSnapshot: () => TriageEntrySessionStartControllerV1; getRecovery: () => TriageSingleStartRecoveryV1 | null; restore: (recovery: TriageSingleStartRecoveryV1) => void; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageEntrySessionStartControllerV1> }> {
     let phase: TriageEntrySessionStartPhaseV1 = IDLE;
     const listeners = new Set<() => void>();
     let snapshot: TriageEntrySessionStartControllerV1;
@@ -1137,6 +1140,20 @@ export function createTriageEntrySessionStartController(
     snapshot = readSnapshot();
     return Object.freeze({
         getSnapshot: () => snapshot,
+        getRecovery: (): TriageSingleStartRecoveryV1 | null => custody.current === null ? null : {
+            kind: 'single', actionId: custody.current.actionId,
+            input: { ...custody.current.input,
+                ...(custody.current.pending === undefined ? {} : { resume: custody.current.pending }) },
+            ...(custody.current.reviewInstructions === undefined ? {} : { reviewInstructions: custody.current.reviewInstructions }),
+        },
+        restore: (recovery) => {
+            if (inFlight.current) return;
+            const { resume, ...input } = retainedStartInput(recovery.input);
+            custody.current = { actionId: recovery.actionId, input,
+                ...(resume === undefined ? {} : { pending: resume }),
+                ...(recovery.reviewInstructions === undefined ? {} : { reviewInstructions: recovery.reviewInstructions }),
+            };
+        },
         activate: () => { retired.current = false; },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         dispose: () => { retired.current = true;  listeners.clear(); },

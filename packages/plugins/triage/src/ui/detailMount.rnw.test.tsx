@@ -896,6 +896,40 @@ describe('opening a row into the source detail', () => {
         await expect(invoke()).resolves.toEqual({ status: 'unavailable' });
     });
 
+    it('lets an agent focus and peek a row without selecting its detail', async () => {
+        let published: PluginUiContextEnrichmentV1 | null = null;
+        const shell = await mountShell({ activeSurface: true, publishCurrentUiContext: (context) => { published = context; } });
+        await measureFillRegion(1440);
+        const command = (published as PluginUiContextEnrichmentV1 | null)?.commands?.find((entry) => entry.title === 'Switch to Board');
+        if (command?.command.kind !== 'executeAction') throw new Error('Expected the mounted action');
+        const address = TriageMountedUiInputV1Schema.parse(command.command.input);
+        const { createTriageMountedUiActionHandler } = await import('../actions/mountedUi.js');
+        const invoke = async (kind: 'focusRow' | 'peekRow', options: { entryId?: string; expanded?: boolean } = {}) => await createTriageMountedUiActionHandler()(
+            { mountId: address.mountId, operation: { kind, entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: options.entryId ?? '17' },
+                ...(options.expanded === undefined ? {} : { expanded: options.expanded }) } },
+            {
+                plugin: { id: 'happier.triage', version: '0.0.0' },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: shell.context.hostApi, ephemeralSharedScope: currentHarness!.ephemeralSharedScope,
+            },
+        );
+        await act(async () => { expect(await invoke('focusRow')).toEqual({ status: 'applied' }); });
+        expect(activeElementName()).toContain('Replace the duplicated normalizer');
+        expect(queryDetailBodyNode()).toBeNull();
+        await act(async () => { expect(await invoke('focusRow', { entryId: 'missing' })).toEqual({ status: 'unavailable' }); });
+        expect(activeElementName()).toContain('Replace the duplicated normalizer');
+        await act(async () => { expect(await invoke('peekRow')).toEqual({ status: 'applied' }); });
+        await act(async () => { expect(await invoke('peekRow')).toEqual({ status: 'applied' }); });
+        await expect(shell.getByRole('button', { name: 'Open' })).resolves.toBeDefined();
+        expect(queryDetailBodyNode()).toBeNull();
+        await act(async () => { expect(await invoke('peekRow', { expanded: false })).toEqual({ status: 'applied' }); });
+        await expect(shell.queryByRole('button', { name: 'Open' })).resolves.toBeUndefined();
+        await act(async () => { expect(await invoke('peekRow')).toEqual({ status: 'applied' }); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Open' })); });
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+    });
+
     it('lets an agent open an entry on Checks and keeps UI tab presses on the same owner', async () => {
         let published: PluginUiContextEnrichmentV1 | null = null;
         const shell = await mountShell({ activeSurface: true, tabbedDetail: true, publishCurrentUiContext: (context) => { published = context; } });

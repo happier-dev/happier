@@ -85,6 +85,8 @@ import type { TriageBulkSessionDestinationV1 } from '../list/bulkSessionPlan.js'
 import {
   readTriageBulkDestinationUnavailableReasonV1,
   useTriageBulkEntrySessions,
+  isTriageBulkSessionsPhaseRunningV1,
+  canRetryTriageBulkSessionsForSelectionV1,
 } from '../list/useBulkEntrySessions.js';
 import { planTriageListContinuationV1, readTriageWindowStatementV1 } from '../list/continuation.js';
 import { useTriageListSessionActivityV1 } from '../list/useListSessionActivity.js';
@@ -1361,6 +1363,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   ): Promise<TriageMountedUiResultV1> => {
     if (signal.aborted) return { status: 'unavailable' };
     switch (operation.kind) {
+      case 'focusRow':
+      case 'peekRow': {
+        const key = triageEntryRowKey(operation.entryRef);
+        if (!collection.keys.includes(key)) return { status: 'unavailable' };
+        if (operation.kind === 'focusRow') collection.actions.requestFocus(key);
+        else if (collection.expanded.has(key) !== (operation.expanded !== false)) collection.actions.toggleExpanded(key);
+        break;
+      }
       case 'switchView': chooseCollectionView(operation.view); break;
       case 'openDetail': {
         const key = triageEntryRowKey(operation.entryRef);
@@ -1407,6 +1417,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         bulkSelection.setSelectedKeys(keys);
         break;
       }
+      case 'retryRun':
+        if (!canRetryTriageBulkSessionsForSelectionV1(bulkSessions, bulkSelection.getSnapshot().selectedKeys)) return { status: 'unavailable' };
+        bulkSessions.retry();
+        break;
+      case 'cancelRun':
+        if (!isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase)) return { status: 'unavailable' };
+        bulkSessions.cancel();
+        break;
       case 'refresh':
         if (refreshState.kind === 'blocked') return { status: 'unavailable' };
         await refresh();
@@ -1422,7 +1440,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [bulkSelection, chooseCollectionView, chooseDetailTab, collectionWindow, surfaceContext, detailTabs, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, visibleOrder]);
+  }, [bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailTabs, loadMoreEntries, loadMorePins, readRowActivation, readProjectedSelectionAction, refresh, refreshState.kind, savedViews.saved, selectedKey, settleLensEditBeforeDurable, surface.selectedViewId, surface.smartPolicy, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
@@ -1444,8 +1462,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         command(continuation.label, { kind: 'loadMore', section: continuation.key === 'pins' ? 'pins' : 'entries' }),
       ])),
       command(text('plugins.triage.currentContext.clearSelection', 'Clear bulk selection'), { kind: 'setSelection', entryRefs: [] }),
+      ...(bulkSessions.retryable ? [command(text('plugins.triage.surface.bulk.retry', 'Try again'), { kind: 'retryRun' })] : []),
+      ...(isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [command(text('plugins.triage.surface.bulk.cancel', 'Stop'), { kind: 'cancelRun' })] : []),
     ];
-  }, [collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, text]);
+  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, mountId, refreshState.kind, selectedKey, text]);
   const currentUiContext = React.useMemo(() => projectTriageCurrentUiContextV1({
     surface, visibleRows: currentUiContextRows, mountedCommands,
     mountedAction: { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 }, mountId },

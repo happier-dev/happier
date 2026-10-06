@@ -1,6 +1,8 @@
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
-import type { TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
+import type { TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
+import type { TriageConfiguredStartRecoveryV1, TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
+import { triageEntryRowKey } from '../projection/listWindow.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { resolvesTriageUnknownSessionStartV1 } from '../ui/header/sessionStartOutcome.js';
 import { planTriageActionDeliveryV1 } from '../sessions/actionDelivery.js';
@@ -56,6 +58,7 @@ import {
 } from '../ui/list/bulkSessionPlan.js';
 import {
     runTriageBulkEntrySessionStartsV1,
+    projectTriageBulkEntrySessionStartInputV1,
     type TriageBulkSessionExecutionHostV1,
 } from '../ui/list/bulkEntrySessionExecution.js';
 
@@ -175,6 +178,20 @@ export type TriageBulkSessionsControllerV1 = Readonly<{
     cancel: () => void;
     reset: () => void;
 }>;
+
+/** The mounted controls and Action adapter consume the controller's same live phases. */
+export function isTriageBulkSessionsPhaseRunningV1(phase: TriageBulkSessionsPhaseV1): boolean {
+    return phase.kind === 'resolving' || phase.kind === 'choosing' || phase.kind === 'starting';
+}
+
+export function canRetryTriageBulkSessionsForSelectionV1(
+    state: Pick<TriageBulkSessionsControllerV1, 'phase' | 'retryable'>,
+    selected: ReadonlySet<string>,
+): boolean {
+    return state.retryable && state.phase.kind === 'settled'
+        && selected.size === state.phase.selectionKeys.length
+        && state.phase.selectionKeys.every((key) => selected.has(key));
+}
 
 export type TriageBulkSessionsRequestV1 = Readonly<{
     /** Each explicit choice reaches the same draft projection as UI selection. */
@@ -568,12 +585,21 @@ type TriageBulkRetryContextV1 = Readonly<{
     action: TriageActionV1;
     destination: Exclude<TriageBulkSessionDestinationV1, 'attachAllToNewSession'>;
     promptText: string | null;
-    settlements: readonly Readonly<{
+    inputs: readonly Readonly<{
         creationKey: string;
-        settlement: unknown;
-        placementCandidates: readonly ReturnType<typeof projectTriageSessionPlacementCandidateV1>[];
+        input: TriageStartEntrySessionInputV1;
     }>[];
 }>;
+
+type TriageBulkStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'bulk' }>;
+
+/** One projection for both configured outcomes and echoed bulk custody. */
+export function projectTriageConfiguredBulkResultV1(result: TriageBulkSessionOutcomeV1): NonNullable<TriageRunConfiguredActionResultV1['results']>[number] {
+    const identity = { creationKey: result.unit.creationKey, entryRefs: result.unit.entries.map((entry) => entry.entryRef) };
+    return result.status === 'settled'
+        ? { ...identity, status: 'settled', start: result.outcome.start, entries: [...result.outcome.entries] }
+        : { ...identity, status: result.status };
+}
 
 /** Whether one workspace can truthfully represent every entry in a shared unit. */
 export function isTriageBulkSharedPlacementCompatibleV1(input: Readonly<{
@@ -609,7 +635,7 @@ export function readTriageBulkDestinationUnavailableReasonV1(input: Readonly<{
 export function createTriageBulkEntrySessionsController(
     host: TriageBulkHostV1,
     options?: TriageBulkSessionsOptionsV1,
-): Readonly<{ getSnapshot: () => TriageBulkSessionsControllerV1; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageBulkSessionsControllerV1> }> {
+): Readonly<{ getSnapshot: () => TriageBulkSessionsControllerV1; getRecovery: () => TriageBulkStartRecoveryV1 | null; restore: (recovery: TriageBulkStartRecoveryV1, entries: TriageBulkSessionsRequestV1['entries']) => boolean; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageBulkSessionsControllerV1> }> {
     let phase: TriageBulkSessionsPhaseV1 = IDLE;
     const listeners = new Set<() => void>();
     let snapshot: TriageBulkSessionsControllerV1;
@@ -788,7 +814,7 @@ export function createTriageBulkEntrySessionsController(
                 // never silently reused for repository B. All choices settle
                 // before the first side effect; cancellation therefore still
                 // has an honest "nothing started" outcome.
-                const settlements: Array<TriageBulkRetryContextV1['settlements'][number]> = [];
+                const inputs: Array<TriageBulkRetryContextV1['inputs'][number]> = [];
                 for (const unit of plan.units) {
                     const placement = placementFor(unit.entries);
                     const placementCandidates = placement.kind === 'candidates'
@@ -824,7 +850,7 @@ export function createTriageBulkEntrySessionsController(
                             : 'newSessionUnavailable'));
                         return;
                     }
-                    if (projectTriageNewSessionDestinationV1({
+                    const admitted = projectTriageNewSessionDestinationV1({
                         workspaceMode: action.workspaceMode,
                         creationKey: unit.creationKey,
                         settlement: draft.settlement,
@@ -833,20 +859,18 @@ export function createTriageBulkEntrySessionsController(
                             reviewWorkspace: unit.entries[0].reviewWorkspace.preparation,
                         }),
                         placementCandidates,
-                    }).status === 'refused') {
+                    });
+                    if (admitted.status === 'refused') {
                         setPhase(unavailable('newSessionUnavailable'));
                         return;
                     }
-                    settlements.push(Object.freeze({
+                    inputs.push(Object.freeze({
                         creationKey: unit.creationKey,
-                        settlement: draft.settlement,
-                        placementCandidates,
+                        input: projectTriageBulkEntrySessionStartInputV1({ action, unit,
+                            destination: request.destination as Exclude<TriageBulkSessionDestinationV1, 'attachAllToNewSession'>,
+                            sessionDestination: admitted.destination, promptText }),
                     }));
                 }
-
-                const settlementForUnit = (unit: Readonly<{ creationKey: string }>): unknown => (
-                    settlements.find((candidate) => candidate.creationKey === unit.creationKey)?.settlement
-                );
 
                 const total = plan.units.length;
                 let started = 0;
@@ -857,7 +881,7 @@ export function createTriageBulkEntrySessionsController(
                         'attachAllToNewSession'
                     >,
                     promptText,
-                    settlements: Object.freeze(settlements),
+                    inputs: Object.freeze(inputs),
                 });
                 setPhase(Object.freeze({ kind: 'starting', started, total }));
                 const results = await runTriageBulkEntrySessionStartsV1({
@@ -866,11 +890,9 @@ export function createTriageBulkEntrySessionsController(
                     action,
                     destination: request.destination,
                     promptText,
-                    settlement: settlements[0]?.settlement,
-                    settlementForUnit,
-                    placementCandidatesForUnit: (unit) => settlements.find(
+                    inputForUnit: (unit) => inputs.find(
                         (candidate) => candidate.creationKey === unit.creationKey,
-                    )?.placementCandidates ?? [],
+                    )!.input,
                     onPreparationCancelled: () => controller.abort(),
                     signal: controller.signal,
                     onStarted: () => {
@@ -927,13 +949,9 @@ export function createTriageBulkEntrySessionsController(
                     action: context.action,
                     destination: context.destination,
                     promptText: context.promptText,
-                    settlement: context.settlements[0]?.settlement,
-                    settlementForUnit: (unit) => context.settlements.find(
+                    inputForUnit: (unit) => context.inputs.find(
                         (candidate) => candidate.creationKey === unit.creationKey,
-                    )?.settlement,
-                    placementCandidatesForUnit: (unit) => context.settlements.find(
-                        (candidate) => candidate.creationKey === unit.creationKey,
-                    )?.placementCandidates ?? [],
+                    )!.input,
                     onPreparationCancelled: () => controller.abort(),
                     signal: controller.signal,
                     previousResults: prior.results,
@@ -973,6 +991,44 @@ export function createTriageBulkEntrySessionsController(
     snapshot = readSnapshot();
     return Object.freeze({
         getSnapshot: () => snapshot,
+        getRecovery: (): TriageBulkStartRecoveryV1 | null => {
+            const context = retryContext.current;
+            if (phase.kind !== 'settled' || !readRetryable() || context === null) return null;
+            return { kind: 'bulk', action: context.action, destination: context.destination, promptText: context.promptText,
+                units: phase.results.map((result) => ({ result: projectTriageConfiguredBulkResultV1(result),
+                    input: context.inputs.find((candidate) => candidate.creationKey === result.unit.creationKey)!.input })),
+                refusals: phase.refusals.map((refusal) => ({ entryRef: refusal.entry.entryRef, reason: refusal.reason })),
+                unavailableKeys: [...phase.unavailableKeys],
+            };
+        },
+        restore: (recovery, entries) => {
+            if (inFlight.current) return false;
+            const results: TriageBulkSessionOutcomeV1[] = [];
+            for (const retained of recovery.units) {
+                if (retained.input.destination.kind !== 'new' || retained.input.destination.creationKey !== retained.result.creationKey
+                    || triageEntryRowKey(retained.input.entryRef) !== triageEntryRowKey(retained.result.entryRefs[0]!)) return false;
+                const selected = retained.result.entryRefs.map((ref) => entries.find((entry) => triageEntryRowKey(entry.entryRef) === triageEntryRowKey(ref)));
+                if (selected.some((entry) => entry === undefined)) return false;
+                const unit = { creationKey: retained.result.creationKey,
+                    entries: selected.filter((entry): entry is TriageBulkSessionsRequestV1['entries'][number] => entry !== undefined) };
+                results.push(retained.result.status === 'settled'
+                    ? { unit, status: 'settled', outcome: { start: retained.result.start, entries: retained.result.entries } }
+                    : { unit, status: retained.result.status });
+            }
+            const refusals: Extract<TriageBulkSessionsPhaseV1, { kind: 'settled' }>['refusals'][number][] = [];
+            for (const refusal of recovery.refusals) {
+                const entry = entries.find((candidate) => triageEntryRowKey(candidate.entryRef) === triageEntryRowKey(refusal.entryRef));
+                if (entry === undefined) return false;
+                const reason = refusal.reason;
+                if (reason !== 'workflowSubjectUnavailable' && reason !== 'actionInapplicable') return false;
+                refusals.push({ entry, reason });
+            }
+            retryContext.current = { action: recovery.action, destination: recovery.destination, promptText: recovery.promptText,
+                inputs: recovery.units.map((unit) => ({ creationKey: unit.result.creationKey, input: unit.input })) };
+            setPhase({ kind: 'settled', results, refusals, unavailableKeys: recovery.unavailableKeys,
+                selectionKeys: [...entries.map((entry) => entry.key), ...recovery.unavailableKeys] });
+            return true;
+        },
         activate: () => { retired.current = false; },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         dispose: () => { retired.current = true; abort.current?.abort(); listeners.clear(); },

@@ -23,6 +23,7 @@ import type {
   TriageBulkSessionsPhaseV1,
   TriageBulkUnavailableReasonV1,
 } from './useBulkEntrySessions.js';
+import { canRetryTriageBulkSessionsForSelectionV1, isTriageBulkSessionsPhaseRunningV1 } from './useBulkEntrySessions.js';
 
 /**
  * What a bulk selection can be turned into (`PLAN.md` §0a A6).
@@ -108,13 +109,6 @@ function destinationOf(actionId: string): TriageBulkSessionDestinationV1 | null 
   return found?.destination ?? null;
 }
 
-function isSameSelection(
-  selected: ReadonlySet<string>,
-  resultKeys: readonly string[],
-): boolean {
-  return selected.size === resultKeys.length && resultKeys.every((key) => selected.has(key));
-}
-
 /** No control exists to press, so no press can arrive. */
 const NO_DESTINATIONS: readonly [] = Object.freeze([]);
 const IGNORE_PRESS = (): void => undefined;
@@ -167,9 +161,7 @@ export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.Re
   )?.reason ?? null;
 
   if (!snapshot.isSelectionMode) return null;
-  const busy = props.phase.kind === 'resolving'
-    || props.phase.kind === 'choosing'
-    || props.phase.kind === 'starting';
+  const busy = isTriageBulkSessionsPhaseRunningV1(props.phase);
 
   if (action === undefined) {
     // The count and the Clear control belong to the shared bar and stay: a
@@ -239,9 +231,7 @@ export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.Re
         {props.phase.kind === 'idle' && unavailableDestinationReason !== null
           ? <TriageBulkUnavailableStatus reason={unavailableDestinationReason} />
           : <TriageBulkPhaseStatus phase={props.phase} />}
-        {props.phase.kind !== 'settled'
-          || !props.retryable
-          || !isSameSelection(snapshot.selectedKeys, props.phase.selectionKeys) ? null : (
+        {!canRetryTriageBulkSessionsForSelectionV1(props, snapshot.selectedKeys) ? null : (
           <Button
             titleKey="plugins.triage.surface.bulk.retry"
             title="Try again"

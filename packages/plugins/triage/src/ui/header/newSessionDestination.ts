@@ -225,9 +225,7 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
     if (!selected.success || selected.data.directory.kind !== 'path') {
         return { status: 'refused', reason: 'draftUnusable' };
     }
-    const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse({
-        ...selected.data, directory: selected.data.directory.path,
-    });
+    const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse(selected.data);
     if (!draft.success) return { status: 'refused', reason: 'draftUnusable' };
     const directory = draft.data.directory.path;
 

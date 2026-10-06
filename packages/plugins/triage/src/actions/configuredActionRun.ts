@@ -83,10 +83,11 @@ export function createTriageRunConfiguredActionHandler(): PluginClientActionHand
             actionId: input.actionId, destination: input.destination, entries, unavailableKeys,
             ...(input.reviewChoices === undefined ? {} : { reviewChoices: input.reviewChoices }),
             ...(input.resumeReview === undefined ? {} : { resumeReview: input.resumeReview }),
+            ...(input.resumeStart === undefined ? {} : { resumeStart: input.resumeStart }),
             ...(input.drafts === undefined ? {} : { settlements: entries.map((entry) => {
                 const draft = input.drafts?.[input.destination === 'oneSessionForAllEntries' ? 0
                     : input.entries.findIndex((selected) => triageEntryRowKey(selected.entryRef) === entry.key)];
-                return draft === undefined ? undefined : { ...draft, directory: { kind: 'path', path: draft.directory } };
+                return draft;
             }) }),
         }, { signal: context.signal });
         return TriageRunConfiguredActionResultV1Schema.parse(result);
