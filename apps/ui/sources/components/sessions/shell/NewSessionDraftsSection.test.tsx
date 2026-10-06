@@ -728,12 +728,12 @@ describe('NewSessionDraftsSection', () => {
             ...projection,
             document: {
                 v: 2,
-                composer: projection.document.composer,
+                composer: document.composer,
                 extensions: {},
                 target: {
                     kind: 'newSession',
                     authoring: {
-                        directory: projection.document.target.authoring.directory,
+                        directory: document.target.authoring.directory,
                         agentTarget: {
                             mutationId: 'm-agent',
                             value: {

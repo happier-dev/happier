@@ -12,7 +12,6 @@ import {
   PluginProjectionV2Schema,
   ParticipantRecipientV1Schema,
   StrictJsonValueSchema,
-  PluginProjectionV2Schema,
   SessionCurrentProjectionRecordV1Schema,
   SessionMetadataTuplePatchV1Schema,
   SessionMetadataTuplePatchSuccessV1Schema,

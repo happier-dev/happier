@@ -214,7 +214,7 @@ describe('authGetToken key-challenge gate', () => {
     });
 
     it('waits for slow features when focused key login requires an Account-bound challenge', async () => {
-        const profile = upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Slow Home' });
+        const profile = await upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Slow Home' });
         await setActiveServerId(profile.id);
         vi.useFakeTimers();
         mocks.serverFetch.mockImplementation(async (path: string) => {
