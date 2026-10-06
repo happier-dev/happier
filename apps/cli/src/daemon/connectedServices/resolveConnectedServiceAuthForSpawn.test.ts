@@ -700,6 +700,12 @@ beforeAll(async () => {
     });
     externalRuntimeLease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
+        resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
+          kind: 'development',
+          registeredRootId: `spawn-resolver-fixture:${pluginId}`,
+          canonicalRoot: rootPath,
+          observedRevision: 1,
+        }),
         contributes: getResolvedContributionRegistry(),
         pluginIds: [
           'happier.agent.claude',
