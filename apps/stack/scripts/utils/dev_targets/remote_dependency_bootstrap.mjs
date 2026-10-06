@@ -63,12 +63,24 @@ export async function bootstrapRemoteDependencies({
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
 } = {}) {
   const componentDir = join(repoDir, 'apps', 'stack');
+  const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   if (validationKind === 'source-test') {
     // Source tests consume installed tools, not the Stack dependency owner's
-    // compiled closure. Keep installation freshness and its lock authoritative.
+    // compiled closure. UI tests also consume patched dependencies; prepare them
+    // under the same lock without promoting scriptless admission to runtime-ready.
+    let refreshed = false;
+    const onDependenciesReady = /^apps\/ui(?:\/|$)/u.test(componentPath)
+      ? async () => {
+          const { ensureUiPostinstallOutputs } = await loadDependencyOwner();
+          await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, { env, force: refreshed });
+        }
+      : null;
     return await withDependencyRefreshImpl(
-      { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
-      async () => await installInitialDependenciesImpl({ repoDir, env }),
+      { installDir: repoDir, componentDir, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE, onDependenciesReady },
+      async () => {
+        await installInitialDependenciesImpl({ repoDir, env });
+        refreshed = true;
+      },
     );
   }
   const dependencyOwnerEntrypoints = ['workspaces', 'process'].map((domain) => join(
@@ -104,7 +116,6 @@ export async function bootstrapRemoteDependencies({
   );
   // The launcher needs its dependency owner, while only Stack commands consume
   // Stack's emitted workspace closure. Other components prepare their own outputs.
-  const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   if (/^apps\/stack(?:\/|$)/u.test(componentPath)) {
     if (typeof ensureWorkspacePackagesBuiltForComponent !== 'function') {
       throw new Error('Remote Happier workspace dependency owner does not expose component workspace preparation');

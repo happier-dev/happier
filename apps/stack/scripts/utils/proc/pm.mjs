@@ -15,10 +15,6 @@ import { withDependencyRefresh } from './dependency_refresh.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
 import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
-import {
-  happyCliRuntimeInputFreshnessEqual,
-  readHappyCliRuntimeInputFreshness,
-} from './cli_runtime_inputs.mjs';
 export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
 
 // These are source-workspace build tools, not part of the installed Stack runtime. Keep their
@@ -488,7 +484,7 @@ function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
   ])).filter((packageDir) => existsSync(packageDir));
 }
 
-async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn, force = false } = {}) {
+export async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn, force = false } = {}) {
   const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
   if (componentPkg?.name !== '@happier-dev/app') return;
   if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
@@ -1017,6 +1013,7 @@ export async function ensureCliBuilt(cliDir, {
   env: envIn = process.env,
   platform = process.platform,
 } = {}) {
+  const { happyCliRuntimeInputFreshnessEqual, readHappyCliRuntimeInputFreshness } = await import('./cli_runtime_inputs.mjs');
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   const invocationDistFreshness = await readUsableCliDistFreshness(distEntrypoint);
   const invocationInputFreshness = await readHappyCliRuntimeInputFreshness(cliDir);
