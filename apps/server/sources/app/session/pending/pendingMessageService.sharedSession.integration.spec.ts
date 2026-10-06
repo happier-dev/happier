@@ -3513,7 +3513,11 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toEqual({ deliveryState: null, deliveryBlockedReason: null });
     });
 
-    it("claims an exact later steer-now row while leaving its ordinary FIFO neighbor queued", async () => {
+    it.each([
+        ["ready", "send"],
+        ["active_steerable", "steer"],
+        ["active_unsteerable", "steer"],
+    ] as const)("claims an exact later steer-now row with %s foreground while leaving its ordinary FIFO neighbor queued", async (foregroundState, providerAction) => {
         const owner = await createAccount("owner");
         const session = await createSession(owner.id);
         const earlierLocalId = `exact-earlier-${randomUUID()}`;
@@ -3549,7 +3553,7 @@ describe("pendingMessageService (shared sessions)", () => {
             actorUserId: owner.id,
             sessionId: session.id,
             deliveryTiming: "after_runtime_idle",
-            foregroundState: "active_steerable",
+            foregroundState,
         });
 
         expect(materialize).toMatchObject({
@@ -3559,7 +3563,7 @@ describe("pendingMessageService (shared sessions)", () => {
             message: {
                 localId: exactLocalId,
                 requestedAction: { v: 1, kind: "steer_now" },
-                providerAction: "steer",
+                providerAction,
             },
         });
         await expect(db.sessionPendingMessage.findMany({

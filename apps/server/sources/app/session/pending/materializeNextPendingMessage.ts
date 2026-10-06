@@ -58,7 +58,7 @@ type MaterializeNextPendingMessageOutcome =
         pendingCount: number;
         pendingBlockedCount: number;
         pendingVersion: number;
-        deferredReason?: "waiting_for_foreground_turn" | "waiting_for_runtime_activity" | "runtime_activity_unknown" | "waiting_for_predecessor" | "steering_unavailable";
+        deferredReason?: "waiting_for_foreground_turn" | "waiting_for_runtime_activity" | "runtime_activity_unknown" | "waiting_for_predecessor";
         localId?: string;
         pendingStateChanged?: boolean;
         recipientCursorsPending?: RecipientCursor[];
@@ -541,59 +541,6 @@ async function materializePendingTargetInTx(
                     return projection.state === "active" ? "active" : "unknown";
                 },
             });
-            if ("blockedLocalId" in invocationSelection) {
-                const blockedFields = pendingDeliveryStatusV1ToPersistedFields({
-                    status: "blocked",
-                    reason: invocationSelection.blockedReason,
-                });
-                const blocked = await tx.sessionPendingMessage.updateMany({
-                    where: {
-                        sessionId,
-                        localId: invocationSelection.blockedLocalId,
-                        targetExecutionRunId: params.targetExecutionRunId,
-                        status: "queued",
-                        deliveryState: null,
-                    },
-                    data: {
-                        deliveryState: blockedFields.deliveryState,
-                        deliveryBlockedReason: blockedFields.deliveryBlockedReason,
-                    },
-                });
-                if (blocked.count === 1 && params.targetExecutionRunId === null) {
-                    await reconcilePendingActivationAuthorizationForRemovedRequestInTx({
-                        tx,
-                        sessionId,
-                        requestId: invocationSelection.blockedLocalId,
-                    });
-                }
-                const pendingBlockedCount = await tx.sessionPendingMessage.count({
-                    where: { sessionId, targetExecutionRunId: null, status: "queued", deliveryState: "blocked" },
-                });
-                const session = await tx.session.update({
-                    where: { id: sessionId },
-                    data: { pendingBlockedCount, pendingVersion: { increment: 1 } },
-                    select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
-                });
-                const recipientCursorsPending = await markPendingStateChangedRecipients({
-                    tx,
-                    sessionId,
-                    pendingCount: session.pendingCount,
-                    pendingBlockedCount: session.pendingBlockedCount,
-                    pendingVersion: session.pendingVersion,
-                });
-                return {
-                    ok: true,
-                    didMaterialize: false,
-                    pendingCount: session.pendingCount,
-                    pendingBlockedCount: session.pendingBlockedCount,
-                    pendingVersion: session.pendingVersion,
-                    pendingStateChanged: true,
-                    recipientCursorsPending,
-                    deferredReason: "steering_unavailable",
-                    localId: invocationSelection.blockedLocalId,
-                    deliveryState: noopDeliveryState,
-                } as const;
-            }
             if ("deferredReason" in invocationSelection && invocationSelection.deferredReason !== "no_pending") {
                 return {
                     ok: true,
