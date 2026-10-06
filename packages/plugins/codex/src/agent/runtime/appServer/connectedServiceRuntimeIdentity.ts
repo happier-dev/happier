@@ -1,4 +1,8 @@
 import type { CodexConnectedServiceRefreshSelection } from '../../auth/services/runtime/auth/application.js';
+import {
+  readCodexConnectedServiceRefreshSelection,
+  resolveCodexConnectedServiceRefreshSelectionFromEnv,
+} from '../../auth/services/runtime/auth/generationRequest.js';
 import type { CodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
 import { createHash } from 'node:crypto';
 
@@ -38,39 +42,6 @@ function trimString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function readGeneration(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.trunc(value)
-    : null;
-}
-
-function readCodexConnectedServiceSelection(value: unknown): CodexConnectedServiceRefreshSelection | null {
-  const record = readRecord(value);
-  if (!record || record.serviceId !== 'openai-codex') return null;
-
-  if (record.kind === 'profile') {
-    const profileId = trimString(record.profileId);
-    return profileId
-      ? { kind: 'profile', serviceId: 'openai-codex', profileId }
-      : null;
-  }
-
-  if (record.kind !== 'group') return null;
-  const groupId = trimString(record.groupId);
-  const activeProfileId = trimString(record.activeProfileId);
-  const generation = readGeneration(record.generation);
-  if (!groupId || !activeProfileId || generation === null) return null;
-  const fallbackProfileId = trimString(record.fallbackProfileId);
-  return {
-    kind: 'group',
-    serviceId: 'openai-codex',
-    groupId,
-    activeProfileId,
-    ...(fallbackProfileId ? { fallbackProfileId } : {}),
-    generation,
-  };
-}
-
 function resolveCodexConnectedServiceCredentialRevisionFromEnv(
   env: Readonly<Record<string, string | undefined>>,
 ): string | null {
@@ -85,8 +56,8 @@ function resolveCodexConnectedServiceCredentialRevisionFromEnv(
   if (!Array.isArray(parsed)) return null;
   for (const item of parsed) {
     const record = readRecord(item);
-    if (record?.serviceId !== 'openai-codex') continue;
-    return trimString(record.credentialRevision);
+    if (!readCodexConnectedServiceRefreshSelection(item)) continue;
+    return trimString(record?.credentialRevision);
   }
   return null;
 }
@@ -95,25 +66,6 @@ export function computeCodexAccessTokenFingerprint(accessToken: string | null | 
   const normalized = accessToken?.trim();
   if (!normalized) return null;
   return `sha256:${createHash('sha256').update(normalized).digest('hex').slice(0, 8)}`;
-}
-
-export function resolveCodexConnectedServiceRefreshSelectionFromEnv(
-  env: Readonly<Record<string, string | undefined>>,
-): CodexConnectedServiceRefreshSelection | null {
-  const raw = env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(parsed)) return null;
-  for (const item of parsed) {
-    const selection = readCodexConnectedServiceSelection(item);
-    if (selection) return selection;
-  }
-  return null;
 }
 
 export function resolveCodexInitialConnectedServiceRuntimeIdentity(

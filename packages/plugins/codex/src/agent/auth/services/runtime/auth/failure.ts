@@ -151,8 +151,11 @@ function containsRefreshTokenFailureMessage(text: string): boolean {
     || /\brefresh\s+token\s+(?:(?:has\s+been|was)\s+)?(?:invalidated|revoked)\b/iu.test(text);
 }
 
-function readChatGptAccountUnsupportedModel(text: string): string | null {
-  return /The\s+['"]([^'"]+)['"]\s+model\s+is\s+not\s+supported\s+when\s+using\s+Codex\s+with\s+a\s+ChatGPT\s+account\./iu.exec(text)?.[1]?.trim() || null;
+function readAccountUnavailableModel(text: string): string | null {
+  return /The\s+['"]([^'"]+)['"]\s+model\s+is\s+not\s+supported\s+when\s+using\s+Codex\s+with\s+a\s+ChatGPT\s+account\./iu.exec(text)?.[1]?.trim()
+    || /\bmodel\s+['"]([^'"]+)['"]\s+is\s+not\s+(?:enabled\b|available\s+for\s+(?:your|this|the)\s+account\b)/iu.exec(text)?.[1]?.trim()
+    || /\b['"]?([a-z0-9][a-z0-9._:/-]*)['"]?\s+model\s+is\s+not\s+available\s+for\s+(?:your|this|the)\s+account\b/iu.exec(text)?.[1]?.trim()
+    || null;
 }
 
 function containsTemporaryThrottleMessage(text: string): boolean {
@@ -292,7 +295,7 @@ export function classifyCodexConnectedServiceAuthFailure(
   }
 
   const text = readErrorText(input.error);
-  const unsupportedModel = readChatGptAccountUnsupportedModel(text);
+  const unsupportedModel = readAccountUnavailableModel(text);
   if (input.providerErrorPath && unsupportedModel) {
     return buildClassification(input, {
       kind: 'plan',

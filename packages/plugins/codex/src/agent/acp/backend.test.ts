@@ -8,6 +8,20 @@ import {
 } from './backend';
 
 describe('buildCodexNativeAcpRuntimeOptions', () => {
+  it.each(['openai-codex', 'happier.agent.codex/openai-codex'])(
+    'declines Connected Account ACP without a host-managed refresh bridge (%s)',
+    (serviceId) => {
+      expect(() => buildCodexNativeAcpRuntimeOptions({
+        kind: 'create', sessionId: 'session-1', cwd: '/workspace',
+        launchEnvironment: { values: {
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+            kind: 'profile', serviceId, profileId: 'work',
+          }]),
+        }, unset: [] },
+      })).toThrow(expect.objectContaining({ code: 'codex_refresh_free_auth_unsupported' }));
+    },
+  );
+
   it('projects the host launch snapshot into the native ACP composer contract', () => {
     const options = buildCodexNativeAcpRuntimeOptions({
       kind: 'create',

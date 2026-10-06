@@ -7,6 +7,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { buildAgentAccountUsageRecordId } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   AgentAccountUsageSnapshot,
+  AgentExecutionRunConversationEventV1,
   AgentSessionConversationRollbackRequest,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -28,6 +29,7 @@ const clientState = vi.hoisted(() => {
   let failNextSteer = false;
   let rejectNextInterrupt: Error | null = null;
   let rejectNextTurnStart: Error | null = null;
+  let rejectNextThreadStart: Error | null = null;
   let delayedTurnStartPrompt: string | null = null;
   let delayedTurnStart: {
     promise: Promise<unknown>;
@@ -58,6 +60,7 @@ const clientState = vi.hoisted(() => {
   let rejectNextThreadRead: Error | null = null;
   let rejectNextThreadRevert: Error | null = null;
   let deferNextLoginStart = false;
+  let rejectNextLoginStart: Error | null = null;
   let deferredLoginStart: {
     promise: Promise<unknown>;
     resolve: (value: unknown) => void;
@@ -102,6 +105,7 @@ const clientState = vi.hoisted(() => {
       failNextSteer = false;
       rejectNextInterrupt = null;
       rejectNextTurnStart = null;
+      rejectNextThreadStart = null;
       delayedTurnStartPrompt = null;
       delayedTurnStart = null;
       deferNextSteer = false;
@@ -131,6 +135,7 @@ const clientState = vi.hoisted(() => {
       rejectNextThreadRead = null;
       rejectNextThreadRevert = null;
       deferNextLoginStart = false;
+      rejectNextLoginStart = null;
       deferredLoginStart = null;
     },
     failNextSteer() {
@@ -150,12 +155,21 @@ const clientState = vi.hoisted(() => {
         ? new Error(failure)
         : failure;
     },
+    rejectNextThreadStart(error: Error) {
+      rejectNextThreadStart = error;
+    },
     deferTurnStartForPrompt(prompt: string) {
       delayedTurnStartPrompt = prompt;
     },
     resolveDeferredTurnStart(turnId: string | null) {
       if (!delayedTurnStart) throw new Error('No deferred turn/start request is pending');
       delayedTurnStart.resolve({ turnId });
+      delayedTurnStart = null;
+      delayedTurnStartPrompt = null;
+    },
+    rejectDeferredTurnStart(error: Error) {
+      if (!delayedTurnStart) throw new Error('No deferred turn/start request is pending');
+      delayedTurnStart.resolve(Promise.reject(error));
       delayedTurnStart = null;
       delayedTurnStartPrompt = null;
     },
@@ -205,6 +219,9 @@ const clientState = vi.hoisted(() => {
     deferNextLoginStart() {
       deferNextLoginStart = true;
     },
+    rejectNextLoginStart(error: Error) {
+      rejectNextLoginStart = error;
+    },
     resolveDeferredLoginStart() {
       if (!deferredLoginStart) throw new Error('No deferred account/login/start request is pending');
       deferredLoginStart.resolve({ ok: true });
@@ -228,6 +245,11 @@ const clientState = vi.hoisted(() => {
         return accountReadResult;
       }
       if (method === 'account/login/start') {
+        if (rejectNextLoginStart) {
+          const error = rejectNextLoginStart;
+          rejectNextLoginStart = null;
+          throw error;
+        }
         if (deferNextLoginStart) {
           deferNextLoginStart = false;
           deferredLoginStart = createDeferred();
@@ -236,6 +258,11 @@ const clientState = vi.hoisted(() => {
         return { ok: true };
       }
       if (method === 'thread/start') {
+        if (rejectNextThreadStart) {
+          const error = rejectNextThreadStart;
+          rejectNextThreadStart = null;
+          throw error;
+        }
         return { threadId: 'thread-1' };
       }
       if (method === 'thread/resume') {
@@ -381,7 +408,10 @@ import {
   type CodexAppServerRuntimeHost,
   waitForCodexAppServerRuntimeTurnCompletion,
 } from './runtime.js';
-import { createCodexNativeAppServerSessionRuntime } from './native.js';
+import {
+  createCodexNativeAppServerExecutionRunConversationRuntime,
+  createCodexNativeAppServerSessionRuntime,
+} from './native.js';
 import {
   createCodexAppServerClient,
   isCodexAppServerOversizedJsonFrameError,
@@ -663,15 +693,6 @@ function failedUsageLimitTurn(
       },
     },
   };
-}
-
-async function waitForTurnStartCount(expectedCount: number): Promise<void> {
-  for (let index = 0; index < 20; index += 1) {
-    const count = clientState.requests.filter((request) => request.method === 'turn/start').length;
-    if (count >= expectedCount) return;
-    await Promise.resolve();
-  }
-  throw new Error(`Expected ${expectedCount} turn/start requests`);
 }
 
 async function waitForRequestCount(method: string, expectedCount: number): Promise<void> {
@@ -2213,7 +2234,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       { v: 1, text: 'delayed provider turn' },
       { turnId: 'session-turn-delayed' },
     );
-    await waitForTurnStartCount(1);
+    await waitForRequestCount('turn/start', 1);
     emitNotification('turn/completed', {
       threadId: 'thread-1',
       turnId: 'turn-unknown-before-start-response',
@@ -2399,6 +2420,132 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       }),
     }));
     expect(refreshRuntimeAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { scope: 'session', method: 'turn/start' },
+    { scope: 'execution_run', method: 'turn/start' },
+    { scope: 'execution_run', method: 'thread/start' },
+  ] as const)('rejects an unaccepted model-entitlement start with exact sanitized member evidence ($scope, $method)', async ({ scope, method }) => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-model-entitlement-'));
+    const privateSentinel = 'PRIVATE_PROVIDER_MODEL_ERROR_DETAIL';
+    let native: ReturnType<typeof createCodexNativeAppServerSessionRuntime> | ReturnType<typeof createCodexNativeAppServerExecutionRunConversationRuntime> | undefined;
+    try {
+      await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
+        tokens: {
+          id_token: buildJwt({ email: 'member@example.test', exp: 4_102_444_800 }),
+          access_token: 'fake-model-entitlement-access-token',
+          account_id: 'acct-model-member',
+        },
+      }));
+      const runtime = createRuntime({
+        processEnv: {
+          CODEX_HOME: codexHome,
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+            kind: 'group', serviceId: 'openai-codex', groupId: 'happier',
+            activeProfileId: 'ineligible-member', generation: 12,
+            credentialRevision: 'csr_0123456789abcdefghijkl',
+          }]),
+        },
+        initialModelId: 'gpt-6.1-sol',
+      });
+      const rejection = createCodexAppServerRpcError({
+        method, code: -32000,
+        message: `model 'gpt-6.1-sol' is not enabled in rustponsesapi (${privateSentinel})`,
+        data: { plan_type: privateSentinel, rate_limits: { provider_note: privateSentinel } },
+      });
+      if (method === 'thread/start') clientState.rejectNextThreadStart(rejection);
+      else clientState.rejectNextTurnStart(rejection);
+      native = scope === 'session'
+        ? createCodexNativeAppServerSessionRuntime(runtime, 'session-1')
+        : createCodexNativeAppServerExecutionRunConversationRuntime(runtime, 'run-1');
+      const events: Array<AgentSessionRuntimeEvent | AgentExecutionRunConversationEventV1> = [];
+      native.watch((event: AgentSessionRuntimeEvent | AgentExecutionRunConversationEventV1) => events.push(event));
+      const result = await native.send({
+        inputIds: ['input-1'], input: { text: 'original input' },
+        delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
+      });
+      const diagnostic = {
+        code: 'connected_service_model_start_rejected', severity: 'error',
+        message: 'The connected account cannot start the requested model.',
+        details: { runtimeAuthClassification: {
+          kind: 'plan', limitCategory: 'plan_invalid', serviceId: 'openai-codex',
+          profileId: 'ineligible-member', groupId: 'happier',
+          groupGeneration: 12, expectedCredentialRevision: 'csr_0123456789abcdefghijkl',
+          sourceProviderAccountId: 'acct-model-member', sourceAccountLabel: 'member@example.test',
+          failingAccessTokenFingerprint: computeCodexAccessTokenFingerprint('fake-model-entitlement-access-token'),
+          quotaScope: 'model', providerLimitId: 'gpt-6.1-sol',
+          source: 'structured_provider_error', connectedServiceRecovery: 'available',
+          resetsAtMs: null, retryAfterMs: null,
+        } },
+      };
+      expect(result).toEqual({ status: 'rejected', retryable: false, diagnostic });
+      expect(events).toEqual([expect.objectContaining({
+        kind: 'input-rejected', inputIds: ['input-1'], retryable: false, diagnostic,
+      })]);
+      expect(JSON.stringify([result, events])).not.toContain(privateSentinel);
+      expect(JSON.stringify([result, events])).not.toContain('fake-model-entitlement-access-token');
+      expect(clientState.requests.filter(({ method: requestMethod }) => requestMethod === 'turn/start'))
+        .toHaveLength(method === 'thread/start' ? 0 : 1);
+    } finally {
+      await native?.dispose();
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    new Error("model 'gpt-6.1-sol' is not enabled in rustponsesapi"),
+    createCodexAppServerRpcError({ method: 'turn/start', code: -32000, message: 'Usage limit exceeded' }),
+  ])('keeps custody unknown without a definite model-entitlement application rejection (%s)', async (error) => {
+    const runtime = createRuntime();
+    clientState.rejectNextTurnStart(error);
+    const native = createCodexNativeAppServerExecutionRunConversationRuntime(runtime, 'run-1');
+    const events: AgentExecutionRunConversationEventV1[] = [];
+    native.watch((event) => events.push(event));
+    try {
+      await expect(native.send({
+        inputIds: ['input-1'], input: { text: 'original input' },
+        delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
+      })).resolves.toMatchObject({
+        status: 'unavailable', diagnostic: { code: 'codex_send_outcome_unknown' },
+      });
+      expect(events.some((event) => event.kind === 'input-custody-unknown')).toBe(true);
+      expect(events.some((event) => event.kind === 'input-rejected')).toBe(false);
+    } finally { await native.dispose(); }
+  });
+
+  it.each(['identified_output', 'unidentified_output', 'terminal'] as const)('keeps custody unknown when %s precedes a model-entitlement RPC rejection', async (activity) => {
+    clientState.deferTurnStartForPrompt('original input');
+    const runtime = createRuntime();
+    const native = createCodexNativeAppServerExecutionRunConversationRuntime(runtime, 'run-1');
+    const events: AgentExecutionRunConversationEventV1[] = [];
+    native.watch((event) => events.push(event));
+    try {
+      const send = native.send({
+        inputIds: ['input-1'], input: { text: 'original input' },
+        delivery: { kind: 'newTurn', turnId: 'host-turn-1' },
+      });
+      await waitForRequestCount('turn/start', 1);
+      if (activity === 'terminal') {
+        emitNotification('turn/completed', completedTurn('provider-turn-1'));
+      } else {
+        emitNotification('item/agentMessage/delta', {
+          threadId: 'thread-1', ...(activity === 'identified_output' ? { turnId: 'provider-turn-1' } : {}),
+          itemId: 'item-1', delta: 'Partial output',
+        });
+      }
+      clientState.rejectDeferredTurnStart(createCodexAppServerRpcError({
+        method: 'turn/start', code: -32000,
+        message: "model 'gpt-6.1-sol' is not enabled in rustponsesapi",
+      }));
+      await expect(send).resolves.toMatchObject({
+        status: 'unavailable', diagnostic: { code: 'codex_send_outcome_unknown' },
+      });
+      if (activity !== 'terminal') {
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: 'Partial output' }));
+      }
+      expect(events.some((event) => event.kind === 'input-rejected')).toBe(false);
+    } finally { await native.dispose(); }
   });
 
   it('surfaces a pre-ack terminal capacity failure without resubmitting the input', async () => {
@@ -3486,7 +3633,10 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('refreshes ChatGPT auth tokens with the spawn-time connected-service selection before live apply', async () => {
+  it.each([
+    { exp: 4_102_444_800, resumeId: undefined },
+    { exp: 1, resumeId: 'thread-resumed' },
+  ])('refreshes ChatGPT auth tokens with the spawn-time connected-service selection before live apply ($resumeId)', async ({ exp, resumeId }) => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-spawn-refresh-'));
     const refreshRequests: unknown[] = [];
     try {
@@ -3494,9 +3644,10 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       await writeFile(
         join(codexHome, 'auth.json'),
         JSON.stringify({
+          auth_mode: 'chatgptAuthTokens',
           tokens: {
-            id_token: buildJwt({ email: 'target@example.test', exp: 4_102_444_800 }),
-            access_token: buildJwt({ exp: 4_102_444_800 }),
+            id_token: buildJwt({ email: 'target@example.test', exp }),
+            access_token: buildJwt({ exp }),
             account_id: 'acct_target',
           },
         }),
@@ -3507,7 +3658,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           CODEX_HOME: codexHome,
           HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
             kind: 'group',
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             groupId: 'team',
             activeProfileId: 'target',
             fallbackProfileId: 'backup',
@@ -3534,7 +3685,18 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       });
 
-      await startCodexAppServerRuntime(runtime);
+      await startCodexAppServerRuntime(runtime, { resumeId });
+
+      expect(clientState.requests).toContainEqual({
+        method: 'account/login/start',
+        params: {
+          type: 'chatgptAuthTokens',
+          accessToken: buildJwt({ exp }),
+          chatgptAccountId: 'acct_target',
+        },
+      });
+      expect(clientState.requests.findIndex(({ method }) => method === 'account/login/start'))
+        .toBeLessThan(clientState.requests.findIndex(({ method }) => method === (resumeId ? 'thread/resume' : 'thread/start')));
 
       await expect(clientState.invokeRequestHandler('account/chatgptAuthTokens/refresh', {
         chatgptPlanType: 'plus',
@@ -3559,6 +3721,57 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }
+  });
+
+  it('returns typed unsupported without opening a thread when Codex rejects external authentication', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-external-auth-unsupported-'));
+    try {
+      await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
+        auth_mode: 'chatgptAuthTokens',
+        tokens: { access_token: buildJwt({ exp: 1 }), account_id: 'acct_target' },
+      }), 'utf8');
+      const runtime = createRuntime({
+        processEnv: {
+          CODEX_HOME: codexHome,
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+            kind: 'profile', serviceId: 'happier.agent.codex/openai-codex', profileId: 'target',
+          }]),
+        },
+      });
+      clientState.rejectNextLoginStart(Object.assign(new Error('Method not found'), { code: -32601 }));
+      await expect(startCodexAppServerRuntime(runtime)).rejects.toMatchObject({
+        code: 'codex_refresh_free_auth_unsupported', reason: 'experimental_api_unavailable',
+      });
+      expect(clientState.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+      // A rejected initialization must not leave a usable half-authenticated client.
+      await expect(startCodexAppServerRuntime(runtime)).resolves.toBe('thread-1');
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('declines initial and hot Connected Account auth when the host has no refresh callback', async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({
+      auth_mode: 'chatgptAuthTokens',
+      tokens: { access_token: buildJwt({ exp: 1 }), account_id: 'acct_target' },
+    }));
+    const runtime = asConnectedServiceAuthRuntime(createCodexAppServerRuntime({
+      directory: '/workspace', happierSessionId: 'execution-run-without-refresh',
+      host: {
+        baseProcessEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+          kind: 'profile', serviceId: 'happier.agent.codex/openai-codex', profileId: 'target',
+        }]) },
+        nativeHome: { root: '/fixture', readFiles: async () => ({ 'auth.json': bytes }) },
+        logger: { debug: vi.fn(), warn: vi.fn() },
+        createClient: async () => { throw new Error('Unsupported auth must not spawn a child'); },
+      },
+    }));
+    await expect(startCodexAppServerRuntime(runtime)).rejects.toMatchObject({
+      code: 'codex_refresh_free_auth_unsupported', reason: 'refresh_bridge_unavailable',
+    });
+    await expect(runtime.runtimeAuth.apply({
+      serviceId: 'openai-codex', authGeneration: { credential: buildConnectedCodexCredential() },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'codex_refresh_free_auth_unsupported' });
   });
 
   it('reports exact connected-service runtime identity from the applied credential', async () => {

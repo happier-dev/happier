@@ -7,11 +7,11 @@ import {
 } from './connectedServiceRuntimeIdentity.js';
 
 describe('buildCodexLiveAccountRuntimeIdentity', () => {
-  it('composes spawn selection with host-read auth tokens without reading plugin files', () => {
+  it.each(['openai-codex', 'happier.agent.codex/openai-codex'])('composes %s spawn selection with host-read auth tokens without reading plugin files', (serviceId) => {
     expect(resolveCodexInitialConnectedServiceRuntimeIdentity({
       HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
         kind: 'profile',
-        serviceId: 'openai-codex',
+        serviceId,
         profileId: 'work',
         credentialRevision: 'csr_current',
       }]),

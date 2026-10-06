@@ -68,11 +68,6 @@ type CodexAppServerErrorPayload = Readonly<{
     message: string | null;
     additionalDetails: string | null;
     codexErrorInfo: string | null;
-    resetsAt: unknown;
-    retryAfterMs: unknown;
-    retryAfter: unknown;
-    planType: unknown;
-    rateLimits: unknown;
 }>;
 
 class CodexAppServerTurnFailure extends Error {
@@ -81,6 +76,7 @@ class CodexAppServerTurnFailure extends Error {
     readonly isTemporaryRecoverableTurnFailure: boolean;
     readonly runtimeAuthClassification: unknown | null;
     readonly isWorkspaceRoutingUnauthorized: boolean;
+    readonly isRejectedStartModelEntitlement: boolean;
 
     constructor(message: string, options: Readonly<{
         isAuthAccountChanged: boolean;
@@ -88,6 +84,7 @@ class CodexAppServerTurnFailure extends Error {
         isTemporaryRecoverableTurnFailure: boolean;
         runtimeAuthClassification: unknown | null;
         isWorkspaceRoutingUnauthorized: boolean;
+        isRejectedStartModelEntitlement: boolean;
     }>) {
         super(message);
         this.name = 'CodexAppServerTurnFailure';
@@ -96,6 +93,7 @@ class CodexAppServerTurnFailure extends Error {
         this.isTemporaryRecoverableTurnFailure = options.isTemporaryRecoverableTurnFailure;
         this.runtimeAuthClassification = options.runtimeAuthClassification;
         this.isWorkspaceRoutingUnauthorized = options.isWorkspaceRoutingUnauthorized;
+        this.isRejectedStartModelEntitlement = options.isRejectedStartModelEntitlement;
     }
 }
 
@@ -178,18 +176,16 @@ function readCodexAppServerErrorPayload(value: unknown): CodexAppServerErrorPayl
     const directError = readRecord(record.error);
     const turn = readRecord(record.turn);
     const turnError = readRecord(turn?.error);
-    const error = directError ?? turnError;
+    const data = readRecord(record.data);
+    const dataTurn = readRecord(data?.turn);
+    const error = directError ?? turnError ?? readRecord(data?.error)
+        ?? readRecord(dataTurn?.error) ?? data ?? (value instanceof Error ? record : null);
     if (!error) return null;
 
     return {
-        message: trimStringValue(error.message),
+        message: trimStringValue(error.message) ?? (value instanceof Error ? value.message : null),
         additionalDetails: trimStringValue(error.additionalDetails ?? error.additional_details),
         codexErrorInfo: trimStringValue(error.codexErrorInfo ?? error.codex_error_info),
-        resetsAt: error.resetsAt ?? error.resets_at,
-        retryAfterMs: error.retryAfterMs ?? error.retry_after_ms,
-        retryAfter: error.retryAfter ?? error.retry_after ?? error['retry-after'],
-        planType: error.planType ?? error.plan_type,
-        rateLimits: error.rateLimits ?? error.rate_limits,
     };
 }
 
@@ -258,6 +254,8 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     value: unknown;
     authContext?: CodexAppServerTurnFailureAuthContext | null;
     sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
+    /** The native request owner proved application rejection before any provider work. */
+    providerStartRejected?: boolean;
 }>): Error {
     const payload = readCodexAppServerErrorPayload(params.value);
     const authContext = params.authContext ?? {
@@ -267,18 +265,7 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
     const runtimeAuthClassification = payload
         ? classifyCodexConnectedServiceAuthFailure({
             providerErrorPath: true,
-            error: {
-                error: {
-                    message: payload.message,
-                    additionalDetails: payload.additionalDetails,
-                    codexErrorInfo: payload.codexErrorInfo,
-                    resetsAt: payload.resetsAt,
-                    retryAfterMs: payload.retryAfterMs,
-                    retryAfter: payload.retryAfter,
-                    planType: payload.planType,
-                    rateLimits: payload.rateLimits,
-                },
-            },
+            error: params.value,
             serviceId: 'openai-codex',
             profileId: authContext.profileId,
             groupId: authContext.groupId,
@@ -293,16 +280,26 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
                 : null,
         })
         : null;
+    const sanitizedClassification = sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification);
     return new CodexAppServerTurnFailure(
         CODEX_APP_SERVER_TURN_FAILURE_MESSAGE,
         {
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
             contextWindowExhaustionEvidence: payload ? readCodexAppServerContextWindowExhaustionEvidence(payload) : null,
             isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
-            runtimeAuthClassification: sanitizeCodexAppServerRuntimeAuthClassification(runtimeAuthClassification),
+            runtimeAuthClassification: sanitizedClassification,
             isWorkspaceRoutingUnauthorized: isCodexWorkspaceRoutingUnauthorizedFailure(params.value),
+            isRejectedStartModelEntitlement: params.providerStartRejected === true
+                && sanitizedClassification?.kind === 'plan'
+                && sanitizedClassification.limitCategory === 'plan_invalid'
+                && sanitizedClassification.quotaScope === 'model'
+                && typeof sanitizedClassification.providerLimitId === 'string',
         },
     );
+}
+
+export function isCodexAppServerRejectedStartModelEntitlementError(error: unknown): error is Error {
+    return error instanceof CodexAppServerTurnFailure && error.isRejectedStartModelEntitlement;
 }
 
 export function isCodexAppServerWorkspaceRoutingUnauthorizedError(error: unknown): boolean {

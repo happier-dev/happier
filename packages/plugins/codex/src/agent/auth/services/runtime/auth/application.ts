@@ -140,6 +140,27 @@ function classifyCodexLoginStartError(error: unknown): CodexDirectLiveAuthApplyR
   return { applied: false, reason: 'live_hot_auth_failed' };
 }
 
+export async function applyCodexExternalAuthTokens(params: Readonly<{
+  client: CodexLoginStartClient;
+  accessToken: string;
+  accountId: string;
+}>): Promise<CodexDirectLiveAuthApplyResult> {
+  try {
+    await params.client.request('account/login/start', {
+      type: 'chatgptAuthTokens',
+      accessToken: params.accessToken,
+      chatgptAccountId: params.accountId,
+    });
+  } catch (error) {
+    return classifyCodexLoginStartError(error);
+  }
+  return {
+    applied: true,
+    appliedVia: 'direct_live_hot_auth',
+    activeAccountId: params.accountId,
+  };
+}
+
 export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<{
   client: CodexLoginStartClient;
   candidate: OauthCredentialRecord | TokenCredentialRecord;
@@ -177,13 +198,12 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
   }
 
   const record = requireConnectedServiceOauthCredentialRecord(params.candidate);
-  try {
-    await params.client.request('account/login/start', {
-      type: 'chatgptAuthTokens',
-      accessToken: record.oauth.accessToken,
-      chatgptAccountId: accountId,
-    });
-  } catch (error) {
+  const result = await applyCodexExternalAuthTokens({
+    client: params.client,
+    accessToken: record.oauth.accessToken,
+    accountId,
+  });
+  if (!result.applied) {
     if (params.refreshSelection) {
       if (!rollbackRefreshSelection) {
         return { applied: false, reason: 'refresh_bridge_selection_update_failed' };
@@ -194,12 +214,7 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
         return { applied: false, reason: 'refresh_bridge_selection_update_failed' };
       }
     }
-    return classifyCodexLoginStartError(error);
+    return result;
   }
-
-  return {
-    applied: true,
-    appliedVia: 'direct_live_hot_auth',
-    activeAccountId: accountId,
-  };
+  return result;
 }

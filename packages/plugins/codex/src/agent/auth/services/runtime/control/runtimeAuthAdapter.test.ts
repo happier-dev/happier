@@ -258,6 +258,12 @@ describe('Codex runtime auth adapter', () => {
       selection: { serviceId: 'openai-codex', profileId: 'work' },
     });
     expect(materialized.files).toEqual({ 'auth.json': expect.any(Uint8Array) });
+    expect(JSON.parse(new TextDecoder().decode(materialized.files['auth.json']))).toMatchObject({
+      auth_mode: 'chatgptAuthTokens',
+      access_token: 'access',
+      refresh_token: '',
+      tokens: { access_token: 'access', refresh_token: '', account_id: 'acct-work' },
+    });
     expect(codec.inspect({
       credential,
       selection: { serviceId: 'openai-codex', profileId: 'work' },
