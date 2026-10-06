@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { extractShellCommand } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { isDefaultReadOnlyToolName } from './writeLikeToolNameHeuristics';

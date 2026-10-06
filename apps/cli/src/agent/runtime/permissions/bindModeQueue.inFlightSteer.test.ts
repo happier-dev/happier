@@ -10,6 +10,7 @@ import type {
   PermissionModeQueuedPrompt,
   PermissionModeQueuedPromptMode,
 } from '@/agent/runtime/permissions/queuedPrompt';
+import { combinePermissionModeQueuedPrompts } from '@/agent/runtime/permissions/queuedPrompt';
 import {
   renderSessionInputContextBlockV1,
   renderSessionInputContextPromptV1,
@@ -56,6 +57,7 @@ function createQueue() {
   // MessageQueue2 already implements push + pushIsolateAndClear.
   const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode),
+    { batcher: combinePermissionModeQueuedPrompts },
   );
   const spyPush = vi.spyOn(queue, 'push');
   const spyIsolate = vi.spyOn(queue, 'pushIsolateAndClear');
@@ -80,6 +82,53 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     emitUserMessage({ content: { text: 'SECOND_INPUT' }, localId: 'role-steer-second', meta: {} });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(steerText.mock.calls[1]?.[0]).toBe(renderLegacyUnknownProviderPrompt('SECOND_INPUT'));
+  });
+
+  it.each([
+    ['the provider is idle', { isTurnInFlight: () => false }],
+    ['steer capability is unavailable', { supportsInFlightSteer: () => false }],
+    ['the active turn is no longer steerable', { canSteerPrompt: () => false }],
+    ['provider input is not admitted', { isProviderInputAdmitted: () => false }],
+  ] as const)('queues a non-interrupting explicit steer when %s', async (_label, override) => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    const steerText = vi.fn(async () => {});
+    const rejectPromptBeforeProvider = vi.fn();
+
+    registerPermissionModeMessageQueueBinding({
+      session: {
+        ...session,
+        getCommittedUserMessageSeq: (localId: string) => localId === 'exact-steer-unavailable' ? 71 : null,
+      },
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+        rejectPromptBeforeProvider,
+        ...override,
+        registerProviderAcceptedEffect: () => undefined,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'exact steer only' },
+      localId: 'exact-steer-unavailable',
+      meta: {},
+      pendingProviderAction: 'steer',
+      pendingRequestedAction: { v: 1, kind: 'steer_now' },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+    const next = await queue.waitForMessagesAndGetAsString();
+    expect(next?.message).toMatchObject({
+      text: 'exact steer only', localId: 'exact-steer-unavailable', userMessageSeq: 71,
+    });
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -173,9 +222,9 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
   });
 
-  it('rejects an exact claimed steer before provider input when steerability is lost before the queued dispatch runs', async () => {
+  it('queues a non-interrupting steer when steerability is lost before the queued dispatch runs', async () => {
     const { session, emitUserMessage } = createSessionHarness();
-    const { queue, spyPush, spyIsolate } = createQueue();
+    const { queue } = createQueue();
     const rejectPromptBeforeProvider = vi.fn();
     const reportPromptEffectMayHaveOccurred = vi.fn();
     const steerText = vi.fn(async () => {});
@@ -208,26 +257,23 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(steerText).not.toHaveBeenCalled();
-    expect(spyPush).not.toHaveBeenCalled();
-    expect(spyIsolate).not.toHaveBeenCalled();
-    expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
-      localIds: ['exact-steer-stale-before-dispatch'],
-      userMessageSeq: null,
-      reason: 'steering_unavailable',
+    expect(queue.size()).toBe(1);
+    expect((await queue.waitForMessagesAndGetAsString())?.message).toMatchObject({
+      text: 'stale exact steer', localId: 'exact-steer-stale-before-dispatch',
     });
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
     expect(reportPromptEffectMayHaveOccurred).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['exact claimed steer', 'steer', true],
-    ['ambient input', undefined, false],
+    ['exact claimed steer', 'steer'],
+    ['ambient input', undefined],
   ] as const)('handles an admission-race cancellation for %s without losing the prompt', async (
-    _label,
+    label,
     pendingProviderAction,
-    expectRejection,
   ) => {
     const { session, emitUserMessage } = createSessionHarness();
-    const { queue, spyPush, spyIsolate } = createQueue();
+    const { queue } = createQueue();
     const rejectPromptBeforeProvider = vi.fn();
     const steerText = vi.fn(async () => {});
 
@@ -249,21 +295,18 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
     emitUserMessage({
       content: { text: 'admission changed before dispatch' },
-      localId: `admission-race-${expectRejection ? 'exact' : 'ambient'}`,
+      localId: `admission-race-${label}`,
       meta: {},
       ...(pendingProviderAction ? { pendingProviderAction } : {}),
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(steerText).not.toHaveBeenCalled();
-    expect(spyIsolate).not.toHaveBeenCalled();
-    if (expectRejection) {
-      expect(spyPush).not.toHaveBeenCalled();
-      expect(rejectPromptBeforeProvider).toHaveBeenCalledTimes(1);
-    } else {
-      expect(spyPush).toHaveBeenCalledTimes(1);
-      expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
-    }
+    expect(queue.size()).toBe(1);
+    expect((await queue.waitForMessagesAndGetAsString())?.message).toMatchObject({
+      text: 'admission changed before dispatch', localId: `admission-race-${label}`,
+    });
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
   });
 
   it('executes a claimed send action as an isolated queued invocation and never steers an active turn', async () => {

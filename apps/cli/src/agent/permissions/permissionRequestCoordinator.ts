@@ -583,6 +583,7 @@ export class PermissionRequestCoordinator<TResult> {
 
     async cancelAll(reason: string): Promise<void> {
         const entries = [...this.pendingRequests.values()];
+        // The Session store may hold requests without coordinator-local waiters.
         await this.cancelEntries({
             entries,
             reason,
@@ -611,16 +612,18 @@ export class PermissionRequestCoordinator<TResult> {
         const ownedEntries = [...this.pendingRequests.values()].filter(
             (entry) => isPermissionRequestOwnedByPlugin(entry.owner, normalizedPluginId),
         );
-        await this.cancelEntries({
-            entries: ownedEntries,
-            reason,
-            persist: async (requestIds) => await this.store.cancelRequestsByOwner?.({
-                owner: { kind: 'plugin', pluginId: normalizedPluginId },
+        if (ownedEntries.length > 0) {
+            await this.cancelEntries({
+                entries: ownedEntries,
                 reason,
-                decision: 'abort',
-                requestIds,
-            }),
-        });
+                persist: async (requestIds) => await this.store.cancelRequestsByOwner?.({
+                    owner: { kind: 'plugin', pluginId: normalizedPluginId },
+                    reason,
+                    decision: 'abort',
+                    requestIds,
+                }),
+            });
+        }
 
         for (const [requestId, cached] of [...this.cachedDecisions.entries()]) {
             if (isPermissionRequestOwnedByPlugin(cached.owner, normalizedPluginId)) {
@@ -634,8 +637,6 @@ export class PermissionRequestCoordinator<TResult> {
         reason: string;
         persist: (requestIds: readonly string[]) => Promise<void> | void;
     }>): Promise<void> {
-        if (params.entries.length === 0) return;
-
         const markedEntries = params.entries.filter(
             (entry) => !entry.cancelReason,
         );
