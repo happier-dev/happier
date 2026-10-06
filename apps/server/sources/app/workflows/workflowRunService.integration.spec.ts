@@ -2098,6 +2098,8 @@ describe("workflowRunService (integration)", () => {
             state: "succeeded",
             workflowCustodyState: "settled",
             revision: 1,
+            // The terminal transition's own instant, so a reader can state when the Run finished.
+            finishedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         });
     });
 
