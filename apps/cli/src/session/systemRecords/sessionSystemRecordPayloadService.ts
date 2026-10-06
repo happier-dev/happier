@@ -1,10 +1,6 @@
-import {
-  LegacyHostSessionSystemRecordLookupQuerySchema,
-  getSessionSystemRecordPayloadSchema,
-  type LegacyHostSessionSystemRecord,
-  type SessionSystemRecordKind,
-  type SessionSystemRecordContent,
-} from '@happier-dev/protocol';
+import { LegacyHostSessionSystemRecordLookupQuerySchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { getSessionSystemRecordPayloadSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordCatalog';
+import type { LegacyHostSessionSystemRecord, SessionSystemRecordKind, SessionSystemRecordContent } from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
