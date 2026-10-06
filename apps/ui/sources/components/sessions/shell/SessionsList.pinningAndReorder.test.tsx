@@ -21,6 +21,27 @@ import { HappyError } from '@/utils/errors/errors';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The persistent store boundary is shared by barrel readers and direct store hooks.
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { createLiveStorageStoreMock, createStableStorageReader } = await import('@/dev/testkit/mocks/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    const storage = createLiveStorageStoreMock(createStableStorageReader(() => {
+        const membership: Record<string, string[]> = {};
+        const rows: Record<string, Record<string, SessionListRenderableSession>> = {};
+        for (const item of mockVisibleSessionListViewData) {
+            if (item.type !== 'session') continue;
+            (membership[item.serverId] ??= []).push(item.session.id);
+            (rows[item.serverId] ??= {})[item.session.id] = item.session;
+        }
+        return {
+            settings: settingsDefaults,
+            ordinarySessionListMembershipByServerId: membership,
+            sessionListRowsByServerId: rows,
+        };
+    }));
+    return { storage, getStorage: () => storage };
+});
+
 vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
     useUniversalSearchRuntime: () => ({
         open: vi.fn(),
@@ -155,9 +176,11 @@ installSessionShellCommonModuleMocks({
     }).module,
     storage: async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                storage,
                 useSetting: createUseSettingMock({ fallback: (key) => {
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
@@ -365,11 +388,15 @@ vi.mock('@/sync/ops/sessionOrganization', () => ({
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    const serverProfile = { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' };
+    const profiles = [
+        { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' },
+        { id: 'server_b', name: 'Server B', serverUrl: 'https://server-b.example.test' },
+        { id: 'https://home.example.test:8443', name: 'Remote Home', serverUrl: 'https://home.example.test:8443' },
+    ];
     return {
         ...actual,
-        listServerProfiles: () => [serverProfile],
-        getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
+        listServerProfiles: () => profiles,
+        getServerProfileById: (serverId: string) => profiles.find((profile) => profile.id === serverId) ?? null,
     };
 });
 
@@ -874,6 +901,7 @@ describe('SessionsList pinning + per-group ordering', () => {
 
     it('keeps the exact URL-shaped Home identity when pinning a qualified Session row', async () => {
         const serverId = 'https://home.example.test:8443';
+        mockAllowedServerIds = [serverId];
         mockVisibleSessionListViewData = [
             {
                 type: 'header',

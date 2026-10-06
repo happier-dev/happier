@@ -1,13 +1,7 @@
-import {
-  isLaunchProfileV2,
-  isHistoricalBuiltInAiLaunchProfileIdV1,
-  readAiLaunchProfileCollection,
-  readProviderSettingsFromAccountSettingsV1,
-  type LaunchProfileV2,
-  type AiLaunchProfileSourceV1,
-  type ArtifactSharingResourceV1,
-  validateLaunchProfileV2ReservedEnvironment,
-} from '@happier-dev/protocol';
+import { isLaunchProfileV2, isHistoricalBuiltInAiLaunchProfileIdV1, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { LaunchProfileV2, AiLaunchProfileSourceV1, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
+import { validateLaunchProfileV2ReservedEnvironment } from '@happier-dev/protocol/profiles/v2/schema';
 
 type SpawnProfileValidationResult =
   | Readonly<{ ok: true; kind: 'none' | 'legacy' | 'slim' }>

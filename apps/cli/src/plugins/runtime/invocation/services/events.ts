@@ -1,18 +1,10 @@
-import {
-    AGENT_SESSION_RUNTIME_EVENT_KINDS_V1,
-    HAPPIER_HOST_EVENT_PREFIX_V1,
-    HostEventTargetV1Schema,
-    hostEventIdForSemanticEventV1,
-    parseHostEventPayloadV1,
-    type HostEventEnvelopeV1,
-    type HostEventIdV1,
-    type HostEventTargetV1,
-    type HostSemanticEventV1,
-    type ParsedPluginEventContributionV1,
-    PluginContributionIdentityV1Schema,
-    PluginContributionLocalIdSchema,
-    readHostEventNamespaceV1,
-} from '@happier-dev/protocol';
+import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from '@happier-dev/protocol/runtime/eventKindsV1';
+import { HAPPIER_HOST_EVENT_PREFIX_V1, readHostEventNamespaceV1 } from '@happier-dev/protocol/plugins/events/v1';
+import { HostEventTargetV1Schema } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
+import { hostEventIdForSemanticEventV1, parseHostEventPayloadV1 } from '@happier-dev/protocol/plugins/events/hostV1';
+import type { HostEventEnvelopeV1, HostEventIdV1, HostEventTargetV1, HostSemanticEventV1, ParsedPluginEventContributionV1 } from '@happier-dev/protocol';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isPluginError, PluginError, type Disposable, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
     HostEvents,

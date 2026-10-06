@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import {
   SessionBroadcastContainerSchema,
@@ -8,6 +10,16 @@ import {
 } from './index.js';
 
 describe('updates forward compatibility', () => {
+  it('retains classic acknowledgement projection and parse error identity', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(UpdateMetadataAckResponseSchema, { target })).toMatchObject({
+        oneOf: expect.arrayContaining([expect.objectContaining({ type: 'object', additionalProperties: {} })]),
+      });
+    }
+    const invalid = UpdateMetadataAckResponseSchema.safeParse({ result: 'success', version: 'invalid', metadata: 'cipher' });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) expect(invalid.error).toBeInstanceOf(z.ZodError);
+  });
   it('accepts extra fields in session broadcast containers', () => {
     const parsed = SessionBroadcastContainerSchema.safeParse({
       id: 'b1',
@@ -57,4 +69,3 @@ describe('updates forward compatibility', () => {
     expect(parsed.success).toBe(true);
   });
 });
-

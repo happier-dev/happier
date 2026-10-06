@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
-import { normalizeVoiceDictationLanguage, VoiceProviderSettingsEnvelopeV1Schema, type VoiceProviderContribution } from '@happier-dev/protocol';
+import { normalizeVoiceDictationLanguage } from '@happier-dev/protocol/voice/recognitionLanguage';
+import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type { VoiceProviderContribution } from '@happier-dev/protocol';
 import { getActiveAccountSettingsSnapshotLifetimeToken, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

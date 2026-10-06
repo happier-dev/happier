@@ -2,7 +2,7 @@ import type {
     AgentExternalSessionTakeoverLaunchPlan,
     AgentExternalSessionsResolvedIdentity,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import type { ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';

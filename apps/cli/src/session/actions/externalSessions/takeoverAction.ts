@@ -1,7 +1,5 @@
-import {
-    ExternalSessionTakeoverInputV1Schema,
-    type ExternalSessionTakeoverResultV1,
-} from '@happier-dev/protocol/sessions';
+import { ExternalSessionTakeoverInputV1Schema } from '@happier-dev/protocol/sessions/external/takeoverV1';
+import type { ExternalSessionTakeoverResultV1 } from '@happier-dev/protocol/sessions';
 
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
 

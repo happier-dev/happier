@@ -1,8 +1,5 @@
-import {
-    ExternalSessionStatusGetRequestSchema,
-    type ExternalAgentObservationSnapshotV1,
-    type ExternalSessionStatusGetResponse,
-} from '@happier-dev/protocol';
+import { ExternalSessionStatusGetRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ExternalAgentObservationSnapshotV1, ExternalSessionStatusGetResponse } from '@happier-dev/protocol';
 
 import {
     resolveExternalSessionObservationLinkInput,

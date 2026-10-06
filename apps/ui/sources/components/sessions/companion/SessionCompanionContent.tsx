@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost';
 import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
 import type { EntityDropEffectV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useEntityDragDropRuntime, readWindowBounds, measureWindowBounds, type WindowBounds, useTreeDropAutoscroll } from '@/components/ui/treeDragDrop';
@@ -415,12 +416,13 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
         });
     }, [revealTranscript, sessionId]);
     const [pickerRequest, setPickerRequest] = React.useState(0);
-    const addItem = React.useCallback((ref: SessionCompanionAddBinding['refs'][number]) => {
-        mutateCompanion({
+    const addItem = React.useCallback(async (ref: SessionCompanionAddBinding['refs'][number]) => {
+        const outcome = mutateCompanion({
             kind: 'companion.item.add',
             message: t('sessionBoard.companion.notices.added'),
             apply: (companion) => companion.addItem(ref),
         });
+        if (!outcome) throw new Error('session_companion_write_refused');
     }, [mutateCompanion]);
     const addBindingInput = props.addBinding;
     const glanceServerId = props.serverId ?? null;
@@ -438,27 +440,33 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     // Companion's own owner (the same intents `widgets.instance.inputs.set`/`.rename` reach).
     const setInstanceInputs = React.useCallback(async (instanceId: string, bindings: WidgetInputBindingsV1): Promise<WidgetSetupSubmitResult> => {
         if (controller.availability !== 'ready' || !noticeKeyPrefix) return { ok: false, message: t('widgetAdd.saveFailed') };
-        mutateCompanion({
+        const existing = controller.preference.items.find(item => item.kind === 'instance' && item.instance.id === instanceId);
+        if (existing?.kind !== 'instance') return { ok: false, message: t('widgetAdd.saveFailed') };
+        const outcome = mutateCompanion({
             kind: 'companion.instance.inputs.set',
             message: t('common.done'),
             apply: (companion) => companion.setInstanceInputs(instanceId, bindings),
         });
-        return { ok: true };
-    }, [controller.availability, mutateCompanion, noticeKeyPrefix]);
-    const renameInstance = React.useCallback((instanceId: string, displayName: string | null) => {
-        mutateCompanion({
+        return outcome || sameStrictJsonValue(existing.instance.bindings, bindings) ? { ok: true } : { ok: false, message: t('widgetAdd.saveFailed') };
+    }, [controller.availability, controller.preference.items, mutateCompanion, noticeKeyPrefix]);
+    const renameInstance = React.useCallback(async (instanceId: string, displayName: string | null) => {
+        if (controller.availability !== 'ready' || !noticeKeyPrefix) throw new Error('session_companion_write_refused');
+        const existing = controller.preference.items.find(item => item.kind === 'instance' && item.instance.id === instanceId);
+        if (existing?.kind !== 'instance') throw new Error('session_companion_instance_missing');
+        const outcome = mutateCompanion({
             kind: 'companion.instance.rename',
             message: t('common.done'),
             apply: (companion) => companion.renameInstance(instanceId, displayName),
         });
-    }, [mutateCompanion]);
+        if (!outcome && (existing.instance.displayName ?? null) !== displayName) throw new Error('session_companion_write_refused');
+    }, [controller.availability, controller.preference.items, mutateCompanion, noticeKeyPrefix]);
     const instanceControls = (entry: SessionCompanionContentItem): SessionCompanionInstanceControls | undefined => (
         entry.kind === 'instance' && !props.measurementOnly ? {
             instance: entry.ref.instance,
             scope: companionSurface.scope,
             context: companionSurface.context,
             setInputs: (bindings) => setInstanceInputs(entry.ref.instance.id, bindings),
-            rename: (displayName) => { renameInstance(entry.ref.instance.id, displayName); },
+            rename: (displayName) => renameInstance(entry.ref.instance.id, displayName),
         } : undefined
     );
     const addBinding = React.useMemo<SessionCompanionAddBinding | null>(() => (

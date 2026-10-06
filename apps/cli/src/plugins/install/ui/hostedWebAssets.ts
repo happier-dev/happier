@@ -1,11 +1,7 @@
-import {
-  isPluginUiHostApiVersionCompatibleV1,
-  PluginHostedWebRuntimeModeV1Schema,
-  PluginUiArtifactsManifestV2Schema,
-  type PluginHostedWebRuntimeModeV1,
-  type PluginUiHostedStaticArtifactV2,
-  type PluginUiArtifactsManifestV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { isPluginUiHostApiVersionCompatibleV1 } from '@happier-dev/protocol/plugins/ui/hostApi';
+import { PluginHostedWebRuntimeModeV1Schema } from '@happier-dev/protocol/plugins/ui/hostedWebBuild';
+import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
+import type { PluginHostedWebRuntimeModeV1, PluginUiHostedStaticArtifactV2, PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 export type HostedWebAssetRuntimeResolutionCode =
   | 'invalid_runtime_mode'

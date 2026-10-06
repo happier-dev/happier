@@ -10,7 +10,7 @@ export function applyVoiceExecutionMachineChoice(voice: VoiceSettings, choice: s
     return {
         ...voice,
         executionMachine: machineId === 'auto'
-            ? { mode: 'auto', machineId: null, autoMachineId: null }
+            ? { mode: 'auto', machineId: null }
             : { ...voice.executionMachine, mode: 'fixed', machineId },
     };
 }

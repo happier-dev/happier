@@ -13,7 +13,8 @@ import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -56,6 +57,7 @@ const capturedOpenSessionSpy = vi.hoisted(() => vi.fn<(sid: string) => void>());
 const companionHostPropsSpy = vi.hoisted(() => vi.fn());
 const boardControllerState = vi.hoisted(() => ({ unavailable: false }));
 const openDetailsTabSpy = vi.hoisted(() => vi.fn());
+const openRightSpy = vi.hoisted(() => vi.fn());
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.hoisted(() =>
     vi.fn<(sessionId: string) => string | null>((sessionId: string) =>
         sessionId === 's1' ? 'server-cache' : null
@@ -224,34 +226,35 @@ vi.mock('@/components/sessions/companion/SessionCompanionHost', () => ({
         return React.createElement('SessionCompanionHost', props);
     },
 }));
-vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
-    SessionBoardControllerProvider: ({ children }: React.PropsWithChildren) => children,
-    useMountedSessionBoardController: (address: { serverId: string; sessionId: string } | null) => (
-        boardControllerState.unavailable || !address
-            ? null
-            : {
-                address,
-                binding: {
-                    status: 'ready' as const,
-                    snapshot: { itemsById: new Map() },
-                },
-                pluginRuntime: {
-                    serverId: address.serverId,
-                    machineId: 'm1',
-                    pluginUiProjection: null,
-                    pluginBrowserProjection: null,
-                    phase: 'current' as const,
-                    interactionEnabled: true,
-                    platform: 'web' as const,
-                },
-                controller: {
-                    supports: () => false,
-                    resolveSourceAvailability: () => ({ kind: 'available' as const }),
-                },
-                callerHostedHtmlRuntime: null,
-            }
-    ),
-}));
+vi.mock('@/components/sessions/board/SessionBoardControllerProvider', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/board/SessionBoardControllerProvider')>();
+    const { SessionBoardContinuityProvider } = await import('@/components/sessions/board/SessionBoardContinuity');
+    const { projectSessionBoard, createSessionBoardActionsPort } = await import('@/sync/domains/session/board');
+    const { SessionBoardLayoutV1Schema, SessionSurfaceItemV1Schema } = await import('@happier-dev/protocol/sessions/board');
+    const snapshot = projectSessionBoard({
+        layout: { revision: 'ssr1:layout', outcome: { status: 'ready', value: SessionBoardLayoutV1Schema.parse({
+            v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'widget-7', width: 'medium' }] }],
+        }) } },
+        items: new Map([['widget-7', { revision: 'ssr1:widget-7', outcome: { status: 'ready' as const, value: SessionSurfaceItemV1Schema.parse({
+            v: 1, title: 'Widget', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Widget' } } },
+        }) } }]]),
+        capabilities: { readTranscript: true, editSessionRecords: true },
+        freshness: 'fresh', reachability: 'reachable', loading: 'idle', incomplete: false,
+    });
+    return { ...actual, SessionBoardControllerProvider: (props: React.ComponentProps<typeof actual.SessionBoardControllerProvider>) => {
+        if (boardControllerState.unavailable || !props.serverId) return <>{props.children}</>;
+        const address = { serverId: props.serverId, sessionId: props.sessionId };
+        const binding = { status: 'ready' as const, snapshot };
+        const actions = createSessionBoardActionsPort(address);
+        return <SessionBoardContinuityProvider {...address}><actual.SessionBoardControllerOwner
+            address={address} input={{ ...address, binding, actions }} binding={binding} actions={actions}
+            pluginRuntime={{ serverId: address.serverId, machineId: 'm1', pluginUiProjection: null,
+                pluginBrowserProjection: null, phase: 'unavailable', interactionEnabled: false, platform: 'web' }}
+            callerHostedHtmlRuntime={null}
+        >{props.children}</actual.SessionBoardControllerOwner></SessionBoardContinuityProvider>;
+    } };
+});
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
 }));
@@ -316,7 +319,7 @@ vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
 }));
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
-        openRight: vi.fn(),
+        openRight: openRightSpy,
         setRightTab: vi.fn(),
         closeRight: vi.fn(),
         openDetailsTab: openDetailsTabSpy,
@@ -341,6 +344,7 @@ vi.mock('@/sync/sync', async () => {
     const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
     return {
         sync: {
+        getSessionAttachmentTransferContext: () => undefined,
             ...createAcceptedExternalSessionTailCursorSyncBoundary(),
             markSessionViewed: async () => {},
             fetchPendingMessages: async () => {},
@@ -435,9 +439,10 @@ describe('SessionView info navigation', () => {
         companionHostPropsSpy.mockReset();
         boardControllerState.unavailable = false;
         openDetailsTabSpy.mockReset();
+        openRightSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
-            sessionId === 's1' ? 'server-cache' : null
+            sessionId === 's1' ? 'server-2' : null
         );
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
@@ -449,6 +454,8 @@ describe('SessionView info navigation', () => {
     afterEach(() => {
         standardCleanup();
     });
+
+    beforeEach(activateSessionShellStorageBoundary);
 
     it('opens session info via singular navigate using the explicit route server id for a route-owned session', async () => {
         const { SessionView } = await import('./SessionView');
@@ -524,18 +531,18 @@ describe('SessionView info navigation', () => {
         const companionProps = companionHostPropsSpy.mock.calls.at(-1)?.[0] as Readonly<{
             summaryDestinations: Readonly<{
                 sessionInfo: () => void;
-                workflow: () => void;
+                workTab: () => void;
                 usage: () => void;
             }>;
         }> | undefined;
         expect(companionProps).toBeDefined();
 
         companionProps?.summaryDestinations.sessionInfo();
-        companionProps?.summaryDestinations.workflow();
+        companionProps?.summaryDestinations.workTab();
         companionProps?.summaryDestinations.usage();
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2');
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/runs?serverId=server-2');
+        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'agents' });
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/usage?serverId=server-2');
         expect(routerPushSpy.mock.calls.map((call) => String(call[0]))
             .filter((href) => href.includes('server-other-home'))).toEqual([]);
@@ -592,7 +599,7 @@ describe('SessionView info navigation', () => {
         screen.root.findByProps({ accessibilityLabel: 'sessionInfo.title' }).props.onPress();
 
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
     });

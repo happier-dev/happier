@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { runNodeCapture as runNode } from './testkit/core/run_node_capture.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(dirname(dirname(scriptsDir)));
@@ -64,22 +65,6 @@ async function spawnForeignHealthServer({ stackName, envPath, healthStatus = 200
     });
   });
   return { child, port };
-}
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), 8_000);
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? (signal ? 1 : 0), stdout, stderr });
-    });
-  });
 }
 
 test('run proves a projected proxy PID when proxy metadata is missing and never publishes it as serverPid', async (t) => {

@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { voiceSettingsDefaults, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { storage } from '@/sync/domains/state/storageStore';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { t } from '@/text';
 import { createVoiceProviderRegistry, type VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
@@ -66,11 +69,14 @@ vi.mock('@/sync/store/hooks', () => ({
   ],
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-  // Unselected fixtures only need the resolver to fail closed; the focused
-  // source-selection cases install their canonical parsed Settings value.
-  useSettings: () => storageBoundary.settings ?? ({} as Settings),
-}));
+vi.mock('@/sync/domains/state/storage', async () => {
+  const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+  return {
+    // Unselected fixtures only need the resolver to fail closed; the focused
+    // source-selection cases install their canonical parsed Settings value.
+    useSettingsSelector: <T,>(selector: (settings: Settings) => T) => selector(storageBoundary.settings ?? settingsDefaults),
+  };
+});
 
 function localVoice(providerId: 'local_direct' | 'local_conversation'): VoiceSettings {
   return {
@@ -79,7 +85,6 @@ function localVoice(providerId: 'local_direct' | 'local_conversation'): VoiceSet
     executionMachine: {
       mode: 'fixed',
       machineId: 'machine-1',
-      autoMachineId: 'stale-machine',
     },
   };
 }
@@ -101,7 +106,7 @@ it('keeps the Advanced Voice computer available for model management when conver
   expect(picker).toBeDefined();
   await act(async () => { picker!.props.onSelect('machine-1'); });
   expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
-    providerId: null, executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
+    providerId: null, executionMachine: { mode: 'fixed', machineId: 'machine-1' },
   }));
 });
 
@@ -189,6 +194,8 @@ function agentRealtimeRegistry(): VoiceProviderRegistry {
 
 describe('VoiceExecutionMachineSection', () => {
   beforeEach(() => {
+    storage.setState({ settingsScope: { serverId: 'voice-picker-home', accountId: 'voice-picker-account' } });
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
     vi.clearAllMocks();
   });
 
@@ -343,6 +350,8 @@ describe('VoiceExecutionMachineSection', () => {
   });
 
   it('clears both fixed and sticky-auto machine ids when the user explicitly selects Automatic', async () => {
+    const scope = storage.getState().settingsScope!;
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'stale-machine');
     const VoiceExecutionMachineSection = await loadSection();
     const setVoice = vi.fn();
     const voice = localVoice('local_conversation');
@@ -352,12 +361,12 @@ describe('VoiceExecutionMachineSection', () => {
     const dropdown = screen.findAll((node) => String(node.type) === 'DropdownMenu')[0];
 
     dropdown?.props.onSelect('auto');
+    expect(useVoiceTargetStore.getState().autoTargetMachineByScope[accountSettingsScopeKeySuffix(scope)]).toBeNull();
 
     expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
       executionMachine: {
         mode: 'auto',
         machineId: null,
-        autoMachineId: null,
       },
     }));
   });
@@ -366,7 +375,7 @@ describe('VoiceExecutionMachineSection', () => {
     const VoiceExecutionMachineSection = await loadSection();
     const voice = {
       ...localVoice('local_conversation'),
-      executionMachine: { mode: 'fixed' as const, machineId: 'missing-machine', autoMachineId: null },
+      executionMachine: { mode: 'fixed' as const, machineId: 'missing-machine' },
     };
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} />,
@@ -377,10 +386,11 @@ describe('VoiceExecutionMachineSection', () => {
   });
 
   it('shows the sticky resolved machine in the Automatic selection', async () => {
+    useVoiceTargetStore.getState().rememberAutoTargetMachine(storage.getState().settingsScope!, 'machine-1');
     const VoiceExecutionMachineSection = await loadSection();
     const voice = {
       ...localVoice('local_conversation'),
-      executionMachine: { mode: 'auto' as const, machineId: null, autoMachineId: 'machine-1' },
+      executionMachine: { mode: 'auto' as const, machineId: null },
     };
     const screen = await renderSettingsView(
       <VoiceExecutionMachineSection voice={voice} setVoice={() => {}} />,

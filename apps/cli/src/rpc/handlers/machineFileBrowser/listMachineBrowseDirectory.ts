@@ -1,5 +1,5 @@
 import type { DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol'
-import { DaemonFilesystemListDirectoryRequestSchema } from '@happier-dev/protocol'
+import { DaemonFilesystemListDirectoryRequestSchema } from '@happier-dev/protocol/machines/fileBrowser';
 
 import type { ScmBackendRegistry } from '@/scm/registry'
 

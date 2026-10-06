@@ -4,6 +4,7 @@ import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionLis
 
 import {
     resolveSessionAttentionStandingSource,
+    resolveSessionReminderPresentation,
     type SessionAttentionStandingPolicy,
     type SessionAttentionStandingSource,
 } from '@/sync/domains/session/organization/attentionStanding';
@@ -20,6 +21,8 @@ import {
     normalizeSessionListWorkingPlacementMode,
     type SessionListAttentionPlacementMode,
     type SessionListAttentionPlacementReason,
+    type SessionListAttentionPlacementOrdering,
+    type SessionListRetainedAttentionPlacement,
     type SessionListWorkingPlacementMode,
     type SessionListWorkingPlacementReason,
 } from './sessionListAttentionPlacementTypes';
@@ -34,14 +37,8 @@ export type SessionListAttentionPlacementOptions = Readonly<{
     mode: SessionListAttentionPlacementMode;
     /** Archived corpus hosts opt in; active-library placement remains archive-excluding. */
     includeArchived?: boolean;
-    /**
-     * Rows to hold in the band for one more pass even though they no longer
-     * earn it — the session the user is currently reading. Retention carries
-     * keys only: the reason that placed a row is a live fact about the session,
-     * and replaying a stale one would relabel an approved session as still
-     * blocked.
-     */
-    retainSessionKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    /** Preserve the opened row's ordering, independently of its live displayed reason. */
+    retainPlacements?: ReadonlyArray<SessionListRetainedAttentionPlacement>;
     /**
      * The user's Keep in Needs attention instructions, carried as the policy
      * itself rather than a resolved key set: an account default plus per-session
@@ -80,6 +77,7 @@ type PlacementCandidate<Reason extends PlacementReason> = Readonly<{
     originalIndex: number;
     retainedIndex: number | null;
     retainedWorking?: boolean;
+    attentionOrdering?: SessionListAttentionPlacementOrdering;
     /**
      * Only meaningful for a 'standing' placement: true when the user asked for
      * THIS session to stay in the band, false when standing comes from the
@@ -96,6 +94,7 @@ type PlacementLane<Reason extends PlacementReason> = Readonly<{
         originalIndex: number;
         retainedKeys: ReadonlySet<string>;
         retainedKeyRanks: ReadonlyMap<string, number>;
+        retainedAttentionPlacements?: ReadonlyMap<string, SessionListRetainedAttentionPlacement>;
         standingPolicy: SessionAttentionStandingPolicy | undefined;
         nowMs: number;
         allowArchived?: boolean;
@@ -116,6 +115,7 @@ function readAttentionReasonPriority(reason: SessionListAttentionPlacementReason
             return readSessionAwarenessOperationalPrimaryRankV1('ready') - 1;
         case 'unread':
             return readSessionAwarenessOperationalPrimaryRankV1('ready') - 2;
+        case 'reminder':
         case 'standing':
             // Standing is the floor of the band: it only reaches sessions whose own
             // signals place them nowhere, so it always sorts behind every earned reason.
@@ -306,13 +306,17 @@ function projectSessionListPlacement(params: Readonly<{
     const standingSource = params.standingPolicy
         ? resolveSessionAttentionStandingSource(params.standingPolicy, params.sessionKey, params.nowMs)
         : 'none';
+    const attentionReason = resolveAttentionReason(
+        params.session,
+        runtimePresentation,
+        liveWorking,
+        standingSource,
+    );
+    const dueReminder = resolveSessionReminderPresentation(
+        params.standingPolicy?.overridesBySessionKey[params.sessionKey], params.nowMs,
+    )?.state === 'due';
     return {
-        attentionReason: resolveAttentionReason(
-            params.session,
-            runtimePresentation,
-            liveWorking,
-            standingSource,
-        ),
+        attentionReason: attentionReason === 'standing' && dueReminder ? 'reminder' : attentionReason,
         standingSource,
         liveWorking,
     };
@@ -436,7 +440,8 @@ function compareAttentionCandidates(
     left: PlacementCandidate<SessionListAttentionPlacementReason>,
     right: PlacementCandidate<SessionListAttentionPlacementReason>,
 ): number {
-    const priorityDelta = readAttentionReasonPriority(right.reason) - readAttentionReasonPriority(left.reason);
+    const priorityDelta = readAttentionReasonPriority(right.attentionOrdering?.reason ?? right.reason)
+        - readAttentionReasonPriority(left.attentionOrdering?.reason ?? left.reason);
     if (priorityDelta !== 0) return priorityDelta;
     return compareByTimestamp(left, right);
 }
@@ -447,6 +452,7 @@ function resolveAttentionCandidate(params: Readonly<{
     originalIndex: number;
     retainedKeys: ReadonlySet<string>;
     retainedKeyRanks: ReadonlyMap<string, number>;
+    retainedAttentionPlacements?: ReadonlyMap<string, SessionListRetainedAttentionPlacement>;
     standingPolicy: SessionAttentionStandingPolicy | undefined;
     nowMs: number;
     allowArchived?: boolean;
@@ -476,29 +482,26 @@ function createAttentionCandidate(params: Readonly<{
     originalIndex: number;
     retainedKeys: ReadonlySet<string>;
     retainedKeyRanks: ReadonlyMap<string, number>;
+    retainedAttentionPlacements?: ReadonlyMap<string, SessionListRetainedAttentionPlacement>;
 }>): PlacementCandidate<SessionListAttentionPlacementReason> | null {
     const reason = params.projection.attentionReason;
     if (!reason && !params.retainedKeys.has(params.key)) return null;
     if (!reason && params.projection.liveWorking) return null;
 
-    // A retained row has no live reason left, so it is held with the neutral
-    // one. Its former reason is a fact about the session that has since
-    // changed; replaying it would paint an approved permission, a handled
-    // request, or a cleared failure back onto the row the user just resolved.
-    // Standing is the band's FLOOR, so it must not pre-empt retention either.
-    // Retention relied on an opened row having no live reason left; the floor
-    // supplies one, so without this it fires the moment the earned reason
-    // clears and reason priority drops the row to the bottom of the band under
-    // the reader. A kept row is held with the same neutral reason as any other
-    // retained row, and only reaches the floor once navigation releases it.
-    const heldFromStandingFloor = reason === 'standing' && params.retainedKeys.has(params.key);
-    const resolvedReason = heldFromStandingFloor ? 'ready' : reason ?? 'ready';
+    // Retention preserves ordering, while presentation continues to reflect live facts.
+    const retained = params.retainedAttentionPlacements?.get(params.key);
+    const held = retained !== undefined && (reason === null || reason === 'standing' || reason === 'reminder');
+    const resolvedReason = held ? 'ready' : reason ?? 'ready';
+    const attentionOrdering = held
+        ? { reason: retained.reason, timestamp: retained.timestamp }
+        : { reason: resolvedReason, timestamp: resolveAttentionTimestamp(params.row, resolvedReason) };
     return {
         item: params.item,
         row: params.row,
         key: params.key,
         reason: resolvedReason,
-        timestamp: resolveAttentionTimestamp(params.row, resolvedReason),
+        timestamp: attentionOrdering.timestamp,
+        attentionOrdering,
         originalIndex: params.originalIndex,
         retainedIndex: params.retainedKeyRanks.get(params.key) ?? null,
         explicitStanding: resolvedReason === 'standing' && params.projection.standingSource === 'override',
@@ -578,6 +581,7 @@ function createGlobalAttentionSessionItem(candidate: PlacementCandidate<SessionL
         groupKey: ATTENTION_PLACEMENT_GROUP_KEY_V1,
         groupKind: 'attention',
         attentionPlacementReason: candidate.reason,
+        attentionPlacementOrdering: candidate.attentionOrdering,
         workingPlacementReason: undefined,
         variant: 'default',
         ...(keepAttentionCandidateVisibleWhenInactive(candidate) ? { keepVisibleWhenInactive: true } : {}),
@@ -589,6 +593,8 @@ function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<Ses
     if (
         (!keepVisibleWhenInactive || candidate.item.keepVisibleWhenInactive === true)
         && candidate.item.attentionPlacementReason === candidate.reason
+        && candidate.item.attentionPlacementOrdering?.reason === candidate.attentionOrdering?.reason
+        && candidate.item.attentionPlacementOrdering?.timestamp === candidate.attentionOrdering?.timestamp
         && candidate.item.workingPlacementReason == null
     ) {
         return candidate.item;
@@ -596,6 +602,7 @@ function createWithinGroupAttentionSessionItem(candidate: PlacementCandidate<Ses
     return {
         ...candidate.item,
         attentionPlacementReason: candidate.reason,
+        attentionPlacementOrdering: candidate.attentionOrdering,
         workingPlacementReason: undefined,
         ...(keepVisibleWhenInactive ? { keepVisibleWhenInactive: true } : {}),
     };
@@ -615,6 +622,7 @@ function createGlobalWorkingSessionItem(candidate: PlacementCandidate<'working'>
         groupKey: WORKING_PLACEMENT_GROUP_KEY_V1,
         groupKind: 'working',
         attentionPlacementReason: undefined,
+        attentionPlacementOrdering: undefined,
         workingPlacementReason,
         variant: 'default',
         keepVisibleWhenInactive: true,
@@ -633,6 +641,7 @@ function createWithinGroupWorkingSessionItem(candidate: PlacementCandidate<'work
     return {
         ...candidate.item,
         attentionPlacementReason: undefined,
+        attentionPlacementOrdering: undefined,
         workingPlacementReason,
         keepVisibleWhenInactive: true,
     };
@@ -675,7 +684,9 @@ export function buildSessionListGlobalPlacements(params: Readonly<{
         && params.workingOptions != null;
     if (!attentionEnabled && !workingEnabled) return null;
 
-    const retainedAttentionSource = attentionEnabled ? params.attentionOptions?.retainSessionKeys : undefined;
+    const retainedAttentionPlacements = new Map((attentionEnabled ? params.attentionOptions?.retainPlacements ?? [] : [])
+        .map((placement) => [placement.key, placement] as const));
+    const retainedAttentionSource = [...retainedAttentionPlacements.keys()];
     const retainedWorkingSource = workingEnabled ? params.workingOptions?.retainSessionKeys : undefined;
     const retainedAttentionKeys = normalizeRetainedKeys(retainedAttentionSource);
     const retainedAttentionKeyRanks = buildRetainedKeyRanks(retainedAttentionSource);
@@ -710,6 +721,7 @@ export function buildSessionListGlobalPlacements(params: Readonly<{
                 originalIndex,
                 retainedKeys: retainedAttentionKeys,
                 retainedKeyRanks: retainedAttentionKeyRanks,
+                retainedAttentionPlacements,
             });
             if (attentionCandidate) {
                 attentionCandidates.push(attentionCandidate);
@@ -784,6 +796,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
     lane: PlacementLane<Reason>,
     nowMs: number,
     allowArchived?: boolean,
+    retainedAttentionPlacements?: ReadonlyMap<string, SessionListRetainedAttentionPlacement>,
 ): Readonly<{
     items: SessionListIndexItem[];
     changed: boolean;
@@ -797,6 +810,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
             originalIndex: entry.originalIndex,
             retainedKeys,
             retainedKeyRanks,
+            retainedAttentionPlacements,
             standingPolicy,
             nowMs,
             allowArchived,
@@ -827,6 +841,7 @@ function reorderSessionRunWithinGroup<Reason extends PlacementReason>(
 function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(params: Readonly<{
     source: ReadonlyArray<SessionListIndexItem>;
     retainedKeys?: ReadonlySet<string> | ReadonlyArray<string> | null;
+    retainedAttentionPlacements?: ReadonlyMap<string, SessionListRetainedAttentionPlacement>;
     standingPolicy?: SessionAttentionStandingPolicy;
     resolveSessionRow: (serverId: string | null | undefined, sessionId: string) => SessionListRenderableSession | null;
     lane: PlacementLane<Reason>;
@@ -851,6 +866,7 @@ function applySessionListPlacementWithinGroups<Reason extends PlacementReason>(p
             params.lane,
             params.nowMs,
             params.allowArchived,
+            params.retainedAttentionPlacements,
         );
         out.push(...reordered.items);
         changed = changed || reordered.changed;
@@ -947,7 +963,8 @@ export function applySessionListAttentionPlacementWithinGroups(params: Readonly<
 
     return applySessionListPlacementWithinGroups({
         source: params.source,
-        retainedKeys: params.options.retainSessionKeys,
+        retainedKeys: params.options.retainPlacements?.map((placement) => placement.key),
+        retainedAttentionPlacements: new Map(params.options.retainPlacements?.map((placement) => [placement.key, placement])),
         standingPolicy: params.options.standingPolicy,
         allowArchived: params.options.includeArchived === true,
         resolveSessionRow: params.resolveSessionRow,

@@ -1,7 +1,8 @@
 import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
-import { readSessionAccessProjectionRoleV1, SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol';
+import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 

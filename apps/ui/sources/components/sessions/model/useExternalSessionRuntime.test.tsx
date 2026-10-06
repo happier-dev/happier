@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
@@ -40,7 +39,6 @@ const subscribePreferredServerSpy = vi.hoisted(() => vi.fn((listener: () => void
     preferredServerListeners.delete(listener);
   };
 }));
-const noopSubscribe = vi.hoisted(() => () => () => {});
 const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 const acceptedTailCursorState = vi.hoisted(() => ({
   current: null as string | null,
@@ -71,17 +69,17 @@ vi.mock('./resolveSessionTargetServerId', () => ({
   resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
     resolveSessionTargetServerIdSpy(sessionId, fallbackServerId),
 }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-  usePreferredServerIdForSession: (
-    _sessionId: string,
-    _fallbackServerId?: string | null,
-    enabled = true,
-  ) => React.useSyncExternalStore(
-    enabled ? subscribePreferredServerSpy : noopSubscribe,
-    () => enabled ? preferredServerIdState.current : null,
-    () => null,
-  ),
-}));
+vi.mock('@/sync/domains/state/storageStore', async () => {
+  const { createLiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+  const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  // The persisted Session map and its subscription are the boundary; Home selection stays real.
+  const storage = Object.assign(createLiveStorageStoreMock(() => ({
+    sessions: Object.fromEntries(['session-1', 'session-2'].map((id) => [id, createSessionFixture({
+      id, serverId: preferredServerIdState.current ?? undefined,
+    })])),
+  })), { subscribe: subscribePreferredServerSpy });
+  return { storage, getStorage: () => storage };
+});
 vi.mock('@/sync/sync', () => ({
   sync: {
     getAcceptedExternalSessionTailCursor: () => acceptedTailCursorState.current,
@@ -238,6 +236,33 @@ describe('useExternalSessionRuntime', () => {
   afterEach(() => {
     resetDemoModeDepthForTests();
     vi.clearAllMocks();
+  });
+
+  it('preserves the public runtime result identity until a returned field changes', async () => {
+    const { useExternalSessionRuntime } = await import('./useExternalSessionRuntime');
+    const metadata = { path: '/tmp/workspace', host: 'tester.local' };
+    const hook = await renderHook((sessionId: string) => useExternalSessionRuntime({
+      sessionId, metadata,
+    }), { initialProps: 'session-1' });
+    try {
+      const initial = hook.getCurrent();
+      await hook.rerender('session-1');
+      expect(hook.getCurrent().externalSessionLink).toBe(initial.externalSessionLink);
+      expect(hook.getCurrent().externalAgent).toBe(initial.externalAgent);
+      expect(hook.getCurrent().sessionServerId).toBe(initial.sessionServerId);
+      expect(hook.getCurrent().status).toBe(initial.status);
+      expect(hook.getCurrent().refreshNow).toBe(initial.refreshNow);
+      expect(hook.getCurrent()).toBe(initial);
+
+      await hook.rerender('session-2');
+      const changed = hook.getCurrent();
+      expect(changed.refreshNow).not.toBe(initial.refreshNow);
+      expect(changed).not.toBe(initial);
+      await hook.rerender('session-2');
+      expect(hook.getCurrent()).toBe(changed);
+    } finally {
+      await hook.unmount();
+    }
   });
 
   it('keeps linked demo sessions inert while preserving their canonical link', async () => {

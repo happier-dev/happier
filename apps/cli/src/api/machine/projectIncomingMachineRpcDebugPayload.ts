@@ -1,7 +1,5 @@
-import {
-    AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
-    SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-} from '@happier-dev/protocol';
+import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
+import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 
 /**
  * Reserved server-origin parameters can contain private plain or encrypted

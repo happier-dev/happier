@@ -1,8 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import {
-    ManagedServiceLocalIdSchema,
-    normalizeProviderPublicHeaders,
-} from '@happier-dev/protocol';
+import { ManagedServiceLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
 import type {
     ManagedServiceHealthCheck,
     ManagedServiceHttpHealthResponse,

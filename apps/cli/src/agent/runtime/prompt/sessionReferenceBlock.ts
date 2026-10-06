@@ -1,10 +1,5 @@
-import {
-  MENTION_BOUNDS,
-  MENTION_KIND_V1,
-  readMentionRefOpaqueForKindV1,
-  sanitizeMentionRefsV1,
-  type MentionRefV1,
-} from '@happier-dev/protocol';
+import { MENTION_BOUNDS, MENTION_KIND_V1, readMentionRefOpaqueForKindV1, sanitizeMentionRefsV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import type { MentionRefV1 } from '@happier-dev/protocol';
 
 /**
  * A Session mention reaches an agent as an identity/tool hint only. Transcript text remains

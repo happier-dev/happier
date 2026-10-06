@@ -232,7 +232,6 @@ export function createCodexConnectedAccountNativeAuthCodec(): AgentConnectedAcco
         files: {
           'auth.json': new TextEncoder().encode(JSON.stringify(buildCodexCloudAuthFile({
             accessToken: record.oauth.accessToken,
-            refreshToken: record.oauth.refreshToken,
             idToken: record.oauth.idToken,
             accountId: record.oauth.providerAccountId,
             lastRefreshIso: new Date().toISOString(),

@@ -1,5 +1,6 @@
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
-import { TurnIdSchema, type SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import type { SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import type { HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService } from '@/agent/runtime/state/currentSessionUiTypes';
 
 import type {

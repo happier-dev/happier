@@ -1,11 +1,7 @@
-import {
-    ExternalAgentObservationResourceGroupingV1Schema,
-    PluginBackendExternalSessionSourceDeclarationV1Schema,
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-    type PluginBackendExternalSessionSourceDeclarationV1,
-    type ExternalAgentObservationTargetV1,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { ExternalAgentObservationResourceGroupingV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import { PluginBackendExternalSessionSourceDeclarationV1Schema } from '@happier-dev/protocol/plugins/backendDefinitionV1';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { PluginBackendExternalSessionSourceDeclarationV1, ExternalAgentObservationTargetV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionObservationContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';

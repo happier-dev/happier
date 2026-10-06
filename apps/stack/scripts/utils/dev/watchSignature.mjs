@@ -28,6 +28,7 @@ export function isDevRuntimeReloadIgnoredPath(path) {
   if (!normalized) return false;
   const parts = normalized.split('/').filter(Boolean);
   if (parts.some((part) => TEST_ONLY_DIRECTORY_NAMES.has(part))) return true;
+  if (parts.some((part) => /^\.(?:.*[-.])?(?:scratch|tmp|temp)(?:[-.]|$)/.test(part))) return true;
   const base = parts.at(-1) ?? '';
   return (
     TEST_ONLY_FILE_RE.test(base)

@@ -1,4 +1,5 @@
-import { extractShellCommand, getActionSpec } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveHappierActionForMcpToolName } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import { resolveAgentRequestKind } from './requestKind';
 import { isSharedPermissionSafeToolName, isSharedPermissionWriteLikeToolName } from './permissionTaxonomy';

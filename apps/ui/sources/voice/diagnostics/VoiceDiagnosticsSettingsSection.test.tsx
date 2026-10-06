@@ -279,7 +279,7 @@ describe('VoiceDiagnosticsSettingsSection selected-machine status', () => {
     };
     const voiceFor = (machineId: string) => ({
       diagnostics,
-      executionMachine: { mode: 'fixed', machineId, autoMachineId: null },
+      executionMachine: { mode: 'fixed', machineId },
     });
     let releaseCleanup!: () => void;
     const cleanupBarrier = new Promise<void>((resolve) => { releaseCleanup = resolve; });

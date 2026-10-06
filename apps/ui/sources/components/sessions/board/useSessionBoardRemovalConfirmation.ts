@@ -3,7 +3,7 @@ import {
     normalizeActionsSettingsV1,
 } from '@happier-dev/protocol';
 
-import { useSettings } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/hooks';
 
 /**
  * Whether removing a Board item asks for confirmation on this device.
@@ -18,7 +18,9 @@ import { useSettings } from '@/sync/store/hooks';
  * exact CAS revisions and the aggregate's own recheck still decide the write.
  */
 export function useSessionBoardRemovalConfirmationRequired(): boolean {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        actionsSettingsV1: settings.actionsSettingsV1,
+    }));
     return isApprovalRequiredByActionsSettings(
         'session.board.item.remove',
         normalizeActionsSettingsV1((settings as { actionsSettingsV1?: unknown })?.actionsSettingsV1),

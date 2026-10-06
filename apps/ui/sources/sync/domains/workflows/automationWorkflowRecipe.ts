@@ -1,7 +1,7 @@
 import {
-    AutomationStoredWorkflowDefinitionRecipeV2Schema,
+    AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
     AutomationStoredWorkflowDefinitionV2Schema,
-    type AutomationStoredWorkflowDefinitionRecipeV2,
+    AutomationStoredWorkflowDefinitionV2ReadSchema,
 } from '@happier-dev/protocol';
 
 import { openAutomationRecipePayloadForAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
@@ -21,10 +21,10 @@ export type OpenedAutomationWorkflowDefinition =
  * would overwrite the stored definition on Save.
  */
 export async function openAutomationWorkflowRecipeForAuthoring(params: Readonly<{
-    recipe: AutomationStoredWorkflowDefinitionRecipeV2;
+    recipe: unknown;
     decryptRaw?: (ciphertext: string) => Promise<unknown | null>;
     isCurrent?: () => boolean;
 }>): Promise<OpenedAutomationWorkflowDefinition> {
-    const recipe = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse(params.recipe);
-    return openAutomationRecipePayloadForAuthoring({ ...params, envelope: recipe.workflow, schema: AutomationStoredWorkflowDefinitionV2Schema });
+    const recipe = AutomationStoredWorkflowDefinitionRecipeV2ReadSchema.parse(params.recipe);
+    return openAutomationRecipePayloadForAuthoring({ ...params, envelope: recipe.workflow, schema: AutomationStoredWorkflowDefinitionV2ReadSchema });
 }

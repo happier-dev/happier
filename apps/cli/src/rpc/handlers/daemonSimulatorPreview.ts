@@ -1,13 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonSimulatorPreviewActionRequestV1Schema,
-    DaemonSimulatorPreviewActionResponseV1Schema,
-    DaemonSimulatorPreviewSnapshotRequestV1Schema,
-    DaemonSimulatorPreviewSnapshotResponseV1Schema,
-    type DaemonSimulatorPreviewActionResponseV1,
-    type DaemonSimulatorPreviewSnapshotResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonSimulatorPreviewActionRequestV1Schema, DaemonSimulatorPreviewActionResponseV1Schema, DaemonSimulatorPreviewSnapshotRequestV1Schema, DaemonSimulatorPreviewSnapshotResponseV1Schema } from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import type { DaemonSimulatorPreviewActionResponseV1, DaemonSimulatorPreviewSnapshotResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 

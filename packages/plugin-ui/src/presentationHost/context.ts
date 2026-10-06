@@ -9,6 +9,7 @@ import type { HappierMaterialRole } from '../presentation/layout/material.js';
 import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import type { HappierPageChrome } from '../presentation/layout/pageChrome.js';
 import type { HappierCollectionMotionDriver } from '../presentation/collection/collectionMotion.js';
+import type { CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
 import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
 import type { HappierStateSize } from '../presentation/state/InfoState.js';
 import type { HappierCapsuleHost } from '../presentation/status/capsuleHost.js';
@@ -19,6 +20,7 @@ import type { DragSourceProps, DropTargetProps } from '../components/EntityDragD
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
+import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -160,6 +162,8 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  /** The incumbent host viewport policy, carried by a same-realm physical scroller. */
+  createScrollActivityTracker?(scrollRef: RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
   renderVoiceMarkArt?(input: Omit<VoiceMarkArtProps, 'fallback'>): ReactNode;
   renderStatusCell?(input: Omit<StatusCellProps, 'label' | 'fallback'> & Readonly<{ presented: boolean }>): ReactNode;
   renderSetupBlockTile?(input: Omit<SetupBlockTileProps, 'fallback'>): ReactNode;
@@ -194,6 +198,8 @@ export type PluginUiPresentationHost = Readonly<{
    * host-private. Absent (a hosted-web realm), the Collection's changes land at once.
    */
   collectionMotion?: HappierCollectionMotionDriver;
+  /** Same-realm platform rendering only; List/Collection retain their state and semantics. */
+  collectionVirtualizer?: CollectionVirtualizer;
   /**
    * The container the surface is mounted in, as Happier's own states size themselves (`pane` in a
    * session sidebar tab, `phone` on a phone surface, `details` in a details drawer). A plugin state

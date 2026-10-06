@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod/mini';
 
 import {
     ConnectedServiceCredentialRecordV1Schema,
@@ -55,8 +55,8 @@ export class BuiltInLegacyConnectedServiceCompatibilityError extends Error {
  * Remove this translator when that predecessor can no longer coexist with Dev
  * and all persisted V2 ciphertext written by it has left the supported window.
  */
-const BuiltInLegacyConnectedServiceRecoveryCreditV1Schema = z.object({
-    providerCreditId: z.string().trim().min(1).optional(),
+const BuiltInLegacyConnectedServiceRecoveryCreditV1Schema = z.strictObject({
+    providerCreditId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     kind: z.enum([
         'usage_limit_reset',
         'rate_limit_reset',
@@ -70,38 +70,38 @@ const BuiltInLegacyConnectedServiceRecoveryCreditV1Schema = z.object({
         'expired',
         'unknown',
     ]),
-    providerResetType: z.string().trim().min(1).optional(),
-    appliesToProviderLimitId: z.string().trim().min(1).nullable().optional(),
-    title: z.string().trim().min(1).nullable().optional(),
-    description: z.string().trim().min(1).nullable().optional(),
-    grantedAtMs: z.number().int().nonnegative().nullable().optional(),
-    expiresAtMs: z.number().int().nonnegative().nullable().optional(),
-    redeemStartedAtMs: z.number().int().nonnegative().nullable().optional(),
-    redeemedAtMs: z.number().int().nonnegative().nullable().optional(),
-}).strict();
+    providerResetType: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    appliesToProviderLimitId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+    title: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+    description: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+    grantedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+    expiresAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+    redeemStartedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+    redeemedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+});
 
-const BuiltInLegacyConnectedServiceRecoveryCreditsV1Schema = z.object({
+const BuiltInLegacyConnectedServiceRecoveryCreditsV1Schema = z.strictObject({
     kind: z.literal('usage_limit_resets'),
-    availableCount: z.number().int().nonnegative(),
-    totalCount: z.number().int().nonnegative().optional(),
-    nextExpiresAtMs: z.number().int().nonnegative().nullable().optional(),
-    source: ConnectedServiceQuotaSourceV1Schema.optional(),
-    confidence: ConnectedServiceQuotaConfidenceV1Schema.optional(),
-    credits: z.array(
+    availableCount: z.number().check(z.int(), z.nonnegative()),
+    totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+    nextExpiresAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
+    source: z.optional(ConnectedServiceQuotaSourceV1Schema),
+    confidence: z.optional(ConnectedServiceQuotaConfidenceV1Schema),
+    credits: z._default(z.array(
         BuiltInLegacyConnectedServiceRecoveryCreditV1Schema,
-    ).default([]),
-}).strict().superRefine((value, context) => {
+    ), []),
+}).check(z.superRefine((value, context) => {
     if (
         typeof value.totalCount === 'number'
         && value.totalCount < value.availableCount
     ) {
         context.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: 'custom',
             message: 'totalCount must be greater than or equal to availableCount',
             path: ['totalCount'],
         });
     }
-});
+}));
 
 function parseLegacyRecoveryCredits(
     value: unknown,
@@ -265,13 +265,13 @@ export function projectBuiltInLegacyConnectedServiceCredentialRecordV1(
     );
 }
 
-const QualifiedCredentialPayloadInLegacyRecordV1Schema = z.object({
-    happierQualifiedConnectedAccountCredentialV1: z.object({
+const QualifiedCredentialPayloadInLegacyRecordV1Schema = z.strictObject({
+    happierQualifiedConnectedAccountCredentialV1: z.strictObject({
         v: z.literal(1),
-        authenticationModeId: z.string().trim().min(1).max(128),
+        authenticationModeId: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
         payload: QualifiedConnectedAccountCredentialPayloadV1Schema,
-    }).strict(),
-}).strict();
+    }),
+});
 
 type QualifiedCredentialMetadata = Readonly<{
     providerIdentity?: Readonly<{

@@ -1,22 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-  buildReviewTriageTransitionRequestV1,
-  createReviewFindingIdentityV1,
-  createReviewFindingMessageHashV1,
-  ReviewCommentV1Schema,
-  ReviewTriageOverlaySchema,
-  stringifyReviewCommentPrincipalCanonicalJsonV1,
-  type ReviewCommentAnchorV1,
-  type ReviewCommentCreateRequestV1,
-  type ReviewCommentFingerprintV1,
-  type ReviewCommentScopeV1,
-  type ReviewCommentV1,
-  type ReviewCommentPrincipalHeaderV1,
-  type ReviewFinding,
-  type ReviewTriageOverlay,
-  type ReviewTriageStatus,
-} from '@happier-dev/protocol';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
 
 import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/executor';
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';

@@ -1,21 +1,5 @@
 /** @moduleRealm daemon */
-import {
-    ActionExecuteAfterHookPayloadSchema as canonicalActionExecuteAfterHookPayloadSchema,
-    ActionExecuteBeforeHookPayloadSchema as canonicalActionExecuteBeforeHookPayloadSchema,
-    AgentToolExecuteAfterHookPayloadSchema as canonicalAgentToolExecuteAfterHookPayloadSchema,
-    AgentToolExecuteBeforeHookPayloadSchema as canonicalAgentToolExecuteBeforeHookPayloadSchema,
-    getPluginHookDefinitionV1 as canonicalGetPluginHookDefinitionV1,
-    PLUGIN_HOOK_CATALOG_V1 as canonicalPluginHookCatalogV1,
-    PLUGIN_HOOK_IDS_V1 as canonicalPluginHookIdsV1,
-    PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1 as canonicalPluginHookPayloadSchemasById,
-    PluginAgentCompositionRequestV1Schema as canonicalPluginAgentCompositionRequestV1Schema,
-    PluginAgentCompositionResultV1Schema as canonicalPluginAgentCompositionResultV1Schema,
-    PluginExecutionCallerSchema as canonicalPluginExecutionCallerSchema,
-    PluginExecutionInterceptionCapabilitySchema as canonicalPluginExecutionInterceptionCapabilitySchema,
-    PluginExecutionInterceptionResultSchema as canonicalPluginExecutionInterceptionResultSchema,
-    validatePluginHookPayloadV1 as canonicalValidatePluginHookPayloadV1,
-    validatePluginHookResultV1 as canonicalValidatePluginHookResultV1,
-} from '@happier-dev/protocol/plugins/hooks';
+import { ActionExecuteAfterHookPayloadSchema as canonicalActionExecuteAfterHookPayloadSchema, ActionExecuteBeforeHookPayloadSchema as canonicalActionExecuteBeforeHookPayloadSchema, AgentToolExecuteAfterHookPayloadSchema as canonicalAgentToolExecuteAfterHookPayloadSchema, AgentToolExecuteBeforeHookPayloadSchema as canonicalAgentToolExecuteBeforeHookPayloadSchema, getPluginHookDefinitionV1 as canonicalGetPluginHookDefinitionV1, PLUGIN_HOOK_CATALOG_V1 as canonicalPluginHookCatalogV1, PLUGIN_HOOK_IDS_V1 as canonicalPluginHookIdsV1, PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1 as canonicalPluginHookPayloadSchemasById, PluginAgentCompositionRequestV1Schema as canonicalPluginAgentCompositionRequestV1Schema, PluginAgentCompositionResultV1Schema as canonicalPluginAgentCompositionResultV1Schema, PluginExecutionCallerSchema as canonicalPluginExecutionCallerSchema, PluginExecutionInterceptionCapabilitySchema as canonicalPluginExecutionInterceptionCapabilitySchema, PluginExecutionInterceptionResultSchema as canonicalPluginExecutionInterceptionResultSchema, validatePluginHookPayloadV1 as canonicalValidatePluginHookPayloadV1, validatePluginHookResultV1 as canonicalValidatePluginHookResultV1 } from '@happier-dev/protocol/plugins/hooks';
 
 import type { JsonValue } from './identity.js';
 

@@ -9,7 +9,7 @@ import Constants from 'expo-constants';
 import { t } from '@/text';
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { layout } from '@/components/ui/layout/layout';
-import { useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useSetting, useSettingsSelector } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { PopoverScope } from '@/components/ui/popover';
@@ -23,7 +23,6 @@ import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsave
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
@@ -47,7 +46,12 @@ export default React.memo(function ProfileEditScreen() {
         machineId?: string | string[];
         spawnServerId?: string | string[];
     }>();
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const spawnServerIdParam = resolveSpawnServerRouteParam(Array.isArray(params.spawnServerId) ? params.spawnServerId[0] : params.spawnServerId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({

@@ -2,10 +2,8 @@ import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingId } from '@h
 import type { OpenSshAuth as CanonicalOpenSshAuth } from '../../ssh/openSshTransport.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
 export type { OpenSshAuth } from '../../ssh/openSshTransport.js';
-import {
-  SystemTaskResultSchema,
-  type SystemTaskJsonObject,
-} from '@happier-dev/protocol';
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol';
 
 import type { SystemTaskSshConnectionConfig } from '../kinds/relayRuntimeKinds.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../kinds/remoteFirstPartyPayloadInstaller.js';

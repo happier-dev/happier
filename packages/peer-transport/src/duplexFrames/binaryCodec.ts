@@ -1,11 +1,6 @@
 /** Binary `binary_frame_v2` encode/decode for tunnel sessions and substreams. */
-import {
-    decodePeerTcpTunnelBinaryFrameV2,
-    encodePeerTcpTunnelBinaryFrameV2,
-    type PeerTcpTunnelDirectionV1,
-    type PeerTcpTunnelBinaryFrameDecodeFailureReasonV2,
-    type PeerTcpTunnelBinaryFrameHeaderV2,
-} from '@happier-dev/protocol';
+import { decodePeerTcpTunnelBinaryFrameV2, encodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import type { PeerTcpTunnelDirectionV1, PeerTcpTunnelBinaryFrameDecodeFailureReasonV2, PeerTcpTunnelBinaryFrameHeaderV2 } from '@happier-dev/protocol';
 import type { PeerTcpTunnelBinaryFrameForSessionResult, PeerTcpTunnelBinarySubstreamFrameResult, PeerTcpTunnelFrame } from './types.js';
 
 export type PeerTcpTunnelBinaryDecodeDenialReason = Extract<

@@ -22,6 +22,11 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
+// Native haptics are the device boundary; the carry's feel owner decides when they tick.
+const haptics = vi.hoisted(() => ({ light: vi.fn(async () => {}), selection: vi.fn(async () => {}), success: vi.fn(async () => {}), error: vi.fn(async () => {}) }));
+vi.mock('@/components/ui/theme/haptics', () => ({
+    hapticsLight: haptics.light, hapticsSelection: haptics.selection, hapticsSuccess: haptics.success, hapticsError: haptics.error,
+}));
 vi.mock('@/utils/web/reactDomCjs', () => ({
     // ReactTestRenderer cannot render DOM portals; the native portal and drag owner stay real.
     requireReactDOM: () => ({ createPortal: (children: React.ReactNode) => children }),
@@ -40,6 +45,7 @@ function Realm(props: Readonly<{ page: string; feedback?: boolean }>) {
 }
 
 afterEach(() => {
+    haptics.light.mockClear();
     standardCleanup();
     for (const dispose of retire.splice(0)) dispose();
     runtime?.cancel('test-end');
@@ -58,6 +64,8 @@ describe('one app-realm carried preview', () => {
             describe: () => ({ title: 'Zen task' }) }));
         await act(async () => { runtime.begin('home-section')!.move({ x: 150, y: 150 }); });
         expect(screen.findAllHostsByTestId('entity-drag-carried-preview')).toHaveLength(1);
+        // A phone lift ticks once; the web pointer shows grabbing instead.
+        expect(haptics.light).toHaveBeenCalledTimes(platform === 'web' ? 0 : 1);
         expect(JSON.stringify(screen.tree.toJSON())).toContain('Home setup');
         await screen.update(<Realm page="Zen" />);
         expect(runtime.getSnapshot().phase).toBe('carrying');

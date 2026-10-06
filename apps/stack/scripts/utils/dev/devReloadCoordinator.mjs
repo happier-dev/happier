@@ -623,6 +623,8 @@ export function startDevReloadCoordinator(
   const watcher = watchDebouncedImpl({
     paths: watchPaths,
     debounceMs,
+    ignorePath: isDevRuntimeReloadIgnoredPath,
+    logger,
     shouldObserve,
     onObservation,
     onChange,

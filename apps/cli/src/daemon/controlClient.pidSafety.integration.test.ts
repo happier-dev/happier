@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { spawnSleepyDetachedProcess, withConfiguredDaemonTestHome } from './testkit/fakeDaemonLifecycle.testkit';
+import { readProcessIdentityByPid } from './processIdentity';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 describe.sequential('daemon control client PID safety', () => {
   let envScope = createEnvKeyScope([
@@ -35,6 +39,38 @@ describe.sequential('daemon control client PID safety', () => {
       'HAPPIER_DAEMON_PING_TIMEOUT_MS',
     ]);
   });
+
+  it.skipIf(process.platform !== 'linux').each([true, false])('force stop binds the recorded runtime instead of the stopping CLI runtime (matching: %s)', async (matches) => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-stop-recorded-runtime-', env: {
+      HAPPIER_ACTIVE_SERVER_ID: 'cloud', HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'cloud',
+      HAPPIER_SERVER_URL: 'https://api.happier.dev', HAPPIER_DAEMON_HTTP_TIMEOUT: '150',
+    } }, async ({ homeDir }) => {
+      const entrypoint = join(homeDir, '.runner-snapshots', 'previous', 'package-dist', 'index.mjs');
+      const child = spawnSleepyDetachedProcess([entrypoint, 'daemon', 'start-sync']);
+      try {
+        const { configuration } = await import('@/configuration');
+        const { stopDaemon } = await import('./controlClient');
+        let identity = await readProcessIdentityByPid(child.pid);
+        while (!identity?.command.includes('daemon start-sync')) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          identity = await readProcessIdentityByPid(child.pid);
+        }
+        mkdirSync(dirname(configuration.daemonStateFile), { recursive: true });
+        writeFileSync(configuration.daemonStateFile, JSON.stringify({ pid: child.pid, httpPort: 1,
+          startedAt: Date.now(), startedWithCliVersion: '0.0.0-test', controlToken: 'fixture-token',
+          startedWithRuntimeEntrypoint: matches ? entrypoint : join(homeDir, '.runner-snapshots', 'other', 'package-dist', 'index.mjs') }));
+        writeFileSync(configuration.daemonLockFile, JSON.stringify({ t: 'happier_daemon_lock_v2', pid: child.pid,
+          ownerToken: '00000000-0000-4000-8000-000000000123', processStartedAtMs: identity.processStartTimeMs,
+          processInstanceFingerprint: readProcessInstanceFingerprintSync(child.pid), createdAtMs: Date.now() }));
+        if (matches) {
+          await expect(stopDaemon()).resolves.toMatchObject({ status: 'stopped', method: 'force' });
+        } else {
+          await expect(stopDaemon()).rejects.toMatchObject({ reason: 'process_identity_unverified' });
+          expect(() => process.kill(child.pid, 0)).not.toThrow();
+        }
+      } finally { await child.kill(); }
+    });
+  }, 30_000);
 
   it('stopDaemon refuses to kill an unrelated PID when HTTP stop fails', async () => {
     const homeDir = createTempDirSync('happier-cli-daemon-stop-safety-');

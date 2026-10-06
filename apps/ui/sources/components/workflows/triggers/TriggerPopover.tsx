@@ -48,11 +48,12 @@ import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTr
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
+import type { WorkflowReferenceOption } from '../presentation/workflowReferenceOptions';
 
 /** A choice the popover lists but cannot offer here, with the reason it says instead. */
 export type TriggerKindAvailability = Readonly<Partial<Record<SessionTriggerWhenKind, string>>>;
 
-export type TriggerWorkflowOption = Readonly<{ ref: string; title: string; definition?: WorkflowDefinitionV1 }>;
+export type TriggerWorkflowOption = WorkflowReferenceOption;
 
 type TriggerPopoverBaseProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
@@ -212,7 +213,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const [failure, setFailure] = React.useState<string | null>(null);
     const [rawInputText, setRawInputText] = React.useState<Readonly<Record<string, string>>>({});
     const [examplesOpen, setExamplesOpen] = React.useState(false);
-    const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null, props.workflowOptions,
+    const workflow = useTriggerWorkflowDefinition(then.kind === 'runWorkflow' ? then.ref : null,
         props.libraryWorkflowsAvailable !== false);
     const inlineDefinition = then.kind === 'kept' && then.target.kind === 'inline' ? then.target.definition : null;
     const inputFields = React.useMemo(() => projectWorkflowRunInputFields({
@@ -620,9 +621,13 @@ function ThenRows(props: Readonly<{
                     <FieldSelect
                         testID={`${props.testID}-workflow`}
                         title={t('workflows.triggers.then.workflow')}
-                        items={props.workflowOptions.map((option) => ({ id: option.ref, title: option.title }))}
+                        items={props.workflowOptions.map((option) => ({ id: option.ref, title: option.title,
+                            ...(option.unavailableReason === undefined ? {} : { disabled: true, subtitle: option.unavailableReason }) }))}
                         selectedId={then.ref}
-                        onSelect={(ref) => props.onChange({ kind: 'runWorkflow', ref, inputs: {} })}
+                        onSelect={(ref) => {
+                            if (!props.workflowOptions.some(option => option.ref === ref && option.unavailableReason === undefined)) return;
+                            props.onChange({ kind: 'runWorkflow', ref, inputs: {} });
+                        }}
                     />
                     <WorkflowRunInputs fields={props.workflowFields} values={then.inputs} rawTextValues={props.rawInputText}
                         optionsConsumer={then.ref === null ? undefined : { kind: 'workflow', workflow: then.ref }}

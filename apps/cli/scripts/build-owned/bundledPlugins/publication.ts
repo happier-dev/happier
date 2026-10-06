@@ -28,7 +28,8 @@ function readCompletion(path: string) {
     || !('fingerprint' in value) || typeof value.fingerprint !== 'string'
     || !('currentness' in value) || typeof value.currentness !== 'string'
     || !('error' in value) || (value.error !== null && typeof value.error !== 'string')) return null;
-  return { lease: value.lease, fingerprint: value.fingerprint, currentness: value.currentness, error: value.error };
+  return { lease: value.lease, fingerprint: value.fingerprint, currentness: value.currentness, error: value.error,
+    preparationFingerprint: 'preparationFingerprint' in value ? value.preparationFingerprint : undefined };
 }
 
 export async function withGeneratorSingleFlight(input: Readonly<{
@@ -37,15 +38,36 @@ export async function withGeneratorSingleFlight(input: Readonly<{
   readFingerprint: () => string;
   readPreparationFingerprint?: () => string;
   readCurrentness?: () => string;
+  reportReuseDecision?: (reason: string) => void;
   stampPath: string;
   lockOptions: WorkspaceBundleLockOptions<void>;
 }>): Promise<void> {
   // Fingerprinting can fail before admission; do not claim publication for an
-  // invalid request. A completion is reusable only by overlapping requests,
-  // never as a durable compiler-failure memo or a blanket warm-output cache.
+  // invalid request. Failed completions are reusable only by overlapping
+  // requests, never as a durable compiler-failure memo.
   input.readFingerprint();
   const previousLease = readCompletion(input.stampPath)?.lease;
   const readCurrentness = input.readCurrentness ?? input.readFingerprint;
+  // A successful completed publication is reusable only while its authored
+  // inputs and output currentness remain exact. Failed completions stay
+  // overlap-only. Preparation still runs outside this admission lock.
+  let reused = false;
+  await withWorkspaceBundleLock(async (lease) => {
+    if (input.lockOptions.heldLockValue && !lease.inherited) {
+      throw new Error('Bundled plugin inherited publication lease is not authentic');
+    }
+    lease.assertOwned();
+    const completion = readCompletion(input.stampPath);
+    const reason = !completion ? 'missing-publication'
+      : completion.error !== null ? 'previous-failure'
+      : completion.preparationFingerprint !== (input.readPreparationFingerprint ?? input.readFingerprint)() ? 'preparation-inputs-changed'
+      : completion.fingerprint !== input.readFingerprint() ? 'publication-inputs-changed'
+      : completion.currentness !== readCurrentness() ? 'outputs-changed'
+      : 'reused';
+    input.reportReuseDecision?.(reason);
+    reused = reason === 'reused';
+  }, input.lockOptions);
+  if (reused) return;
   const reuseCompletion = () => {
     const completion = readCompletion(input.stampPath);
     if (!completion || completion.lease === previousLease
@@ -85,7 +107,8 @@ export async function withGeneratorSingleFlight(input: Readonly<{
           lease.assertOwned();
           writeFileAtomic(input.stampPath, JSON.stringify({
             ...readPreparationStamp(input.stampPath),
-            publication: { lease: lease.heldLockValue, fingerprint, currentness: readCurrentness(), error },
+            publication: { lease: lease.heldLockValue, fingerprint, currentness: readCurrentness(), error,
+              preparationFingerprint: (input.readPreparationFingerprint ?? input.readFingerprint)() },
           }));
         };
         // Do not publish a prepared graph whose inputs changed before admission.

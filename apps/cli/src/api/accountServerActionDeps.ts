@@ -1,57 +1,15 @@
 import axios, { type AxiosResponse } from 'axios';
-import {
-  ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
-  AccountApiTokensServerErrorV1Schema,
-  type ActionExecuteFailure,
-  ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
-  ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
-  ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
-  ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
-  ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1,
-  ACCOUNT_PASSWORD_CHANGE_PATH_V1,
-  ACCOUNT_PASSWORD_ENROLL_PATH_V1,
-  ACCOUNT_PASSWORD_REMOVE_PATH_V1,
-  ACCOUNT_SECURITY_PATH_V1,
-  ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1,
-  ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1,
-  AccountApiTokensCreateActionInputV1Schema,
-  AccountApiTokensCreateActionOutputV1Schema,
-  AccountApiTokensListActionInputV1Schema,
-  AccountApiTokensListActionOutputV1Schema,
-  AccountApiTokensRevokeActionInputV1Schema,
-  AccountApiTokensRevokeActionOutputV1Schema,
-  AccountApiTokensRevokeAllActionInputV1Schema,
-  AccountApiTokensRevokeAllActionOutputV1Schema,
-  AccountApiTokensUpdateActionInputV1Schema,
-  AccountApiTokensUpdateActionOutputV1Schema,
-  AccountEmailChangeRequestResponseV1Schema,
-  AccountEmailChangeRequestV1Schema,
-  AccountPasswordChangeRequestV1Schema,
-  AccountPasswordEnrollRequestV1Schema,
-  AccountPasswordMutationResponseV1Schema,
-  AccountPasswordRemoveRequestV1Schema,
-  AccountSecurityGetResponseV1Schema,
-  AccountSecurityRouteErrorV1Schema,
-  AccountTerminalPresentUserPolicySetRequestV1Schema,
-  AccountTerminalPresentUserPolicySetResponseV1Schema,
-  AccountSessionsSignOutEverywhereActionInputV1Schema,
-  AccountSessionsSignOutEverywhereServerOutputV1Schema,
-  type ActionExecutorDeps,
-  bindHomeDomainActionHttpRequestV1,
-  bindSessionAccessActionHttpRequestV1,
-  getActionSpec,
-  homeDomainActionOutputSchemaV1,
-  readHomeDomainActionErrorV1,
-  MachinePoolActionInputSchemasV1,
-  MachinePoolActionOutputSchemasV1,
-  MachinePoolErrorV1Schema,
-  machinePoolActionEndpointPathV1,
-  projectSessionPublicLinkActionResultV1,
-  projectSessionPublicLinkCreateActionResultV1,
-  SessionAccessErrorCodeV1Schema,
-  type ActionExecutorContext,
-  type ArtifactPublicLinkIssuedV1,
-} from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, AccountApiTokensServerErrorV1Schema, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { ActionExecuteFailure, ActionExecutorDeps, ActionExecutorContext, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
+import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereServerOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
+import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionAccessActionFamily';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { z } from 'zod';
 
 import {

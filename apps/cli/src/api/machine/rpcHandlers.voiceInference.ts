@@ -1,18 +1,5 @@
-import {
-  DaemonVoiceInferenceModelsInstallRequestSchema,
-  DaemonVoiceInferenceModelsInstallResponseSchema,
-  DaemonVoiceInferenceModelLicenseAcceptRequestSchema,
-  DaemonVoiceInferenceModelLicenseAcceptResponseSchema,
-  DaemonVoiceInferenceModelsListResponseSchema,
-  DaemonVoiceInferenceModelsRemoveRequestSchema,
-  DaemonVoiceInferenceModelsRemoveResponseSchema,
-  DaemonVoiceInferenceModelsStatusRequestSchema,
-  DaemonVoiceInferenceModelsStatusResponseSchema,
-  DaemonVoiceInferenceModelsWarmRequestSchema,
-  DaemonVoiceInferenceModelsWarmResponseSchema,
-  DaemonVoiceInferenceStatusResponseSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceInferenceModelsInstallRequestSchema, DaemonVoiceInferenceModelsInstallResponseSchema, DaemonVoiceInferenceModelLicenseAcceptRequestSchema, DaemonVoiceInferenceModelLicenseAcceptResponseSchema, DaemonVoiceInferenceModelsListResponseSchema, DaemonVoiceInferenceModelsRemoveRequestSchema, DaemonVoiceInferenceModelsRemoveResponseSchema, DaemonVoiceInferenceModelsStatusRequestSchema, DaemonVoiceInferenceModelsStatusResponseSchema, DaemonVoiceInferenceModelsWarmRequestSchema, DaemonVoiceInferenceModelsWarmResponseSchema, DaemonVoiceInferenceStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';

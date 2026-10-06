@@ -1,10 +1,7 @@
 import type { Metadata } from '@/api/types';
-import {
-  AgentNativeResumeIdentityV1Schema,
-  readRuntimeDescriptorV1FromMetadata,
-  type AgentNativeResumeIdentityV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { AgentNativeResumeIdentityV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 type MetadataRecord = Record<string, unknown>;
 

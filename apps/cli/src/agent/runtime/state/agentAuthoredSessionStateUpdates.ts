@@ -1,9 +1,7 @@
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import type { AgentTerminalSessionStateUpdate } from '@happier-dev/plugin-sdk/agents/runtime';
-import {
-  RuntimeDescriptorV1Schema,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type { SessionMetadata } from '@happier-dev/protocol';
 
 function assertPlainRecord(
     value: unknown,

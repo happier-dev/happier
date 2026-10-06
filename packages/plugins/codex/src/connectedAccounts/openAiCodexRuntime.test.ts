@@ -313,6 +313,11 @@ describe('OpenAI Codex Connected Account', () => {
       ['lastRefreshAtMs', '1700000000000'],
     ]);
     const credentials = credentialStore(values);
+    const get = credentials.store.get;
+    credentials.store.get = async (key) => {
+      if (key === 'refreshToken') throw new Error('Native consumers must not read refresh authority');
+      return get(key);
+    };
     const materialized = await runtime.materialize(
       { kind: 'files', fileIds: ['auth.json'] },
       {
@@ -344,11 +349,17 @@ describe('OpenAI Codex Connected Account', () => {
     });
     if (materialized.kind !== 'files') throw new Error('Codex file materialization was unavailable');
     expect(JSON.parse(new TextDecoder().decode(materialized.files['auth.json']))).toMatchObject({
-      auth_mode: 'chatgpt',
+      auth_mode: 'chatgptAuthTokens',
       access_token: 'codex-access',
-      refresh_token: 'codex-refresh',
+      refresh_token: '',
       id_token: 'codex-id',
       account_id: 'chatgpt-account-1',
+      tokens: {
+        access_token: 'codex-access',
+        refresh_token: '',
+        id_token: 'codex-id',
+        account_id: 'chatgpt-account-1',
+      },
     });
     await expect(runtime.materialize(
       {

@@ -1,7 +1,8 @@
 import type { PermissionIntent } from '@happier-dev/agents';
 
 import type { StoredCredentials } from '@/persistence';
-import { isPermissionModeGrantedV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol';
+import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { CallerInputConstraintsV1 } from '@happier-dev/protocol';
 
 import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 

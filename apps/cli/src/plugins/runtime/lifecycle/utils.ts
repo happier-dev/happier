@@ -1,9 +1,5 @@
-import {
-    PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-    projectPluginFailureMessage,
-    projectPluginFailureText,
-    trimBugReportTextHeadToMaxBytes,
-} from '@happier-dev/protocol';
+import { PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES, projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
+import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import {
@@ -33,11 +29,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }
 
-export {
-    PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
-    projectPluginFailureMessage,
-    projectPluginFailureText,
-} from '@happier-dev/protocol';
+export { PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES, projectPluginFailureMessage, projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
 /**
  * The local-development realm marker. A caller supplies the author's

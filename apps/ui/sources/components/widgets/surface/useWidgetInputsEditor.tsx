@@ -7,6 +7,7 @@ import type { WidgetSetupDraft, WidgetSetupSubmitResult } from '@/components/wid
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { WidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import { useWidgetInstanceBindingLabel } from './useWidgetInstanceBindingLabel';
@@ -66,15 +67,21 @@ export function useWidgetInputsEditor(input: Readonly<{
 }>): Readonly<{
     anchorRef: React.RefObject<View | null>;
     editInputs: Readonly<{ onPress: () => void; binding: string | null }> | undefined;
-    /** The card's repair line opens the same step. */
-    onRepairInputs: (() => void) | undefined;
+    /** The card's repair opens the same step, at the input it names. */
+    onRepairInputs: ((outcome?: WidgetInputRepairOutcome) => void) | undefined;
     popover: React.ReactElement | null;
 }> {
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
+    // The input a repair named, opened ready to choose (lab ST "repair in place").
+    const [focusPath, setFocusPath] = React.useState<string | null>(null);
     const binding = useWidgetInstanceBindingLabel(input.instance ?? UNBOUND, input.candidate, input.context);
     const close = React.useCallback(() => setOpen(false), []);
-    const show = React.useCallback(() => setOpen(true), []);
+    const show = React.useCallback(() => { setFocusPath(null); setOpen(true); }, []);
+    const repair = React.useCallback((outcome?: WidgetInputRepairOutcome) => {
+        setFocusPath(outcome?.field?.path ?? null);
+        setOpen(true);
+    }, []);
     const candidate = input.candidate;
     const editable = input.instance !== null && candidate != null && isConfigurableWidgetCandidate(candidate)
         && input.setInputs !== undefined && input.scope !== null;
@@ -110,8 +117,9 @@ export function useWidgetInputsEditor(input: Readonly<{
             onRequestClose={close}
             serverId={scope!.serverId}
             {...(sessionId ? { sessionId } : {})}
+            {...(focusPath ? { focusPath } : {})}
             testID={`${testID}.editInputs`}
         />
     ) : null;
-    return { anchorRef, editInputs, onRepairInputs: editable ? show : undefined, popover };
+    return { anchorRef, editInputs, onRepairInputs: editable ? repair : undefined, popover };
 }

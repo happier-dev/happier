@@ -29,8 +29,7 @@ import {
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { coercePort } from '../server/port.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
-import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
-import { daemonControlPost } from './daemonControlClient.mjs';
+import { daemonControlPost, pingDaemon } from './daemonControlClient.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
@@ -299,67 +298,25 @@ async function requestLifecycleOwnerShutdown(
   });
 }
 
-async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
-  // Read daemon state file written by happier-cli; needed to call control server (/list, /stop-session).
-  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl });
-  if (!existsSync(statePath)) {
-    return { ok: true, skipped: true, reason: 'missing_state', stoppedSessionIds: [] };
+async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, env, stackName }) {
+  const control = await pingDaemon({ cliHomeDir, serverUrl, env, stackName });
+  if (!control.ok) {
+    return { ok: control.reason === 'missing_state' || control.reason === 'daemon_not_running', skipped: true, reason: control.reason, stoppedSessionIds: [] };
   }
-
-  let state = null;
-  try {
-    state = JSON.parse(await readFile(statePath, 'utf-8'));
-  } catch {
-    return { ok: false, skipped: true, reason: 'bad_state', stoppedSessionIds: [] };
-  }
-
-  const httpPort = Number(state?.httpPort);
-  const pid = Number(state?.pid);
-  const controlToken = String(state?.controlToken ?? '').trim();
-  if (!Number.isFinite(httpPort) || httpPort <= 0) {
-    return { ok: false, skipped: true, reason: 'missing_http_port', stoppedSessionIds: [] };
-  }
-  if (!Number.isFinite(pid) || pid <= 1) {
-    return { ok: false, skipped: true, reason: 'missing_pid', stoppedSessionIds: [] };
-  }
-  try {
-    process.kill(pid, 0);
-  } catch {
+  if (!isPidAlive(control.pid)) {
     return { ok: true, skipped: true, reason: 'daemon_not_running', stoppedSessionIds: [] };
   }
-
-  // Prefer a single /stop call with stopSessions, so the daemon can stop *all* tracked sessions
-  // (including PID-fallback sessions) in a centralized, versioned way.
-  const stopOk = await daemonControlPost({ httpPort, path: '/stop', body: { stopSessions: true }, controlToken })
-    .then(() => true)
-    .catch((e) => {
-      if (!json) console.warn(`[stack] failed to stop daemon with sessions: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
-    });
-
-  if (stopOk) {
-    return { ok: true, skipped: false, stoppedSessionIds: [] };
-  }
-
-  // Back-compat fallback: older daemons may not support /stop with stopSessions.
-  const listed = await daemonControlPost({ httpPort, path: '/list', controlToken }).catch((e) => {
-    if (!json) console.warn(`[stack] failed to list daemon sessions: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  });
-  const children = Array.isArray(listed?.children) ? listed.children : [];
-
-  const stoppedSessionIds = [];
-  for (const child of children) {
-    const sid = String(child?.happySessionId ?? '').trim();
-    if (!sid) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const res = await daemonControlPost({ httpPort, path: '/stop-session', body: { sessionId: sid }, controlToken }).catch(() => null);
-    if (res?.success) {
-      stoppedSessionIds.push(sid);
-    }
-  }
-
-  return { ok: true, skipped: false, stoppedSessionIds };
+  const { httpPort, controlToken } = control.state;
+  // The daemon quiesces spawn admission and awaits its canonical session-stop
+  // owner before acknowledging shutdown. A Stack-owned /list loop would race
+  // new admissions and compete with that lifecycle owner.
+  const result = await daemonControlPost({ httpPort, path: '/stop', body: { stopSessions: true }, controlToken, timeoutMs: null });
+  return {
+    ok: result?.status === 'stopping',
+    skipped: false,
+    ...(result?.status === 'stopping' ? {} : { reason: result?.status ?? 'session_cleanup_unavailable' }),
+    stoppedSessionIds: [],
+  };
 }
 
 async function stopExpoStateDir({ stackName, baseDir, kind, stateFileName, envPath, json, cleanupResults, confirmedCleanupPids, killProcessGroupOwnedByStackImpl }) {
@@ -645,6 +602,23 @@ async function stopStackWithEnvInternal({
   const runnerPid = Number(runtimeState?.ownerPid);
   const processEntries = getStackRuntimeProcessEntries(runtimeState);
 
+  if (!preserveDaemon) {
+    try {
+      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, env, stackName });
+    } catch (e) {
+      actions.errors.push({ step: 'daemon-sessions', error: e instanceof Error ? e.message : String(e) });
+      actions.daemonSessionsStopped = { ok: false, skipped: false, reason: 'session_cleanup_failed', stoppedSessionIds: [] };
+    }
+    if (!actions.daemonSessionsStopped.ok) {
+      // Retain both the daemon and the runtime record for an observable retry;
+      // killing the parent here would orphan the unconfirmed session runners.
+      actions.finalization = { finalized: false, reason: 'session_cleanup_incomplete' };
+      return actions;
+    }
+  } else if (preserveDaemon) {
+    actions.daemonSessionsStopped = { ok: true, skipped: true, reason: 'preserve_daemon', stoppedSessionIds: [] };
+  }
+
   actions.runner = { stopped: false, pid: Number.isFinite(runnerPid) ? runnerPid : null, reason: runtimeState ? 'not_running_or_not_owned' : 'missing_state' };
   if (Number.isFinite(runnerPid) && runnerPid > 1 && isPidAlive(runnerPid)) {
     const res = await requestLifecycleOwnerShutdownImpl(runnerPid, {
@@ -724,16 +698,6 @@ async function stopStackWithEnvInternal({
   }
   actions.killedPorts = actions.killedPorts ?? [];
   actions.processes = { killed: killedProcessPids };
-
-  if (aggressive && !preserveDaemon) {
-    try {
-      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, json });
-    } catch (e) {
-      actions.errors.push({ step: 'daemon-sessions', error: e instanceof Error ? e.message : String(e) });
-    }
-  } else if (preserveDaemon) {
-    actions.daemonSessionsStopped = { ok: true, skipped: true, reason: 'preserve_daemon', stoppedSessionIds: [] };
-  }
 
   if (!preserveDaemon) {
     try {

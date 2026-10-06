@@ -1,9 +1,5 @@
-import {
-  buildSessionAwarenessListResultV1,
-  markSessionListQueryResultV1,
-  type AccountSettings,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
+import type { AccountSettings, ActionExecutorDeps } from '@happier-dev/protocol';
 
 import {
   resolveExternalActionServerRequestHeaders,

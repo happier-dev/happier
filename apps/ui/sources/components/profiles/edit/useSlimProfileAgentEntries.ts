@@ -4,11 +4,14 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 
 export function useSlimProfileAgentEntries(machineId: string | null, serverId?: string | null) {
     const enabledAgentIds = useEnabledAgentIds();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    }));
     const resolvedServerId = serverId ?? getActiveServerId();
     const projection = useDaemonMergedProjectionInputs({
         machineId,

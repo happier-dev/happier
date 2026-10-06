@@ -1,9 +1,6 @@
 import { isActionEnabledByEnv } from '../../../settings/actionsSettings';
-import {
-  isMemoryRecallGuidanceSupported,
-  type MemoryRecallGuidanceSurface,
-  type MemorySettingsV1,
-} from '@happier-dev/protocol';
+import { isMemoryRecallGuidanceSupported } from '@happier-dev/protocol/prompts/isMemoryRecallGuidanceSupported';
+import type { MemoryRecallGuidanceSurface, MemorySettingsV1 } from '@happier-dev/protocol';
 
 export async function resolveCliMemoryRecallGuidanceEnabled(args?: Readonly<{
   surfaces?: readonly MemoryRecallGuidanceSurface[];

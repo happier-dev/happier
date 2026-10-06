@@ -50,6 +50,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
     const [sessionHeaderIdentityDisplay, setSessionHeaderIdentityDisplay] = useSettingMutable('sessionHeaderIdentityDisplay');
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
+    const [sessionReminderAutoClearOnOpen, setSessionReminderAutoClearOnOpen] = useSettingMutable('sessionReminderAutoClearOnOpen');
     const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
     const [sessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
     const [sessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
@@ -786,6 +787,22 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
                         }}
                         items={sessionListAttentionPromotionModeItems}
                         onSelect={handleSessionListAttentionPromotionModeSelect}
+                    />
+                </SettingAnchor>
+                <SettingAnchor setting={SESSION_SETTINGS.settings.reminderAutoClearOnOpen}>
+                    <Item
+                        testID="settings-session-reminderAutoClearOnOpen-item"
+                        title={t(SESSION_SETTINGS.settings.reminderAutoClearOnOpen.titleKey)}
+                        subtitle={t('settingsSession.sessionList.reminderAutoClearOnOpenSubtitle')}
+                        rightElement={
+                            <Switch
+                                testID="settings-session-reminderAutoClearOnOpen-toggle"
+                                value={sessionReminderAutoClearOnOpen !== false}
+                                onValueChange={setSessionReminderAutoClearOnOpen}
+                            />
+                        }
+                        showChevron={false}
+                        onPress={() => setSessionReminderAutoClearOnOpen(sessionReminderAutoClearOnOpen === false)}
                     />
                 </SettingAnchor>
                 <SettingAnchor setting={SESSION_SETTINGS.settings.attentionStandingDefault}>

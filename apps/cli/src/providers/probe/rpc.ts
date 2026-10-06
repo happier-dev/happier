@@ -1,17 +1,12 @@
 import { z } from 'zod';
 
-import {
-  PROVIDER_CATALOG_LIMITS_V1,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderObservationAuthorizationFingerprintV1Schema,
-  ProviderConnectionIdSchema,
-  ProviderMachineIdSchema,
-  createProviderProbeObservationIdentityV1,
-  createProviderErrorV1,
-  type ProviderErrorV1,
-  type ProviderObservationAuthorizationFingerprintV1,
-  type ProviderProbeObservationIdentityV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_CATALOG_LIMITS_V1 } from '@happier-dev/protocol/providers/catalog/limits';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderObservationAuthorizationFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { createProviderProbeObservationIdentityV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
+import type { ProviderErrorV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1 } from '@happier-dev/protocol';
 
 import type {
   ContributedProviderCatalogParserBinding,

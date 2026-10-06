@@ -1,11 +1,6 @@
-import {
-  EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  type AgentSurfaceAvailabilityV1,
-  type AgentNativeResumeIdentityV1,
-  type PluginAgentExternalSessionLinkDataValue,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1 } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { AgentSurfaceAvailabilityV1, AgentNativeResumeIdentityV1, PluginAgentExternalSessionLinkDataValue, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type {
   AgentSessionLaunchHintsV1,
   AgentSurfaceResultV1,

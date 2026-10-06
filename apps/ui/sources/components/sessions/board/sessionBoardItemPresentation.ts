@@ -3,8 +3,6 @@ import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardItemState } from '@/sync/domains/session/board';
 import type { SessionBoardMountMode } from '@/sync/domains/session/board';
-import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -49,10 +47,9 @@ const NO_HTML_RENDERER: SessionBoardSourceAvailability = Object.freeze({
     kind: 'unavailable' as const,
     reason: 'hosted_html_renderer_unavailable' as const,
 });
-/** Renderer presence only. The configured body admits its own exact bound target. */
+/** Renderer presence only. WidgetSurface admits bodies and references against their exact bound target. */
 export function createSessionBoardSourceAvailabilityResolver(
-    _runtime: SessionPluginRuntimeState | null | undefined,
-    options?: Readonly<{ hostedHtmlRendererAvailable?: boolean; policyContext?: PluginUiPolicyEvaluationContext }>,
+    options?: Readonly<{ hostedHtmlRendererAvailable?: boolean }>,
 ): SessionBoardSourceAvailabilityResolver {
     return (source) => {
         if (source.kind === 'declarative' || source.kind === 'walkthrough') return AVAILABLE;
@@ -63,9 +60,9 @@ export function createSessionBoardSourceAvailabilityResolver(
     };
 }
 
-/** The resolver a host with no plugin projection uses. */
+/** Default renderer presence; plugin projection is not an input. */
 export const defaultSessionBoardSourceAvailability: SessionBoardSourceAvailabilityResolver =
-    createSessionBoardSourceAvailabilityResolver(null);
+    createSessionBoardSourceAvailabilityResolver();
 
 /**
  * Whether the person can open this item in a Board editor at all.

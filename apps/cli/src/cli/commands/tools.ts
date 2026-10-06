@@ -20,12 +20,8 @@ import {
 } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
 import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import {
-  isActionEnabledByActionsSettings,
-  type ActionId,
-  type ActionsSettingsV1,
-  type FeatureId,
-} from '@happier-dev/protocol';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionId, ActionsSettingsV1, FeatureId } from '@happier-dev/protocol';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';

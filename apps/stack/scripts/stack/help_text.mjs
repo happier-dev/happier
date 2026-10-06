@@ -12,7 +12,7 @@ const STACK_HELP_USAGE_LINES = [
   'hstack stack daemon <name> start|stop|restart|status [--json]',
   'hstack stack happier <name> [-- ...]',
   'hstack stack bug-report <name> [-- ...]',
-  'hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
+  'hstack stack env <name> shared-db <source-stack> | set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
   'hstack stack auth <name> status|login|copy-from [--json]',
   'hstack stack dev <name> [-- ...]',
   'hstack stack start <name> [-- ...]',

@@ -1,4 +1,4 @@
-import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AgentId } from '../../types.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
 import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';

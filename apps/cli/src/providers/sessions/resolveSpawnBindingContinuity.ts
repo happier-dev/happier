@@ -1,13 +1,7 @@
-import {
-  SessionProviderBindingMetadataV1Schema,
-  SessionProviderBindingSecurityChangeConfirmationV1Schema,
-  compareSessionProviderBindingV1,
-  createProviderErrorV1,
-  type ProviderErrorV1,
-  type SessionProviderBindingChangeV1,
-  type SessionProviderBindingMetadataV1,
-  type SessionProviderBindingSecurityChangeConfirmationV1,
-} from '@happier-dev/protocol';
+import { SessionProviderBindingMetadataV1Schema, SessionProviderBindingSecurityChangeConfirmationV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { compareSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/lifecycle';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1, SessionProviderBindingChangeV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 export type ProviderSpawnBindingContinuityChange = 'initial' | SessionProviderBindingChangeV1;
 

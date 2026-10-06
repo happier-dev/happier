@@ -99,6 +99,8 @@ describe('WorkflowFlowView accessibility structure', () => {
             ]]]), testIDPrefix: 'flow',
         }));
         expect(screen.findByTestId('flow-node-wait')?.props.disabled).toBe(true);
+        expect(screen.tree.findHostByTestId('flow-node-wait-occurrence-held-1')?.props['aria-current']).toBe('page');
+        expect(screen.tree.findHostByTestId('flow-node-wait-occurrence-held-2')?.props['aria-current']).toBeUndefined();
         expect(screen.root.findAllByType(HappierPressable).some((node) => node.props.testID === 'flow-node-wait-occurrence-held-2')).toBe(true);
         const occurrences = screen.root.findAll((node) => typeof node.type === 'string'
             && (node.props.testID === 'flow-node-wait-occurrence-held-1'
@@ -140,5 +142,26 @@ describe('WorkflowFlowView accessibility structure', () => {
         const ordered = ['analyze', 'fan-out', 'fan-out#checks', 'review', 'implement']
             .map((nodeId) => screen.findByTestId(`flow-node-${nodeId}`));
         expect(ordered.every((node) => node !== null)).toBe(true);
+    });
+});
+
+describe('WorkflowFlowView run map anatomy (lab run-A)', () => {
+    it('numbers each step, says what it returns, and keeps a finished step quiet', async () => {
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+            step('gather'),
+            { kind: 'wait', id: 'approve', document: { text: 'Approve?', references: [], attachments: [] },
+                result: { kind: 'json', schema: { type: 'object', properties: { approval: { type: 'string' } } } } },
+        ] } as WorkflowDefinitionV1;
+        const screen = await renderScreen(React.createElement(WorkflowFlowView, {
+            projection: projectWorkflowFlow(definition), selectedNodeId: null, testIDPrefix: 'flow',
+            runStates: new Map([['approve', [{ nodeId: 'approve', invocationId: 'approve-1', lifecycle: 'completed' as const }]]]),
+        }));
+        expect(screen.findByTestId('flow-node-gather-ordinal')?.findAll((node) => node.props.children === 1).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('flow-node-approve-ordinal')?.findAll((node) => node.props.children === 2).length).toBeGreaterThan(0);
+        const approve = screen.findByTestId('flow-node-approve');
+        expect(approve?.findAll((node) => node.props.children === 'workflows.page.blocks.returnsFields:{"fields":"approval"}').length).toBeGreaterThan(0);
+        // The state is the marker's spoken name, not a visible word beside it.
+        expect(approve?.findAll((node) => node.props.children === 'workflows.invocationState.completed')).toHaveLength(0);
+        expect(screen.findByTestId('flow-node-approve-state')?.props.accessibilityLabel).toBe('workflows.invocationState.completed');
     });
 });

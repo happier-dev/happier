@@ -1,4 +1,4 @@
-import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 
 function parseTimeoutMs(raw: unknown): number | null {
   const value = String(raw ?? '').trim();

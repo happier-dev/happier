@@ -1,7 +1,8 @@
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import {

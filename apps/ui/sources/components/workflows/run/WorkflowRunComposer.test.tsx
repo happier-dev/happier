@@ -1,16 +1,21 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { View } from 'react-native';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { WorkflowRunComposer } from './WorkflowRunComposer';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 
 const executeMock = vi.hoisted(() => vi.fn());
+const appliedHome = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a.example' }));
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => executeMock }));
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    getAppliedActiveServerSnapshot: () => ({ serverId: 'server-a' }),
+    getAppliedActiveServerSnapshot: () => appliedHome,
     isAppliedActiveServerRuntimeAvailable: () => true,
 }));
 
@@ -18,6 +23,27 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+// The harness installs network leaves before the real UI binds its scoped transport.
+const { WorkflowRunComposer } = await import('./WorkflowRunComposer');
+const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { getStorage } = await import('@/sync/domains/state/storageStore');
+const { createExecutionRunStartContentChip } = await import('@/components/sessions/runs/launcher/executionRunStartChips');
+
+async function offerTeams(teamIds: readonly string[], required = false) {
+    appliedHome.serverUrl = 'https://workflow.example';
+    appliedHome.serverId = await home.addHome({ name: 'Workflow Home', serverUrl: 'https://workflow.example', accountId: 'account-a' });
+    getStorage().setState({ profileScope: { serverId: appliedHome.serverId, accountId: 'account-a' } });
+    home.answer(appliedHome.serverId, '/v1/teams/get', { select: (input) => {
+        const teamId = (input as { teamId: string }).teamId;
+        return teamIds.includes(teamId) ? { body: teamSummaryFixture({ id: teamId,
+            name: teamId === 'team-a' ? 'Builders' : 'Reviewers', viewerRole: 'member', capabilities: teamCapabilitiesFixture({}),
+            policy: teamPolicyFixture({ sessionCreationPolicy: required ? 'team_required' : 'team_default' }) }) }
+            : { status: 404, body: { error: 'team_not_found' } };
+    } });
+}
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
@@ -43,6 +69,127 @@ async function mount(initial: React.ComponentProps<typeof WorkflowRunComposer>['
 }
 
 describe('workflow composer admission', () => {
+    let restorePopoverGlobals: (() => void) | undefined;
+    beforeEach(async () => {
+        resetTeamsDirectoryEngineForTests(); resetTeamsSnapshotsForTests();
+        await home.reset();
+        appliedHome.serverId = 'server-a';
+        appliedHome.serverUrl = 'https://server-a.example';
+        restorePopoverGlobals = withPopoverWebGlobals();
+        getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+        executeMock.mockReset();
+    });
+    afterEach(() => { standardCleanup(); restorePopoverGlobals?.(); });
+    it('renders and opens a custom Where control in the wrapped composer', async () => {
+        const where = { ...createExecutionRunStartContentChip({ key: 'review-where', icon: 'folder',
+            label: 'Builder · /repo', title: 'Where', testID: 'review-where-chip',
+            renderContent: <View testID="review-where-content" />,
+        }), controlId: 'machine' as const };
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} extraActionChips={[where]} />);
+        expect(screen.findByTestId('review-where-chip')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-where-chip');
+        expect(screen.findByTestId('review-where-content')).not.toBeNull();
+    });
+    it.each([['team-a'], ['team-a', 'team-b']])('reviews only granted Teams before admitting the draft (%j)', async (...teamIds) => {
+        await offerTeams(teamIds);
+        executeMock.mockImplementation(async (action: string) => action === 'artifact.access.grants.list'
+            ? { ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner',
+                grants: [
+                    ...teamIds.map(teamId => ({ principal: { kind: 'team', teamId }, accessLevel: 'edit',
+                        createdByAccountId: 'account-a', createdAt: 1, display: { name: teamId === 'team-a' ? 'Builders' : 'Reviewers' } })),
+                    { principal: { kind: 'account', accountId: 'friend' }, accessLevel: 'view',
+                        createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Friend' } },
+                ] } }
+            : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
+        const onRun = vi.fn();
+        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
+            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-visibility-chip')).not.toBeNull());
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(teamIds.length > 1);
+        if (teamIds.length > 1) {
+            await screen.pressByTestIdAsync('workflow-run-inputs-visibility-chip');
+            const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+            const select = screen.root.findByType(DropdownMenu);
+            expect(select.props.items.map((item: { id: string }) => item.id)).toEqual(teamIds);
+            const { act } = await import('react-test-renderer');
+            await act(async () => select.props.onSelect('team-b'));
+        }
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(undefined, [], teamIds.at(-1));
+    });
+    it('discloses member editing before a team_required start', async () => {
+        await offerTeams(['team-a'], true);
+        executeMock.mockResolvedValue({ ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner',
+            grants: [{ principal: { kind: 'team', teamId: 'team-a' }, accessLevel: 'edit',
+                createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Builders' } }] } });
+        const onRun = vi.fn();
+        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
+            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        expect(screen.findByTestId('workflow-run-inputs-team-required')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(undefined, [], 'team-a');
+    });
+    it('excludes an unreadable Team even when the caller can use its Artifact', async () => {
+        await offerTeams(['team-a']);
+        executeMock.mockResolvedValue({ ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'someone-else', access: 'view',
+            grants: ['team-a', 'team-hidden'].map(teamId => ({ principal: { kind: 'team', teamId }, accessLevel: 'view',
+                createdByAccountId: 'someone-else', createdAt: 1, display: { name: teamId } })) } });
+        const onRun = vi.fn();
+        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
+            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        expect(screen.findByTestId('workflow-run-inputs-team-required')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-inputs-visibility-chip');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        expect(screen.root.findAllByType(DropdownMenu)).toHaveLength(0);
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(undefined, [], 'team-a');
+        expect(home.requests.filter(request => request.path === '/v1/teams/get').map(request => request.input)).toEqual(
+            expect.arrayContaining([{ v: 1, teamId: 'team-a' }, { v: 1, teamId: 'team-hidden' }]));
+    });
+    it('keeps Start closed when grant discovery fails and retries without assuming private visibility', async () => {
+        executeMock.mockResolvedValue({ ok: false, errorCode: 'artifact_access_unavailable', error: 'artifact_access_unavailable' });
+        const onRun = vi.fn();
+        const screen = await renderScreen(<WorkflowRunComposer sourceArtifactId="saved-workflow"
+            definition={createWorkflowDefinitionFixture({ inputs: [] })} inputs={[]} values={{}}
+            onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).not.toHaveBeenCalled();
+        executeMock.mockResolvedValue({ ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner', grants: [] } });
+        await screen.pressByTestIdAsync('workflow-run-inputs-visibility-retry');
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(undefined, []);
+    });
+    it('discards a late grant read when the reviewed source changes to an unbound inline draft', async () => {
+        let resolveGrants!: (value: unknown) => void;
+        executeMock.mockImplementation(async () => new Promise((resolve) => { resolveGrants = resolve; }));
+        let changeSource!: (source: string | null) => void;
+        const onRun = vi.fn();
+        function Host() {
+            const [source, setSource] = React.useState<string | null>('saved-workflow');
+            changeSource = setSource;
+            return <WorkflowRunComposer sourceArtifactId={source} definition={createWorkflowDefinitionFixture({ inputs: [] })}
+                inputs={[]} values={{}} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />;
+        }
+        const screen = await renderScreen(<Host />);
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        const { act } = await import('react-test-renderer');
+        await act(async () => { changeSource(null); });
+        await act(async () => { resolveGrants({ ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a',
+            access: 'owner', grants: [{ principal: { kind: 'team', teamId: 'team-old' }, accessLevel: 'edit',
+                createdByAccountId: 'account-a', createdAt: 1, display: { name: 'Old Team' } }] } }); });
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        expect(screen.findByTestId('workflow-run-inputs-visibility-chip')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(undefined, []);
+    });
     it('submits an accepted repeat with frozen root roles and nested step targets', async () => {
         const role = resolveRoleSelectionV1({ roleId: 'builder', runOverrides: [{ roleId: 'builder', workspaceWrites: 'deny' }] });
         if (!role.ok) throw new Error('invalid_role_fixture');
@@ -77,7 +224,9 @@ describe('workflow composer admission', () => {
                     inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' }, materializedLeaves: [], frozenChildren: {}, roleOverrides,
                     workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } }, origin: { kind: 'direct' } }, checkpoint: null,
             } };
-            return { ok: true, result: { items: [] } };
+            return action === 'artifact.access.grants.list'
+                ? { ok: true, result: { artifactId: 'saved-workflow', ownerAccountId: 'account-a', access: 'owner', grants: [] } }
+                : { ok: true, result: { items: [] } };
         });
         const onRun = vi.fn();
         const screen = await renderScreen(<WorkflowRunComposer definition={definition} sourceArtifactId="saved-workflow"
@@ -127,6 +276,14 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).not.toHaveBeenCalled();
         expect(screen.findByTestId('workflow-run-inputs-reason')).not.toBeNull();
+    });
+
+    it('keeps a refused Start in the composer with its reason and Start available to retry', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}} onChangeValues={() => {}} onRun={() => {}}
+            onCancel={() => {}} startProblem="workflows.problem.targetUnavailable" />);
+        expect(screen.findByTestId('workflow-run-inputs-reason')?.props.accessibilityRole).toBe('alert');
+        expect(screen.findByTestId('workflow-run-inputs-reason-text')?.props.children).toBe('workflows.problem.targetUnavailable');
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
     });
 
     it('keeps a no-text workflow inspectable without a dead editable input', async () => {

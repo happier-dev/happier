@@ -1,4 +1,7 @@
-import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS, BrowserEventBatchV1Schema, browserViewKey, type BrowserEventV1, type MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserEventBatchV1Schema } from '@happier-dev/protocol/browser/events/v1';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import type { BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationDaemonService } from '../automation/service';
 import type { BrowserSidecarContextCaptureSurface } from '../sidecar/controlAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';

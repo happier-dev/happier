@@ -1,3 +1,1 @@
-export {
-    normalizeExecutionRunWaitTimeoutMs,
-} from '@happier-dev/protocol';
+export { normalizeExecutionRunWaitTimeoutMs } from '@happier-dev/protocol/execution/runs/waitForTerminal';

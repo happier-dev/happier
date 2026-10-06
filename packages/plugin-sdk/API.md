@@ -729,9 +729,9 @@
 | `./agents/runtime` | `AgentSessionRealtimeRuntime` | type | any |
 | `./agents/runtime` | `AgentSessionRealtimeStartInput` | type | any |
 | `./agents/runtime` | `AgentSessionRealtimeStartRequestV1` | type | any |
-| `./agents/runtime` | `AgentSessionRealtimeStartRequestV1Schema` | value | any |
+| `./agents/runtime` | `AgentSessionRealtimeStartRequestV1Schema` | value | daemon |
 | `./agents/runtime` | `AgentSessionRealtimeStartResult` | type | any |
-| `./agents/runtime` | `AgentSessionRealtimeStartResultV1Schema` | value | any |
+| `./agents/runtime` | `AgentSessionRealtimeStartResultV1Schema` | value | daemon |
 | `./agents/runtime` | `AgentSessionRealtimeStopResult` | type | any |
 | `./agents/runtime` | `AgentSessionRunnerFactoryLocatorV1` | type | daemon |
 | `./agents/runtime` | `AgentSessionRuntime` | type | daemon |
@@ -2607,6 +2607,7 @@
 | `./ui` | `UiResource` | type | any |
 | `./ui` | `UiTranslationBundle` | type | any |
 | `./ui` | `UiView` | type | any |
+| `./ui` | `WorkBoardPreviewLayoutV1` | type | any |
 | `./ui` | `defineHostedWebBridgeMessage` | value | any |
 | `./ui` | `definePluginDeclarativeDocumentV1` | value | any |
 | `./ui` | `normalizePluginUiSubPathV1` | value | any |

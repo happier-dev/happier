@@ -4,7 +4,7 @@ import type {
     FileBackedTranscriptSessionStore,
     FileBackedTranscriptSubscriptionListener,
 } from './fileBackedTranscripts/store';
-import { SessionMessageV1Schema } from '@happier-dev/protocol';
+import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { observeSessionSocketEvents } from '@/session/transport/socket/sessionSocketAgentState';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

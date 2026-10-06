@@ -18,15 +18,11 @@ import type {
   PluginSourceCustodyV1,
   SessionAgentSpawnPolicyV1,
 } from '@happier-dev/protocol';
-import {
-  type ActionExecutorDeps,
-  assertNonEscalatingPermissionMode,
-  getActionSpec,
-  SignedRootActionIdSchema,
-  resolveEffectivePermissionMode,
-  verifyExternalActionApprovalInputV1,
-  pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import { assertNonEscalatingPermissionMode, resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
+import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 
 import type { ResolveExternalActionTarget } from './executeExternalAction';
@@ -482,7 +478,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
 }>): ResolveExternalActionTarget {
-  return async ({ actionId, target, currentMachineId, signal }) => {
+  return async ({ actionId, actionInput, target, currentMachineId, signal }) => {
     if (!target) {
       return { kind: 'machine', machineId: currentMachineId };
     }
@@ -492,7 +488,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
     }
 
     const serverFeaturesSnapshot = await input.resolveServerFeaturesSnapshot?.();
-    if (getActionSpec(actionId).executionPlacement === 'account') {
+    if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), actionInput) === 'account') {
       const session = await fetchSessionById({
         token: input.credentials.token,
         sessionId: target.sessionId,

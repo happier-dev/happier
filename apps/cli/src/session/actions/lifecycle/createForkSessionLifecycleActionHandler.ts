@@ -9,7 +9,7 @@ import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
+import { SessionForkRpcParamsSchema } from '@happier-dev/protocol/sessions/fork';
 import {
     evaluateAgentSessionCapabilitySupport,
     isProviderBoundSessionMetadata,

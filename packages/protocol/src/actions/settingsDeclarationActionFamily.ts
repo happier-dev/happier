@@ -8,8 +8,9 @@ export function isSettingsDeclarationActionIdV1(value: string): value is Setting
   return (SETTINGS_DECLARATION_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
 
-/** The generic family exposes scalar preferences; compound editors keep their domain Actions. */
-export const SettingsDeclarationValueV1Schema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
+/** Values are strict JSON; the declaration's canonical owner admits each setting's shape. */
+export const SettingsDeclarationValueV1Schema = StrictJsonValueSchema;
+const SettingsDeclarationScalarChoiceV1Schema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 const AnchorSchema = z.string().trim().min(1);
 const OperationIdSchema = z.string().trim().min(1);
 /** Exact operation targets, never a settings path, credential value or caller confirmation. */
@@ -31,7 +32,7 @@ export const SettingsDeclarationDescriptorV1Schema = z.object({
   writable: z.boolean(),
   sensitive: z.boolean(),
   storageScope: z.enum(['account', 'local']).optional(),
-  allowedValues: z.array(SettingsDeclarationValueV1Schema).optional(),
+  allowedValues: z.array(SettingsDeclarationScalarChoiceV1Schema).optional(),
   operation: z.object({ actionId: z.literal('settings.invoke'), requiresHumanInteraction: z.boolean(), requiresApproval: z.boolean().optional() }).strict().optional(),
   unavailableReason: z.enum(['not_bound', 'sensitive', 'read_only', 'unsupported_host', 'feature_disabled']).optional(),
 }).strict();

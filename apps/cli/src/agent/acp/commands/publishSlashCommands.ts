@@ -1,6 +1,6 @@
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { normalizeSlashCommandName } from '@happier-dev/protocol';
+import { normalizeSlashCommandName } from '@happier-dev/protocol/sessions/slashCommands';
 
 export type SlashCommandDetail = {
   command: string;

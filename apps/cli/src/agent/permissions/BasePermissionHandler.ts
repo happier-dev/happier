@@ -20,59 +20,25 @@ import { updateAgentStateBestEffort as updateAgentStateBestEffortShared } from "
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from './applyPermissionAllowlistUpdates';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
-import {
-    PluginContributionLocalIdSchema,
-    buildBackendTargetKeyV2,
-    parseBackendTargetKeyV2,
-    readSessionRolesV1,
-    resolveRoleSelectionV1,
-    ExecutionRunStartResponseSchema,
-    ExecutionRunWaitResultSchema,
-    PluginIdSchema,
-    SessionPermissionExternalHumanDecisionActorV1Schema,
-    SessionPermissionRespondRpcParamsV1Schema,
-    SessionInputCausalPermissionAuthorityV1Schema,
-    SessionPermissionRemoteRespondInputV1Schema,
-    SessionUserActionRemoteAnswerInputV1Schema,
-    SessionPermissionRemoteGrantRecordV1Schema,
-    SessionPermissionRemoteSettlementRecordV1Schema,
-    SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX,
-    SESSION_REMOTE_PERMISSION_MEDIATION_ROWS_MAX,
-    SessionPermissionRequestIdV1Schema,
-    SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES,
-    SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES,
-    SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES,
-    SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION,
-    SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS,
-    SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES,
-    SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES,
-    StructuredQuestionAnswersV1Schema,
-    TurnIdSchema,
-    type AccountSettings,
-    type SessionPermissionRemoteRespondInputV1,
-    type SessionPermissionRemoteRespondOutputV1,
-    type SessionPermissionRemotePendingListOutputV1,
-    type SessionUserActionRemoteAnswerInputV1,
-    type SessionUserActionRemoteAnswerOutputV1,
-    type SessionPermissionRemoteGrantRecordV1,
-    type SessionPermissionRemoteGrantsListOutputV1,
-    type SessionPermissionRemoteGrantRevokeOutputV1,
-    type SessionPermissionMediationRecordIdentityV1,
-    type SessionPermissionExternalHumanDecisionActorV1,
-    type SessionPermissionSourceAuthorityV1,
-    type AgentRequestQuestionSummary,
-    type StructuredQuestionAnswersV1,
-    buildAgentRequestSemanticSummary,
-    formatPermissionRequestSummary,
-    redactBugReportSensitiveText,
-    summarizeToolInputForNotification,
-} from '@happier-dev/protocol';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
-import {
-    SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
-    parseSocketRpcAuthorizationContext,
-    type SocketRpcSessionPermissionRespondAuthorizationContext,
-} from '@happier-dev/protocol/rpc';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionPermissionRequestIdV1Schema, SESSION_PERMISSION_REMOTE_QUESTION_CHOICE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_QUESTION_TEXT_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_DETAIL_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION, SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS, SESSION_PERMISSION_REMOTE_SUMMARY_TITLE_UTF8_BYTES, SESSION_PERMISSION_REMOTE_SUMMARY_TOOL_LABEL_UTF8_BYTES } from '@happier-dev/protocol/sessions/permissions/v1';
+import { SessionPermissionRemoteGrantRecordV1Schema, SessionPermissionRemoteSettlementRecordV1Schema, SESSION_REMOTE_PERMISSION_ACTIVE_GRANTS_MAX, SESSION_REMOTE_PERMISSION_MEDIATION_ROWS_MAX } from '@happier-dev/protocol/sessions/permissions/mediationRecordsV1';
+import { SessionPermissionRespondRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import type { AccountSettings, SessionPermissionRemoteRespondInputV1, SessionPermissionRemoteRespondOutputV1, SessionPermissionRemotePendingListOutputV1, SessionUserActionRemoteAnswerInputV1, SessionUserActionRemoteAnswerOutputV1, SessionPermissionRemoteGrantRecordV1, SessionPermissionRemoteGrantsListOutputV1, SessionPermissionRemoteGrantRevokeOutputV1, SessionPermissionMediationRecordIdentityV1, SessionPermissionExternalHumanDecisionActorV1, SessionPermissionSourceAuthorityV1, AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import { buildAgentRequestSemanticSummary, formatPermissionRequestSummary, summarizeToolInputForNotification } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude/permissionRequestSource';
+import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcSessionPermissionRespondAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type {
     PermissionRequestPushSender as PermissionRequestPushSenderFromSettings,
@@ -102,7 +68,7 @@ import type {
     PermissionMediationRecordWrite,
 } from './mediation/permissionMediationRecordStore';
 import { createPermissionMediationRecordStore } from './mediation/permissionMediationRecordStore';
-import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol';
+import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { isWorkspaceWriteDeniedByRole } from './workspaceWritePolicy';
 
 type AgentStateRequestStoreBindableSession = Readonly<{

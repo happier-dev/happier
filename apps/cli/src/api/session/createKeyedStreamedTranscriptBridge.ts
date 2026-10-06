@@ -78,7 +78,9 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
       const summaries: readonly StreamedTranscriptFlushSummary[] = await Promise.all(
         Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)),
       );
-      writerByStreamKey.clear();
+      for (const [streamKey, writer] of writerByStreamKey) {
+        if (!writer.hasPendingSegments()) writerByStreamKey.delete(streamKey);
+      }
       return summaries;
     },
 

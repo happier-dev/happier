@@ -13,9 +13,19 @@ interface CliDistBuildManifest {
   readonly workspaceRuntimeIdentity?: string;
   readonly workspaceRuntimePackages?: readonly string[];
   readonly runtimeAsset?: CliRuntimeAssetBuildManifestEntry;
+  readonly stalePackages?: readonly CliQaTypecheckFailure[];
+}
+
+interface CliQaTypecheckFailure {
+  readonly packageName: string;
+  readonly reason: 'typecheck';
+  readonly diagnosticSummary: string;
+  readonly errorCount: number;
+  readonly files: readonly string[];
 }
 
 interface CliDistBuildManifestOptions {
+  readonly stalePackages?: readonly CliQaTypecheckFailure[];
   readonly outputDir?: string;
   readonly maxFiles?: number;
   readonly builtAt?: string;

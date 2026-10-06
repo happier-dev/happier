@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, createActionExecutor, isApprovalRequiredByActionsSettings, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { AgentStateRequestStore, AgentStateResponseTargetDispatcher, type PermissionResponseClaim } from './agentStateRequestStore';
 import { createSessionActionConfirmationAdapter } from '@/session/actions/approvals/sessionActionConfirmation';
@@ -50,6 +52,37 @@ class FakeSession {
 }
 
 describe('BasePermissionHandler permission-response routing (gap 28/29)', () => {
+  it.each([
+    { name: 'unknown request', requestId: 'unknown', turnId: 'turn-current', decision: 'allow', errorCode: 'permission_request_not_found' },
+    { name: 'stale turn', requestId: 'pending', turnId: 'turn-old', decision: 'allow', errorCode: 'permission_request_not_found' },
+    { name: 'non-offered Session grant', requestId: 'pending', turnId: 'turn-current', decision: 'approved_for_session', errorCode: 'permission_response_invalid' },
+  ] as const)('refuses an agent Action answer for $name without settling the current request', async ({ requestId, turnId, decision, errorCode }) => {
+    const session = new FakeSession();
+    session.agentState.requests.pending = {
+      tool: 'Happier Action', kind: 'permission', source: 'happier_action',
+      arguments: { actionId: 'session.message.send', sessionId: session.sessionId },
+      turnId: 'turn-current', createdAt: 1,
+    };
+    new CodexLikePermissionHandler({ session: session as never, logPrefix: '[Test]' });
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+    const settings = ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } });
+    // Only the Session RPC transport is replaced; admission, policy, codecs,
+    // request currentness and offered-answer validation are the real owners.
+    const deps = {
+      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      sessionPermissionRespond: async ({ requestId: id, turnId: turn, decision: answer }) => rpc(
+        buildSessionPermissionRespondRpcParamsV1({ id: id ?? '', turnId: turn ?? undefined, decision: answer }),
+      ),
+    } satisfies Pick<ActionExecutorDeps, 'isActionApprovalRequired' | 'sessionPermissionRespond'>;
+    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const result = await executor.execute('session.permission.respond', { sessionId: session.sessionId, requestId, turnId, decision }, {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: session.sessionId,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode });
+    expect(session.agentState.requests.pending).toMatchObject({ turnId: 'turn-current' });
+    expect(session.agentState.completedRequests.pending).toBeUndefined();
+  });
   it('rejects unknown permission RPC fields before settling the pending request', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as never, logPrefix: '[Test]' });

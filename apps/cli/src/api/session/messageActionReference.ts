@@ -1,18 +1,10 @@
 import axios from 'axios';
 
-import {
-  MESSAGE_ACTION_VISIBLE_TEXT_MAX_UTF8_BYTES,
-  MessageActionDurableResolutionV1Schema,
-  MessageActionReferenceV1Schema,
-  SessionMessageRoleSchema,
-  SessionStoredMessageContentSchema,
-  projectMessageActionProvenanceCategoryV1,
-  readSessionMessageProvenanceV1,
-  type MessageActionDurableResolutionV1,
-  type MessageActionReferenceV1,
-  type MessageActionResolutionV1,
-  type SessionMessageRole,
-} from '@happier-dev/protocol';
+import { MESSAGE_ACTION_VISIBLE_TEXT_MAX_UTF8_BYTES, MessageActionDurableResolutionV1Schema, MessageActionReferenceV1Schema, projectMessageActionProvenanceCategoryV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { readSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { MessageActionDurableResolutionV1, MessageActionReferenceV1, MessageActionResolutionV1, SessionMessageRole } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

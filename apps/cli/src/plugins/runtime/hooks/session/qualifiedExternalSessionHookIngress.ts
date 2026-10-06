@@ -12,16 +12,11 @@ import {
 import type {
     AgentExternalSessionSource,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import {
-    agentRoutingIdAddressesContributionIdentityV1,
-    buildLinkedExternalSessionQualifiedIdentityV1,
-    readNonBlankOpaqueIdentifier,
-    type ExternalAgentObservationLeafFactV1,
-    type ExternalAgentObservationTargetV1,
-    type LinkedExternalSessionQualifiedIdentityV1,
-    type PluginContributionIdentityV1,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildLinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { ExternalAgentObservationLeafFactV1, ExternalAgentObservationTargetV1, LinkedExternalSessionQualifiedIdentityV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 import type {
     ExternalSessionIndexedTagLookupProof,

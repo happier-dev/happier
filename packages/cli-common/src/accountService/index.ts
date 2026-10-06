@@ -1,15 +1,5 @@
-import {
-  AccountDirectoryHomeEntryV1Schema,
-  createHomeCredentialDestinationDigestV1,
-  createHomeCredentialDestinationV1,
-  isHomeCredentialDestinationAllowedV1,
-  type AccountDirectoryHomeEntryV1,
-  type HomeConnectionDescriptorV1,
-  type HomeCredentialDestinationSelectionV1,
-  type HomeLoginAssertionV1,
-  type HomeLoginRedemptionResultV1,
-  type HomeSignInServicePolicyV1,
-} from '@happier-dev/protocol';
+import { AccountDirectoryHomeEntryV1Schema, createHomeCredentialDestinationDigestV1, createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { AccountDirectoryHomeEntryV1, HomeConnectionDescriptorV1, HomeCredentialDestinationSelectionV1, HomeLoginAssertionV1, HomeLoginRedemptionResultV1, HomeSignInServicePolicyV1 } from '@happier-dev/protocol';
 import type { HomeTargetInput } from '../homeTarget/homeTarget.js';
 
 export type EffectiveSignInService =

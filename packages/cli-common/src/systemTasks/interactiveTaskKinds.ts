@@ -1,10 +1,5 @@
-import {
-  SYSTEM_TASK_PROTOCOL_VERSION,
-  type SystemTaskEvent,
-  type SystemTaskJsonObject,
-  type SystemTaskJsonValue,
-  type SystemTaskResult,
-} from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskResult } from '@happier-dev/protocol';
 
 import { SystemTaskExecutionError } from './runSystemTask.js';
 

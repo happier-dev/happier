@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { isApprovalRequiredByActionsSettings, normalizeActionsSettingsV1, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { TriageScanInputV1Schema, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
@@ -110,6 +111,10 @@ describe('PostHog plugin manifest', () => {
 
     it('declares one conforming Triage source contribution and its direct-disclosure Composer reference only', () => {
         expect(() => assertTriageSourceContributionV1(PLUGIN_MANIFEST)).not.toThrow();
+        const admitted = parsePluginManifest(PLUGIN_MANIFEST);
+        if (!admitted.ok) throw new Error('PostHog manifest must pass canonical ingestion');
+        expect(admitted.manifest.contributes.actions.find(action => action.id === POSTHOG_ACTION_IDS.codeVariables))
+            .toMatchObject({ dangerLevel: 'safe', confirmation: { title: expect.anything(), body: expect.anything() } });
         const contributes = PLUGIN_MANIFEST.contributes as Readonly<Record<string, unknown>>;
         // PostHog may resolve one already-selected opaque evidence candidate. It owns
         // no attachment, control, or region: `happier.triage` remains the sole owner
@@ -263,12 +268,31 @@ describe('PostHog plugin manifest', () => {
         expect(reveal).toMatchObject({
             execution: { target: 'daemon' },
             dangerLevel: 'safe',
+            confirmation: { title: expect.anything(), body: expect.anything() },
+            surfaces: ['ui', 'agent', 'mcp', 'cli'],
             hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, 'posthog-network'],
             connectedAccountPurposeBindings: [{
                 path: 'instance.binding.account',
                 purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
             }],
         });
+    });
+
+    it('routes sensitive reveals through the shared default, waiver and Ask-first policy on every exposed surface', () => {
+        const reveal = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === POSTHOG_ACTION_IDS.codeVariables)!;
+        const actionId = 'happier.posthog/posthog/code-variables';
+        const defaultRequired = pluginActionRequiresPresentUserIntent(reveal, 'agent');
+        for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {
+            const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
+            const required = normalizeActionsSettingsV1({ ...waived,
+                actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
+            });
+            for (const [settings, expected] of [[normalizeActionsSettingsV1({ v: 1 }), true], [waived, false], [required, true]] as const) {
+                expect(pluginActionRequiresPresentUserIntent({ ...reveal,
+                    approvalRequiredByActionSettings: isApprovalRequiredByActionsSettings(actionId, settings, { surface }, undefined, defaultRequired),
+                }, surface), surface).toBe(expected);
+            }
+        }
     });
 
     it('declares the source-native activity read without giving it a Triage role', () => {

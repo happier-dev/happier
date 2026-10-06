@@ -1,8 +1,6 @@
 import { gray, yellow } from '@happier-dev/cli-common/output';
-import {
-  SessionAwarenessListResultV1Schema,
-  SessionListResultSchema,
-} from '@happier-dev/protocol';
+import { SessionAwarenessListResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
+import { SessionListResultSchema } from '@happier-dev/protocol/sessions/control/listResult';
 
 import type { ActionCliPresentation } from '@/cli/actions/commandPresentation';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';

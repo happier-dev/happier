@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
@@ -30,6 +31,7 @@ export const SessionCompanionPresentationItemRefV1Schema = z.discriminatedUnion(
 export type SessionCompanionPresentationItemRefV1 = z.infer<
   typeof SessionCompanionPresentationItemRefV1Schema
 >;
+export const SessionCompanionPresentationItemRefV1StoredSchema = createStoredReadSchema(SessionCompanionPresentationItemRefV1Schema);
 
 /**
  * Reversible viewer-local Session presentation intents. Durable Board writes

@@ -1,4 +1,6 @@
 import { vi } from 'vitest';
+import 'fake-indexeddb/auto';
+import { registerStorageStateReader, registerStorageStateSubscribe } from '@/sync/domains/state/storageStateReaderBridge';
 
 type StorageModule = typeof import('@/sync/domains/state/storage');
 type RegistryUiBehaviorModule = typeof import('@/agents/registry/registryUiBehavior');
@@ -30,6 +32,8 @@ const sessionShellModuleState = vi.hoisted(() => ({
         storage: undefined as SessionShellStorageModuleFactory | undefined,
     },
     draftStateBySessionId: new Map<string, { currentValue: string }>(),
+    storage: null as StorageModule['storage'] | null,
+    readAccountScope: null as StorageModule['useActiveServerAccountScope'] | null,
 }));
 
 /**
@@ -111,11 +115,18 @@ export function installSessionShellCommonModuleMocks(
 
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { registerStorageStateReader, registerStorageStateSubscribe } = await import('@/sync/domains/state/storageStateReaderBridge');
         const defaultStorageModule = createStorageModuleStub({});
         const activeOptions = sessionShellModuleState.options;
         if (activeOptions.storage) {
             const providedStorageModule = await activeOptions.storage(importOriginal) as Partial<StorageModule>;
             const storage = providedStorageModule.storage ?? defaultStorageModule.storage;
+            sessionShellModuleState.storage = storage;
+            sessionShellModuleState.readAccountScope = providedStorageModule.useActiveServerAccountScope ?? null;
+            // Exact-address readers use the production store's registered boundary,
+            // so the fixture must publish the same store it exposes to hook readers.
+            registerStorageStateReader(storage.getState);
+            registerStorageStateSubscribe(storage.subscribe);
             return {
                 ...defaultStorageModule,
                 ...providedStorageModule,
@@ -124,6 +135,9 @@ export function installSessionShellCommonModuleMocks(
             } satisfies Partial<StorageModule>;
         }
 
+        registerStorageStateReader(defaultStorageModule.storage.getState);
+        registerStorageStateSubscribe(defaultStorageModule.storage.subscribe);
+        sessionShellModuleState.storage = defaultStorageModule.storage;
         return defaultStorageModule;
     });
 
@@ -181,6 +195,40 @@ export function installSessionShellCommonModuleMocks(
             };
         },
     }));
+}
+
+/** Rebind after imports finish: the real store can initialize later in the import graph. */
+export async function activateSessionShellStorageBoundary(): Promise<void> {
+    // Browser persistence is a genuine boundary; load it before the real draft
+    // repository participates in composer admission and restoration.
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+    const storage = sessionShellModuleState.storage;
+    if (!storage) throw new Error('Session shell storage boundary has not been initialized');
+    registerStorageStateReader(storage.getState);
+    registerStorageStateSubscribe(storage.subscribe);
+    const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+    const accountId = sessionShellModuleState.readAccountScope?.()?.accountId ?? 'account-1';
+    const serverIds = new Set(Object.values(storage.getState().sessions).flatMap((session) =>
+        typeof session?.serverId === 'string' && session.serverId ? [session.serverId] : []));
+    for (const serverId of serverIds) {
+        const serverUrl = `https://${serverId}`;
+        const profile = await upsertServerProfile({ serverUrl, name: serverId });
+        if (profile.id !== serverId) throw new Error(`Session shell Home fixture id mismatch: ${profile.id}`);
+        // Secure credential custody is the boundary. Scope resolution and lifetime stay real.
+        await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, {
+            token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64')}.signature`,
+            secret: 's',
+        });
+        const resolved = await resolveServerCredentialAccountScope(serverId);
+        if (resolved.kind !== 'bound' || resolved.scope.accountId !== accountId) {
+            throw new Error(`Session shell credential fixture did not bind ${serverId}: ${resolved.kind}`);
+        }
+    }
+    registerStorageStateReader(storage.getState);
+    registerStorageStateSubscribe(storage.subscribe);
 }
 
 export function readSessionShellDraftTextForTest(sessionId: string): string | undefined {

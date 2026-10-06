@@ -3,20 +3,8 @@
  * projects their declarations for SDK authors without creating another parser
  * or JSON-Schema owner.
  */
-import {
-    defineProtocolArray as canonicalDefineProtocolArray,
-    defineProtocolJsonValue as canonicalDefineProtocolJsonValue,
-    defineProtocolLiteral as canonicalDefineProtocolLiteral,
-    defineProtocolNumber as canonicalDefineProtocolNumber,
-    defineProtocolObject as canonicalDefineProtocolObject,
-    defineProtocolString as canonicalDefineProtocolString,
-    defineProtocolUnion as canonicalDefineProtocolUnion,
-    defineProtocolUniqueArray as canonicalDefineProtocolUniqueArray,
-    defineProtocolUtf8String as canonicalDefineProtocolUtf8String,
-    isProtocolComposableSchema as canonicalIsProtocolComposableSchema,
-    pluginJsonValuesEqual as canonicalPluginJsonValuesEqual,
-    ProtocolValidationError as canonicalProtocolValidationError,
-} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { defineProtocolArray as canonicalDefineProtocolArray, defineProtocolJsonValue as canonicalDefineProtocolJsonValue, defineProtocolLiteral as canonicalDefineProtocolLiteral, defineProtocolNumber as canonicalDefineProtocolNumber, defineProtocolObject as canonicalDefineProtocolObject, defineProtocolString as canonicalDefineProtocolString, defineProtocolUnion as canonicalDefineProtocolUnion, defineProtocolUniqueArray as canonicalDefineProtocolUniqueArray, defineProtocolUtf8String as canonicalDefineProtocolUtf8String, isProtocolComposableSchema as canonicalIsProtocolComposableSchema, ProtocolValidationError as canonicalProtocolValidationError } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { pluginJsonValuesEqual as canonicalPluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 /**
  * Declaration-neutral SDK projection of Protocol's mutable structural JSON
  * (`PluginJsonValueV2`): data as authored into declarations and carried on

@@ -1,7 +1,5 @@
-import {
-  isLegacyCustomAcpId,
-  type BackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { isLegacyCustomAcpId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {

@@ -1,11 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import {
-    SESSION_PROVIDER_HOOK_EVENT_ID_V1,
-    SessionProviderHookEventPayloadV1Schema,
-    readNonBlankOpaqueIdentifier,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { SESSION_PROVIDER_HOOK_EVENT_ID_V1, SessionProviderHookEventPayloadV1Schema } from '@happier-dev/protocol/plugins/events/session';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,

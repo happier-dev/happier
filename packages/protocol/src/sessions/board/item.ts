@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { WidgetSnapshotDocumentV1Schema, WidgetSnapshotMetadataV1Schema } from './declarative/snapshot.js';
 import { WidgetInstanceV1Schema as InstanceSchema } from '../../widgets/widgetInstanceV1.js';
 const WidgetInstanceV1Schema = z.lazy(() => InstanceSchema);
@@ -10,12 +12,14 @@ import { SessionSurfaceDeclarativeDocumentV1Schema } from './declarative/authori
 import { readPluginDeclarativeDataSourcesV1 } from '../../plugins/contributions/ui/declarativeDocumentAuthoringV1.js';
 
 const HeightSizeSchema = z.enum(['compact', 'regular', 'tall']);
+// Unknown JSON fields cannot hide a private selection from shared-content admission.
+const ConnectedAccountSelectionSchema = createStoredReadSchema(asProtocolZod(QualifiedConnectedAccountRefSchema));
 function containsPrivateConnectedAccountSelection(value: unknown): boolean {
   const pending = [value];
   while (pending.length) {
     const next = pending.pop();
     if (!next || typeof next !== 'object') continue;
-    if (QualifiedConnectedAccountRefSchema.safeParse(next).success) return true;
+    if (ConnectedAccountSelectionSchema.safeParse(next).success) return true;
     pending.push(...(Array.isArray(next) ? next : Object.values(next)));
   }
   return false;
@@ -67,6 +71,8 @@ export const SessionSurfaceItemV1Schema = z.object({
   }
 });
 export type SessionSurfaceItemV1 = Readonly<z.infer<typeof SessionSurfaceItemV1Schema>>;
+/** Persisted content drops additive fields before the strict Action/result owners consume it. */
+export const SessionSurfaceItemV1StoredSchema = createStoredReadSchema(SessionSurfaceItemV1Schema);
 
 /** A Board widget's instance identity is its existing canonical record identity. */
 export function isSessionSurfaceItemIdentityCorrespondingV1(itemId: string, item: SessionSurfaceItemV1): boolean {

@@ -4,13 +4,10 @@ import type {
   PluginSourceCustodyV1,
   PromptBlockV1,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  PluginSourceCustodyV1Schema,
-  pluginSourceCustodyV1Equal,
-  ReviewCommentProposalsV1Schema,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
 
 import type { ExecutionRunIntentProfile } from './ExecutionRunIntentProfile';
 import { ReviewProfile } from './review/ReviewProfile';

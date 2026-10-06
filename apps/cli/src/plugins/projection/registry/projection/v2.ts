@@ -7,19 +7,12 @@ import type {
     PluginProjectionV2,
     PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    isDynamicPluginResourceContributionV2,
-    PluginAgentCapabilitiesV2Schema,
-    PluginActionDeclaredExecutionV2Schema,
-    PluginActionScopeV2Schema,
-    PluginMachineExecutionOriginV1Schema,
-    PluginSettingsProjectionError,
-    projectPluginSettingsContributionV2,
-    PluginResourceKindV2Schema,
-    PluginDynamicResourceScopeV1Schema,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isDynamicPluginResourceContributionV2, PluginAgentCapabilitiesV2Schema, PluginResourceKindV2Schema, PluginDynamicResourceScopeV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginActionDeclaredExecutionV2Schema, PluginActionScopeV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginSettingsProjectionError, projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';

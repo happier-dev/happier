@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 
@@ -143,4 +143,28 @@ export async function writeRuntimeSnapshotLayout({
   await writeFile(paths.currentPath, JSON.stringify(currentPayload, null, 2) + '\n', 'utf-8');
 
   return paths;
+}
+
+export async function writeManagedRuntimeSnapshotLayout({ stackDir, snapshotId = 'managed-qa', target = { platform: process.platform, arch: process.arch } }) {
+  const paths = resolveRuntimeSnapshotLayoutPaths({ stackDir, snapshotId });
+  const components = {};
+  await mkdir(paths.snapshotDir, { recursive: true });
+  for (const [component, directory, entrypoint] of [['web', 'ui', 'index.html'], ['server', 'server', 'happier-server'], ['daemon', 'cli', 'happier']]) {
+    const artifactFingerprint = `${component}-${snapshotId}`;
+    const artifactDir = join(stackDir, 'artifacts', component, artifactFingerprint);
+    await mkdir(join(artifactDir, 'payload'), { recursive: true });
+    await writeRuntimeArtifact(join(artifactDir, 'payload'), entrypoint, component + '\n');
+    if (component === 'daemon') {
+      await writeRuntimeArtifact(join(artifactDir, 'payload'), 'package-dist/index.mjs', 'export {};\n');
+      await writeRuntimeArtifact(join(artifactDir, 'payload'), 'package-dist/.build-manifest.json', JSON.stringify({ fingerprint: '0123456789abcdef', fileCount: 1 }));
+    }
+    await writeFile(join(artifactDir, 'manifest.json'), JSON.stringify({ version: 1, component, artifactFingerprint,
+      sourceFingerprint: 'managed-source', payloadDir: 'payload', entrypoint, target }));
+    await symlink(`../../../artifacts/${component}/${artifactFingerprint}/payload`, join(paths.snapshotDir, directory));
+    components[component] = { artifactFingerprint, entrypoint: directory + '/' + entrypoint };
+  }
+  const manifest = { version: 1, snapshotId, sourceFingerprint: 'managed-source', components, target };
+  await writeFile(join(paths.snapshotDir, 'manifest.json'), JSON.stringify(manifest));
+  return { ...paths, snapshotId, snapshotPath: paths.snapshotDir, producerStackBaseDir: stackDir,
+    sourceFingerprint: 'managed-source', daemonDistClosureFingerprint: '0123456789abcdef', manifest };
 }

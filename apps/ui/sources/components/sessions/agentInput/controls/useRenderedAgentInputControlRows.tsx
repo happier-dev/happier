@@ -18,6 +18,7 @@ type ChipStyle = (pressed: boolean) => any;
 type SessionModeChipControlLike = Pick<Parameters<typeof resolveSessionModeChipPresentation>[0], 'label' | 'selectedId'>;
 
 export function useRenderedAgentInputControlRows(params: Readonly<{
+    readOnly?: boolean;
     layout: 'scroll' | 'wrap' | 'collapsed';
     /** Collapsed layout: the controls the host keeps on its bar (see `resolveRenderedAgentInputControls`). */
     barControlIds?: readonly AgentInputControlId[];
@@ -85,6 +86,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     sourceControlWrapperStyle: any;
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
+    readOnlyEngineNodes: ReadonlyArray<React.ReactNode>;
     extraChipNodes: ReadonlyArray<React.ReactNode>;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
     extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
@@ -115,6 +117,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         });
 
         const coreControlNodesById = buildCoreAgentInputControlNodes({
+            readOnly: params.readOnly,
             showPermissionChip: params.showPermissionChip,
             permissionChipAnchorRef: params.permissionChipAnchorRef,
             permissionChipLabel: params.permissionChipLabel,
@@ -186,6 +189,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 
         return {
             controlNodes: renderedControls.chips,
+            readOnlyEngineNodes: coreControlNodesById.engine ?? [],
             extraChipNodes: [
                 ...extraControlNodesById.extraChips,
                 ...Object.values(extraControlNodesById.extraControlNodesById).flat(),
@@ -194,6 +198,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             extraChipAnchorRefsByKey: extraControlNodesById.extraChipAnchorRefsByKey as Readonly<Record<string, React.RefObject<View | null>>>,
         };
     }, [
+        params.readOnly,
         params.actionBarIsCollapsed,
         params.barControlIds,
         params.actionButtonPressedStyle,

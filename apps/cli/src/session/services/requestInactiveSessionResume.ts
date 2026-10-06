@@ -1,10 +1,7 @@
-import {
-  normalizeSpawnSessionNonceResolution,
-  resolveLinkedExternalSessionAuthorityV1,
-  SPAWN_SESSION_ERROR_CODES,
-  SpawnSessionExecutionAuthorizationSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';

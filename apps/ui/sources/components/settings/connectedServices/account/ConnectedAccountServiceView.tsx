@@ -59,7 +59,7 @@ import {
 import {
     useActiveServerAccountScope,
     useProfile,
-    useSettings,
+    useSettingsSelector,
 } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -229,7 +229,9 @@ const ConnectedAccountServiceController = React.memo(
         executionTarget,
         navigation,
     } = controllerProps;
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+    }));
     const locale = getPreferredLanguage();
     const profile = useProfile();
     const applySettings = useApplySettings();
@@ -1220,7 +1222,7 @@ const ConnectedAccountServiceController = React.memo(
                     localize={localizeServiceText}
                     fields={activeMode.fields}
                     guided={manualGuide ? { consoleUrl: manualGuide.consoleUrl, createKeyTitle: t(manualGuide.createKeyTitleKey),
-                        billingNote: t(manualGuide.billingNoteKey), shapePattern: manualGuide.shapePattern, shapeHint: t(manualGuide.shapeHintKey) } : undefined}
+                        billingNote: t(manualGuide.billingNoteKey), shapeHint: t(manualGuide.shapeHintKey) } : undefined}
                     submitting={busy}
                     navigation={navigation}
                     onCancel={panelCancel}
@@ -1400,7 +1402,6 @@ const ConnectedAccountServiceController = React.memo(
                         title={resolveConnectedServiceSettingsErrorMessage({
                             code: errorCode,
                         })}
-                        subtitle={errorCode}
                         mode="info"
                         showChevron={false}
                     />

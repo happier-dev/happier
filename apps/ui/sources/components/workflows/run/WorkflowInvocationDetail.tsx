@@ -1,6 +1,8 @@
+import { useUnistyles } from 'react-native-unistyles';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { Pressable, View } from 'react-native';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { View } from 'react-native';
 
 import type {
     WorkflowInvocationRecoveryV1,
@@ -171,6 +173,7 @@ function useReviewedContinuation(
 }
 
 export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const { recovery, testIDPrefix } = props;
     const execution = props.progress?.execution;
     const workspace = recovery.workspace;
@@ -208,10 +211,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     const acknowledgementSatisfied = !recovery.requiresUncertaintyAcknowledgement
         || props.uncertaintyAcknowledged === true;
     const operationPending = props.operationPending === true;
-    const durableActionState = (enabled: boolean) => ({
-        disabled: !enabled || operationPending,
-        ...(operationPending ? { busy: true } : {}),
-    });
     // The Protocol's continuation input is required and its text is non-empty,
     // so an unwritten continuation is refused here rather than rejected later.
     const continuationSubmittable = acknowledgementSatisfied
@@ -285,7 +284,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             ) : null}
             {previousAttemptRecordId === undefined || props.onSelectInvocation === undefined ? null : (
                 <HappierPressable testID={`${testIDPrefix}-previous-attempt`} accessibilityRole="link"
-                    onPress={() => props.onSelectInvocation?.(previousAttemptRecordId)} style={styles.actionTarget}>
+                    onPress={() => props.onSelectInvocation?.(previousAttemptRecordId)} style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                     <Text style={styles.action}>{t('workflows.review.previousAttempt')}</Text>
                 </HappierPressable>
             )}
@@ -385,26 +384,26 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 : t('workflows.workspace.unavailableBody')}
                     </Text>
                     {!recovery.canRestoreWorkspace || props.onRestoreWorkspace === undefined ? null : (
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-restore-workspace`}
                             accessibilityRole="button"
-                            accessibilityState={durableActionState(true)}
+                            busy={operationPending}
                             disabled={operationPending}
                             onPress={props.onRestoreWorkspace}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={styles.action}>{t('workflows.workspace.restore')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     )}
                     {!recovery.canStartReviewedNewRun || props.onStartReviewedNewRun === undefined ? null : (
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-start-reviewed-new-run`}
                             accessibilityRole="button"
                             onPress={props.onStartReviewedNewRun}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={styles.action}>{t('workflows.recovery.startReviewedRun')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     )}
                 </View>
             ) : null}
@@ -461,40 +460,40 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             {execution?.kind === 'session'
                 && recovery.canInspectExecution
                 && props.onOpenSession !== undefined ? (
-                    <Pressable
+                    <HappierPressable
                         testID={`${testIDPrefix}-open-session`}
                         accessibilityRole="link"
                         onPress={() => props.onOpenSession?.(execution.sessionId)}
-                        style={styles.actionTarget}
+                        style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={styles.action}>{t('workflows.run.openSourceSession')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             {execution !== undefined
                 && recovery.canInspectExecution
                 && execution.kind === 'detached_run'
                 && props.onOpenExecutionRun !== undefined ? (
-                    <Pressable
+                    <HappierPressable
                         testID={`${testIDPrefix}-open-execution-run`}
                         accessibilityRole="link"
                         onPress={() => props.onOpenExecutionRun?.(execution.runId)}
-                        style={styles.actionTarget}
+                        style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={styles.action}>{t('workflows.run.openExecution')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             {!recovery.canReattach || props.onReattach === undefined ? null : (
                 <View style={styles.section}>
-                    <Pressable
+                    <HappierPressable
                         testID={`${testIDPrefix}-reattach`}
                         accessibilityRole="button"
-                        accessibilityState={durableActionState(true)}
+                        busy={operationPending}
                         disabled={operationPending}
                         onPress={props.onReattach}
-                        style={styles.actionTarget}
+                        style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={styles.action}>{t('workflows.recovery.reattach')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                     <Text style={styles.provenance}>{t('workflows.recovery.reattachExplain')}</Text>
                 </View>
             )}
@@ -505,11 +504,11 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
               * never inherited from a sibling selection.
               */}
             {recovery.canRunWithAnotherAgent && props.onRunWithAnotherAgent ? (
-                <Pressable testID={`${testIDPrefix}-run-another-agent`} accessibilityRole="button"
-                    accessibilityState={durableActionState(true)} disabled={operationPending}
-                    onPress={props.onRunWithAnotherAgent} style={styles.actionTarget}>
+                <HappierPressable testID={`${testIDPrefix}-run-another-agent`} accessibilityRole="button"
+                    busy={operationPending} disabled={operationPending}
+                    onPress={props.onRunWithAnotherAgent} style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                     <Text style={styles.action}>{t('workflows.start.runWithAnotherAgent')}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
             {recovery.requiresUncertaintyAcknowledgement
                 && props.onAcknowledgeUncertainPriorEffects !== undefined ? (
@@ -519,16 +518,16 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 block: props.workspaceSourceLabel ?? t('workflows.run.untitled'),
                             })}
                         </Text>
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-acknowledge-uncertain`}
                             accessibilityRole="checkbox"
-                            accessibilityState={{ checked: props.uncertaintyAcknowledged === true }}
+                            checked={props.uncertaintyAcknowledged === true}
                             accessibilityLabel={t('workflows.recovery.acknowledgeEffects')}
                             onPress={props.onAcknowledgeUncertainPriorEffects}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={styles.action}>{t('workflows.recovery.acknowledgeEffects')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     </View>
                 ) : null}
 
@@ -548,15 +547,15 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 })
                                 : t('workflows.recovery.freshAgentExplain')}
                         </Text>
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-edit-continuation`}
                             accessibilityRole="button"
-                            accessibilityState={{ expanded: continuation.open }}
+                            expanded={continuation.open}
                             onPress={continuation.toggle}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={styles.action}>{t('workflows.recovery.editContinuation')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                         {continuation.open ? (
                             <MultiTextInput
                                 testID={`${testIDPrefix}-continuation-input`}
@@ -567,10 +566,10 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 submitBehavior="newline"
                             />
                         ) : null}
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-continue-prepared`}
                             accessibilityRole="button"
-                            accessibilityState={durableActionState(continuationSubmittable)}
+                            busy={operationPending}
                             disabled={!continuationSubmittable}
                             onPress={() => {
                                 if (!continuationSubmittable) return;
@@ -580,64 +579,64 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                     input: continuation.input,
                                 });
                             }}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={continuationSubmittable ? styles.action : styles.provenance}>
                                 {prepared.conversation === 'same_conversation'
                                     ? t('workflows.recovery.resumeSameConversation')
                                     : t('workflows.recovery.freshAgent')}
                             </Text>
-                        </Pressable>
+                        </HappierPressable>
                     </View>
                 ) : null}
 
             {recovery.canRetrySameConversation && props.onRetrySameConversation !== undefined ? (
-                <Pressable
+                <HappierPressable
                     testID={`${testIDPrefix}-retry-same`}
                     accessibilityRole="button"
-                    accessibilityState={durableActionState(retryable)}
+                    busy={operationPending}
                     disabled={!retryable}
                     onPress={() => {
                         if (!retryable) return;
                         props.onRetrySameConversation?.();
                     }}
-                    style={styles.actionTarget}
+                    style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={retryable ? styles.action : styles.provenance}>
                         {t('workflows.recovery.resumeSameConversation')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
             {recovery.canRetryFreshAgent && props.onRetryFreshAgent !== undefined ? (
-                <Pressable
+                <HappierPressable
                     testID={`${testIDPrefix}-retry-fresh`}
                     accessibilityRole="button"
-                    accessibilityState={durableActionState(retryable)}
+                    busy={operationPending}
                     disabled={!retryable}
                     onPress={() => {
                         if (!retryable) return;
                         props.onRetryFreshAgent?.();
                     }}
-                    style={styles.actionTarget}
+                    style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={retryable ? styles.action : styles.provenance}>
                         {t('workflows.recovery.freshAgent')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
             {/* Retry distinguishes repeating the original input from an inspected replacement. */}
             {(recovery.canRetrySameConversation || recovery.canRetryFreshAgent)
                 && props.onRetryWithReplacement !== undefined ? (
                     <View testID={`${testIDPrefix}-retry-replacement`} style={styles.section}>
-                        <Pressable
+                        <HappierPressable
                             testID={`${testIDPrefix}-use-replacement-input`}
                             accessibilityRole="button"
-                            accessibilityState={{ expanded: replacement.open }}
+                            expanded={replacement.open}
                             onPress={replacement.toggle}
-                            style={styles.actionTarget}
+                            style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={styles.action}>{t('workflows.recovery.useReplacementInput')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                         {replacement.open ? (
                             <>
                                 <MultiTextInput
@@ -655,18 +654,16 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                         style={styles.actions}
                                     >
                                         {replacementConversationChoices.map((choice) => (
-                                            <Pressable
+                                            <HappierPressable
                                                 key={choice}
                                                 testID={`${testIDPrefix}-replacement-conversation-${choice}`}
                                                 accessibilityRole="radio"
-                                                accessibilityState={{
-                                                    selected: effectiveReplacementConversation === choice,
-                                                }}
+                                                checked={effectiveReplacementConversation === choice}
                                                 accessibilityLabel={choice === 'same_conversation'
                                                     ? t('workflows.recovery.resumeSameConversation')
                                                     : t('workflows.recovery.freshAgent')}
                                                 onPress={() => setReplacementConversation(choice)}
-                                                style={styles.actionTarget}
+                                                style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                                             >
                                                 <Text style={effectiveReplacementConversation === choice
                                                     ? styles.action
@@ -676,14 +673,14 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                                         ? t('workflows.recovery.resumeSameConversation')
                                                         : t('workflows.recovery.freshAgent')}
                                                 </Text>
-                                            </Pressable>
+                                            </HappierPressable>
                                         ))}
                                     </View>
                                 )}
-                                <Pressable
+                                <HappierPressable
                                     testID={`${testIDPrefix}-submit-replacement`}
                                     accessibilityRole="button"
-                                    accessibilityState={durableActionState(replacementSubmittable)}
+                                    busy={operationPending}
                                     disabled={!replacementSubmittable}
                                     onPress={() => {
                                         if (!replacementSubmittable) return;
@@ -693,10 +690,10 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                             input: replacement.input,
                                         });
                                     }}
-                                    style={styles.actionTarget}
+                                    style={(state) => [styles.actionTarget, styles.focusTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                                 >
                                     <Text style={styles.action}>{t('workflows.run.retryStep')}</Text>
-                                </Pressable>
+                                </HappierPressable>
                             </>
                         ) : null}
                     </View>

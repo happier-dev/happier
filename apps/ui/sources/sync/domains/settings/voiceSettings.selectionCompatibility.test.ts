@@ -570,7 +570,7 @@ describe('Voice provider selection persistence compatibility', () => {
             voice: {
                 providerId: 'local_conversation',
                 welcome: { enabled: true, mode: 'on_first_turn', templateId: 'welcome-current' },
-                executionMachine: { mode: 'fixed', machineId: 'machine-current', autoMachineId: null },
+                executionMachine: { mode: 'fixed', machineId: 'machine-current' },
                 providers: {
                     local_direct: {
                         schemaVersion: 1,
@@ -647,7 +647,7 @@ describe('Voice provider selection persistence compatibility', () => {
         expect(root.providers.local_conversation.config.networkTimeoutMs).toBe(32_000);
         expect(restored.voice.welcome).toEqual({ enabled: false, mode: 'immediate', templateId: null });
         expect(restored.voice.executionMachine).toEqual({
-            mode: 'auto', machineId: null, autoMachineId: 'machine-auto',
+            mode: 'auto', machineId: null,
         });
     });
 
@@ -2075,7 +2075,7 @@ describe('Voice provider selection persistence compatibility', () => {
                     stt: { provider: 'device' },
                 },
                 welcome: { enabled: true, mode: 'on_first_turn', templateId: 'hello' },
-                executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
+                executionMachine: { mode: 'fixed', machineId: 'machine-1' },
                 credentialBindings: [{
                     providerId: EXTERNAL_PROVIDER_ID,
                     credentialBindings: { account: { api_key: 'secret-1' } },
@@ -2098,7 +2098,7 @@ describe('Voice provider selection persistence compatibility', () => {
                 stt: expect.objectContaining({ provider: 'device' }),
             }),
             welcome: { enabled: true, mode: 'on_first_turn', templateId: 'hello' },
-            executionMachine: { mode: 'fixed', machineId: 'machine-1', autoMachineId: null },
+            executionMachine: { mode: 'fixed', machineId: 'machine-1' },
             credentialBindings: [expect.objectContaining({
                 contribution: {
                     pluginId: 'acme.synthetic-voice',

@@ -5,6 +5,7 @@ import {
   AutomationRunExecutionRecipeV1Schema,
   AutomationStoredDefinitionExecutionRecipeV1Schema,
   AutomationRunTemplateV1Schema,
+  AutomationRunTriggerEvidenceV1Schema,
   automationRunExecutionTargetDeliversComposerReferencesV1,
   validateAutomationRunTemplateForExecutionTargetV1,
   freezeAutomationRunPluginEventExecutionRecipeV1,
@@ -98,6 +99,24 @@ describe('materializeAutomationRunPromptV1', () => {
 });
 
 describe('AutomationRunExecutionRecipeV1', () => {
+  it('reads unknown stored recipe fields through materialization but rejects them at write admission', () => {
+    const canonical = { v: 1, templateVersion: 1, assignmentMachineIds: [],
+      template: { t: 'plain', v: { v: 1, prompt: 'Review' } }, triggerEvidence: null,
+      target: { kind: 'existingSession', sessionId: 'session-1' } };
+    const stored = { ...canonical, extra: true, target: { ...canonical.target, extra: true },
+      template: { ...canonical.template, extra: true, v: { ...canonical.template.v, extra: true } } };
+    const opened = parseAutomationRunExecutionRecipeV1(JSON.stringify(stored));
+    expect(opened.kind).toBe('available');
+    if (opened.kind !== 'available') throw new Error('expected readable recipe');
+    expect(opened.recipe).toEqual(canonical);
+    expect(materializeAutomationRunExecutionRecipeV1({ recipe: stored,
+      cause: { kind: 'manual', invokedAt: 1 }, runId: 'run-1',
+      accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null } }))
+      .toEqual({ kind: 'available', target: { kind: 'existingSession', sessionId: 'session-1', prompt: 'Review', mentions: [] } });
+    expect(serializeAutomationRunExecutionRecipeV1(stored).kind).toBe('contentInvalid');
+    expect(parseAutomationRunExecutionRecipeV1(JSON.stringify({ ...stored,
+      target: { ...stored.target, sessionId: null } })).kind).toBe('contentInvalid');
+  });
   const plainCurrentness = {
     mode: 'plain',
     version: 7,
@@ -124,6 +143,26 @@ describe('AutomationRunExecutionRecipeV1', () => {
       },
     },
   } as const;
+
+  it('projects known stored evidence fields while preserving opaque Event payload data', () => {
+    const canonical = AutomationRunExecutionRecipeV1Schema.parse({
+      ...plainRecipe,
+      triggerEvidence: { t: 'plain', v: pluginEventEvidence },
+    });
+    const evidence = {
+      ...pluginEventEvidence,
+      extra: true,
+      eventRef: { ...pluginEventEvidence.eventRef, extra: true },
+      filter: { ...pluginEventEvidence.filter, extra: true },
+    };
+    const stored = { ...canonical, triggerEvidence: { t: 'plain', v: evidence, extra: true } };
+    expect(parseAutomationRunExecutionRecipeV1(JSON.stringify(stored)))
+      .toEqual({ kind: 'available', recipe: canonical, serialized: JSON.stringify(stored) });
+    expect(AutomationRunTriggerEvidenceV1Schema.safeParse(evidence).success).toBe(false);
+    expect(parseAutomationRunExecutionRecipeV1(JSON.stringify({
+      ...stored, triggerEvidence: { t: 'plain', v: { ...evidence, eventRef: { localId: 'issue-opened' } } },
+    }))).toEqual({ kind: 'contentInvalid' });
+  });
 
   it('uses the strict detached execution request and independently mode-matched envelopes', () => {
     expect(AutomationRunExecutionRecipeV1Schema.safeParse(plainRecipe).success).toBe(true);
@@ -202,9 +241,22 @@ describe('AutomationRunExecutionRecipeV1', () => {
     });
   });
 
-  it('inspects stored Definition mode without accepting Run-only frozen facts', () => {
+  it('inspects unknown stored Definition fields without granting Run-only authority', () => {
     const { assignmentMachineIds: _frozenAssignments, ...storedRecipe } = plainRecipe;
     const canonicalStoredRecipe = AutomationStoredDefinitionExecutionRecipeV1Schema.parse(storedRecipe);
+    const storedWithExtras = {
+      ...storedRecipe,
+      extra: true,
+      template: { ...storedRecipe.template, extra: true, v: { ...storedRecipe.template.v, extra: true } },
+    };
+    expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
+      recipe: storedWithExtras,
+      accountCurrentness: plainCurrentness,
+    })).toEqual({ kind: 'available', recipe: canonicalStoredRecipe });
+    expect(parseAutomationStoredDefinitionExecutionRecipeV1(JSON.stringify(storedWithExtras)))
+      .toMatchObject({ kind: 'available', recipe: canonicalStoredRecipe });
+    expect(serializeAutomationStoredDefinitionExecutionRecipeV1(storedWithExtras).kind)
+      .toBe('contentInvalid');
     expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
       recipe: storedRecipe,
       accountCurrentness: plainCurrentness,
@@ -221,10 +273,12 @@ describe('AutomationRunExecutionRecipeV1', () => {
         mode: 'e2ee', version: 8, contentKeyFingerprint: 'content-key',
       },
     })).toEqual({ kind: 'contentInvalid' });
-    for (const recipe of [
-      plainRecipe,
-      { ...storedRecipe, triggerEvidence: { t: 'plain', v: pluginEventEvidence } },
-    ]) {
+    for (const recipe of [plainRecipe, { ...storedWithExtras, assignmentMachineIds: ['ignored-machine'] }]) {
+      expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({ recipe, accountCurrentness: plainCurrentness }))
+        .toEqual({ kind: 'available', recipe: canonicalStoredRecipe });
+      expect(serializeAutomationStoredDefinitionExecutionRecipeV1(recipe).kind).toBe('contentInvalid');
+    }
+    for (const recipe of [{ ...storedRecipe, triggerEvidence: { t: 'plain', v: pluginEventEvidence } }]) {
       expect(inspectAutomationStoredDefinitionExecutionRecipeOuterV1({
         recipe,
         accountCurrentness: plainCurrentness,

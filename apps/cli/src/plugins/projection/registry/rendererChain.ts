@@ -1,9 +1,7 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    PluginUiRendererChainBindingV1Schema,
-    type PluginUiRendererChainBindingV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginUiRendererChainBindingV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/rendererChainBinding';
+import type { PluginUiRendererChainBindingV1 } from '@happier-dev/protocol';
 
 import type { ResolvedUiRendererV2Contribution } from './types';
 

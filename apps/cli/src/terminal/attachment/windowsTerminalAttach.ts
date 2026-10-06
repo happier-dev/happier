@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
-import { normalizeWindowsTerminalWindowName } from '@happier-dev/protocol';
+import { normalizeWindowsTerminalWindowName } from '@happier-dev/protocol/sessions/metadata/windowsTerminalWindowName';
 
 export async function focusWindowsTerminalWindow(params: {
   windowId: string;

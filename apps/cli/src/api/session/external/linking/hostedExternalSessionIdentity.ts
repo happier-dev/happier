@@ -2,12 +2,8 @@ import {
   resolveAgentIdFromSessionMetadata,
   resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
-import {
-  resolveExternalHistoryImportV1FromMetadata,
-  resolveLinkedExternalSessionMetadataV1,
-  type ExternalSessionsAgentId,
-  type ExternalSessionStorageStateV1,
-} from '@happier-dev/protocol';
+import { resolveExternalHistoryImportV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionsAgentId, ExternalSessionStorageStateV1 } from '@happier-dev/protocol';
 
 export type HostedExternalSessionIdentityProof =
   | Readonly<{ state: 'matched' | 'not_matched' }>

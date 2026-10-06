@@ -12,11 +12,9 @@ import type {
 } from '@happier-dev/plugin-sdk/managed-services';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
-import {
-    PluginDiagnosticDataV1Schema,
-    readManagedServiceEndpointUrl,
-    type ManagedServiceEndpointHostPolicy,
-} from '@happier-dev/protocol';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
+import type { ManagedServiceEndpointHostPolicy } from '@happier-dev/protocol';
 
 import type {
     ManagedServiceProcessDurabilityOwner,

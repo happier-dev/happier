@@ -1,4 +1,4 @@
-import { readPendingLocalId } from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 
 export const DEFAULT_COMMITTED_USER_MESSAGE_SEQ_TRACKER_MAX_ENTRIES = 256;
 

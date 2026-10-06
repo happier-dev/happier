@@ -1,4 +1,4 @@
-import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol';
+import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '../../happierCloud.js';
 import type { PersonalHomeRuntimeLayout } from './layout.js';
 

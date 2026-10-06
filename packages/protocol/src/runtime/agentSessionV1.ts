@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
@@ -44,15 +45,15 @@ function opaqueNonBlankString(max: number) {
   return NonBlankOpaqueIdentifierSchema.max(max);
 }
 
-const HostIdSchema = exactString(HOST_ID_MAX);
+const HostIdSchema = lazyZodSchema(() => exactString(HOST_ID_MAX));
 /**
  * Identifiers the Agent mints — session, turn, tool-call, message, edit and
  * observation ids. Happier correlates and replays them, never re-canonicalizes
  * them, so they are validated for presence and carried byte for byte.
  */
-const ProviderIdSchema = opaqueNonBlankString(PROVIDER_ID_MAX);
-const InputIdSchema = opaqueNonBlankString(HOST_ID_MAX);
-const SafeIntegerSchema = z.number().int().nonnegative().max(LIMITS.safeIntegerMax);
+const ProviderIdSchema = lazyZodSchema(() => opaqueNonBlankString(PROVIDER_ID_MAX));
+const InputIdSchema = lazyZodSchema(() => opaqueNonBlankString(HOST_ID_MAX));
+const SafeIntegerSchema = lazyZodSchema(() => z.number().int().nonnegative().max(LIMITS.safeIntegerMax));
 /**
  * The strict runtime JSON value used at admission boundaries. Aggregate byte
  * limits belong to a real transport, persistence, or external contract owner;
@@ -78,13 +79,13 @@ const AgentRuntimeEventJsonValueV1Schema: z.ZodType<StrictJsonValue, unknown> = 
 export const AgentRuntimeJsonValueSchema = AgentRuntimeJsonValueV1Schema;
 
 export const AgentSessionProviderCheckpointMaxJsonBytesV1 = 4_096;
-export const AgentSessionProviderCheckpointV1Schema = AgentRuntimeJsonValueV1Schema.refine(
+export const AgentSessionProviderCheckpointV1Schema = lazyZodSchema(() => AgentRuntimeJsonValueV1Schema.refine(
   (value) => (
     new TextEncoder().encode(JSON.stringify(value)).byteLength
     <= AgentSessionProviderCheckpointMaxJsonBytesV1
   ),
   'Provider checkpoint exceeds the Agent session byte bound',
-);
+));
 export type AgentSessionProviderCheckpointV1 = z.infer<
   typeof AgentSessionProviderCheckpointV1Schema
 >;
@@ -96,7 +97,7 @@ const TimestampedAgentValueV1Schema = <ValueSchema extends z.core.SomeType>(
   updatedAtMs: SafeIntegerSchema,
 }).strict();
 
-const AgentLaunchEnvironmentCoreV1Schema = z.object({
+const AgentLaunchEnvironmentCoreV1Schema = lazyZodSchema(() => z.object({
   values: z.record(exactString(HOST_ID_MAX), z.string()),
   unset: z.array(exactString(HOST_ID_MAX)),
 }).strict().superRefine((value, context) => {
@@ -110,30 +111,30 @@ const AgentLaunchEnvironmentCoreV1Schema = z.object({
       context.addIssue({ code: 'custom', message: `Launch-environment key '${key}' cannot be set and unset` });
     }
   }
-});
+}));
 
-export const AgentLaunchEnvironmentV1Schema = AgentRuntimeJsonValueV1Schema.pipe(
+export const AgentLaunchEnvironmentV1Schema = lazyZodSchema(() => AgentRuntimeJsonValueV1Schema.pipe(
   AgentLaunchEnvironmentCoreV1Schema,
-);
+));
 
-const AgentConfigurationScalarV1Schema = z.union([
+const AgentConfigurationScalarV1Schema = lazyZodSchema(() => z.union([
   z.string(),
   z.number().finite(),
   z.boolean(),
   z.null(),
-]);
+]));
 export {
   AGENT_PERMISSION_INTENTS_V1,
   AgentPermissionIntentV1Schema,
   parseAgentPermissionIntentV1Alias,
 } from './permissionIntentV1.js';
-export const AgentSessionProviderResumeV1Schema = z.object({
+export const AgentSessionProviderResumeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('provider_session.v1'),
   providerSessionId: ProviderIdSchema,
-}).strict();
+}).strict());
 export type AgentSessionProviderResumeV1 = z.infer<typeof AgentSessionProviderResumeV1Schema>;
 
-const AgentSessionConfigurationSnapshotCoreV1Schema = z.object({
+const AgentSessionConfigurationSnapshotCoreV1Schema = lazyZodSchema(() => z.object({
   mode: TimestampedAgentValueV1Schema(exactString(MODEL_ID_MAX).nullable()),
   model: TimestampedAgentValueV1Schema(exactString(MODEL_ID_MAX).nullable()),
   permissionIntent: TimestampedAgentValueV1Schema(asProtocolZod(AgentPermissionIntentV1Schema).nullable()),
@@ -145,11 +146,11 @@ const AgentSessionConfigurationSnapshotCoreV1Schema = z.object({
   ),
   /** Stable provider-owned continuation identity; never an opaque credential payload. */
   providerSessionResume: AgentSessionProviderResumeV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const AgentSessionConfigurationSnapshotV1Schema = AgentRuntimeJsonValueV1Schema.pipe(
+export const AgentSessionConfigurationSnapshotV1Schema = lazyZodSchema(() => AgentRuntimeJsonValueV1Schema.pipe(
   AgentSessionConfigurationSnapshotCoreV1Schema,
-);
+));
 
 export type AgentSessionConfigurationUpdateV1 = z.infer<
   typeof AgentSessionConfigurationSnapshotV1Schema
@@ -163,19 +164,19 @@ export const AgentSessionConfigurationUpdateV1Schema =
     }).strict(),
   ) as z.ZodType<AgentSessionConfigurationUpdateV1, AgentSessionConfigurationUpdateV1>;
 
-const EventBaseSchema = z.object({
+const EventBaseSchema = lazyZodSchema(() => z.object({
   sequence: SafeIntegerSchema,
   sessionId: HostIdSchema,
   emittedAtMs: SafeIntegerSchema,
-}).strict();
+}).strict());
 
 export const SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX = Math.floor(
   SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX / 2,
 );
-const SessionRuntimeActivitySlotActiveCountSchema = SafeIntegerSchema.max(
+const SessionRuntimeActivitySlotActiveCountSchema = lazyZodSchema(() => SafeIntegerSchema.max(
   SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX,
-);
-const RuntimeActivitySnapshotEventSchema = EventBaseSchema.extend({
+));
+const RuntimeActivitySnapshotEventSchema = lazyZodSchema(() => EventBaseSchema.extend({
   kind: z.literal('runtime-activity-snapshot'),
   state: z.enum(['active', 'idle', 'unknown']),
   activeCount: SessionRuntimeActivitySlotActiveCountSchema,
@@ -189,7 +190,7 @@ const RuntimeActivitySnapshotEventSchema = EventBaseSchema.extend({
   if (value.activeCount !== 0) {
     context.addIssue({ code: 'custom', path: ['activeCount'], message: 'Idle and unknown snapshots require a zero count' });
   }
-});
+}));
 
 const TurnEventBaseShape = {
   sequence: SafeIntegerSchema,
@@ -199,20 +200,20 @@ const TurnEventBaseShape = {
   agentTurnId: ProviderIdSchema.optional(),
 };
 
-const InputIdsSchema = z.tuple([InputIdSchema], InputIdSchema)
+const InputIdsSchema = lazyZodSchema(() => z.tuple([InputIdSchema], InputIdSchema)
   .refine((ids) => ids.length <= INPUT_IDS_MAX, 'Input id tuple limit exceeded')
-  .refine((ids) => new Set(ids).size === ids.length, 'Input ids must be duplicate-free');
+  .refine((ids) => new Set(ids).size === ids.length, 'Input ids must be duplicate-free'));
 
-const UsageTokensSchema = z.object({
+const UsageTokensSchema = lazyZodSchema(() => z.object({
   input: SafeIntegerSchema,
   output: SafeIntegerSchema,
   reasoning: SafeIntegerSchema,
   cacheRead: SafeIntegerSchema,
   cacheWrite: SafeIntegerSchema,
   total: SafeIntegerSchema,
-}).strict();
+}).strict());
 
-const UsageCostSchema = z.object({
+const UsageCostSchema = lazyZodSchema(() => z.object({
   reportedUsd: z.number().finite().nonnegative(),
   estimatedUsd: z.number().finite().nonnegative(),
   invoiceUsd: z.number().finite().nonnegative().optional(),
@@ -240,9 +241,9 @@ const UsageCostSchema = z.object({
     )
     .optional(),
   effectiveUsd: z.number().finite().nonnegative().optional(),
-}).strict();
+}).strict());
 
-const ContextUsageSchema = z.object({
+const ContextUsageSchema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   modelId: exactString(MODEL_ID_MAX).nullable(),
   usedTokens: SafeIntegerSchema,
@@ -257,7 +258,7 @@ const ContextUsageSchema = z.object({
   }).strict()).max(LIMITS.usage.contextCategoriesMaxItems).nullable(),
   observedAtMs: SafeIntegerSchema,
   source: z.enum(['provider_live', 'provider_turn', 'derived_estimate']),
-}).strict();
+}).strict());
 
 const UsageMeasurementShape = {
   tokens: UsageTokensSchema.optional(),
@@ -266,7 +267,7 @@ const UsageMeasurementShape = {
 };
 
 const InputCustodySchemas = [
-  EventBaseSchema.extend({
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('input-accepted'),
     inputIds: InputIdsSchema,
     delivery: z.discriminatedUnion('kind', [
@@ -274,19 +275,19 @@ const InputCustodySchemas = [
       z.object({ kind: z.literal('followUp'), turnId: HostIdSchema }).strict(),
       z.object({ kind: z.literal('steer'), turnId: HostIdSchema }).strict(),
     ]),
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('input-rejected'),
     inputIds: InputIdsSchema,
     diagnostic: AgentRuntimeDiagnosticDataV1Schema,
     retryable: z.boolean(),
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('input-custody-unknown'),
     inputIds: InputIdsSchema,
     issue: AgentRuntimeDiagnosticDataV1Schema,
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('input-delivery-failed'),
     inputIds: InputIdsSchema,
     delivery: z.discriminatedUnion('kind', [
@@ -295,11 +296,11 @@ const InputCustodySchemas = [
     ]),
     issue: AgentRuntimeDiagnosticDataV1Schema,
     duplicateRisk: z.enum(['possible', 'likely', 'unknown']),
-  }).strict(),
+  }).strict()),
 ] as const;
 
 const LifecycleSchemas = [
-  EventBaseSchema.extend({
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('provider-session-id'),
     providerSessionId: ProviderIdSchema,
     /**
@@ -316,25 +317,25 @@ const LifecycleSchemas = [
      * handoff brief, which offers the successor Agent the predecessor's log.
      */
     nativeSessionLogPath: z.string().trim().min(1).max(4_096).optional(),
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('available-commands'),
     commands: z.array(z.object({
       name: z.string().trim().min(1).max(2_000),
       description: z.string().max(20_000).optional(),
     }).strict()).max(4_096),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('turn-start'),
     startedBy: z.enum(['host', 'provider']),
     causedByTurnId: HostIdSchema.optional(),
-  }).strict(),
-  z.object({ ...TurnEventBaseShape, kind: z.literal('turn-progress') }).strict(),
-  z.object({ ...TurnEventBaseShape, kind: z.literal('turn-agent-id-observed'), agentTurnId: ProviderIdSchema }).strict(),
-  z.object({ ...TurnEventBaseShape, kind: z.literal('turn-complete') }).strict(),
-  z.object({ ...TurnEventBaseShape, kind: z.literal('turn-failed'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({ ...TurnEventBaseShape, kind: z.literal('turn-progress') }).strict()),
+  lazyZodSchema(() => z.object({ ...TurnEventBaseShape, kind: z.literal('turn-agent-id-observed'), agentTurnId: ProviderIdSchema }).strict()),
+  lazyZodSchema(() => z.object({ ...TurnEventBaseShape, kind: z.literal('turn-complete') }).strict()),
+  lazyZodSchema(() => z.object({ ...TurnEventBaseShape, kind: z.literal('turn-failed'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('turn-cancelled'),
     cause: z.enum([
@@ -347,55 +348,55 @@ const LifecycleSchemas = [
       'unknown',
     ]),
     diagnostic: AgentRuntimeDiagnosticDataV1Schema.optional(),
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('runtime-ended'),
     cause: z.enum(['providerEnded', 'connectionLost', 'processExited', 'protocolError', 'unknown']),
     retryable: z.boolean(),
     diagnostic: AgentRuntimeDiagnosticDataV1Schema.optional(),
-  }).strict(),
+  }).strict()),
 ] as const;
 
 const OutputSchemas = [
-  z.object({
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('message-delta'),
     channel: z.enum(['assistant', 'reasoning']),
     text: z.string(),
     sidechainId: HostIdSchema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('tool-call'),
     toolCallId: ProviderIdSchema,
     toolName: exactString(NAME_MAX),
     input: AgentRuntimeEventJsonValueV1Schema,
     sidechainId: HostIdSchema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('tool-progress'),
     toolCallId: ProviderIdSchema,
     progress: AgentRuntimeEventJsonValueV1Schema,
     sidechainId: HostIdSchema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('tool-result'),
     toolCallId: ProviderIdSchema,
     output: AgentRuntimeEventJsonValueV1Schema,
     isError: z.boolean().optional(),
     sidechainId: HostIdSchema.optional(),
-  }).strict(),
-  EventBaseSchema.extend({
+  }).strict()),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('transcript-message-committed'),
     messageId: ProviderIdSchema,
     role: z.enum(['user', 'assistant', 'reasoning']),
     text: z.string().max(TRANSCRIPT_TEXT_CANDIDATE_MAX),
     turnId: HostIdSchema.optional(),
     sidechainId: HostIdSchema.optional(),
-  }).strict(),
-  z.object({
+  }).strict()),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('file-edit'),
     editId: ProviderIdSchema,
@@ -412,8 +413,8 @@ const OutputSchemas = [
       newContent: value.newContent,
     }) <= LIMITS.p0MeasuredCandidates.fileEditContentMaxJsonBytes,
     'File-edit content exceeds the CORE-A candidate byte bound',
-  ),
-  EventBaseSchema.extend({
+  )),
+  lazyZodSchema(() => EventBaseSchema.extend({
     kind: z.literal('usage-observed'),
     observationId: ProviderIdSchema,
     turnId: HostIdSchema.optional(),
@@ -424,29 +425,29 @@ const OutputSchemas = [
   }).strict().refine(
     (value) => value.tokens !== undefined || value.cost !== undefined || value.context !== undefined,
     'At least one usage measurement is required',
-  ),
-  z.object({
+  )),
+  lazyZodSchema(() => z.object({
     ...TurnEventBaseShape,
     kind: z.literal('turn-rollback-boundary'),
     agentRollbackOrdinal: SafeIntegerSchema.optional(),
     providerCheckpoint: AgentSessionProviderCheckpointV1Schema.optional(),
-  }).strict(),
+  }).strict()),
 ] as const;
 
 const CompactionCommonShape = {
   sequence: SafeIntegerSchema,
   sessionId: HostIdSchema,
   emittedAtMs: SafeIntegerSchema,
-  kind: z.literal('context-compaction'),
+  kind: lazyZodSchema(() => z.literal('context-compaction')),
   compactionId: HostIdSchema,
   turnId: HostIdSchema.optional(),
-  trigger: z.enum(['manual', 'automatic', 'threshold', 'overflow', 'unknown']),
+  trigger: lazyZodSchema(() => z.enum(['manual', 'automatic', 'threshold', 'overflow', 'unknown'])),
   retryAttempt: SafeIntegerSchema.optional(),
 };
 
-const TokenCountSourceSchema = z.enum(['providerReported', 'providerEstimated', 'derivedEstimate']);
+const TokenCountSourceSchema = lazyZodSchema(() => z.enum(['providerReported', 'providerEstimated', 'derivedEstimate']));
 const CompactionSchemas = [
-  z.object({
+  lazyZodSchema(() => z.object({
     ...CompactionCommonShape,
     phase: z.literal('started'),
     tokenCountBefore: SafeIntegerSchema.optional(),
@@ -455,9 +456,9 @@ const CompactionSchemas = [
     if ((value.tokenCountBefore === undefined) !== (value.tokenCountSource === undefined)) {
       context.addIssue({ code: 'custom', message: 'Token count and source must be supplied together' });
     }
-  }),
-  z.object({ ...CompactionCommonShape, phase: z.literal('progress') }).strict(),
-  z.object({
+  })),
+  lazyZodSchema(() => z.object({ ...CompactionCommonShape, phase: z.literal('progress') }).strict()),
+  lazyZodSchema(() => z.object({
     ...CompactionCommonShape,
     phase: z.literal('completed'),
     tokenCountBefore: SafeIntegerSchema.optional(),
@@ -473,47 +474,47 @@ const CompactionSchemas = [
     if (value.pauseReason !== undefined && value.continuation !== 'paused') {
       context.addIssue({ code: 'custom', message: 'Pause reason requires paused continuation' });
     }
-  }),
-  z.object({ ...CompactionCommonShape, phase: z.literal('failed'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
-  z.object({ ...CompactionCommonShape, phase: z.literal('cancelled'), diagnostic: AgentRuntimeDiagnosticDataV1Schema.optional() }).strict(),
-  z.object({ ...CompactionCommonShape, phase: z.literal('outcomeUnknown'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
+  })),
+  lazyZodSchema(() => z.object({ ...CompactionCommonShape, phase: z.literal('failed'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict()),
+  lazyZodSchema(() => z.object({ ...CompactionCommonShape, phase: z.literal('cancelled'), diagnostic: AgentRuntimeDiagnosticDataV1Schema.optional() }).strict()),
+  lazyZodSchema(() => z.object({ ...CompactionCommonShape, phase: z.literal('outcomeUnknown'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict()),
 ] as const;
 
-const AgentSessionRuntimeNonCompactionEventV1Schema = z.discriminatedUnion('kind', [
+const AgentSessionRuntimeNonCompactionEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ...InputCustodySchemas,
   ...LifecycleSchemas,
   ...OutputSchemas,
   RuntimeActivitySnapshotEventSchema,
-]);
-const AgentSessionCompactionEventV1Schema = z.discriminatedUnion('phase', CompactionSchemas);
-const AgentSessionRuntimeEventCoreV1Schema = z.union([
+]));
+const AgentSessionCompactionEventV1Schema = lazyZodSchema(() => z.discriminatedUnion('phase', CompactionSchemas));
+const AgentSessionRuntimeEventCoreV1Schema = lazyZodSchema(() => z.union([
   AgentSessionRuntimeNonCompactionEventV1Schema,
   AgentSessionCompactionEventV1Schema,
-]);
+]));
 
 function jsonByteLength(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-export const AgentSessionRuntimeEventV1Schema = AgentSessionRuntimeEventCoreV1Schema.superRefine((value, context) => {
+export const AgentSessionRuntimeEventV1Schema = lazyZodSchema(() => AgentSessionRuntimeEventCoreV1Schema.superRefine((value, context) => {
   if (jsonByteLength(value) > EVENT_JSON_BYTES_CANDIDATE_MAX) {
     context.addIssue({ code: 'custom', message: 'Agent runtime event exceeds the CORE-A candidate byte bound' });
   }
-});
+}));
 export const AgentSessionRuntimeEventSchema = AgentSessionRuntimeEventV1Schema;
 
-const AgentSessionInputV1Schema = z.object({
+const AgentSessionInputV1Schema = lazyZodSchema(() => z.object({
   text: z.string().max(INPUT_TEXT_CANDIDATE_MAX),
   structuredInput: AgentRuntimeJsonValueV1Schema.optional(),
-}).strict();
+}).strict());
 
-const AgentSessionDeliveryV1Schema = z.discriminatedUnion('kind', [
+const AgentSessionDeliveryV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('newTurn'), turnId: HostIdSchema }).strict(),
   z.object({ kind: z.literal('steer'), turnId: HostIdSchema }).strict(),
   z.object({ kind: z.literal('followUp'), turnId: HostIdSchema, afterTurnId: HostIdSchema }).strict(),
-]);
+]));
 
-export const AgentSessionSendRequestV1Schema = z.object({
+export const AgentSessionSendRequestV1Schema = lazyZodSchema(() => z.object({
   inputIds: InputIdsSchema,
   input: AgentSessionInputV1Schema,
   delivery: AgentSessionDeliveryV1Schema,
@@ -523,20 +524,20 @@ export const AgentSessionSendRequestV1Schema = z.object({
   if (jsonByteLength(value) > SEND_JSON_BYTES_CANDIDATE_MAX) {
     context.addIssue({ code: 'custom', message: 'Agent runtime send request exceeds the CORE-A candidate byte bound' });
   }
-});
+}));
 
-export const AgentSessionCompactRequestV1Schema = z.object({
+export const AgentSessionCompactRequestV1Schema = lazyZodSchema(() => z.object({
   compactionId: HostIdSchema,
   trigger: z.literal('manual'),
   instructions: z.string().max(COMPACT_INSTRUCTIONS_MAX).optional(),
-}).strict();
+}).strict());
 
-const AgentSessionConversationRollbackAffectedTurnV1Schema = z.object({
+const AgentSessionConversationRollbackAffectedTurnV1Schema = lazyZodSchema(() => z.object({
   turnId: HostIdSchema,
   providerCheckpoint: AgentSessionProviderCheckpointV1Schema.optional(),
-}).strict();
+}).strict());
 
-export const AgentSessionConversationRollbackRequestV1Schema = z.object({
+export const AgentSessionConversationRollbackRequestV1Schema = lazyZodSchema(() => z.object({
   operationId: HostIdSchema,
   target: z.object({ kind: z.literal('beforeTurn'), turnId: HostIdSchema }).strict(),
   affectedTurns: z.tuple(
@@ -554,24 +555,24 @@ export const AgentSessionConversationRollbackRequestV1Schema = z.object({
   providerSessionId: ProviderIdSchema,
   runtimeIncarnationId: HostIdSchema,
   managedServerInstanceId: HostIdSchema.optional(),
-}).strict();
+}).strict());
 
-const AgentSessionControlFailureV1Schema = z.union([
+const AgentSessionControlFailureV1Schema = lazyZodSchema(() => z.union([
   z.object({
     status: z.enum(['rejected', 'unavailable']),
     diagnostic: AgentRuntimeDiagnosticDataV1Schema,
     retryable: z.boolean(),
   }).strict(),
   z.object({ status: z.literal('unsupported'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
-]);
+]));
 
-export const AgentSessionConversationRollbackResultV1Schema = z.union([
+export const AgentSessionConversationRollbackResultV1Schema = lazyZodSchema(() => z.union([
   z.object({ status: z.literal('applied') }).strict(),
   z.object({ status: z.literal('outcomeUnknown'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
   AgentSessionControlFailureV1Schema,
-]);
+]));
 
-export const AgentSessionConversationRollbackReconciliationResultV1Schema = z.union([
+export const AgentSessionConversationRollbackReconciliationResultV1Schema = lazyZodSchema(() => z.union([
   z.object({ status: z.enum(['applied', 'notApplied']) }).strict(),
   z.object({ status: z.literal('outcomeUnknown'), diagnostic: AgentRuntimeDiagnosticDataV1Schema }).strict(),
   z.object({
@@ -579,7 +580,7 @@ export const AgentSessionConversationRollbackReconciliationResultV1Schema = z.un
     diagnostic: AgentRuntimeDiagnosticDataV1Schema,
     retryable: z.boolean(),
   }).strict(),
-]);
+]));
 
 export type AgentSessionRuntimeEvent = z.infer<typeof AgentSessionRuntimeEventV1Schema>;
 export type AgentSessionRuntimeEventV1 = AgentSessionRuntimeEvent;

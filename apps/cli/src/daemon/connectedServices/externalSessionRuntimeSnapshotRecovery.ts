@@ -3,13 +3,10 @@ import {
   readProviderSessionIdSessionState,
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
-import {
-  ExternalSessionsAgentIdSchema,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  readNonBlankOpaqueIdentifier,
-  type ExternalSessionsAgentId,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { ExternalSessionsAgentIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { ExternalSessionsAgentId, SessionMetadata } from '@happier-dev/protocol';
 
 import { listSessionMarkers, type DaemonSessionMarker } from '@/daemon/sessionRegistry';
 import {

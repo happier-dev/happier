@@ -1,5 +1,5 @@
 import type { InitializeResponse } from '@agentclientprotocol/sdk';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 const MAX_AUTH_METHODS = 64;
 const MAX_AUTH_METHOD_ID_CODE_UNITS = 256;

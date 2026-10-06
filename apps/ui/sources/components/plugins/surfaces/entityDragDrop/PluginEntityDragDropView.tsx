@@ -1,18 +1,19 @@
 import * as React from 'react';
-import { I18nManager, Platform, Pressable, View } from 'react-native';
+import { I18nManager, Platform, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { DragSourceProps, DropTargetProps } from '@happier-dev/plugin-ui';
-import { HAPPIER_CARRIED_SOURCE_OPACITY, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_CARRIED_SOURCE_OPACITY, describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { usePluginUiClientExecutableRegistrationRevision } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
-import { describeSessionListDropOutcome } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { createEntityDragGestureAdapter, ENTITY_DRAG_ACTIVATION_DISTANCE_PX } from '@/components/ui/treeDragDrop/entityDragGestureAdapter';
 import { useEntityDragDestinations, useEntityDragSourceState, useEntityDropTargetState } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { isSecondaryEntityRowControl, useEntityDragDomBinding, useEntityDropDomBinding } from '@/components/ui/treeDragDrop/useEntityDragDomBinding';
 import { measureWindowBounds, readWindowBounds, toTreeDropMeasurableRef } from '@/components/ui/treeDragDrop/registry/measureWindowBounds';
-import { EntityDragGrip, EntityStagedMoveDock } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { EntityDragGripTrigger, EntityStagedMoveDock, useEntityStagedMoveHints } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
+import { EntityDropSettledFeedback } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
+import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 import { TreeDropOutline } from '@/components/ui/treeDragDrop/ui/TreeDropOutline';
 import type { EntityDragCarry, EntityDropDestination } from '@/components/ui/treeDragDrop/entityDragDropTypes';
 import type { WindowBounds } from '@/components/ui/treeDragDrop/treeDragDropTypes';
@@ -139,15 +140,17 @@ function MountedPluginEntityDragSource(props: DragSourceProps & Readonly<{
         items={sections.flatMap(section => section.options.map(option => ({ id: option.id, title: option.label,
             subtitle: option.detail, disabled: option.disabled, category: section.title })))}
         onSelect={key => { const destination = destinations[Number(key)]; if (destination) void runtime.perform(sourceId, destination.targetId, destination.destination, 'chooser'); }}
-        trigger={({ toggle }) => <GestureDetector gesture={gesture}><Pressable onPress={toggle} accessibilityRole="button" accessibilityLabel={label}>
-            <EntityDragGrip active={state.active} density="touch" accessibilityLabel={label} />
-        </Pressable></GestureDetector>} /> : null;
-    return <View ref={attachDrag} testID={props.testID}
-        style={{ opacity: state.active ? HAPPIER_CARRIED_SOURCE_OPACITY : 1 }}
-        {...(Platform.OS === 'web' ? { onKeyDown, tabIndex: enabled ? 0 : undefined, role: 'group' as const, accessibilityLabel: label } : {})}>
-        <View style={grip ? { flexDirection: 'row', alignItems: 'center' } : undefined}>{grip}<View style={grip ? { flex: 1, minWidth: 0 } : undefined}>{props.children}</View></View>
-        <PluginSourceStagedFeedback binding={binding} sourceId={sourceId} testID={props.testID} />
-    </View>;
+        trigger={({ toggle }) => <GestureDetector gesture={gesture}><EntityDragGripTrigger onPress={toggle} accessibilityLabel={label}
+            active={state.active} density="touch" expanded={chooserOpen} /></GestureDetector>} /> : null;
+    const settledMatch = React.useMemo(() => ({ sourceId }), [sourceId]);
+    return <EntityDropSettledFeedback runtime={runtime} match={settledMatch} {...(props.testID ? { testID: props.testID } : {})}>
+        <View ref={attachDrag} testID={props.testID}
+            style={{ opacity: state.active ? HAPPIER_CARRIED_SOURCE_OPACITY : 1 }}
+            {...(Platform.OS === 'web' ? { onKeyDown, tabIndex: enabled ? 0 : undefined, role: 'group' as const, accessibilityLabel: label } : {})}>
+            <View style={grip ? { flexDirection: 'row', alignItems: 'center' } : undefined}>{grip}<View style={grip ? { flex: 1, minWidth: 0 } : undefined}>{props.children}</View></View>
+            <PluginSourceStagedFeedback binding={binding} sourceId={sourceId} testID={props.testID} />
+        </View>
+    </EntityDropSettledFeedback>;
 }
 
 function PluginSourceStagedFeedback(props: Readonly<{ binding: PluginEntityDragDropBinding; sourceId: string; testID?: string }>) {
@@ -156,14 +159,12 @@ function PluginSourceStagedFeedback(props: Readonly<{ binding: PluginEntityDragD
         const current = runtime.getSnapshot();
         return current.sourceId === props.sourceId && runtime.getPointer() === null ? current : null;
     }, () => null);
-    const outcome = snapshot ? describeSessionListDropOutcome({ phase: snapshot.phase, admission: snapshot.admission }) : null;
-    const announcement = outcome ? [outcome.title, outcome.detail].filter(Boolean).join('. ') : '';
+    const hints = useEntityStagedMoveHints();
+    const staged = snapshot && (snapshot.phase === 'carrying' || snapshot.phase === 'pending') ? snapshot : null;
+    const outcome = staged ? describeEntityDropOutcome(staged) : null;
+    const announcement = describeHappierDropAnnouncement(outcome);
     return <>
-        {outcome ? <EntityStagedMoveDock outcome={outcome} hints={[
-            { keys: ['↑', '↓'], label: t('entityDragDrop.keyboard.choose') },
-            { keys: ['Enter'], label: t('entityDragDrop.keyboard.drop') },
-            { keys: ['Esc'], label: t('entityDragDrop.keyboard.cancel') },
-        ]} /> : null}
+        {outcome ? <EntityStagedMoveDock outcome={outcome} hints={hints} /> : null}
         <PoliteAccessibilityStatus statusTestID={`${props.testID ?? props.sourceId}.status`}
             transitionKey={announcement} announcement={announcement} />
     </>;

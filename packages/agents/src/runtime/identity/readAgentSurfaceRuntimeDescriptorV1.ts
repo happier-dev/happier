@@ -1,8 +1,6 @@
-import {
-  readRuntimeDescriptorV1,
-  readRuntimeDescriptorV1FromMetadata,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import { resolveAgentIdFromSessionMetadata } from '../../resolveAgentIdFromSessionMetadata.js';
 import { getRuntimeDescriptorReader } from './runtimeDescriptorReaderRegistry.js';

@@ -98,6 +98,7 @@ export function WorkflowRunSteps(props: Readonly<{
                 return [entry ? props.occurrenceLabel(entry) : null, describeWorkflowInvocationAttempt(invocation.attempt).label].filter(Boolean).join(' · ');
             };
             return {
+                ...(block?.kind === 'workflow' ? { nestedDefinition: child ?? null } : {}),
                 state: selected || occurrences.length === 1 ? <WorkflowLifecycleStatus lifecycle={(selected ?? occurrences[0]!).lifecycle} blockKind={block?.kind ?? null} /> : null,
                 occurrenceSelector: occurrences.length > 1 ? <WorkflowRunOccurrenceSelector
                     invocations={occurrences} selectedInvocationId={props.selectedInvocationId}
@@ -115,7 +116,6 @@ export function WorkflowRunSteps(props: Readonly<{
                                 style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
                             >
                                 <Text style={styles.action}>{label(invocation)}</Text>
-                                <WorkflowLifecycleStatus lifecycle={invocation.lifecycle} blockKind={block?.kind ?? null} chrome="plain" />
                             </HappierPressable>;
                         })}
                     </View>

@@ -1,40 +1,34 @@
-import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol';
+import { NonBlankOpaqueIdentifierSchema } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { z } from 'zod';
 
-import {
-  AgentExternalSessionTranscriptRawRecordSchema,
-  AgentIdV1Schema,
-  ExternalSessionTranscriptItemIdV1Schema,
-  ExternalSessionTerminalSourceObservationV1Schema,
-  ExternalSessionTranscriptSourceTimestampV1Schema,
-  ExternalSessionUserProjectionSchema,
-  ExternalSessionOperationStateV1Schema,
-  ExternalSessionTranscriptRawMessageV1Schema,
-  ExternalSessionsSourceSchema,
-  PluginContributionIdentityV1Schema,
-  PluginSourceCustodyV1Schema,
-  SidechainIdSchema,
-  VoiceProviderContributionSchema,
-  RuntimeDescriptorV1Schema,
-  SessionRunnerRuntimeStateV1Schema,
-  SessionStateAcpConfigOptionValueSchema,
-  SessionStateAcpSessionModeValueSchema,
-  SessionStateAttentionValueSchema,
-  SessionStateExternalAgentValueSchema,
-  SessionStateModelValueSchema,
-  SessionStatePermissionModeValueSchema,
-  SessionStateProviderSessionIdValueSchema,
-  SessionStateReadStateValueSchema,
-  SessionStateRuntimeActivityValueSchema,
-  SessionStateRuntimeDescriptorValueSchema,
-  SessionStateTitleValueSchema,
-  SessionStateUsageLimitRecoveryValueSchema,
-  SessionStateWorkStateValueSchema,
-  resolveTranscriptBodySemanticEvent,
-  type PluginContributionIdentityV1,
-  type VoiceProviderContribution,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
+import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
+import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
+import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { ExternalSessionOperationStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionTranscriptRawMessageV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionStateAcpConfigOptionValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/acpConfigOption';
+import { AcpSessionModeOverrideV1Schema as SessionStateAcpSessionModeValueSchema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { SessionStateAttentionValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/attention';
+import { ExternalAgentObservationSnapshotV1Schema as SessionStateExternalAgentValueSchema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import { SessionStateModelValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/model';
+import { SessionStatePermissionModeValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/permissionMode';
+import { SessionStateProviderSessionIdValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/providerSessionId';
+import { SessionStateReadStateValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/readState';
+import { SessionRuntimeActivitySnapshotSchema as SessionStateRuntimeActivityValueSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { RuntimeDescriptorV1Schema as SessionStateRuntimeDescriptorValueSchema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionStateTitleValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/title';
+import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { PluginContributionIdentityV1, VoiceProviderContribution } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import {
   AgentRuntimeDaemonServiceTurnWitnessV1Schema,
 } from './agentRuntimeDaemonServiceTurnWitness';

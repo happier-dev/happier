@@ -31,6 +31,7 @@ import { executeBoundedBackendRun } from './bounded/loop';
 import { createRetainedExecutionRunInputDelivery } from './pending/retainedExecutionRunInputDelivery';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { createVoiceSessionContextLease, createVoiceSessionRuntimeThroughNativeFactory } from './testkit/nativeSessionContext';
+import { logger } from '@/ui/logger';
 
 import {
     createNativeAgentExecutionRunHostRuntime,
@@ -45,6 +46,7 @@ import {
 
 afterEach(() => {
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
 });
 
 async function createUnexpectedAgentRuntimeSurfaceInvocationContext(): Promise<never> {
@@ -1620,6 +1622,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
 
     it('sanitizes Provider secrets echoed by async open, send, stop, and run-failed diagnostics', async () => {
         const secret = 'provider-secret-value';
+        const failureLog = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const sanitizeProviderDiagnosticText = (value: string) =>
             value.replaceAll(secret, '[REDACTED]');
         const createLease = (runtime: AgentRuntime) => Object.freeze({
@@ -1645,6 +1648,15 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             start: Object.freeze({ profileId: 'delegate' }),
             revalidateProviderBeforeOpen: async () => ({ ok: true as const }),
             sanitizeProviderDiagnosticText,
+            isolation: { env: {
+                ACCESS_TOKEN: secret,
+                HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+                    kind: 'group', serviceId: 'happier.agent.codex/openai-codex',
+                    groupId: 'happier', activeProfileId: 'account-work',
+                    fallbackProfileId: 'account-work', generation: 3,
+                    policy: { privateValue: 'private-policy-value' },
+                }]),
+            } },
         });
         const failingOpenRuntime: AgentRuntime = Object.freeze({
             executionRuns: Object.freeze({
@@ -1716,6 +1728,13 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             status: 'error',
             detail: 'event echoed [REDACTED]',
         });
+        expect(failureLog).toHaveBeenCalledWith('[EXECUTION RUN] provider failure', {
+            runId: 'run-provider-redaction', agentId: 'codex',
+            selectedMembers: [{ serviceId: 'happier.agent.codex/openai-codex',
+                groupId: 'happier', profileId: 'account-work', label: 'account-work' }],
+        });
+        expect(JSON.stringify(failureLog.mock.calls)).not.toContain(secret);
+        expect(JSON.stringify(failureLog.mock.calls)).not.toContain('private-policy-value');
         await activeHost.dispose();
     });
 

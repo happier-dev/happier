@@ -1,7 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { isValidEnvVarKey, sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 type EnvPreviewSecretsPolicy = 'none' | 'redacted' | 'full';
 

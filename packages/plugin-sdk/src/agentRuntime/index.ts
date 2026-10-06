@@ -308,20 +308,13 @@ export {
   createAgentSessionPreAdmissionBuffer,
 } from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
 
-export {
-  AgentExecutionRunEventSchema,
-  AgentProviderBindingMaterializationV1Schema,
-  AgentRuntimeJsonValueSchema,
-  AgentSessionProviderBindingV1Schema,
-  AgentSessionRealtimeStartRequestV1Schema,
-  AgentSessionRealtimeStartResultV1Schema,
-  AgentSessionRuntimeEventSchema,
-  SessionContextUsageSnapshotV1Schema,
-  UsageObservationContextSchema,
-  UsageObservationCostSchema,
-  UsageObservationScopeSchema,
-  UsageObservationTokensSchema,
-} from '@happier-dev/protocol/runtime';
+export { AgentExecutionRunEventSchema } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
+export { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+export { AgentRuntimeJsonValueSchema, AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+export { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
+export { AgentSessionRealtimeStartRequestV1Schema, AgentSessionRealtimeStartResultV1Schema } from '@happier-dev/protocol/voice/realtime/agentSession';
+export { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
+export { UsageObservationContextSchema, UsageObservationCostSchema, UsageObservationScopeSchema, UsageObservationTokensSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 export {
   assertExperimentalAgentSessionRealtimeRuntime as assertAgentSessionRealtimeRuntime,

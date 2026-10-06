@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { SessionBoardTabIdSchema, SessionSurfaceItemIdSchema } from './ids.js';
 
 export const SessionBoardItemWidthSchema = z.enum(['compact', 'medium', 'wide', 'full']);
@@ -27,6 +28,8 @@ export const SessionBoardLayoutV1Schema = z.object({
   });
 });
 export type SessionBoardItemWidth = z.infer<typeof SessionBoardItemWidthSchema>;
+/** Persisted layout normalizes additive fields; mutations still use the closed schema. */
+export const SessionBoardLayoutV1StoredSchema = createStoredReadSchema(SessionBoardLayoutV1Schema);
 export type SessionBoardItemFrameStyle = z.infer<typeof SessionBoardItemFrameStyleSchema>;
 export type SessionBoardLayoutV1 = Readonly<{
   v: 1;

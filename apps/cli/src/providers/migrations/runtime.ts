@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Credentials } from '@/persistence';
-import {
-  applyReviewedLegacyProfileMigrationConflictV1,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  type AccountSettings,
-  type LegacyProfileMigrationConflictResolutionV1,
-  type LegacyProfileReviewedMappingV1,
-} from '@happier-dev/protocol';
+import { applyReviewedLegacyProfileMigrationConflictV1 } from '@happier-dev/protocol/providers/migrations/conflictsV1';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import type { AccountSettings, LegacyProfileMigrationConflictResolutionV1, LegacyProfileReviewedMappingV1 } from '@happier-dev/protocol';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';

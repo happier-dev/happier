@@ -1,6 +1,4 @@
-import {
-  normalizeProviderContributionKeyV1,
-} from '@happier-dev/protocol';
+import { normalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
 
 import type { ProviderContributionRegistryView } from './types';
 

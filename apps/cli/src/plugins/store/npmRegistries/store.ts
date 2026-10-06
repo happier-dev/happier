@@ -1,10 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import {
-  NpmRegistryOriginV1Schema,
-  NpmRegistryProfileIdV1Schema,
-  NpmRegistryScopeV1Schema,
-} from '@happier-dev/protocol/rpc';
+import { NpmRegistryOriginV1Schema, NpmRegistryProfileIdV1Schema, NpmRegistryScopeV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 import { z } from 'zod';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';

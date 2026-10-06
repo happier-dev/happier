@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1, type HappierPressableStyleState } from '@happier-dev/plugin-ui/presentation';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -9,6 +10,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { doWorkflowParallelBranchesUseSeparateConversations } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { t } from '@/text';
 
 import { updateWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -18,7 +20,7 @@ import type { WorkflowBlockAction } from './WorkflowBlockActionsMenu';
 import { WorkflowBlockHeading } from './WorkflowBlockHeading';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 type ParallelBlock = Extract<WorkflowBlock, Readonly<{ kind: 'parallel' }>>;
 
@@ -168,11 +170,11 @@ export function WorkflowGroupEditor(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const displayName = `${t('workflows.editor.unnamedParallel')} ${props.ordinal}`;
+    const displayName = workflowBlockReferenceLabel(props.block);
     const idPrefix = `${props.testIDPrefix}-parallel-${props.block.id}`;
-    const pressStyle = (state: Parameters<typeof workflowPressFeedbackStyle>[0]) => [
+    const pressStyle = (state: HappierPressableStyleState) => [
         workflowEditorStyles.actionTarget,
-        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
     ];
 
     return (

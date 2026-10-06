@@ -1,4 +1,5 @@
-import { isLoopbackHostname, type HomeConnectionDescriptorV1, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
+import type { HomeConnectionDescriptorV1, IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 
 type HomeIrohEndpointDescriptorV1 = Extract<
   HomeConnectionDescriptorV1['endpoints'][number],

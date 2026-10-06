@@ -1,19 +1,8 @@
 import axios from 'axios';
 import { z } from 'zod';
-import {
-  AutomationDefinitionListRequestSchema,
-  AutomationDefinitionListResponseSchema,
-  AutomationDefinitionDetailSchema,
-  AutomationDefinitionCreateRequestSchema,
-  AutomationDefinitionReconcileRequestSchema,
-  AutomationDeleteResponseSchema,
-  AutomationRunStateV3Schema,
-  type AutomationDefinitionListResponse,
-  type AutomationDefinitionListRequest,
-  type AutomationDefinitionDetail,
-  type AutomationDefinitionCreateRequest,
-  type AutomationDefinitionReconcileRequest,
-} from '@happier-dev/protocol';
+import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema, AutomationDefinitionDetailSchema, AutomationDefinitionCreateRequestSchema, AutomationDefinitionReconcileRequestSchema, AutomationDeleteResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationRunStateV3Schema } from '@happier-dev/protocol/automations/automationRunStateV3';
+import type { AutomationDefinitionListResponse, AutomationDefinitionListRequest, AutomationDefinitionDetail, AutomationDefinitionCreateRequest, AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 
 import {
   createAuthenticationHttpStatusError,

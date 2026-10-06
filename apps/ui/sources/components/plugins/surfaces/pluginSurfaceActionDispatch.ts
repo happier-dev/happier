@@ -1221,6 +1221,8 @@ async function executeHostAction(
 
     const result = await binding.execute(actionId, input.input, {
         ...binding.context,
+        // Admission belongs to the continued parent, not an Action it invokes.
+        ...(clientCaller ? { bypassApprovals: false } : {}),
         ...(input.actionRequestId ? { actionRequestId: input.actionRequestId } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         surface: 'plugin',

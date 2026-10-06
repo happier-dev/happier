@@ -1,10 +1,8 @@
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
 import { createSessionInitialAccessFile } from '../spawn/sessionInitialAccessFile';
-import {
-    createProviderErrorV1,
-    type ConnectedServiceBindingsV2,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { prepareHerdrTerminalContext } from '@/terminal/runtime/prepareHerdrTerminalContext';

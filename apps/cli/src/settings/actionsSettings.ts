@@ -1,15 +1,7 @@
-import {
-  normalizeActionsSettingsV1,
-  tryNormalizeActionsSettingsV1,
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-  listActionSpecs,
-  type ActionId,
-  type ActionSettingsActionId,
-  type ActionSurfaces,
-  type ActionUiPlacement,
-  type ActionsSettingsV1,
-} from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1, tryNormalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId, ActionSettingsActionId, ActionSurfaces, ActionUiPlacement, ActionsSettingsV1 } from '@happier-dev/protocol';
 
 const ENV_KEY = 'HAPPIER_ACTIONS_SETTINGS_V1';
 const EMPTY_ACTIONS_SETTINGS = Object.freeze({

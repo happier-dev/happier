@@ -77,6 +77,7 @@ import { encryptSessionPayload } from '@/session/transport/encryption/sessionEnc
 import { encodeBase64 } from '@/api/encryption';
 import type { PluginActionsServiceSeed } from '@/plugins/runtime/invocation/services/actions';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
 import {
@@ -307,7 +308,8 @@ function createExternalActionExecutor(
 ) {
   return createActionExecutor({
     invokeContributedAction,
-    ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
+    ...(listContributedActionDefinitions ? { listContributedActionDefinitions,
+      readContributedActionSchemas: createCommittedContributedActionSchemaReader(listContributedActionDefinitions) } : {}),
     isActionApprovalRequired: () => false,
   } as unknown as ActionExecutorDeps);
 }

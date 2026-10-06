@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as sessions from '@happier-dev/protocol/sessions';
 
 import * as protocol from './folderSettings.js';
 
@@ -13,14 +14,32 @@ function getSchema(name: 'SessionFoldersV1Schema' | 'SessionFolderV1Schema') {
 }
 
 describe('session folder settings schemas', () => {
+  it('reads known stored folder fields recursively while keeping input validation strict', () => {
+    const workspace = { t: 'workspaceScope', serverId: 'server_1', machineId: 'machine_1', rootPath: '/repo' };
+    const folder = { id: 'folder_1', workspace, parentId: null, name: 'Work', createdAt: 1, updatedAt: 2 };
+    const stored = {
+      v: 1,
+      folders: [{ ...folder, savedBy: 'older-client', workspace: { ...workspace, displayPath: '/repo' } }],
+      savedBy: 'older-client',
+    };
+    const schema = protocol.SessionFoldersV1StoredSchema;
+    const parsed = schema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).toEqual({ v: 1, folders: [folder] });
+    expect(protocol.SessionFoldersV1Schema.parse(parsed.data)).toEqual(parsed.data);
+    expect(protocol.SessionFoldersV1Schema.safeParse(stored).success).toBe(false);
+    expect(protocol.SessionFolderWorkspaceRefV1StoredSchema.parse({ ...workspace, displayPath: '/repo' })).toEqual(workspace);
+    expect(protocol.SessionFolderWorkspaceRefV1Schema.safeParse({ ...workspace, displayPath: '/repo' }).success).toBe(false);
+    expect(schema.safeParse({ v: 1, folders: [{ ...folder, name: undefined }] }).success).toBe(false);
+    expect(schema.safeParse({ v: 1, folders: [{ ...folder, workspace: { ...workspace, machineId: 1 } }] }).success).toBe(false);
+  });
   it('accepts a managed-session bucket without a filesystem path', () => {
     const workspace = { t: 'managedSessions', serverId: 'server_1', machineId: 'machine_1' };
     expect(protocol.SessionFolderWorkspaceRefV1Schema.parse(workspace)).toEqual(workspace);
     expect(protocol.SessionFolderWorkspaceRefV1Schema.safeParse({ ...workspace, rootPath: '/fake' }).success).toBe(false);
   });
-  it('exports folder settings through the canonical sessions subpath', async () => {
-    const sessions = await import('@happier-dev/protocol/sessions');
-
+  it('exports folder settings through the canonical sessions subpath', () => {
     expect(typeof sessions.SessionFoldersV1Schema.safeParse).toBe('function');
     expect(typeof sessions.SetSessionFolderAssignmentRequestSchema.safeParse).toBe('function');
   });

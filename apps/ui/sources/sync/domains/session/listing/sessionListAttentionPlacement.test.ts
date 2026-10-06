@@ -528,7 +528,7 @@ describe('unread attention placement', () => {
             source,
             options: {
                 mode: 'global',
-                retainSessionKeys: [sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' })],
+                retainPlacements: [{ key: sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' }), reason: 'unread', timestamp: 0 }],
             },
             nowMs,
             resolveSessionRow: () => createRow({
@@ -578,7 +578,7 @@ describe('unread attention placement', () => {
             options: {
                 mode: 'global',
                 standingPolicy,
-                retainSessionKeys: [sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' })],
+                retainPlacements: [{ key: sessionAddressKey({ serverId: 'server-a', sessionId: 'selected-now-read' }), reason: 'unread', timestamp: 0 }],
             },
             nowMs,
             resolveSessionRow: resolveRow,

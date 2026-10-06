@@ -47,7 +47,13 @@ export function validateRuntimeTarget(
   { platform = process.platform, arch = process.arch } = {},
 ) {
   const rawTarget = manifest?.target;
-  if (rawTarget == null) return { ok: true, legacy: true, target: null, errors: [] };
+  if (rawTarget == null) {
+    // Predecessor snapshots omitted target metadata. Their local host reading
+    // remains supported; omission cannot establish compatibility on another CPU.
+    const localTarget = platform === process.platform && arch === process.arch;
+    return { ok: localTarget, legacy: true, target: null,
+      errors: localTarget ? [] : [`runtime snapshot has no target metadata for ${platform}/${arch}`] };
+  }
   const target = normalizeRuntimeTarget(rawTarget);
   if (!target) {
     return { ok: false, legacy: false, target: null, errors: ['runtime manifest target requires platform and arch'] };
@@ -169,7 +175,9 @@ export async function readRuntimePointer({ currentPath }) {
   return await readJsonIfExists(currentPath, { defaultValue: null });
 }
 
-export function validateRuntimeManifest(manifest) {
+export const RUNTIME_SNAPSHOT_COMPONENTS = Object.freeze(['web', 'server', 'daemon']);
+
+export function validateRuntimeManifest(manifest, { requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS } = {}) {
   const errors = [];
   const version = Number(manifest?.version);
   const snapshotIdValidation = validateRuntimeSnapshotId(manifest?.snapshotId);
@@ -195,9 +203,16 @@ export function validateRuntimeManifest(manifest) {
     errors.push(snapshotIdValidation.error);
   }
   if (!sourceFingerprint) errors.push('runtime manifest sourceFingerprint is required');
-  if (!web?.entrypoint) errors.push('runtime manifest web entrypoint is required');
-  if (!server?.entrypoint) errors.push('runtime manifest server entrypoint is required');
-  if (!daemon?.entrypoint) errors.push('runtime manifest daemon entrypoint is required');
+  const entries = { web, server, daemon };
+  if (!RUNTIME_SNAPSHOT_COMPONENTS.some(component => entries[component])) errors.push('runtime manifest requires at least one component');
+  for (const component of RUNTIME_SNAPSHOT_COMPONENTS) {
+    if ((requiredComponents.includes(component) || components[component] != null) && !entries[component]?.entrypoint) {
+      errors.push(`runtime manifest ${component} entrypoint is required`);
+    }
+  }
+  for (const component of requiredComponents) {
+    if (!RUNTIME_SNAPSHOT_COMPONENTS.includes(component)) errors.push(`runtime manifest required component is unsupported: ${component}`);
+  }
   if (rawWebEntrypoint && !web?.entrypoint) errors.push('runtime manifest web entrypoint must stay within the snapshot root');
   if (rawServerEntrypoint && !server?.entrypoint) errors.push('runtime manifest server entrypoint must stay within the snapshot root');
   if (rawDaemonEntrypoint && !daemon?.entrypoint) errors.push('runtime manifest daemon entrypoint must stay within the snapshot root');
@@ -223,11 +238,7 @@ export function validateRuntimeManifest(manifest) {
           target,
           source: manifest?.source && typeof manifest.source === 'object' ? { ...manifest.source } : null,
           reusedSnapshotIds,
-          components: {
-            web,
-            server,
-            daemon,
-          },
+          components: Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry)),
         }
       : null,
   };

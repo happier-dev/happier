@@ -1,18 +1,13 @@
-import {
-  evaluatePluginActionPolicy,
-  type PluginActionPolicyDecision,
-  type PluginActionPolicyInput,
-} from '@happier-dev/protocol/plugins/actions/policy';
+import { evaluatePluginActionPolicy } from '@happier-dev/protocol/plugins/actions/policy';
+import type { PluginActionPolicyDecision, PluginActionPolicyInput } from '@happier-dev/protocol/plugins/actions/policy';
 import type {
   PluginActionConfirmationV2,
   PluginActionDangerLevelV2,
   PluginActionPresentUserAuthorizationFacts,
 } from '@happier-dev/protocol';
-import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
-import {
-  evaluatePluginPolicyExpressionV2,
-  type PluginAvailabilityDescriptorV2,
-} from '@happier-dev/protocol/plugins/contributions/public-types';
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
+import { evaluatePluginPolicyExpressionV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginAvailabilityDescriptorV2 } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 export type TargetActionPolicyOutcome = PluginActionPolicyDecision['outcome'];
 

@@ -1,35 +1,9 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from 'axios';
 
-import {
-  LegacyHostSessionSystemRecordLatestResponseSchema,
-  LegacyHostSessionSystemRecordLookupResponseSchema,
-  LegacyHostSessionSystemRecordPageResponseSchema as SessionSystemRecordPageResponseSchema,
-  LegacyHostSessionSystemRecordUpsertResponseSchema as SessionSystemRecordUpsertResponseSchema,
-  SESSION_SYSTEM_RECORDS_PLUGIN_ID_HEADER,
-  SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
-  SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE,
-  readSessionSystemRecordErrorCodeV1,
-  PluginIdSchema,
-  SessionSystemRecordDeleteResponseSchema,
-  SessionSystemRecordStoredPageResponseSchema,
-  SessionSystemRecordStoredReadResponseSchema,
-  SessionSystemRecordStoredUpsertResponseSchema,
-  type LegacyHostSessionSystemRecord,
-  type LegacyHostSessionSystemRecordLatestQuery,
-  type LegacyHostSessionSystemRecordListQuery,
-  type LegacyHostSessionSystemRecordLookupQuery,
-  type LegacyHostSessionSystemRecordUpsertRequest,
-  type SessionSystemRecordAddress,
-  type SessionSystemRecordContent,
-  type SessionSystemRecordDeleteRequest,
-  type SessionSystemRecordKind,
-  type SessionSystemRecordListQuery,
-  type SessionSystemRecordNamespace,
-  type SessionSystemRecordStored,
-  type SessionSystemRecordStoredUpsertRequest,
-  type LegacyHostSessionSystemRecordPageResponse,
-} from '@happier-dev/protocol';
+import { LegacyHostSessionSystemRecordLatestResponseSchema, LegacyHostSessionSystemRecordLookupResponseSchema, LegacyHostSessionSystemRecordPageResponseSchema as SessionSystemRecordPageResponseSchema, LegacyHostSessionSystemRecordUpsertResponseSchema as SessionSystemRecordUpsertResponseSchema, SESSION_SYSTEM_RECORDS_PLUGIN_ID_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER, SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE, readSessionSystemRecordErrorCodeV1, SessionSystemRecordDeleteResponseSchema, SessionSystemRecordStoredPageResponseSchema, SessionSystemRecordStoredReadResponseSchema, SessionSystemRecordStoredUpsertResponseSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { LegacyHostSessionSystemRecord, LegacyHostSessionSystemRecordLatestQuery, LegacyHostSessionSystemRecordListQuery, LegacyHostSessionSystemRecordLookupQuery, LegacyHostSessionSystemRecordUpsertRequest, SessionSystemRecordAddress, SessionSystemRecordContent, SessionSystemRecordDeleteRequest, SessionSystemRecordKind, SessionSystemRecordListQuery, SessionSystemRecordNamespace, SessionSystemRecordStored, SessionSystemRecordStoredUpsertRequest, LegacyHostSessionSystemRecordPageResponse } from '@happier-dev/protocol';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';

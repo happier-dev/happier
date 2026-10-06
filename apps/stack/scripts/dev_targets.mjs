@@ -1,6 +1,7 @@
 import { configureDevTargetPower } from './utils/dev_targets/worker_power.mjs';
 import { provisionManagedWslDevTarget } from './utils/dev_targets/managed_wsl.mjs';
 import './utils/env/env.mjs';
+import { loadControlledRuntimeConfig } from './utils/dev_targets/service_placement.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -15,6 +16,7 @@ import {
   upgradeDevTargetsConfigToVersion3,
 } from './utils/dev_targets/config.mjs';
 import { runDevTargetsDoctor } from './utils/dev_targets/doctor.mjs';
+import { spawnForegroundCommand } from './utils/proc/proc.mjs';
 import {
   applyManagedDevTargetCapacity,
   doctorManagedDevTargetRuntime,
@@ -33,6 +35,7 @@ import {
   waitForDevTargetSyncMonitor,
 } from './utils/dev_targets/sync_service.mjs';
 import { writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
+import { moveRetainedServerData } from './utils/dev_targets/retained_server_data.mjs';
 
 async function configureWorkerPower(target) {
   const results = await configureDevTargetPower({ target });
@@ -171,8 +174,8 @@ function setPlacement(config, surface, destination, options = {}) {
   const upgraded = upgradePlacementConfig(config);
   const normalizedSurface = String(surface ?? '').trim().toLowerCase();
   const normalizedDestination = String(destination ?? '').trim().toLowerCase();
-  if (!['server', 'expo', 'daemon', 'build', 'commands'].includes(normalizedSurface)) {
-    throw new Error('[dev-targets] placement surface must be server, expo, daemon, build, or commands');
+  if (!['server', 'expo', 'daemon', 'build', 'qa', 'commands'].includes(normalizedSurface)) {
+    throw new Error('[dev-targets] placement surface must be server, expo, daemon, build, qa, or commands');
   }
   if (!normalizedDestination) {
     throw new Error('[dev-targets] placement destination must be local or a configured target name');
@@ -207,6 +210,19 @@ function setPlacement(config, surface, destination, options = {}) {
         daemon: { mode: 'local-and-targets', targets: options.targets },
       },
     });
+  }
+  if (['build', 'qa'].includes(normalizedSurface) && normalizedDestination === 'ordered') {
+    if (!options.targets?.length) throw new Error(`[dev-targets] ordered ${normalizedSurface} placement requires --targets=NAME,...`);
+    return parseDevTargetsConfig({ ...upgraded, runtimePlacement: {
+      ...upgraded.runtimePlacement,
+      [normalizedSurface]: { mode: 'prefer-target', targets: options.targets, fallback: options.fallback ?? 'local' },
+    } });
+  }
+  if (normalizedSurface === 'qa' && normalizedDestination === 'auto') {
+    return parseDevTargetsConfig({ ...upgraded, runtimePlacement: {
+      ...upgraded.runtimePlacement,
+      qa: { mode: 'auto', ...(options.targets ? { targets: options.targets } : {}), fallback: options.fallback ?? 'local' },
+    } });
   }
   if (normalizedDestination === 'auto') {
     throw new Error('[dev-targets] automatic least-load placement is supported only for commands');
@@ -329,7 +345,10 @@ async function main() {
         '  hstack dev-targets sync-service stop [--stack=NAME]',
         '  hstack dev-targets exec NAME|auto [--cwd=PATH] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=NAME] -- COMMAND [ARG...]',
         '  hstack dev-targets placement show [--stack=NAME]',
-        '  hstack dev-targets placement set server|expo|build local|TARGET [--stack=NAME]',
+        '  hstack dev-targets move-server TARGET [--stack=NAME]',
+        '  hstack dev-targets placement set server|expo local|TARGET [--stack=NAME]',
+        '  hstack dev-targets placement set build local|TARGET|ordered [--targets=NAME,...] [--fallback=local] [--stack=NAME]',
+        '  hstack dev-targets placement set qa local|TARGET|ordered|auto [--targets=NAME,...] [--fallback=local] [--stack=NAME]',
         '  hstack dev-targets placement set daemon local|TARGET|local-and-targets [--targets=NAME,...] [--stack=NAME]',
         '  hstack dev-targets placement set commands local|TARGET|auto [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
         '  hstack dev-targets placement clear --downgrade-v1 [--stack=NAME]',
@@ -347,7 +366,12 @@ async function main() {
     return;
   }
 
-  const loaded = await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+  let loaded = await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+  if (loaded.config.targets.length === 0 && (command === 'move-server'
+    || (command === 'placement' && positionals[1] === 'set' && positionals[2] === 'qa'))) {
+    const inherited = await loadControlledRuntimeConfig({ stackName, env: process.env });
+    loaded = { ...loaded, config: inherited.config };
+  }
   if (command === 'path') {
     printResult({ json, data: { path, stackName }, text: path });
     return;
@@ -362,6 +386,35 @@ async function main() {
             .join('\n')
         : '[dev-targets] no targets configured',
     });
+    return;
+  }
+  if (command === 'move-server') {
+    const target = requireTarget(loaded.config.targets, positionals[1], command);
+    const { authority } = await loadControlledRuntimeConfig({ stackName, env: process.env });
+    const result = await moveRetainedServerData({
+      target, stackName, stackBaseDir: dirname(loaded.path), config: loaded.config, env: process.env,
+      syncStackBaseDir: authority.producerStackBaseDir,
+      persistPlacement: async () => {
+        const current = await loadDevTargetsConfig({ stackName, env: process.env });
+        if (current.config.runtimePlacement?.server?.mode === 'prefer-target') {
+          throw new Error('[dev-targets] server placement changed during handoff; copied source retained and placement was not replaced');
+        }
+        const targetConfig = current.config.targets.length
+          ? current.config
+          : { ...current.config, targets: loaded.config.targets };
+        const currentTarget = targetConfig.targets.find(entry => entry.name === target.name);
+        if (['platform', 'ssh', 'sshConfigFile', 'repoDir', 'cliHomeDir'].some(key => currentTarget?.[key] !== target[key])) {
+          throw new Error('[dev-targets] target changed during handoff; copied source retained and placement was not replaced');
+        }
+        let config = setPlacement(targetConfig, 'server', target.name);
+        config = setPlacement(config, 'daemon', target.name);
+        config = setPlacement(config, 'qa', target.name);
+        await writeConfig(path, config);
+      },
+    });
+    printResult({ json, data: { path, stackName, ...result }, text: result.moved
+      ? `[dev-targets] ${stackName} retained server data verified on ${target.name}; source kept at ${result.sourceDir}`
+      : `[dev-targets] ${stackName} retained server data already belongs to ${target.name}; placement unchanged` });
     return;
   }
   if (command === 'show') {
@@ -609,10 +662,11 @@ async function main() {
       ] : [];
       // The native owner performs the one mandatory synchronization barrier;
       // the legacy --flush spelling does not add a second flush here.
-      const child = spawn(launcher, [...launcherArgs, '--', ...remoteCommandArgs], {
+      const child = spawnForegroundCommand(launcher, [...launcherArgs, '--', ...remoteCommandArgs], {
         cwd: target ? repoRoot : resolve(repoRoot, kv.get('--cwd') ?? '.'),
         env: { ...process.env, HAPPIER_EXEC_CONFIG_PATH: loaded.path },
         stdio: 'inherit',
+        ownedProcessGroup: true,
       });
       // Forward parent-only termination to the native owner and wait for its
       // remote cancellation/barrier cleanup before this CLI exits.

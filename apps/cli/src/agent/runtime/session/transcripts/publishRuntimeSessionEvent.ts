@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  TranscriptRawAgentEventV1Schema,
-  type TranscriptRawAgentEventV1,
-} from '@happier-dev/protocol';
+import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import type { TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
 import type { AgentTranscriptSessionEventPublicationResult } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {

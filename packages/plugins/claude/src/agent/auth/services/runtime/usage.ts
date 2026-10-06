@@ -1,4 +1,4 @@
-import { resolveClaudeUsageWindowLabel } from '../usage/windowLabel.js';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
 import {
   parseClaudeProviderTimestampMs,
   parseClaudeUsageLimitReset,
@@ -89,7 +89,7 @@ function buildRuntimeRateLimitMeter(
   if (utilizationPct === null && resetsAtMs === null) return null;
   return {
     meterId,
-    label: resolveClaudeUsageWindowLabel(meterId),
+    label: resolveConnectedServiceQuotaMeterLabel(meterId),
     utilizationPct,
     resetsAtMs,
     source: 'runtimeSignal',
@@ -112,14 +112,14 @@ function readSdkRateLimitObservation(value: unknown): NormalizedClaudeRuntimeRat
     if (!isRecord(raw)) return [];
     const utilizationPct = readSdkUtilizationPercent(raw.utilization, true);
     if (utilizationPct === null) return [];
-    return [{ meterId, label: resolveClaudeUsageWindowLabel(meterId), utilizationPct,
+    return [{ meterId, label: resolveConnectedServiceQuotaMeterLabel(meterId), utilizationPct,
       resetsAtMs: readTimestampMs(raw.resetsAt), source: 'runtimeSignal' as const }];
   });
   if (meters.length > 0) return { status: 'loaded_data', meters };
   const meterId = readString(info.rateLimitType ?? info.rate_limit_type);
   const utilizationPct = readSdkUtilizationPercent(info.utilization, false);
   if (meterId && utilizationPct !== null) {
-    return { status: 'loaded_data', meters: [{ meterId, label: resolveClaudeUsageWindowLabel(meterId), utilizationPct,
+    return { status: 'loaded_data', meters: [{ meterId, label: resolveConnectedServiceQuotaMeterLabel(meterId), utilizationPct,
       resetsAtMs: readTimestampMs(info.resetsAt ?? info.resets_at), source: 'runtimeSignal' }] };
   }
   return null;

@@ -1,11 +1,8 @@
 import { z } from 'zod';
 
-import {
-    PluginIdSchema,
-    PluginSourceCustodyV1Schema,
-    pluginSourceCustodyV1Equal,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 
 const HostPluginIdSchema = asHostProtocolZod(PluginIdSchema);

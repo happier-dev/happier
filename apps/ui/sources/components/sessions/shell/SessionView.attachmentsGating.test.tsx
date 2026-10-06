@@ -10,7 +10,8 @@ import { createLiveStorageStoreMock, createStorageModuleStub } from '@/dev/testk
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { activateSessionShellStorageBoundary, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+
 
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
 vi.mock('@/components/sessions/companion/presentation/SessionCompanionPresentationBridge', () => ({
@@ -31,6 +32,7 @@ let authCredentials: any = { token: 't', secret: 's' };
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
+    serverId: 'server-1',
     metadata: {
       machineId: 'm1',
       flavor: 'codex',
@@ -282,6 +284,7 @@ vi.mock('@/sync/sync', async () => {
   const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
   return {
     sync: {
+        getSessionAttachmentTransferContext: () => undefined,
       ...createAcceptedExternalSessionTailCursorSyncBoundary(),
       markSessionViewed: async () => {},
       fetchPendingMessages: async () => {},
@@ -428,6 +431,7 @@ describe('SessionView attachments gating', () => {
   beforeEach(() => {
     sessionState.session = {
       id: 's1',
+      serverId: 'server-1',
       metadata: {
         machineId: 'm1',
         flavor: 'codex',
@@ -449,6 +453,8 @@ describe('SessionView attachments gating', () => {
     supportsEditableSessionGoalsMock.mockReturnValue(false);
     featureEnabledState['agents.goals'] = false;
   });
+
+  beforeEach(activateSessionShellStorageBoundary);
 
   it('returns the session abort operation promise from the composer callback', async () => {
     let resolveAbort!: () => void;

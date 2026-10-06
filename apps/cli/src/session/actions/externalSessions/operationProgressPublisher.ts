@@ -2,22 +2,9 @@ import {
   clearSessionStateFieldFromMetadata,
   writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-  EXTERNAL_SESSION_OPERATION_METADATA_KEY,
-  EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY,
-  ExternalSessionOperationReferenceV1Schema,
-  ExternalSessionOperationSharedPresentationV1Schema,
-  ExternalSessionOperationStateV1Schema,
-  isExternalSessionOperationTerminalStatusV1,
-  isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1,
-  projectExternalSessionOperationProgressV1,
-  projectExternalSessionOperationSharedPresentationV1,
-  type ExternalSessionCanonicalOwnerEvidenceV1,
-  type ExternalSessionOperationProgressV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationSharedPresentationV1,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_OPERATION_METADATA_KEY, EXTERNAL_SESSION_OPERATION_PRESENTATION_METADATA_KEY, ExternalSessionOperationSharedPresentationV1Schema, ExternalSessionOperationStateV1Schema, isExternalSessionOperationTerminalStatusV1, isRetryableExternalLinkedAdmissionAcknowledgementReconciliationV1, projectExternalSessionOperationProgressV1, projectExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionOperationReferenceV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ExternalSessionCanonicalOwnerEvidenceV1, ExternalSessionOperationProgressV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSharedPresentationV1, SessionMetadata } from '@happier-dev/protocol';
 import { readStoredCredentials } from '@/persistence';
 import {
   readSessionMetadataTupleWriterSnapshot,

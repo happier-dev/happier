@@ -1,0 +1,41 @@
+{
+  "name": "@example/happier-widget-areas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Native personal widget-area and registered Resource example.",
+  "keywords": [
+    "happier-plugin"
+  ],
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "exports": {
+    "./happier-plugin-ui/overview-native": "./ui/overview-native.tsx",
+    "./happier-plugin-ui/counter-native": "./ui/counter-native.tsx"
+  },
+  "files": [
+    "dist",
+    ".happier-plugin"
+  ],
+  "scripts": {
+    "build": "happier plugins dev build .",
+    "build:ui": "happier-plugin-build-ui --project-root .",
+    "typecheck": "happier plugins dev typecheck .",
+    "test": "happier plugins test ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.5",
+    "react-native-web": "0.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@types/react": "19.2.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "5.9.3"
+  }
+}

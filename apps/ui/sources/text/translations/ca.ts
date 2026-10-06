@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -871,6 +872,7 @@ const caValues = {
     connectedServicesSetup: connectedServicesSetupTranslations.ca,
     homeWidgets: homeWidgetTranslations.ca,
     widgetFrame: widgetFrameTranslations.ca,
+    navigationPlacement: navigationPlacementTranslations.ca,
     inputPicker: inputPickerTranslations.ca,
     widgetAdd: widgetAddTranslations.ca,
     widgetDefinition: widgetDefinitionTranslations.ca,
@@ -3480,6 +3482,19 @@ const caValues = {
             invalidGroup: 'Aquest grup de comptes no és vàlid. Revisa’n la configuració i torna-ho a provar.',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: 'L’acció del servei connectat ha fallat. Actualitza i torna-ho a provar.',
+            accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+            accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+            accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+            accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+            accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+            accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+            accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+            accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+            accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+            accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+            accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+            accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
         },
         diagnostics: {
             title: {
@@ -10016,6 +10031,8 @@ settingsSession: {
 	                attentionPromotionModeGlobalSubtitle: 'Mostra una secció d\'atenció per sobre de la resta',
 	                attentionPromotionModeWithinGroupsTitle: 'Mou-les a dalt del grup actual',
 	                attentionPromotionModeWithinGroupsSubtitle: 'Mantén les sessions dins la seva carpeta o espai de treball',
+	                reminderAutoClearOnOpenTitle: "Esborra els recordatoris en obrir",
+	                reminderAutoClearOnOpenSubtitle: "Desactiva per eliminar manualment els recordatoris vençuts. Els futurs continuen programats.",
 	                attentionStandingDefaultTitle: 'Mantén les sessions a Requereix atenció',
 	                attentionStandingDefaultEnabledSubtitle: 'Cada sessió es queda fins que la treguis',
 	                attentionStandingDefaultDisabledSubtitle: "Mantén les sessions d'una en una",
@@ -10164,21 +10181,21 @@ settingsSession: {
           },
           providerUsageGauge: {
               title: 'Ús del proveïdor',
-              footer: 'Controla l’indicador de quota que es mostra al costat del compositor quan hi ha dades fiables d’ús del proveïdor. Fixa una finestra d’ús en un compte connectat per mostrar-la com a indicador addicional.',
+              footer: "Tria els indicadors de l’editor per a tots els comptes. Respecten els límits d’ús seleccionats a cada grup. Els preferits afegeixen indicadors per al compte actiu.",
               visibilityTitle: 'Mostra l’indicador d’ús del proveïdor',
               labelsTitle: 'Mostra les etiquetes',
               labelsSubtitle: 'Posa nom als indicadors de context i d’ús al costat del compositor.',
               visibilityEnabledSubtitle: 'Mostra la quota restant del proveïdor al costat del compositor quan estigui disponible.',
               visibilityHiddenSubtitle: 'Amaga la quota del proveïdor al compositor.',
-              windowTitle: 'Finestra de l’indicador',
+              windowTitle: "Finestres dels indicadors",
               windowMostConstrainedTitle: 'Més limitada',
               windowMostConstrainedSubtitle: 'Mostra la finestra de quota fiable amb menys quota restant.',
               windowDailyTitle: 'Diària',
               windowDailySubtitle: 'Prefereix la finestra de quota diària.',
               windowWeeklyTitle: 'Setmanal',
               windowWeeklySubtitle: 'Prefereix la finestra de quota setmanal.',
-              windowSessionTitle: 'Sessió',
-              windowSessionSubtitle: 'Prefereix la finestra de quota de la sessió actual.',
+              windowSessionTitle: "Finestra curta",
+              windowSessionSubtitle: "Mostra finestres curtes de quota, com un límit de cinc hores.",
               windowPrimaryTitle: 'Primària',
               windowPrimarySubtitle: 'Prefereix la finestra de quota primària del proveïdor.',
               windowSecondaryTitle: 'Secundària',
@@ -10667,7 +10684,7 @@ settingsSession: {
             byo: "El meu compte d’ElevenLabs",
             byoSubtitle: 'Fes servir la teva clau API i l’agent d’ElevenLabs',
             openaiRealtime: 'OpenAI Realtime',
-            openaiRealtimeSubtitle: 'Fes servir una clau API desada o un compte d’OpenAI seleccionat explícitament',
+            openaiRealtimeSubtitle: 'Fa servir el teu compte d’OpenAI o la teva clau API',
             grokRealtime: "Grok Voice",
             grokRealtimeSubtitle: "Fa servir la teva clau API d’xAI",
         },

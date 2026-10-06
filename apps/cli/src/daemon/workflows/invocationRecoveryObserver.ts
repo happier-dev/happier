@@ -1,20 +1,13 @@
 import type { StoredCredentials } from '@/persistence';
-import {
-  DaemonContributionRegistryProjectionDescribeResponseSchema,
-  ExecutionRunGetResponseSchema,
-  SessionContinuationInspectionV1Schema,
-  type WorkflowAccountRunActionDeps,
-  type WorkflowProgressEnvelopeV1,
-  type WorkflowMaterializedLeafV1,
-  ActionIdSchema,
-  getActionSpec,
-  resumeActionCompletionV1,
-  readActionCompletionRunObservationV1,
-  isActionCompletionRunObservationPendingV1,
-  type ReviewWalkthroughObservation,
-} from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { SessionContinuationInspectionV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
+import type { WorkflowAccountRunActionDeps, WorkflowProgressEnvelopeV1, WorkflowMaterializedLeafV1, ReviewWalkthroughObservation } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';

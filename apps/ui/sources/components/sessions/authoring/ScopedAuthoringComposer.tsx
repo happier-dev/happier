@@ -137,6 +137,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
             agentLabel?: string;
             engineLabel?: string;
             permissionMode?: React.ComponentProps<typeof AgentInput>['permissionMode'];
+            showStatusPermissionMode?: boolean;
             modelMode?: string | null;
             machineName?: string | null;
             currentPath?: string | null;
@@ -470,6 +471,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 agentLabel={context?.agentLabel}
                 engineLabel={context?.engineLabel}
                 permissionMode={context?.permissionMode}
+                showStatusPermissionMode={context?.showStatusPermissionMode}
                 modelMode={context?.modelMode ?? undefined}
                 machineName={context?.machineName}
                 currentPath={context?.currentPath ?? undefined}
@@ -480,6 +482,7 @@ export const ScopedAuthoringComposer = React.forwardRef<
                 onAgentPickerSelect={editable ? context?.onAgentPickerSelect : undefined}
                 onAgentClick={context?.onAgentClick}
                 contentPaddingHorizontal={0}
+                panelPresentation="document"
             />
             {pluginPresentation.afterComposer}
         </PluginContextualResourceStoreProvider>

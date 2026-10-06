@@ -4,11 +4,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exitWithCommandResult, runCommand } from '../../stack/scripts/utils/proc/proc.mjs';
+import { exitWithCommandResult, runCommand, spawnForegroundCommand } from '../../stack/scripts/utils/proc/proc.mjs';
+import { resolveWorkspaceBuildMode, summarizeTypeScriptDiagnostics } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
@@ -21,6 +24,19 @@ import { runPkgrollBuild } from './runPkgrollBuild.mjs';
 
 const INCREMENTAL_SOURCE_DIR = '.tmp.hstack-cli-build-source.incremental';
 const BUILD_SOURCE_PATHS = ['package.json', 'tsconfig.json', 'tsconfig.build.json', 'src'];
+
+function readBuildMemory() {
+  // Use the native admission owner's live memory observation and measured
+  // runtime envelope. This query never dispatches work or acquires admission.
+  if (process.platform === 'win32') return null;
+  const result = spawnSync(fileURLToPath(new URL('../../stack/bin/hstack-exec', import.meta.url)), ['--runtime-build-memory'], { encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  const [memory, required] = result.stdout.trim().split('\n');
+  const availableKiB = Number(memory?.split(' ')[0]);
+  const requiredKiB = Number(required);
+  return Number.isFinite(availableKiB) && availableKiB > 0 && Number.isFinite(requiredKiB) && requiredKiB > 0
+    ? { availableKiB, requiredKiB } : null;
+}
 
 function resolveBuildOutputDir(env = process.env) {
   const raw = String(env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
@@ -48,12 +64,25 @@ function reclaimAbandonedCliBuildDirs(packageRoot, activeOutputDir) {
 }
 
 async function runNodeScript(scriptPath, args, options = {}) {
-  const result = await runCommand(process.execPath, [scriptPath, ...args], {
+  const processOptions = {
     ownedProcessGroup: true,
     cwd: options.cwd,
     env: options.env,
     stdio: 'inherit',
-  });
+  };
+  const diagnosticStreams = ['', ''];
+  const result = options.captureTypeScriptDiagnostics
+    ? await new Promise((done) => {
+        const child = spawnForegroundCommand(process.execPath, [scriptPath, ...args], {
+          ...processOptions, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        for (const [index, [source, target]] of [[child.stdout, process.stdout], [child.stderr, process.stderr]].entries()) {
+          source?.on('data', (chunk) => { diagnosticStreams[index] += chunk.toString(); target.write(chunk); });
+        }
+        child.once('error', (error) => done({ status: null, signal: null, error }));
+        child.once('close', (status, signal) => done({ status, signal }));
+      })
+    : await runCommand(process.execPath, [scriptPath, ...args], processOptions);
   if (result.error) throw result.error;
   if (result.signal) {
     const error = new Error(`${scriptPath} terminated by signal ${result.signal}`);
@@ -61,7 +90,10 @@ async function runNodeScript(scriptPath, args, options = {}) {
     throw error;
   }
   if (result.status !== 0) {
-    throw new Error(`${scriptPath} exited with status ${String(result.status)}`);
+    const error = new Error(`${scriptPath} exited with status ${String(result.status)}`);
+    error.exitCode = result.status;
+    error.typeScriptDiagnostics = summarizeTypeScriptDiagnostics(diagnosticStreams.join('\n'));
+    throw error;
   }
 }
 
@@ -141,6 +173,7 @@ export async function buildCliDist(options = {}) {
 async function buildCliDistUnlocked(options = {}) {
   const packageRoot = resolve(String(options.packageRoot ?? process.cwd()));
   const env = { ...process.env, ...(options.env ?? {}) };
+  const buildMode = resolveWorkspaceBuildMode({ env });
   const callerOwnsOutputDir = String(env.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim().length > 0;
   const outputDir = resolveBuildOutputDir(env);
   env.HAPPIER_CLI_BUILD_OUTPUT_DIR = outputDir;
@@ -192,15 +225,49 @@ async function buildCliDistUnlocked(options = {}) {
     const typeScriptInvocation = (options.resolveTypeScriptCliInvocationImpl ?? resolveTypeScriptCliInvocation)({
       processExecPath: process.execPath,
     });
-    await (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], ['-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'], {
+    const measure = async (phase, operation) => {
+      const start = performance.now();
+      try { return await operation(); }
+      finally { process.stderr.write(`[cli-build] phase=${phase} elapsedMs=${Math.round(performance.now() - start)}\n`); }
+    };
+    const typecheck = () => measure('typecheck', () => (options.runTypecheckImpl ?? runNodeScript)(typeScriptInvocation.argsPrefix[0], ['-p', 'tsconfig.build.json', '--noEmit', '--singleThreaded'], {
       cwd: immutableSource.packageRoot,
       env,
-    });
-    await (options.runPkgrollBuildImpl ?? runPkgrollBuild)({
+      captureTypeScriptDiagnostics: true,
+    }));
+    const bundle = () => measure('pkgroll', () => (options.runPkgrollBuildImpl ?? runPkgrollBuild)({
       packageJsonPath: immutableSource.packageJsonPath,
       outputDir,
       env,
-    });
+    }));
+    let stalePackages;
+    if (buildMode === 'qa-runtime') {
+      const memory = (options.readBuildMemoryImpl ?? readBuildMemory)();
+      const concurrent = memory != null && memory.availableKiB >= memory.requiredKiB;
+      process.stderr.write(`[cli-build] concurrency=${concurrent ? 'parallel' : 'sequential'} availableKiB=${memory?.availableKiB ?? 'unknown'} requiredKiB=${memory?.requiredKiB ?? 'unknown'}\n`);
+      // Drain both consumers before deleting their shared immutable source,
+      // including bundler failures. Strict/release publication stays gated.
+      const checkedPromise = Promise.resolve().then(typecheck);
+      // Retain QA diagnostic handling in both modes; a sequential compiler
+      // diagnostic still permits the current pkgroll output to be published.
+      const bundledPromise = concurrent
+        ? Promise.resolve().then(bundle)
+        : checkedPromise.catch(error => {
+            if (error?.signal || error?.exitCode !== 1 || !error?.typeScriptDiagnostics) throw error;
+          }).then(bundle);
+      const [checked, bundled] = await Promise.allSettled([checkedPromise, bundledPromise]);
+      if (bundled.status === 'rejected') throw bundled.reason;
+      if (checked.status === 'rejected') {
+        const error = checked.reason;
+        if (error?.signal || error?.exitCode !== 1 || !error?.typeScriptDiagnostics) throw error;
+        const { name: packageName } = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+        stalePackages = [{ packageName, reason: 'typecheck', ...error.typeScriptDiagnostics }];
+        process.stderr.write(`[cli-build] QA publishes current output with TypeScript errors:\n${error.typeScriptDiagnostics.diagnosticSummary}\n`);
+      }
+    } else {
+      await typecheck();
+      await bundle();
+    }
     const finalWorkspaceRuntimeIdentity = readWorkspaceRuntimeIdentity({
       repoRoot,
       hostPackageDir: packageRoot,
@@ -220,6 +287,7 @@ async function buildCliDistUnlocked(options = {}) {
       expectedCurrentFingerprint,
       inputFingerprint: compiledInputFingerprint,
       workspaceRuntimeIdentity: initialWorkspaceRuntimeIdentity.fingerprint,
+      ...(stalePackages ? { stalePackages } : {}),
       ...(initialWorkspaceRuntimeIdentity.packageNames?.length > 0
         ? { workspaceRuntimePackages: initialWorkspaceRuntimeIdentity.packageNames }
         : {}),

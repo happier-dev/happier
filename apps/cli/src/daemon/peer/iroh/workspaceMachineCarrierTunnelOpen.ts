@@ -1,15 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { MACHINE_ALPN } from '@happier-dev/iroh-native/node';
 
-import {
-  DIRECT_ROUTE_GRANT_TTL_MS,
-  DirectRouteGrantRequestV2Schema,
-  IrohEndpointDescriptorV1Schema,
-  IrohMachineHandshakeV1Schema,
-  SignedDirectRouteGrantV2Schema,
-  createEphemeralPeerRouteProofHandleV2,
-  readMachineIrohEndpointAuthorityV1,
-} from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
+import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 import type {
   FiniteTransferMachineTunnel,

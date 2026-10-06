@@ -110,6 +110,8 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
     /** Where the host draws the count itself (the app rail's one badge owner), the mark carries none. */
     hostDrawsCount?: boolean;
     testID?: string;
+    /** A rail item in More keeps this popover owner and supplies the menu-row trigger. */
+    renderTrigger?: (state: Readonly<{ onPress: (event?: unknown) => void; open: boolean; accessibilityLabel: string }>) => React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -123,7 +125,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
     const copy = describeUpdatesEntry(props.summary);
     if (!copy && !open) return null;
 
-    const onPress = (event: unknown) => {
+    const onPress = (event?: unknown) => {
         if (props.variant === 'header') {
             router.push(UPDATES_ROUTE);
             return;
@@ -203,7 +205,7 @@ export const UpdatesPopoverButton = React.memo(function UpdatesPopoverButton(pro
 
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-            {trigger}
+            {props.renderTrigger ? props.renderTrigger({ onPress, open, accessibilityLabel: copy?.a11y ?? t('updates.title') }) : trigger}
             {open ? (
                 <Popover
                     open

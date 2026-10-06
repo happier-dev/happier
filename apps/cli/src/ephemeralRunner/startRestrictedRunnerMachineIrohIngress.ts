@@ -1,8 +1,5 @@
-import {
-  RPC_ERROR_CODES,
-  RPC_ERROR_MESSAGES,
-  resolveEphemeralRunnerMachineRpcAuthority,
-} from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import {
   type FeaturesResponse,
 } from '@happier-dev/protocol';

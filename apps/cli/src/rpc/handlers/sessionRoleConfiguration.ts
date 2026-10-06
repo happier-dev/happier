@@ -1,15 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import {
-  SessionRolesConfigurationSetRpcV1Schema,
-  readSessionRolesV1, readSessionWorkspaceWritesV1, resolveRoleSelectionV1, writeSessionRoleConfigurationV1ToMetadata,
-  type RoleInstructionsOverrideV1,
-  type ActionExecutorDeps,
-  type ActionExecutorContext,
-  resolveActionAgentStartContextV1,
-  admitAgentStartV1,
-  SessionAgentSpawnPolicyV1StrictSchema,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionRolesConfigurationSetRpcV1Schema, readSessionRolesV1, writeSessionRoleConfigurationV1ToMetadata } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { readSessionWorkspaceWritesV1, resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { RoleInstructionsOverrideV1, ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import { resolveActionAgentStartContextV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { RoleSourceReader } from '@/session/roles/roleSources';

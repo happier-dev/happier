@@ -11,12 +11,8 @@ import type {
 import type {
   PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
-import {
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 import {
   createConnectedAccountPurposeBindingOwner,

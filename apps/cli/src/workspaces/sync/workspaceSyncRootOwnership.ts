@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol';
+import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
 import { processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
 import { probeProcessLiveness } from '@happier-dev/cli-common/process';
 

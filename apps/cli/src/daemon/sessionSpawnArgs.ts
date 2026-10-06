@@ -1,18 +1,11 @@
-import {
-  serializeSessionCreationCorrespondenceV1,
-  serializeSessionModelSelectionV1,
-  SessionCreationTagV1Schema,
-  MachinePoolSelectionOriginV1Schema,
-  type BackendTargetRefV2,
-  type MachinePoolSelectionOriginV1,
-  type SessionCreationCorrespondenceV1,
-  type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
-import {
-  SessionTeamCredentialBindingIntentsV1Schema,
-  type SessionTeamCredentialBindingIntentListV1,
-} from '@happier-dev/protocol/teams';
+import { serializeSessionCreationCorrespondenceV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { serializeSessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import type { BackendTargetRefV2, MachinePoolSelectionOriginV1, SessionCreationCorrespondenceV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import {
   serializeNativeForkSourceV1,
   type NativeForkSource,

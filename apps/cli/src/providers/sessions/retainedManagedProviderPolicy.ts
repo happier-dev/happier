@@ -1,10 +1,7 @@
-import {
-  ProviderRuntimeBindingBasisV1Schema,
-  ProviderSettingsV1Schema,
-  createProviderMachineGrantFingerprintV1,
-  type ProviderRuntimeBindingBasisV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { createProviderMachineGrantFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import type { ProviderRuntimeBindingBasisV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export type RetainedManagedProviderAuthorizationCurrentnessCheck = Readonly<{
   isExactRetainedRuntimeCurrent?: () => boolean;

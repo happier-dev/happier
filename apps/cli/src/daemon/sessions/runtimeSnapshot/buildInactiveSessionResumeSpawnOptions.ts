@@ -1,14 +1,12 @@
 import {
   resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
-import {
-  AgentExecutionTargetV1Schema,
-  SessionCreationCorrespondenceV1Schema,
-  agentRoutingIdAddressesContributionIdentityV1,
-  readRuntimeDescriptorV1FromMetadata,
-  readSessionDirectoryKind,
-  resolveLinkedExternalSessionMetadataV1,
-} from '@happier-dev/protocol';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import { PersistedProviderResumeBindingError } from '@/providers/lifecycle/readPersistedResumeSelection';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';

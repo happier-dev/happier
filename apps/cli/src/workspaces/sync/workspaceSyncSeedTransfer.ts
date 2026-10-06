@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { WorkspaceManifestSchema, type WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
+import { WorkspaceManifestSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
+import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { buildWorkspaceExportArtifactsWithBlobProviderFromWorkspaceIntegration } from '@/scm/workspace/workspaceTransferResolution';
 import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/workspace/workspaceExportArtifacts';

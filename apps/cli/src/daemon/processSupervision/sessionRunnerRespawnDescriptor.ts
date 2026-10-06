@@ -7,30 +7,20 @@ import {
   readSpawnRuntimeDescriptorV1,
 } from '@/rpc/handlers/spawnRuntimeSelection';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
-import {
-  BackendTargetRefSchema,
-  BackendTargetRefV2Schema,
-  AgentExecutionTargetV1Schema,
-  ConnectedServiceMaterializationIdentityV1Schema,
-  PluginContributionIdentityV1Schema,
-  openAccountScopedBlobCiphertext,
-  readBackendTargetRefV2,
-  RuntimeDescriptorV1Schema,
-  sealAccountScopedBlobCiphertext,
-  SessionMcpSelectionV1Schema,
-  SessionCreationTagV1Schema,
-  SessionModelSelectionV1Schema,
-  SessionProviderBindingMetadataV1Schema,
-  buildBackendTargetKeyV2,
-  writePersistedBackendTargetRefV2,
-  writeRuntimeDescriptorV1ForPersistence,
-  type AccountScopedCryptoMaterial,
-  type BackendTargetRefV1,
-  type BackendTargetRefV2,
-  type BackendTargetRefV2Input,
-  type AgentExecutionTargetV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { BackendTargetRefSchema } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetRefV2Schema, readBackendTargetRefV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { RuntimeDescriptorV1Schema, writeRuntimeDescriptorV1ForPersistence } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { AccountScopedCryptoMaterial, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, AgentExecutionTargetV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import * as z from 'zod';
 import {
   resolveConcreteBackendTargetRefV2,

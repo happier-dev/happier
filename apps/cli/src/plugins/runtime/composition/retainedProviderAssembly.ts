@@ -1,12 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-    ProviderRuntimeBindingBasisV1Schema,
-    createPluginContributionIdentity,
-    resolveProviderManagedRuntimeDeclarationV1,
-    type PluginContributionIdentityV1,
-    type ProviderRuntimeBindingBasisV1,
-} from '@happier-dev/protocol';
+import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import type { PluginContributionIdentityV1, ProviderRuntimeBindingBasisV1 } from '@happier-dev/protocol';
 
 import type { PluginStorePaths } from '../../store/paths';
 import type { PluginSourceCustody } from '../sourceAuthority';

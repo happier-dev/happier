@@ -6,7 +6,7 @@ import type {
 import type { DaemonState } from '@/api/types';
 import type { ConnectedServiceQuotasLoopHandle } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
 import type { MachineLiveStreamControlLeaseV1, WorkspaceSyncRuntimeReadinessV1, WorkspaceSyncStatusV1 } from '@happier-dev/protocol';
-import { doesRunnerBrokerReadinessResponseMatchRequestV1 } from '@happier-dev/protocol/teams';
+import { doesRunnerBrokerReadinessResponseMatchRequestV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { logger } from '@/ui/logger';
 import { startAutomationWorker, type AutomationWorkerHandle } from '../automation/automationWorker';
 import { startMemoryWorker, type MemoryWorkerHandle } from '../memory/memoryWorker';

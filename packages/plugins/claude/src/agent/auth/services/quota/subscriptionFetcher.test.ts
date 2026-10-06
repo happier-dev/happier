@@ -10,6 +10,7 @@ import {
 import {
     claudeSubscriptionQuotaFetcherDescriptor,
     createClaudeSubscriptionQuotaFetcher,
+    parseClaudeSubscriptionUsageMeters,
 } from './subscriptionFetcher.js';
 
 function buildClaudeOAuthRecord(now: number, overrides?: Readonly<{
@@ -51,6 +52,22 @@ function headersFromFetchCall(call: ReadonlyArray<unknown>): Record<string, unkn
 }
 
 describe('createClaudeSubscriptionQuotaFetcher', () => {
+    it('labels all-model and future provider windows through the canonical usage display owner', () => {
+        const meters = parseClaudeSubscriptionUsageMeters({
+            seven_day_all: { utilization: 20 },
+            seven_day_fable: { utilization: 30 },
+            spend: { utilization: 40 },
+            future_api_window: { utilization: 50 },
+        });
+        expect(meters.filter((meter) => meter.status === 'ok').map((meter) => [meter.meterId, meter.label]))
+            .toEqual([
+                ['seven_day_all', 'Weekly (all models)'],
+                ['seven_day_fable', 'Weekly (Fable)'],
+                ['spend', 'Spend'],
+                ['future_api_window', 'Future API Window'],
+            ]);
+    });
+
     it('uses the Claude-owned private Anthropic OAuth usage endpoint by default', async () => {
         const now = 1_000_000;
         const fetchMock = vi.fn(async () => ({

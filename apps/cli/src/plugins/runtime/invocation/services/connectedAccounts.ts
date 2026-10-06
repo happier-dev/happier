@@ -1,12 +1,8 @@
 import { Buffer } from 'node:buffer';
 
-import {
-    ConnectedAccountMaterializationRequestSchema,
-    type QualifiedConnectedAccountPurposeV1,
-} from '@happier-dev/protocol/connect/connected-account-purposes';
-import {
-    QualifiedConnectedAccountRefSchema,
-} from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type {
     ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';

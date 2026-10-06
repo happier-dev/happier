@@ -12,17 +12,10 @@ import type { SessionMessageModelSelectionInput } from '@/session/services/resol
 import {
   buildWorkflowSessionInputAdmissionV2,
 } from '@/session/services/sessionInputAdmissionIdentity';
-import {
-  deriveWorkflowSessionInputLocalIdV2,
-  ExecutionRunGetResponseSchema,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  type MentionRefV1,
-  type PortableComposerAttachmentV1,
-  type ExecutionRunResultContractV1,
-  type SessionInputAdmissionResultV1,
-  type SessionInputSourceAuthorityV1,
-  type SessionInputWorkflowV2,
-} from '@happier-dev/protocol';
+import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import type { MentionRefV1, PortableComposerAttachmentV1, ExecutionRunResultContractV1, SessionInputAdmissionResultV1, SessionInputSourceAuthorityV1, SessionInputWorkflowV2 } from '@happier-dev/protocol';
 
 export type WorkflowSessionInputObservation =
   | Readonly<{ kind: 'pending' }>

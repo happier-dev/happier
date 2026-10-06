@@ -6,6 +6,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import type {
     PluginUiSessionServerStartDraftV1,
+    PluginUiContextEnrichmentV1,
     PluginUiTargetedContributionContributorV1,
     PluginUiTargetedContributionOperationV1,
     RenderSurface,
@@ -56,6 +57,8 @@ import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
+import { TriageMountedUiInputV1Schema, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 
 /**
  * Keyed MULTI-selection on the PRs & Issues list, driven through the real
@@ -463,8 +466,10 @@ async function mountShell(
 ): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
+    invokeMounted: (operation: TriageMountedUiOperationV1) => Promise<TriageMountedUiResultV1>;
 }>> {
     const locations: string[] = [];
+    let published: PluginUiContextEnrichmentV1 | null = null;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const surfaceWithDataClient: RenderSurface = (context) => cloneElement(
         // This visible semantic mount supplies the same host activity fact as
@@ -485,7 +490,7 @@ async function mountShell(
             ),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
-                publishCurrentUiContext: () => undefined,
+                publishCurrentUiContext: ({ enrichment }) => { published = enrichment; },
                 readSession: ({ sessionId }) => harness.sessionStates[sessionId] ?? null,
                 watchSession: () => undefined,
                 executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
@@ -584,7 +589,17 @@ async function mountShell(
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
     });
-    return { shell: fixture, locations };
+    return { shell: fixture, locations, invokeMounted: async (operation) => {
+        const command = published?.commands?.find((entry) => entry.command.kind === 'executeAction');
+        if (command?.command.kind !== 'executeAction') throw new Error('Expected mounted action address');
+        const address = TriageMountedUiInputV1Schema.parse(command.command.input);
+        return await createTriageMountedUiActionHandler()({ mountId: address.mountId, operation }, {
+            plugin: { id: 'happier.triage', version: '0.0.0' },
+            contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+            invocationSurface: 'agent', signal: new AbortController().signal,
+            ui: fixture.context.hostApi, ephemeralSharedScope,
+        });
+    } };
 }
 
 afterEach(async () => {
@@ -935,9 +950,9 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain('None of your configured actions');
     });
 
-    it('shows one truthful Stop control for live work without hiding the selection or its progress owner', async () => {
+    it.each(['ui', 'agent'])('shows one truthful Stop control and shares cancellation with the %s caller', async (caller) => {
         const harness = createHarness({ deferProjectsRead: true });
-        const { shell } = await mountShell(harness);
+        const { shell, invokeMounted } = await mountShell(harness);
         await chooseRow('Replace the duplicated normalizer');
         await chooseBulkAction(shell, 'Fix');
 
@@ -952,7 +967,8 @@ describe('selecting several PRs & Issues rows', () => {
             const buttons = await shell.getAllByRole('button');
             expect(buttons.filter((button) => button.name === 'Stop')).toHaveLength(1);
             expect(buttons.some((button) => button.name === 'Clear selection')).toBe(false);
-            await shell.press(await shell.getByRole('button', { name: 'Stop' }));
+            if (caller === 'ui') await shell.press(await shell.getByRole('button', { name: 'Stop' }));
+            else expect(await invokeMounted({ kind: 'cancelRun' })).toEqual({ status: 'applied' });
         });
         await settle();
 
@@ -1282,7 +1298,7 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain('2 started, 0 unconfirmed, 0 not started, 0 could not be used');
     });
 
-    it('lets the reader retry only unfinished per-entry units with their original creation key', async () => {
+    it.each(['ui', 'agent'])('lets the %s caller retry only unfinished per-entry units with their original creation key', async (caller) => {
         const harness = createHarness({
             failSpawnAttempt: 2,
             actions: {
@@ -1302,7 +1318,7 @@ describe('selecting several PRs & Issues rows', () => {
                 }],
             },
         });
-        const { shell } = await mountShell(harness);
+        const { shell, invokeMounted } = await mountShell(harness);
 
         await chooseRow('Replace the duplicated normalizer');
         await chooseRow('Extract the selection reducer');
@@ -1316,7 +1332,10 @@ describe('selecting several PRs & Issues rows', () => {
         const unfinishedCreationKey = (harness.spawnInputs[1] as { creationKey: string }).creationKey;
         const retry = await shell.getByRole('button', { name: 'Try again' });
 
-        await act(async () => { await shell.press(retry); });
+        await act(async () => {
+            if (caller === 'ui') await shell.press(retry);
+            else expect(await invokeMounted({ kind: 'retryRun' })).toEqual({ status: 'applied' });
+        });
         await settle();
 
         expect(harness.spawnInputs).toHaveLength(3);
@@ -1325,6 +1344,10 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain(
             '2 started, 0 unconfirmed, 0 not started, 0 could not be used',
         );
+        if (caller === 'agent') {
+            await act(async () => { expect(await invokeMounted({ kind: 'retryRun' })).toEqual({ status: 'unavailable' }); });
+            expect(harness.spawnInputs).toHaveLength(3);
+        }
     });
 
     it('still opens a detail on an unmodified press while no set is being built', async () => {

@@ -1,5 +1,6 @@
 import type {
     ConnectedServiceQuotaMeterV1,
+    ConnectedServiceQuotaLimitSelectionV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaSnapshotV1,
     SessionRuntimeIssueV1,
@@ -9,6 +10,7 @@ import {
     readBuiltInLegacyConnectedAccountServiceKeyIngress,
     readBuiltInLegacyConnectedServiceIdForQualifiedService,
     readConnectedServiceLimitCategoryV1,
+    resolveConnectedServiceQuotaMeterLabel,
 } from '@happier-dev/protocol';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
@@ -19,13 +21,9 @@ import {
 import { formatResetCountdown } from './formatResetCountdown';
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 
-export type ConnectedServiceQuotaGaugeWindowMode =
-    | 'most_constrained'
-    | 'daily'
-    | 'weekly'
-    | 'primary'
-    | 'secondary'
-    | 'session';
+import { resolveQuotaGaugeWindowModes, type ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
+import { projectConnectedServiceQuotaSnapshotForLimitSelection } from './projectConnectedServiceQuotaSnapshotForLimitSelection';
+export type { ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
 
 export type ConnectedServiceQuotaGaugeTone = 'neutral' | 'warning' | 'critical';
 
@@ -94,7 +92,7 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     isStale: boolean;
     effectiveMeter: ConnectedServiceQuotaMeterV1;
     allMeterRows: readonly ConnectedServiceQuotaGaugeMeterRow[];
-    /** The main meter, followed by the account's pinned meters that the snapshot reports. */
+    /** Global windows followed by reliable favorites of the active account. */
     usageRings: readonly ConnectedServiceQuotaGaugeRing[];
     recoveryCreditSummary: ConnectedServiceQuotaRecoveryCreditSummary | null;
 }>;
@@ -310,7 +308,7 @@ function buildMeterRow(
     const resetLabel = formatResetCountdown(nowMs, meter.resetAtMs ?? meter.resetsAt, formatter);
     return {
         meterId: meter.meterId,
-        label: meter.label,
+        label: resolveConnectedServiceQuotaMeterLabel(meter.meterId, meter.label),
         remainingPct,
         usedPct,
         detailRightSemantics: 'remaining',
@@ -344,14 +342,18 @@ export type ConnectedServiceQuotaGaugeSnapshotInput =
 export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     snapshot: ConnectedServiceQuotaGaugeSnapshotInput | null;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
-    /** Pinned meters of the session's connected account, shown as extra rings. */
+    windowModes?: readonly ConnectedServiceQuotaGaugeWindowMode[] | null;
+    /** Extra favorites from the account currently used by the session. */
     additionalMeterIds?: readonly string[];
+    /** Null means the bound Pool policy has not loaded yet. */
+    quotaLimitSelection?: ConnectedServiceQuotaLimitSelectionV1 | null;
     nowMs: number;
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
     providerDisplayName?: string | null;
     activeAccountDisplayLabel?: string | null;
 }>): ConnectedServiceQuotaGaugeViewModel | null {
-    const params = _params;
+    if (_params.quotaLimitSelection === null) return null;
+    const params = { ..._params, snapshot: projectConnectedServiceQuotaSnapshotForLimitSelection(_params.snapshot, _params.quotaLimitSelection) };
     if (!params.snapshot) return null;
 
     const rankableMeters = selectComparableConnectedServiceQuotaMeters(params.snapshot.meters);
@@ -360,36 +362,52 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         .filter((row): row is ConnectedServiceQuotaGaugeMeterRow => row !== null);
     if (allMeterRows.length === 0) return null;
 
-    const selectedCandidates = rankableMeters.filter((meter) => meterMatchesWindowMode(meter, params.windowMode));
-    const candidates = selectedCandidates.length > 0 ? selectedCandidates : rankableMeters;
-    let effectiveMeter: ConnectedServiceQuotaMeterV1 | null = null;
-    let effectiveRemainingPct = Number.POSITIVE_INFINITY;
-    for (const meter of candidates) {
-        const usedPct = deriveQuotaUtilizationPct(meter);
-        if (usedPct === null) continue;
-        const remainingPct = typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
-            ? clampQuotaPct(meter.remainingPct)
-            : clampQuotaPct(100 - usedPct);
-        if (remainingPct < effectiveRemainingPct) {
-            effectiveRemainingPct = remainingPct;
-            effectiveMeter = meter;
+    const windowModes = resolveQuotaGaugeWindowModes(params.windowModes, params.windowMode);
+    const selectedMeters = windowModes.flatMap((mode) => {
+        const matching = rankableMeters.filter((meter) => meterMatchesWindowMode(meter, mode));
+        // Preserve the predecessor single-window fallback; explicit multi-selections omit missing windows.
+        const candidates = matching.length || params.windowModes?.length ? matching : rankableMeters;
+        let selected: ConnectedServiceQuotaMeterV1 | null = null;
+        let leastRemaining = Number.POSITIVE_INFINITY;
+        for (const meter of candidates) {
+            const usedPct = deriveQuotaUtilizationPct(meter);
+            if (usedPct === null) continue;
+            const remaining = typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
+                ? clampQuotaPct(meter.remainingPct) : clampQuotaPct(100 - usedPct);
+            if (remaining < leastRemaining) {
+                selected = meter;
+                leastRemaining = remaining;
+            }
+        }
+        return selected ? [{ meter: selected, remainingPct: leastRemaining }] : [];
+    });
+    // Favorites append to global windows after Pool filtering; dedupe shared meters.
+    for (const meterId of params.additionalMeterIds ?? []) {
+        if (selectedMeters.some(({ meter }) => meter.meterId === meterId)) continue;
+        const meter = params.snapshot.meters.find((candidate) => candidate.meterId === meterId
+            && isConnectedServiceQuotaMeterPercentRankable(candidate));
+        const row = meter ? buildMeterRow(meter, params.nowMs, params.formatter) : null;
+        if (meter && row?.usedPct !== null && row?.remainingPct != null) {
+            selectedMeters.push({ meter, remainingPct: row.remainingPct });
         }
     }
-    if (!effectiveMeter || !Number.isFinite(effectiveRemainingPct)) return null;
+    const effectiveMeter = selectedMeters[0]?.meter;
+    const effectiveRemainingPct = selectedMeters[0]?.remainingPct;
+    if (!effectiveMeter || effectiveRemainingPct === undefined) return null;
 
     const selectedRow = buildMeterRow(effectiveMeter, params.nowMs, params.formatter);
     if (!selectedRow || selectedRow.usedPct === null) return null;
 
     const snapshotMeters = params.snapshot.meters;
-    const displayedMeterRows = [...new Set([effectiveMeter.meterId, ...(params.additionalMeterIds ?? [])])].flatMap((meterId) => {
-        // Pinned extras may cross comparison families, but still share the reliability gate.
+    const displayedMeterRows = [...new Set(selectedMeters.map(({ meter }) => meter.meterId))].flatMap((meterId) => {
+        // Every selected window shares the numeric reliability gate.
         const meter = snapshotMeters.find((candidate) => candidate.meterId === meterId
             && isConnectedServiceQuotaMeterPercentRankable(candidate));
         const row = meter ? buildMeterRow(meter, params.nowMs, params.formatter) : null;
         return row && row.usedPct !== null && row.remainingPct !== null
             ? [{ ...row, usedPct: row.usedPct, remainingPct: row.remainingPct }] : [];
     });
-    // Details retain useful usage/rate windows and explicitly pinned placeholders.
+    // Details retain useful usage/rate windows in the Pool-selected snapshot.
     // The comparable numeric family alone selects the main composer ring.
     for (const meter of snapshotMeters) {
         const category = readPublicLimitCategory(meter);
@@ -399,7 +417,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         if (row && isConnectedServiceQuotaMeterVisible(meter, params.nowMs, params.additionalMeterIds)) allMeterRows.push(row);
     }
 
-    const selectedWindowPrefix = params.windowMode === 'most_constrained'
+    const selectedWindowPrefix = windowModes[0] === 'most_constrained'
         ? null
         : resolveConnectedServiceQuotaMeterScopePrefix(effectiveMeter);
     const roundedRemaining = Math.round(effectiveRemainingPct);
@@ -422,7 +440,9 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         resetLabel: selectedRow.resetLabel,
         tone: selectedRow.tone,
         isStale,
-        effectiveMeter,
+        effectiveMeter: effectiveMeter.label === selectedRow.label
+            ? effectiveMeter
+            : { ...effectiveMeter, label: selectedRow.label },
         allMeterRows,
         usageRings: displayedMeterRows.map((row) => {
             const ringRemaining = Math.round(row.remainingPct);

@@ -10,7 +10,7 @@ export function useTreeDropFlashHighlight(): Readonly<{
     const progress = useSharedValue(0);
 
     const trigger = useCallback(() => {
-        progress.value = withTiming(1, { duration: 60 }, () => {
+        progress.value = withTiming(1, { duration: motionTokens.durationMs.press }, () => {
             progress.value = withTiming(0, { duration: motionTokens.durationMs.base });
         });
     }, [progress]);

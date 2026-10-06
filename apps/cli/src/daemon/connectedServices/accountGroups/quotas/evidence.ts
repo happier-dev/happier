@@ -1,7 +1,5 @@
-import {
-  isConnectedServiceQuotaObservationFresh,
-  type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 
 export type QuotaLifecycleEvidenceRejectionReason =
   | 'generation_mismatch'

@@ -1,33 +1,7 @@
-import {
-  DaemonProviderBindingStatusRequestV1Schema,
-  DaemonProviderBindingStatusResponseV1Schema,
-  DaemonProviderConnectionMutationRequestV1Schema,
-  DaemonProviderConnectionMutationResponseV1Schema,
-  DaemonProviderConnectionsDescribeRequestV1Schema,
-  DaemonProviderConnectionsDescribeResponseV1Schema,
-  DaemonProviderModelLoadRequestV1Schema,
-  DaemonProviderModelLoadResponseV1Schema,
-  DaemonProviderModelProjectionRequestV1Schema,
-  DaemonProviderModelProjectionResponseV1Schema,
-  DaemonProviderModelsRequestV1Schema,
-  DaemonProviderModelsResponseV1Schema,
-  DaemonProviderModelSettingsMutationRequestV1Schema,
-  DaemonProviderModelSettingsMutationResponseV1Schema,
-  DaemonProviderProbeRequestV1Schema,
-  DaemonProviderProbeResponseV1Schema,
-  DaemonProviderProfileMigrationConfirmRequestV1Schema,
-  DaemonProviderProfileMigrationConfirmResponseV1Schema,
-  DaemonProviderProfileMigrationConflictConfirmRequestV1Schema,
-  DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
-  DaemonProviderProfileMigrationPreviewRequestV1Schema,
-  DaemonProviderProfileMigrationPreviewResponseV1Schema,
-  type DaemonProviderModelLoadResponseV1,
-} from '@happier-dev/protocol/rpc';
-import {
-  createProviderErrorV1,
-  ProviderErrorV1Schema,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema, DaemonProviderConnectionMutationRequestV1Schema, DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderConnectionsDescribeRequestV1Schema, DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderModelLoadRequestV1Schema, DaemonProviderModelLoadResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderModelsRequestV1Schema, DaemonProviderModelsResponseV1Schema, DaemonProviderModelSettingsMutationRequestV1Schema, DaemonProviderModelSettingsMutationResponseV1Schema, DaemonProviderProbeRequestV1Schema, DaemonProviderProbeResponseV1Schema, DaemonProviderProfileMigrationConfirmRequestV1Schema, DaemonProviderProfileMigrationConfirmResponseV1Schema, DaemonProviderProfileMigrationConflictConfirmRequestV1Schema, DaemonProviderProfileMigrationConflictConfirmResponseV1Schema, DaemonProviderProfileMigrationPreviewRequestV1Schema, DaemonProviderProfileMigrationPreviewResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderModelLoadResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {

@@ -1,9 +1,6 @@
-import {
-  isBaseCredentialDiagnosticKey,
-  redactBugReportSensitiveText,
-  sanitizeBugReportUrl,
-  splitSensitiveDiagnosticKeySegments,
-} from '@happier-dev/protocol';
+import { isBaseCredentialDiagnosticKey, splitSensitiveDiagnosticKeySegments } from '@happier-dev/protocol/diagnostics/sensitive-keys';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
 
 import type { DaemonLocallyPersistedState } from '@/persistence';
 import type { readSettings } from '@/persistence';

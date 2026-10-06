@@ -4,8 +4,79 @@ import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildServerArtifact, linkServerRuntimeSupportPayload } from './build_server_artifact.mjs';
+import { buildServerArtifact, linkServerRuntimeSupportPayload, resolveServerSupportArtifactFingerprint } from './build_server_artifact.mjs';
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import { resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
+
+test('cold server support identity prepares workspace outputs and preserves canonical QA admission', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'runtime-server-cold-support-' });
+  const write = async (path, value) => {
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, value);
+  };
+  await write(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
+  for (const name of ['server', 'cli', 'ui', 'stack']) {
+    await write(join(root, 'apps', name, 'package.json'), JSON.stringify({
+      name: `@fixture/${name}`,
+      ...(name === 'server' ? {
+        dependencies: { '@happier-dev/iroh-native': '0.0.0' },
+        // Prisma generation is an external command boundary. This fixture has
+        // its generated clients already, while package admission remains real.
+        scripts: { 'generate:providers': 'node generate.mjs' },
+      } : {}),
+    }));
+  }
+  await write(join(root, 'apps/server/generate.mjs'), '');
+  const packageDir = join(root, 'packages/iroh-native');
+  const sourcePath = join(packageDir, 'src/index.ts');
+  await write(sourcePath, 'export const value: string = "green";\n');
+  await write(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/iroh-native', version: '0.0.0', type: 'module',
+    main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'node compile.mjs' },
+  }));
+  await write(join(packageDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+    target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src',
+    strict: true, declaration: true, types: [],
+  }, include: ['src/**/*.ts'] }));
+  const compiler = resolveTypeScriptCliInvocation({});
+  await write(join(packageDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
+const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { env: process.env, stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exitCode = result.status ?? 1;
+`);
+  for (const path of ['packages/iroh-native/scripts/load.mjs', 'apps/server/generated/sqlite-client/index.js',
+    'apps/server/prisma/sqlite/migrations/fixture.sql', 'node_modules/.prisma/client/index.js',
+    'node_modules/@prisma/client/package.json']) await write(join(root, path), '{}');
+  for (const name of ['sharp', `@img/sharp-${process.platform}-${process.arch}`, `@img/sharp-libvips-${process.platform}-${process.arch}`]) {
+    await write(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '0.34.5' }));
+  }
+  const env = { ...process.env, HAPPIER_BUILD_DB_PROVIDERS: 'sqlite', HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' };
+  const identity = (extraEnv = {}) => resolveServerSupportArtifactFingerprint({
+    rootDir: join(root, 'apps/stack'), sourceMetadata: { repoDir: root, serverComponent: 'happier-server-light' },
+    env: { ...env, ...extraEnv },
+  });
+  const cold = await identity();
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
+  assert.equal(await identity(), cold);
+  await write(sourcePath, 'export const value: string = 1;\n');
+  const request = await resolveRuntimeBuildRequestIdentity({
+    rootDir: join(root, 'apps/stack'),
+    sourceMetadata: { repoDir: root, serverComponent: 'happier-server-light' },
+    selection: { components: { server: true, daemon: false, web: false }, activateRuntime: false },
+    env,
+  });
+  assert.equal(request.stalePackagesByComponent.server.length, 1,
+    'initial identity must describe the stale output just admitted for server support');
+  assert.equal(request.stalePackagesByComponent.server[0].packageName, '@happier-dev/iroh-native');
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
+  await assert.rejects(identity({ HAPPIER_WORKSPACE_BUILD_MODE: 'strict' }));
+  await assert.rejects(identity({ npm_lifecycle_event: 'prepack' }));
+  await write(sourcePath, 'export const value: string = "fixed";\n');
+  assert.notEqual(await identity(), cold);
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /fixed/);
+});
 
 async function writeServerSupportArtifact({
   artifactDir,
@@ -200,7 +271,7 @@ test('a second code-only server publication reuses support and copies neither su
     fingerprint: 'stable-server-support',
     entryCount: 1,
     entries: [],
-    target: { os: 'linux', arch: 'x64', bunTarget: 'bun-linux-x64-baseline', exeExt: '' },
+    target: { os: 'linux', arch: 'arm64', bunTarget: 'bun-linux-arm64', exeExt: '' },
     serverComponent: 'happier-server-light',
     buildDbProviders: 'sqlite',
   };
@@ -216,11 +287,13 @@ test('a second code-only server publication reuses support and copies neither su
     };
     const common = {
       rootDir: root,
+      target: { platform: 'linux', arch: 'arm64' },
       sourceMetadata,
       supportArtifactFingerprint: supportInputs.fingerprint,
       resolveServerSupportArtifactFingerprintImpl: async () => supportInputs.fingerprint,
       resolveServerRuntimeSupportInputsImpl: async () => supportInputs,
-      buildServerRuntimeSupportPayloadImpl: async ({ payloadDir }) => {
+      buildServerRuntimeSupportPayloadImpl: async ({ payloadDir, target }) => {
+        assert.equal(target.arch, 'arm64');
         supportPayloadBuilds += 1;
         for (const name of ['generated', 'prisma', 'node_modules', 'runtime']) {
           await mkdir(join(payloadDir, name), { recursive: true });
@@ -244,8 +317,14 @@ test('a second code-only server publication reuses support and copies neither su
     assert.equal(supportPayloadBuilds, 1);
     assert.equal(codePayloadArgs.length, 2);
     for (const args of codePayloadArgs) {
+      assert.equal(args.target.arch, 'arm64');
+      assert.equal(args.target.bunTarget, 'bun-linux-arm64');
       assert.equal(args.includeRuntimeSupport, false);
       assert.equal('uiWebDistPath' in args, false);
+    }
+    for (const artifactDir of [firstArtifactDir, secondArtifactDir, join(root, 'artifacts', 'server-support', supportInputs.fingerprint)]) {
+      assert.deepEqual(JSON.parse(await readFile(join(artifactDir, 'manifest.json'), 'utf8')).target,
+        { platform: 'linux', arch: 'arm64' });
     }
   } finally {
     await rm(root, { recursive: true, force: true });

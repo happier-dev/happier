@@ -1,8 +1,5 @@
-import {
-    PluginHostedWebBridgeEnvelopeV1Schema as canonicalPluginHostedWebBridgeEnvelopeV1Schema,
-    PluginHostedWebAccountDataBridgeOperationV1Schema as canonicalPluginHostedWebAccountDataBridgeOperationV1Schema,
-    PluginHostedWebAccountDataBridgeResponseV1Schema as canonicalPluginHostedWebAccountDataBridgeResponseV1Schema,
-} from '@happier-dev/protocol/plugins/ui/client';
+import { PluginHostedWebBridgeEnvelopeV1Schema as canonicalPluginHostedWebBridgeEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui/hostedWebBridge';
+import { PluginHostedWebAccountDataBridgeOperationV1Schema as canonicalPluginHostedWebAccountDataBridgeOperationV1Schema, PluginHostedWebAccountDataBridgeResponseV1Schema as canonicalPluginHostedWebAccountDataBridgeResponseV1Schema } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
 import type {
     PluginHostedWebBridgeEnvelopeV1,
     PluginHostedWebAccountDataBridgeChangeV1,

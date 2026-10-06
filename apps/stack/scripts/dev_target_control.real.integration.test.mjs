@@ -10,6 +10,8 @@ import {
   MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
   parseMutagenSyncList,
 } from './utils/dev_targets/mutagen_runtime.mjs';
+import { renderMutagenProject } from './utils/dev_targets/mutagen_project.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const controlExecutable = resolve(testDir, '..', 'bin', 'hstack-dev-target-control');
@@ -24,6 +26,68 @@ function runMutagen(args, env) {
   );
   return result;
 }
+
+test('fail-open no-watch replicas admit new root and package inputs while preserving artifact exclusions', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-mutagen-scan-scope-' });
+  const alpha = fixture.path('alpha');
+  const beta = fixture.path('beta');
+  const sessionName = `happier-scope-${process.pid}`;
+  const files = {
+    'package.json': '{}',
+    'apps/stack/package.json': '{}',
+    'apps/stack/scripts/known.mjs': 'known',
+    'packages/lib/package.json': '{}',
+    'packages/lib/src/index.ts': 'initial',
+    'packages/lib/generated/input.json': 'generated',
+    'brat/foreign.txt': 'foreign',
+    'brat[copy]/foreign.txt': 'foreign with glob characters',
+    '.cache/foreign.txt': 'cache',
+    'apps/stack/mutagen/foreign.txt': 'foreign',
+    'packages/lib/foreign/foreign.txt': 'foreign',
+    'packages/lib/dist/built.js': 'local build',
+    'packages/iroh-native/release-evidence/THIRD-PARTY-NOTICES.txt': 'local stale notices',
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(join(alpha, dirname(path)), { recursive: true });
+    await writeFile(join(alpha, path), content);
+  }
+  await mkdir(join(beta, 'node_modules'), { recursive: true });
+  await writeFile(join(beta, 'node_modules/local.txt'), 'target-local');
+  const rendered = renderMutagenProject({ sourceDir: alpha, targets: [] });
+  const ignores = rendered.split('\n').filter(line => line.startsWith('        - ')).map(line => JSON.parse(line.slice(10)));
+  const env = { ...process.env, DBUS_SESSION_BUS_ADDRESS: '', MUTAGEN_DATA_DIRECTORY: fixture.path('mutagen-data') };
+  t.after(() => {
+    spawnSync('mutagen', ['sync', 'terminate', sessionName], { env });
+    spawnSync('mutagen', ['daemon', 'stop'], { env });
+  });
+  runMutagen(['sync', 'create', '--name', sessionName, '--no-global-configuration', '--sync-mode=one-way-replica',
+    '--watch-mode=no-watch', ...ignores.flatMap(path => ['--ignore', path]), alpha, beta], env);
+  runMutagen(['sync', 'flush', sessionName], env);
+  for (const path of Object.keys(files).filter(path => path.includes('/dist/'))) {
+    await assert.rejects(readFile(join(beta, path)), { code: 'ENOENT' });
+  }
+  assert.equal(await readFile(join(beta, 'packages/lib/generated/input.json'), 'utf8'), 'generated');
+  const newInputs = ['packages/lib/src/new/fresh.ts', 'packages/new-package/package.json', 'packages/lib/new.config.mjs', 'new-root.config.mjs', 'new-root-tree/input.json', 'bratc/kept.txt'];
+  for (const path of newInputs) {
+    await mkdir(join(alpha, dirname(path)), { recursive: true });
+    await writeFile(join(alpha, path), `fresh source: ${path}`);
+  }
+  const flushed = spawnSync(controlExecutable, ['--sync-flush', sessionName, '--', 'mutagen', 'sync', 'flush', sessionName], { env, encoding: 'utf8' });
+  assert.ifError(flushed.error);
+  assert.equal(flushed.status, 0, flushed.stderr);
+  for (const path of newInputs) assert.equal(await readFile(join(beta, path), 'utf8'), `fresh source: ${path}`);
+  for (const path of Object.keys(files).filter(path => path.includes('foreign'))) {
+    assert.equal(await readFile(join(beta, path), 'utf8'), files[path]);
+  }
+  assert.equal(await readFile(join(beta, 'node_modules/local.txt'), 'utf8'), 'target-local');
+  const nativeEvidence = 'packages/iroh-native/release-evidence';
+  await mkdir(join(beta, nativeEvidence), { recursive: true });
+  await writeFile(join(beta, nativeEvidence, 'THIRD-PARTY-NOTICES.txt'), 'target notices');
+  await writeFile(join(beta, nativeEvidence, 'sbom.cdx.json'), 'target SBOM');
+  runMutagen(['sync', 'flush', sessionName], env);
+  assert.equal(await readFile(join(beta, nativeEvidence, 'THIRD-PARTY-NOTICES.txt'), 'utf8'), 'target notices');
+  assert.equal(await readFile(join(beta, nativeEvidence, 'sbom.cdx.json'), 'utf8'), 'target SBOM');
+});
 
 test('native sync check accepts a healthy session from the real Mutagen public template model', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-real-mutagen-'));

@@ -19,7 +19,7 @@ export type WidgetViewerPurposeResolutionV1 = Readonly<{
 type PurposeDescriptor = WidgetInputDescriptorV1 & Readonly<{ resources?: readonly PluginContributionIdentityV1[] }>;
 
 /** The declared read Resource is the authority for both defaults and pin choices. */
-function readWidgetConnectedAccountPurpose(input: Readonly<{ descriptor: PurposeDescriptor; resources: readonly PluginProjectedResourceV2[];
+export function readWidgetConnectedAccountPurposeV1(input: Readonly<{ descriptor: PurposeDescriptor; resources: readonly PluginProjectedResourceV2[];
     path: string; purpose?: string }>) {
     const declarations = input.descriptor.connectedAccountPurposeBindings ?? [];
     const mapping = declarations.filter(mapping => mapping.path === input.path && (input.purpose === undefined || mapping.purpose === input.purpose));
@@ -37,7 +37,7 @@ function readWidgetConnectedAccountPurpose(input: Readonly<{ descriptor: Purpose
 /** Credential-free personal pin candidates from the current viewer's existing inventory. */
 export function resolveWidgetConnectedAccountOptionsV1(input: Readonly<{ descriptor: PurposeDescriptor; resources: readonly PluginProjectedResourceV2[];
     profile: AccountProfile; path: string; now: number }>): readonly InputOption[] | null {
-    const declared = readWidgetConnectedAccountPurpose(input);
+    const declared = readWidgetConnectedAccountPurposeV1(input);
     if (!declared) return null;
     return input.profile.connectedAccountsV4.filter(account => isQualifiedConnectedAccountProfileActiveV4(account, input.now)
         && declared.serviceRefs.some(service => service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId))
@@ -58,7 +58,7 @@ export function resolveWidgetViewerPurposeValuesV1(input: Readonly<{
     const fields: WidgetInputIssueV1[] = [];
     for (const [path, binding] of Object.entries(input.instance.bindings)) {
         if (binding.kind !== 'viewer') continue;
-        const declared = readWidgetConnectedAccountPurpose({ ...input, path, purpose: binding.purpose });
+        const declared = readWidgetConnectedAccountPurposeV1({ ...input, path, purpose: binding.purpose });
         if (!declared) {
             fields.push({ path, status: 'unavailable', reasonCode: 'widget_viewer_purpose_undeclared' });
             continue;

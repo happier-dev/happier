@@ -2,7 +2,7 @@ import React from 'react';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { Pressable } from 'react-native';
 
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -13,7 +13,6 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -37,7 +36,12 @@ export default React.memo(function SecretPickerScreen() {
         || (typeof params.dataId === 'string' && params.dataId.trim().length > 0)
         || (typeof params.machineId === 'string' && params.machineId.trim().length > 0),
     );
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);

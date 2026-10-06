@@ -1,9 +1,5 @@
-import {
-    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    AnyClientUpgradeRequiredV1Schema,
-    buildAccountStoredContentCompatibilityHttpHeadersV1,
-    buildAccountStoredContentCompatibilitySocketAuthV1,
-} from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilityHttpHeadersV1, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { AnyClientUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 
 type CurrentCliClientCompatibilityKind = 'daemon' | 'session-runner';
 

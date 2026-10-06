@@ -168,6 +168,11 @@ function shouldKeepTargetOptionalPackage(directory: string, target: BinaryTarget
   const name = basename(directory);
   const parent = basename(dirname(directory));
 
+  if (parent === '@esbuild') {
+    const platform = target.os === 'windows' ? 'win32' : target.os;
+    return name === `${platform}-${target.arch}`;
+  }
+
   if (parent === '@img' && (
     /^sharp(?:-libvips)?-(?:darwin|linux|linuxmusl|win32)-(?:x64|arm64|arm|ia32|ppc64|riscv64|s390x)$/.test(name)
     || name === 'sharp-wasm32'
@@ -188,6 +193,17 @@ async function projectNativePackage(directory: string, target: BinaryTarget): Pr
   const platform = target.os === 'windows' ? 'win32' : target.os;
   const name = basename(directory);
   const parent = basename(dirname(directory));
+  if (name === 'iroh-native' && parent === '@happier-dev') {
+    const nativeDir = join(directory, 'native');
+    const files = await readdir(nativeDir).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    for (const file of files) {
+      if (/^happier-iroh-native-lifecycle\.(?:linux|darwin|win32)-(?:x64|arm64)\.node$/.test(file)
+        && file !== `happier-iroh-native-lifecycle.${platform}-${target.arch}.node`) await rm(join(nativeDir, file));
+    }
+  }
   if (name === 'sharp' && parent === 'node_modules') {
     await assertTargetOptionalPackages({
       directory: join(directory, 'node_modules', '@img'),
@@ -209,7 +225,7 @@ async function projectNativePackage(directory: string, target: BinaryTarget): Pr
     await rm(directory, { recursive: true, force: true });
     return false;
   }
-  if (['bare-fs', 'bare-os', 'bare-url'].includes(name) && parent === 'node_modules') {
+  if (['bare-fs', 'bare-os', 'bare-url', 'bare-path'].includes(name) && parent === 'node_modules') {
     // These packages all use the same explicit prebuilds/<platform>-<arch> layout.
     // Package-level licenses and JavaScript loaders remain outside this directory.
     for (const prebuild of await readDirectories(join(directory, 'prebuilds'))) {

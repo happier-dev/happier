@@ -35,6 +35,8 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { writeConnectedAccountPurposeDefault, type QualifiedConnectedAccountPurposeV1,
+  type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 
 function requireSettingsVersion(settingsVersion: number | null): number {
   if (settingsVersion === null) throw new Error('Account settings version is unavailable');
@@ -86,6 +88,28 @@ export function useApplySettings(): (delta: SettingsWriteDelta) => void {
       source: 'ui' satisfies SettingsAnalyticsSource,
     });
   }, [expectedSettingsScope]);
+}
+
+/** Personal-purpose edits rebase on current Account settings, never replace a modal's stale collection. */
+export function useApplyConnectedAccountPurposeTarget(): (input: Readonly<{
+  purpose: QualifiedConnectedAccountPurposeV1;
+  target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
+  isCurrent(): boolean;
+}>) => Promise<void> {
+  const expectedScope = useAccountSettingsScope();
+  return React.useCallback(async (input) => {
+    const current = getStorage().getState();
+    const assertCurrent = () => {
+      if (!expectedScope || !areAccountSettingsScopesEqual(expectedScope, getStorage().getState().settingsScope)
+        || !input.isCurrent()) throw new Error('Connected Account purpose is no longer current');
+    };
+    assertCurrent();
+    await persistAccountSettingsOnce(expectedScope, requireSettingsVersion(current.settingsVersion), (raw) => {
+      assertCurrent();
+      return { ...raw, ...writeConnectedAccountPurposeDefault({ settings: settingsParse(raw),
+        purpose: input.purpose, target: input.target }) };
+    });
+  }, [expectedScope]);
 }
 
 /** Voice editors submit their change, not a stale replacement of the Account-owned profile. */

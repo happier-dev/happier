@@ -1,9 +1,5 @@
-import {
-  CHROMIUM_FOR_TESTING_PRODUCT_SOURCE,
-  resolveChromiumForTestingPlatform,
-  resolveChromiumForTestingAssetVersion,
-  type ChromiumForTestingPlatformAsset,
-} from '@happier-dev/protocol';
+import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE, resolveChromiumForTestingPlatform, resolveChromiumForTestingAssetVersion } from '@happier-dev/protocol/browser/sidecar/chromiumForTesting';
+import type { ChromiumForTestingPlatformAsset } from '@happier-dev/protocol';
 import { DEFAULT_ARCHIVE_EXTRACTION_LIMITS } from '@happier-dev/release-runtime/archiveExtraction';
 import { installPinnedArchive, resolveInstalledPinnedArchiveExecutable } from './pinnedArchive';
 

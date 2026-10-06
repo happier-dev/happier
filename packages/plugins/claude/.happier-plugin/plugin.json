@@ -473,6 +473,7 @@
                   "id": "token",
                   "schema": {
                     "minLength": 1,
+                    "pattern": "^\\s*sk-ant-[A-Za-z0-9_-]+\\s*$",
                     "type": "string"
                   },
                   "secret": true,
@@ -2374,6 +2375,26 @@
             {
               "kind": "connectedAccountOrigin",
               "service": "claude-subscription"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "anthropic-key-verification",
+        "reason": "Verify an Anthropic API key before connecting the account.",
+        "scope": {
+          "methods": [
+            "GET"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.anthropic.com"
+            },
+            {
+              "kind": "connectedAccountOrigin",
+              "service": "anthropic"
             }
           ]
         }

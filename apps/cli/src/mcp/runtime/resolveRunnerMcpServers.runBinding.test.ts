@@ -42,7 +42,7 @@ vi.mock('@/features/serverFeaturesClient', () => ({
 // The daemon catalog is a transport boundary; the MCP server and Action execution stay real.
 vi.mock('@/daemon/controlClient', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/daemon/controlClient')>(),
-  readDaemonPluginCatalog: async () => ({ kind: 'unavailable', code: 'daemon_unavailable' }),
+  readDaemonPluginCatalog: async () => ({ kind: 'available', plugins: [], tools: [] }),
 }));
 
 afterEach(() => {

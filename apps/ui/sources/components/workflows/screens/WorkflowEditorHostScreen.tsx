@@ -81,7 +81,7 @@ import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/u
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
-import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { formatWorkflowProblemMessage, resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { exportWorkflowDocument, importWorkflowDocument } from '@/sync/domains/workflows/workflowInterchange';
 import {
     pickWorkflowDocumentText,
@@ -399,7 +399,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         setAgentDraft(null);
         onAgentSessionCreated(target);
     }, [agentDraft, onAgentSessionCreated]);
-    const [hydrationFailed, setHydrationFailed] = React.useState(false);
+    const [hydrationFailure, setHydrationFailure] = React.useState<Readonly<{ error: unknown }> | null>(null);
     const [hydrationAttempt, setHydrationAttempt] = React.useState(0);
     const [view, setView] = React.useState<WorkflowEditorView>('steps');
     const [selection, setSelection] = React.useState<WorkflowEditorViewState>(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
@@ -542,7 +542,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         setDescription(nextDescription);
         savedDescriptionRef.current = nextDescription;
         setSavePending(false);
-        setHydrationFailed(false);
+        setHydrationFailure(null);
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
         setView('steps');
         setInputValues(withdrawn ? {} : nextReviewedRunSeed?.inputs ?? {});
@@ -604,16 +604,16 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 setDraft(hydrated);
                 setSaved({ definitionId: result.definitionId, revision: result.revision });
                 setContentScopeKey(requestScopeKey);
-            } catch {
+            } catch (error) {
                 if (cancelled || !lifetime.isCurrent()) return;
-                setHydrationFailed(true);
+                setHydrationFailure({ error });
             }
         })();
         return () => { cancelled = true; };
     }, [accountScopeKey, agentRevision, agentSeedId, hydrationAttempt, sourceDefinitionId, sourceKind]);
 
     const retryHydration = React.useCallback(() => {
-        setHydrationFailed(false);
+        setHydrationFailure(null);
         setHydrationAttempt((attempt) => attempt + 1);
     }, []);
 
@@ -717,6 +717,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
     const startRun = React.useCallback(async (
         inputs: Readonly<Record<string, JsonValue>> | undefined,
         roleOverrides?: WorkflowRunComposerModalProps['roleOverrides'],
+        visibleTeamId?: string,
     ): Promise<void> => {
         if (planPendingRef.current || draft === null || projectTarget === null || projectTarget.directory.trim().length === 0) return;
         const validation = validateWorkflowEditorDraft(draft);
@@ -747,6 +748,9 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             executionTarget: admittedTarget,
             source: {
                 kind: 'inline',
+                // Grant lineage does not substitute saved contents for this reviewed draft.
+                ...(saved?.definitionId ? { sourceArtifactId: saved.definitionId } : {}),
+                ...(visibleTeamId === undefined ? {} : { visibleTeamId }),
                 // The canonical definition is deeply readonly; the ingress request
                 // type is mutable, so hand it a shallow mutable copy instead of
                 // casting the contract away. The Action re-parses it regardless.
@@ -760,6 +764,8 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
             project: projectTarget,
             isInvocationCurrent: sourceIsCurrent,
+            // The composer stays open with the refusal's reason (04 §4.8).
+            refusal: 'inline',
             ...(ownedPlanOriginId ? { originSessionId: ownedPlanOriginId } : {}),
             ...(ownedPlanOriginId && reportBack ? { onComplete: { kind: 'originating_session' as const } } : {}),
         });
@@ -820,7 +826,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         pendingRunIdRef.current = null;
         setInputSheetOpen(false);
         router.pushRetainingCurrent({ pathname: '/workflows/runs/[runId]', params: { runId: admitted.run.id } } as never);
-    }, [captureSourceGeneration, draft, executionTarget, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack]);
+    }, [captureSourceGeneration, draft, executionTarget, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId]);
 
     const handleRunNow = React.useCallback(() => {
         if (draft === null) return;
@@ -828,10 +834,12 @@ export function WorkflowEditorHostScreen(props: Readonly<{
         setInputSheetOpen(true);
     }, [draft]);
 
+    const { clearRefusal } = runNow;
     const dismissInputSheet = React.useCallback(() => {
         if (planPendingRef.current) return;
+        clearRefusal();
         setInputSheetOpen(false);
-    }, []);
+    }, [clearRefusal]);
 
     const inputModalProps = React.useMemo<WorkflowRunComposerModalProps | null>(() => draft === null ? null : ({
         definition: validateWorkflowEditorDraft(draft).normalizedDefinition,
@@ -865,9 +873,11 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 showChevron={false} rightElementOutsidePressable
                 rightElement={<Switch value={reportBack} onValueChange={setReportBack} disabled={planPending} />} /> }),
             controlId: 'delivery' as const }] : [])],
-        onRun: (inputs, roleOverrides) => { void startRun(inputs, roleOverrides); },
+        onRun: (inputs, roleOverrides, visibleTeamId) => { void startRun(inputs, roleOverrides, visibleTeamId); },
         onCancel: dismissInputSheet,
-        pending: planPending || runNow.stateFor(pendingRunIdRef.current ?? '') === 'submitting',
+        pending: planPending || runNow.isPending(pendingRunIdRef.current ?? ''),
+        reconciling: runNow.stateFor(pendingRunIdRef.current ?? '') === 'reconciling',
+        startProblem: runNow.refusal?.message ?? null,
     }), [activeAccountScope?.serverId, description, dismissInputSheet, draft, inputRawTextValues, inputValues, machineName, machines, projectTarget, runNow, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportBack, planPending]);
 
     const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps, anchorRef: runNowAnchorRef });
@@ -1345,17 +1355,18 @@ export function WorkflowEditorHostScreen(props: Readonly<{
             />
         );
     }
-    // Failing to read the Artifact is not proof it was deleted, so this offers
-    // the read again instead of announcing a removal the owner never reported.
-    if (hydrationFailed) {
+    // Preserve the owner's typed reason; a transport failure alone is not
+    // proof the definition is unavailable or deleted.
+    if (hydrationFailure !== null) {
+        const problem = resolveWorkflowProblemPresentation(hydrationFailure.error);
         return (
             <SurfaceStateCard
                 testID="workflow-editor-error"
-                kind="error"
-                title={t('workflows.editor.loadFailedTitle')}
-                reason={t('workflows.editor.loadFailedBody')}
-                action={{ label: t('common.retry'), onPress: retryHydration }}
-                accessibilitySemantics="alert"
+                kind={problem.code === 'content_unavailable' ? 'unavailable' : 'error'}
+                title={problem.title}
+                reason={problem.message}
+                action={problem.repairLabel === null ? undefined : { label: problem.repairLabel, onPress: retryHydration }}
+                accessibilitySemantics={problem.accessibilitySemantics}
             />
         );
     }
@@ -1455,7 +1466,7 @@ export function WorkflowEditorHostScreen(props: Readonly<{
                 }}
                 onRunNow={handleRunNow}
                 runNowAnchorRef={runNowAnchorRef}
-                runPending={runNow.stateFor(pendingRunIdRef.current ?? '') === 'submitting'}
+                runPending={runNow.isPending(pendingRunIdRef.current ?? '')}
                 {...(canManagePersonalTriggers ? { onSave: handleSave, triggersSummary: triggers.summary,
                 triggersSection: (
                     <WorkflowTriggerSection

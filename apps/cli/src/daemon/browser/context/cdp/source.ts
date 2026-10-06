@@ -1,4 +1,4 @@
-import { resolveAnnotationCropClip } from '@happier-dev/protocol';
+import { resolveAnnotationCropClip } from '@happier-dev/protocol/browser/context/annotationCropGeometry';
 
 import type { BrowserContextCaptureScope, BrowserContextSource } from '../capture';
 import type { BrowserContextRegionRect } from '../capture';

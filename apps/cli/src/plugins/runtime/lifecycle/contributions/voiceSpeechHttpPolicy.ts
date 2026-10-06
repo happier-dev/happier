@@ -1,9 +1,7 @@
 import { lookup } from 'node:dns/promises';
 
-import {
-    assessProviderEndpoint,
-    type VoiceSpeechEndpointPolicy,
-} from '@happier-dev/protocol';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import type { VoiceSpeechEndpointPolicy } from '@happier-dev/protocol';
 
 function unavailable(): Error {
     return Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });

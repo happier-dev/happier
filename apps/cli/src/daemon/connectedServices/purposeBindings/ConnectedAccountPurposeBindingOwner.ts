@@ -7,28 +7,14 @@ import type {
 import type {
   PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
-import {
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  QualifiedConnectedAccountPurposeBindingV1Schema,
-  QualifiedConnectedAccountPurposeBindingTargetV1Schema,
-  QualifiedConnectedAccountPurposeV1Schema,
-  QualifiedConnectedAccountRequestAuthUseV1Schema,
-  ConnectedServiceCredentialRevisionV1Schema,
-  PluginContributionIdentityV1Schema,
-  qualifiedPurposeKey,
-  readAccountSettingsConnectedAccountPurposeBindings,
-  sameQualifiedConnectedAccountRef,
-  type PluginContributionIdentityV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountPurposeTeamResourceSelectionV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type QualifiedConnectedAccountRequestAuthUseV1,
-  type QualifiedConnectedAccountRef,
-  type TeamResourceConnectedServiceSelectionV2,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema, QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readAccountSettingsConnectedAccountPurposeBindings } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { PluginContributionIdentityV1, ConnectedServiceCredentialRevisionV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeTeamResourceSelectionV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
 
 import {
   readActivePluginAccountSettings,

@@ -29,8 +29,8 @@ async function defaultRunCaptureResult({ command, args, env, streamLabel = '', t
   });
 }
 
-function defaultSpawnProcess({ label, command, args, env, tty }) {
-  return spawnProc(label, command, args, env, tty ? { stdio: 'inherit' } : {});
+function defaultSpawnProcess({ label, command, args, env, tty, lifetimeStdin, onLine }) {
+  return spawnProc(label, command, args, env, { onLine, ...(tty ? { stdio: 'inherit' } : lifetimeStdin ? { ownedProcessGroup: true, stdio: ['pipe', 'pipe', 'pipe'] } : {}) });
 }
 
 async function defaultStopProcess(child, signal) {
@@ -213,6 +213,7 @@ export async function runDevTargetCommand(
     flush = null,
     tty = false,
     dependencyAdmission = 'auto',
+    admissionMode = 'wait',
     workspacePreparation = 'auto',
     provenance = 'auto',
     syncAlreadyVerified = false,
@@ -282,6 +283,7 @@ export async function runDevTargetCommand(
   }
 
   const executionId = createExecutionId();
+  const lifetimeStdin = target.platform !== 'windows' && !tty;
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
     cwd,
@@ -293,12 +295,11 @@ export async function runDevTargetCommand(
         ...(preparationRequired ? { componentRelativeDir: resolveRemoteValidationComponentRelativeDir(commandArgs, { cwd }) } : {}),
         validationKind,
       } : null,
-      admissionClass: resolveRemoteCommandPolicy(commandArgs, { cwd }).heavyClass === 'compilation'
-        ? 'compilation'
-        : ['full-validation', 'targeted-validation'].includes(classification.commandClass)
-          ? classification.commandClass : '',
+      admissionClass: resolveRemoteCommandPolicy(commandArgs, { cwd }).heavyClass,
     }),
     environment,
+    admissionMode,
+    lifetimeStdin,
   });
   const sshArgs = [
     ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
@@ -310,12 +311,17 @@ export async function runDevTargetCommand(
     'ConnectTimeout=10',
   ];
   const admittedAt = now();
+  let admissionDeclined = false;
   const child = spawnProcess({
     label: `remote:${target.name}`,
     command: 'ssh',
     args: buildSshWorkerArgs(target, { remoteCommand, sshArgs, tty }),
     env,
     tty,
+    lifetimeStdin,
+    onLine: ({ stream, line }) => {
+      if (stream === 'stderr' && line === '[preferred-execution] heavyweight admission declined before dispatch') admissionDeclined = true;
+    },
   });
   const recordProvenance = async (record) => {
     if (provenance === 'skip') return;
@@ -390,7 +396,9 @@ export async function runDevTargetCommand(
       signal: result.signal,
       durationMs: completedAt - admittedAt,
     });
-    return result;
+    return admissionMode === 'try' && result.code === 75 && admissionDeclined
+      ? { ...result, admissionUnavailable: true }
+      : result;
   } finally {
     for (const [signal, listener] of listeners) {
       if (typeof signalSource.off === 'function') signalSource.off(signal, listener);

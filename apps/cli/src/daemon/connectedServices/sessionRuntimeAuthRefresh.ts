@@ -1,8 +1,6 @@
 import { z } from 'zod';
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  type ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 import type {
   ConnectedServiceDaemonAuthBridgeRefreshResult,

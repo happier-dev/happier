@@ -1,13 +1,13 @@
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { Metadata } from '@/api/types';
-import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/rpc';
+import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import { configuration } from '@/configuration';
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
 import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
-export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 export type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { registerCapabilitiesHandlers } from './capabilities';

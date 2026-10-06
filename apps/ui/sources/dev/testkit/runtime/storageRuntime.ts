@@ -37,6 +37,7 @@ export type StorageRuntimeOptions = Readonly<{
 
 const createDefaultMutableSetter: StorageMutableSetterFactory = () => () => undefined;
 const emptyCurrentSecretBindingsByProfileId: Settings['currentSecretBindingsByProfileId'] = {};
+const defaultStorageSettings = settingsParse({});
 
 const defaultProfile: Profile = Object.freeze({
     id: '',
@@ -132,19 +133,27 @@ export function isStorageStoreLike(value: unknown): value is StorageStoreLike {
  * silently make those tests static.
  */
 export function adaptStorageStoreLike(storeLike: StorageStoreLike): StorageStore {
-    // A callable fixture owns its own state shape and stays passthrough; a
-    // hand-rolled store-like may return a partial snapshot, and readers such
+    // Both callable and hand-rolled store fixtures may return partial snapshots, and readers such
     // as `state.sessions[sessionId]` index into records the real store always
     // exposes. Complete those snapshots at this boundary — the same minimal
     // real shape the canonical store mocks use — and memoize per raw snapshot
     // so unchanged fixtures keep the referential stability readers rely on.
     const rawGetState = storeLike.getState;
     const isCallableFixture = typeof storeLike === 'function';
-    const readCompletedState = isCallableFixture
-        ? rawGetState
-        : createCompletedStateReader(rawGetState);
+    const completedByRawSnapshot = new WeakMap<StorageState, StorageState>();
+    const completeSnapshot = (raw: StorageState): StorageState => {
+        const cached = completedByRawSnapshot.get(raw);
+        if (cached) return cached;
+        const completed = completePartialStorageState(raw);
+        completedByRawSnapshot.set(raw, completed);
+        return completed;
+    };
+    const readCompletedState = () => completeSnapshot(rawGetState());
     const select = isCallableFixture
-        ? storeLike as unknown as StorageStore
+        ? (selector?: (value: StorageState) => unknown) => (storeLike as unknown as StorageStore)((raw) => {
+            const snapshot = completeSnapshot(raw);
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        })
         : (selector?: (value: StorageState) => unknown) => {
             const snapshot = readCompletedState();
             return typeof selector === 'function' ? selector(snapshot) : snapshot;
@@ -152,7 +161,7 @@ export function adaptStorageStoreLike(storeLike: StorageStoreLike): StorageStore
     return Object.assign(select as StorageStore, {
         getState: readCompletedState,
         getInitialState: storeLike.getInitialState
-            ? createCompletedStateReader(storeLike.getInitialState)
+            ? () => completeSnapshot(storeLike.getInitialState!())
             : readCompletedState,
         setState: storeLike.setState ?? (() => undefined),
         subscribe: storeLike.subscribe ?? (() => () => undefined),
@@ -176,27 +185,24 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         archivedSessionListMembershipByServerId: {},
         sessionTailContiguousBoundary: {},
         sessionTranscriptLoadIssues: {},
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
+        sessionListQueryMembershipByKey: {},
         authoringMemory: authoringMemoryDefaults,
+        applyLocalSettings: () => undefined,
         ...state,
+        settings: state.settings
+            ? Object.keys(defaultStorageSettings).every((key) => Object.prototype.hasOwnProperty.call(state.settings, key))
+                ? state.settings
+                : { ...defaultStorageSettings, ...state.settings }
+            : defaultStorageSettings,
         profile: state.profile ?? defaultProfile,
-        localSettings: state.localSettings ?? localSettingsDefaults,
+        localSettings: state.localSettings
+            ? Object.keys(localSettingsDefaults).every((key) => Object.prototype.hasOwnProperty.call(state.localSettings, key))
+                ? state.localSettings
+                : { ...localSettingsDefaults, ...state.localSettings }
+            : localSettingsDefaults,
     } as StorageState;
-}
-
-function createCompletedStateReader(readRaw: () => StorageState): () => StorageState {
-    const completedByRawSnapshot = new WeakMap<object, StorageState>();
-    return () => {
-        const raw = readRaw() as unknown;
-        if (raw === null || typeof raw !== 'object') {
-            // Degenerate fixture snapshot: fall back to the minimal real boundary alone.
-            return completePartialStorageState({});
-        }
-        const cached = completedByRawSnapshot.get(raw);
-        if (cached !== undefined) return cached;
-        const completed = completePartialStorageState(raw as Partial<StorageState>);
-        completedByRawSnapshot.set(raw, completed);
-        return completed;
-    };
 }
 
 export function createStorageModuleStub<TOverrides extends object>(

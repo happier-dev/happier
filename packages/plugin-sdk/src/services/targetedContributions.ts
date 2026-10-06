@@ -4,9 +4,7 @@ import type {
     PluginTargetedContributionSelectionV1,
     PluginTargetedContributionSourceCustodyV1,
 } from '../targetedContributionAuthoring.js';
-import {
-    pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 
 /**
  * One target-owned point declaration used to observe its admitted contributors.

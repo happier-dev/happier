@@ -1,4 +1,7 @@
-import { deriveSessionCreationTagV1, readSessionDirectoryKind, SessionCreationCorrespondenceV1Schema, type SessionCreationTagV1 } from '@happier-dev/protocol';
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import type { SessionCreationTagV1 } from '@happier-dev/protocol';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 

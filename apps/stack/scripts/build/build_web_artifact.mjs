@@ -183,9 +183,13 @@ export async function buildWebArtifact({
   artifactDir,
   artifactFingerprint,
   sourceMetadata,
+  target = { platform: process.platform, arch: process.arch },
   stalePackages = [],
   forceRebuild = false,
   env = process.env,
+  ensureDepsInstalledImpl = ensureDepsInstalled,
+  runUiPostinstallImpl = runCanonicalUiPostinstall,
+  expoExecImpl = expoExec,
 }) {
   void forceRebuild;
   const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
@@ -195,7 +199,7 @@ export async function buildWebArtifact({
 
   const uiDir = getComponentDir(rootDir, 'happier-ui');
   await requireDir('happier-ui', uiDir);
-  await ensureWebUiDependencies({ uiDir, env });
+  await ensureWebUiDependencies({ uiDir, env, ensureDepsInstalledImpl, runUiPostinstallImpl });
 
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
@@ -209,14 +213,14 @@ export async function buildWebArtifact({
     });
     const tmpDir = resolveExpoTmpDir({ env: exportEnv, defaultTmpDir: paths.tmpDir, kind: 'ui-export-runtime-artifact', projectDir: uiDir });
     await ensureExpoIsolationEnv({ env: exportEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
-    const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir, payloadDir, env: exportEnv, artifactFingerprint });
+    const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir, payloadDir, env: exportEnv, artifactFingerprint, expoExecImpl });
 
     await writeArtifactManifest({
       artifactDir: tmpArtifactDir,
       manifest: {
         version: 1,
         component: 'web',
-        target: { platform: process.platform, arch: process.arch },
+        target,
         artifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,

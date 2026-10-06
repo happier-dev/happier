@@ -23,41 +23,21 @@ import type {
 import type {
     PluginInvocationSurface,
 } from '@happier-dev/plugin-sdk/interactions';
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    ActionIdSchema,
-    type ActionExecuteResult,
-    type ActionExecutorContext,
-    type ActionPluginCaller,
-    type ActionCaller,
-    type ActionId,
-} from '@happier-dev/protocol/actions';
-import {
-    arePluginMachineMaterializationRefsEqual,
-    readExecutionRunStartRunCreation,
-    pluginSourceCustodyV1Equal,
-    pluginJsonValuesEqual,
-    readPluginActionFailureAuthorPayload,
-    PluginMachineExecutionOriginV1Schema,
-    sameQualifiedConnectedAccountRef,
-    StrictJsonValueSchema,
-    type QualifiedConnectedAccountRef,
-    type PluginMachineExecutionOriginV1,
-    type RehydratedPluginContributionPointOperationV1,
-    withExecutionRunStartFailureDetails,
-} from '@happier-dev/protocol';
-import {
-    pluginUiSelectedActionInputMatchesOperation,
-    pluginUiTargetedContributionOperationKey,
-    reconstructPluginUiSelectedActionInput,
-    type PluginUiSelectedActionInputCarrierV1,
-    PluginUiSelectedActionInputCarrierV1Schema,
-    type PluginUiTargetedContributionOperationV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    getActionSpec,
-    type ActionSurfaceBindingContext,
-} from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecuteResult, ActionExecutorContext, ActionPluginCaller, ActionCaller, ActionId } from '@happier-dev/protocol/actions';
+import { arePluginMachineMaterializationRefsEqual, PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { QualifiedConnectedAccountRef, PluginMachineExecutionOriginV1, RehydratedPluginContributionPointOperationV1 } from '@happier-dev/protocol';
+import { pluginUiSelectedActionInputMatchesOperation, pluginUiTargetedContributionOperationKey, reconstructPluginUiSelectedActionInput, PluginUiSelectedActionInputCarrierV1Schema } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import type { PluginUiSelectedActionInputCarrierV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AdmittedTargetedOperationExecutionRequest } from '../actions/executeContributedAction';
 import { resolvePluginActionCaller } from './actionCaller';
 import type { PluginExternalActionContext } from './types';

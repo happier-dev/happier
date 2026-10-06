@@ -3,6 +3,11 @@
   "productName": "Happier (dev)",
   "identifier": "dev.happier.app.publicdev",
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["happier-dev"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCRTk2MjE4RjNCMEYxRUYKUldUdjhiRHpHR0xwcTFIUjMvb1FBbW5HOUFYSkd5aGlHa204MWZuRk50ekF5WVZQdU1mVkRWWnkK",
       "endpoints": [

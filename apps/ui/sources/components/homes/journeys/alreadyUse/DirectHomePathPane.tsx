@@ -49,7 +49,7 @@ type AddressState =
 export function DirectHomePathPane(props: Readonly<{
     /** An address handed over from path (b), when it turned out not to be a sign-in service. */
     initialAddress?: string;
-    onHomeConnected: (profile: ServerProfile) => void;
+    onHomeConnected: (profile: ServerProfile) => void | Promise<void>;
     /** A flow that continues on its own screen (the camera, a Home link): the panel closes. */
     onLeave: () => void;
     /** The address as it is typed (Settings' draft row is titled by it). */
@@ -101,6 +101,12 @@ export function DirectHomePathPane(props: Readonly<{
                 confirmInsecureHttp: confirmInsecureHomeHttp,
                 confirmCanonicalUrl: confirmCanonicalHomeUrl,
             });
+            if (controller.signal.aborted) return;
+            if (result.kind === 'connected') {
+                await onHomeConnected(result.profile);
+                if (!controller.signal.aborted) setAddressState({ kind: 'idle' });
+                return;
+            }
         } catch (error) {
             if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
             setAddressState({
@@ -112,11 +118,6 @@ export function DirectHomePathPane(props: Readonly<{
             return;
         }
         if (controller.signal.aborted) return;
-        if (result.kind === 'connected') {
-            setAddressState({ kind: 'idle' });
-            onHomeConnected(result.profile);
-            return;
-        }
         const message = homeConnectFailureMessage(result);
         if (message) {
             setAddressState({

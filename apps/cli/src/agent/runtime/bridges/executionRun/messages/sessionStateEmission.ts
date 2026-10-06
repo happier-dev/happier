@@ -8,7 +8,8 @@ import type { ExecutionRunBackendController } from '@/agent/executionRuns/contro
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
 import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptPublisher';
 import type { ExecutionRunState } from '../executionRunTypes';
-import { readBackendTargetRefV2, readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
 import {
   buildExecutionRunParentSessionPermissionRequestEnvelope,

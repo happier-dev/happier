@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { AccessibilityInfo, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { AccessibilityInfo } from 'react-native';
 import type { WidgetInputBindingsV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { useWorkBoards } from '@/components/boards/model/useWorkBoards';
@@ -9,12 +8,11 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { Text } from '@/components/ui/text/Text';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
+import { WidgetFlowPanel, WidgetPreviewWell } from '@/components/widgets/flow/WidgetFlowPanel';
 
 import { runWidgetDefinitionCommand } from './widgetDefinitionCommands';
-import { WidgetDefinitionPanel, widgetPanelText } from './WidgetDefinitionPanel';
 
 /** A read the Session item makes from its own context, which becomes an input of the copy. */
 export type SaveAsWidgetConvertedInput = Readonly<{ path: string; title: string; becomes: 'viewer' | 'context' }>;
@@ -78,7 +76,7 @@ export function SaveAsWidgetPanel(props: Readonly<{
     }, [chosen, destinations, props, state, trimmed]);
 
     return (
-        <WidgetDefinitionPanel
+        <WidgetFlowPanel
             title={t('widgetDefinition.saveTitle')}
             hint={t('widgetDefinition.saveHint')}
             {...(props.onBack ? { onBack: props.onBack } : {})}
@@ -92,10 +90,9 @@ export function SaveAsWidgetPanel(props: Readonly<{
             testID={props.testID}
         >
             {props.preview ? (
-                <View style={styles.preview} testID={`${props.testID}.preview`} pointerEvents="none">
-                    <Text style={widgetPanelText.secondary}>{t('widgetAdd.previewLive')}</Text>
+                <WidgetPreviewWell testID={`${props.testID}.preview`} caption={t('widgetAdd.previewLive')}>
                     {props.preview}
-                </View>
+                </WidgetPreviewWell>
             ) : null}
             <ListPresentationProvider value="page">
                 <ItemGroup surface="none" density="compact">
@@ -141,10 +138,6 @@ export function SaveAsWidgetPanel(props: Readonly<{
                     ))}
                 </ItemGroup>
             </ListPresentationProvider>
-        </WidgetDefinitionPanel>
+        </WidgetFlowPanel>
     );
 }
-
-const styles = StyleSheet.create((theme) => ({
-    preview: { borderRadius: 12, backgroundColor: theme.colors.surface.inset, padding: 10, gap: 6, marginBottom: 6 },
-}));

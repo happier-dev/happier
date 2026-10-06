@@ -15,9 +15,11 @@ import { Platform, ScrollView, View } from 'react-native';
 import {
   useHappierUiAccessibility,
   useHappierUiTheme,
+  useOptionalHappierUiPalette,
   useOptionalHappierUiPlatform,
   useOptionalHappierUiTypography,
 } from '../environment/context.js';
+import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import type { HappierTypeRole } from '../environment/types.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
@@ -58,6 +60,7 @@ import { DetailsPane, useDetailsPaneAvailable, useDetailsPaneHostInstalled } fro
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { NavigationListDestination } from './NavigationList.js';
 import { CollectionDetailHeadingFocusContext, useCollectionDetailHeadingFocusInternal } from './Focus.js';
+import { CollectionVirtualizerContext, type CollectionVirtualizer } from '../presentation/collection/collectionVirtualizer.js';
 
 /**
  * The Collection (COLLECTION.md §3–§4, §7, §10.1): one item anatomy drawn as a `table` at rest and as a `list` beside
@@ -202,6 +205,8 @@ export type CollectionProps<Item> = Readonly<{
    * `collection` (default): the rows scroll inside the Collection, virtualized, under a fixed header.
    */
   scroll?: 'collection' | 'page';
+  /** Platform adapter for this Collection's Lists; page-scrolling rows remain fully mounted. */
+  virtualizer?: CollectionVirtualizer;
   /** The items are still arriving: a grid holds its geometry with skeleton cards (the last known count). */
   loading?: boolean;
   /**
@@ -304,6 +309,8 @@ type CollectionStage<Item> = Readonly<{
   model: HappierCollectionModel<Item>;
   useRowActions: ((item: Item) => CollectionRowActions) | undefined;
   expandable: boolean;
+  /** On a page section's sheet: the rows that draw the sheet's hairline below them (every row but a group's last). */
+  dividedKeys: ReadonlySet<string> | null;
   onPeekHeight: (key: string, height: number) => void;
   onPeekSettled: (key: string, expanded: boolean) => void;
 }>;
@@ -554,7 +561,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
   const rowItem: ReactElement<ItemProps> = actions.secondaryActions !== undefined && actions.onSecondaryAction !== undefined ? (
     <List.Item
       density="compact"
-      showDivider={false}
+      showDivider={stage.dividedKeys?.has(itemKey) === true}
       accessibilityLabel={anatomy.accessibilityLabel(item)}
       {...(anatomy.accessibilityHint?.(item) === undefined ? {} : { accessibilityHint: anatomy.accessibilityHint(item) })}
       {...(anatomy.testID === undefined ? {} : { testID: anatomy.testID(item) })}
@@ -571,7 +578,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
   ) : (
     <List.Item
       density="compact"
-      showDivider={false}
+      showDivider={stage.dividedKeys?.has(itemKey) === true}
       accessibilityLabel={anatomy.accessibilityLabel(item)}
       {...(anatomy.accessibilityHint?.(item) === undefined ? {} : { accessibilityHint: anatomy.accessibilityHint(item) })}
       {...(anatomy.testID === undefined ? {} : { testID: anatomy.testID(item) })}
@@ -708,6 +715,10 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   // A page-sized collection scrolls as the page: its header, items and footer in one scroller. A board's columns
   // scroll on their own, so a board never does.
   const pageScroll = props.scroll === 'page' && presentation !== 'board';
+  // A page-scrolling list sits among the page's other sections, so its groups take the page section anatomy:
+  // a section title above one sheet of rows, not a dense list's caption band.
+  const palette = useOptionalHappierUiPalette();
+  const pageSections = pageScroll && presentation === 'list' && palette !== null;
 
   // ---- measured geometry: the split owner's pure rule, never a device label ----
   const [size, setSize] = useState<Readonly<{ width: number; height: number }> | null>(null);
@@ -858,11 +869,15 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     return {
       key: group?.key ?? `collection-${index}`,
       title: group?.title ?? '',
-      count: section.items.length,
+      // A page section names its rows; a dense list's caption band counts them.
+      ...(pageSections ? {} : { count: section.items.length }),
       ...(group?.description === undefined ? {} : { description: group.description }),
       data,
     };
-  }), [closingPeeks, expandable, expanded, ghostPeeks, model]);
+  }), [closingPeeks, expandable, expanded, ghostPeeks, model, pageSections]);
+  const dividedKeys = useMemo(() => (pageSections
+    ? new Set(model.sections.flatMap((section) => section.items.slice(0, -1).map(model.keyOf)))
+    : null), [model, pageSections]);
   const grouped = model.sections.some((section) => section.group !== null && section.group.title !== '');
   cellsRef.current = useMemo(() => {
     const cells: HappierCollectionTransitionCell[] = [];
@@ -917,9 +932,10 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     model,
     useRowActions: props.useRowActions,
     expandable,
+    dividedKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, columns, composition, expandable, metrics, model, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
+  }), [anatomy, columns, composition, dividedKeys, expandable, metrics, model, onPeekHeight, onPeekSettled, progress, props.useRowActions, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
@@ -929,13 +945,15 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
     .filter(item => props.selection?.isItemActivatable?.(item) !== false).map(model.keyOf), [model.keyOf, model.sections, props.selection?.isItemActivatable]);
   const selectableKeys = useMemo(() => model.sections.flatMap(section => section.items)
     .filter(item => authorMultiple?.isItemSelectable?.(item) !== false).map(model.keyOf), [authorMultiple?.isItemSelectable, model.keyOf, model.sections]);
+  const eligibleKeys = useMemo(() => {
+    const present = new Set(model.sections.flatMap(section => section.items.map(model.keyOf)));
+    return [...selectableKeys, ...(authorMultiple?.retainedSelectionKeys ?? []).filter(key => !present.has(key))];
+  }, [authorMultiple?.retainedSelectionKeys, model.keyOf, model.sections, selectableKeys]);
   useEffect(() => {
-    // The headless model feeds its own store. An author-supplied store is fed here once for every view.
-    if (multipleStore === model.selectionStore) return;
-    multipleStore?.setVisibleRows({ visibleOrderedKeys: selectableKeys,
-      eligibleKeys: authorMultiple?.retainedSelectionKeys === undefined ? selectableKeys
-        : [...selectableKeys, ...authorMultiple.retainedSelectionKeys] });
-  }, [authorMultiple?.retainedSelectionKeys, model.selectionStore, multipleStore, selectableKeys]);
+    // One inventory for author and model stores across all presentations.
+    // Retention preserves hidden rows, never overrides a present row's exclusion.
+    multipleStore?.setVisibleRows({ visibleOrderedKeys: selectableKeys, eligibleKeys });
+  }, [eligibleKeys, multipleStore, selectableKeys]);
   const tabStopKey = model.focusKey !== null && navigationKeys.includes(model.focusKey) ? model.focusKey
     : openKey !== null && navigationKeys.includes(openKey) ? openKey : navigationKeys[0] ?? null;
   const toggleExpanded = model.actions.toggleExpanded;
@@ -954,15 +972,27 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       return false;
     },
     scroll: { offsetRef: scrollOffsetRef, request: view.scrollRequest ?? viewportScrollRequest },
-    sectionHeaderTitleRole: 'caption',
-    sectionHeaderStyle: {
-      height: metrics.groupHeader,
-      justifyContent: 'center',
-      paddingHorizontal: TABLE.insetStart,
-      backgroundColor: theme.colors.elevatedSurface,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.divider,
-    },
+    ...(pageSections && palette !== null ? {
+      sectionHeaderTitleRole: 'section' as const,
+      // The page section header's rhythm: one section gap above, the header gap down to its sheet.
+      sectionHeaderStyle: {
+        justifyContent: 'flex-end',
+        paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx,
+        paddingBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
+        paddingHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
+      },
+      pageSheet: { colors: palette },
+    } : {
+      sectionHeaderTitleRole: 'caption' as const,
+      sectionHeaderStyle: {
+        height: metrics.groupHeader,
+        justifyContent: 'center',
+        paddingHorizontal: TABLE.insetStart,
+        backgroundColor: theme.colors.elevatedSurface,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.divider,
+      },
+    }),
     ...(props.groupAction === undefined ? {} : {
       sectionHeaderAction: (groupKey: string) => (
         <CollectionGroupActionButton
@@ -984,7 +1014,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         {header}
       </driver.AnimatedView>
     ),
-  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, tabStopKey, theme.colors.divider, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
+  }), [driver, expandable, metrics.groupHeader, model, multipleStore, navigationKeys, pageScroll, pageSections, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, tabStopKey, theme.colors.divider, theme.colors.surface, toggleExpanded, transition, view.scrollRequest, viewportScrollRequest]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);
@@ -1197,6 +1227,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
   };
 
   return (
+    <CollectionVirtualizerContext.Provider value={props.virtualizer}>
     <ListMultiSelectionProvider store={multipleStore}>
     <HappierCollectionLayoutContext.Provider value={layoutState}>
       <View ref={rootRef} testID={props.testID} style={rootStyle}>
@@ -1301,6 +1332,7 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       </View>
     </HappierCollectionLayoutContext.Provider>
     </ListMultiSelectionProvider>
+    </CollectionVirtualizerContext.Provider>
   );
 }
 

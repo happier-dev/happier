@@ -1,12 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  type BackendTargetRefV1,
-  ReviewFindingsV2Schema,
-  ReviewFollowUpInputSchema,
-  ReviewTriageOverlaySchema,
-  type SessionInputCausalPermissionAuthorityV1,
-} from '@happier-dev/protocol';
+import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewFollowUpInputSchema } from '@happier-dev/protocol/reviews/reviewFollowUp';
+import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import {

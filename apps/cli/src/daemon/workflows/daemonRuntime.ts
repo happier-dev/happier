@@ -2,29 +2,22 @@ import type {
   AccountApiTokensListActionOutputV1,
   WorkflowAcceptedAuthorizationV1,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  pluginSourceCustodyV1Equal,
-  type PluginSourceCustodyV1,
-  WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS,
-  WorkflowSessionAuthoringSelectionSchema,
-  SessionOwnerMetadataV1Schema,
-  readSessionModesMetadata,
-  SessionInputCancelExactTurnResultV1Schema,
-  ActionDefinitionV1Schema,
-  StrictJsonValueSchema,
-  admitAgentStartV1,
-  formatWorkflowDefinitionRefV1,
-  readSessionMcpSelectionV1FromMetadata,
-  readSessionMcpSelectionRestartRequiredV1FromMetadata,
-  ActionIdSchema,
-  getActionSpec,
-  freezeActionCompletionContractV1,
-  zodSchemaToJsonSchemaObject,
-  ExecutionRunWaitResultSchema,
-  ExecutionRunGetResponseSchema,
-  readActionCompletionRunObservationV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS, WorkflowSessionAuthoringSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
+import { SessionOwnerMetadataV1Schema, readSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionInputCancelExactTurnResultV1Schema } from '@happier-dev/protocol/sessions/control/exactTurnCancellationV1';
+import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
+import { readSessionMcpSelectionV1FromMetadata, readSessionMcpSelectionRestartRequiredV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { freezeActionCompletionContractV1, readActionCompletionRunObservationV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { ExecutionRunWaitResultSchema, ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
   CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   ConversationPermissionMediationSourceCurrentnessResultV1Schema,
@@ -44,7 +37,7 @@ import { createCredentialedWorkflowMaterializationHostV1 } from '@/session/actio
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { StoredCredentials } from '@/persistence';
 import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';

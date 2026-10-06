@@ -19,12 +19,10 @@ import {
   type RetainedExecutionRunWorkerUpdate,
 } from '@/daemon/executionRunRegistry';
 import { composeExecutionRunWorkerUpdate } from './executionRunWorkerUpdate';
-import {
-  AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1,
-  projectExecutionRunRequestedConfiguration,
-  readBackendTargetRefV2,
-  type ExecutionRunResumeHandle,
-} from '@happier-dev/protocol';
+import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
+import { projectExecutionRunRequestedConfiguration } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import {
   createExecutionRunTranscriptCustodyError,

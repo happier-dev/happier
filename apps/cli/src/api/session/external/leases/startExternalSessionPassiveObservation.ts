@@ -1,8 +1,5 @@
-import {
-    readExternalSessionFollowPolicyV1,
-    readExternalSessionsSettingsV1,
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-} from '@happier-dev/protocol';
+import { readExternalSessionFollowPolicyV1, readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 
 import { readStoredCredentials } from '@/persistence';
 import {

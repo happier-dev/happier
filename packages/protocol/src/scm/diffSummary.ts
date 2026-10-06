@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { lazyZodSchema } from '../lazyZodSchema.js';
+
 import { ScmBackendPreferenceSchema } from './backendIdentity.js';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparison } from './comparison.js';
 import { ReviewLaunchFailureSchema } from '../reviews/reviewLaunchFailure.js';
@@ -7,11 +9,11 @@ import { ReviewPublicationEvidenceSchema } from '../reviews/reviewPublicationEvi
 export * from './comparison.js';
 export * from './reviewedMarks.js';
 
-export const ScmDiffSummarySourceKindSchema = z.enum([
+export const ScmDiffSummarySourceKindSchema = lazyZodSchema(() => z.enum([
   'turnCheckpoint',
   'workingTree',
   'session', 'branch', 'commit', 'pullRequest',
-]);
+]));
 export type ScmDiffSummarySourceKind =
   z.infer<typeof ScmDiffSummarySourceKindSchema>;
 
@@ -19,15 +21,15 @@ export const ScmDiffSummarySourceSchema = ScmComparisonSourceSchema;
 export type ScmDiffSummarySource =
   z.infer<typeof ScmDiffSummarySourceSchema>;
 
-export const ScmDiffSummaryTurnEvidenceModeSchema = z.enum([
+export const ScmDiffSummaryTurnEvidenceModeSchema = lazyZodSchema(() => z.enum([
   'reconciled',
   'agent_reported',
   'checkpoint',
-]);
+]));
 export type ScmDiffSummaryTurnEvidenceMode =
   z.infer<typeof ScmDiffSummaryTurnEvidenceModeSchema>;
 
-export const ScmDiffSummaryModelSelectorSchema = z
+export const ScmDiffSummaryModelSelectorSchema = lazyZodSchema(() => z
   .object({
     profileId: z.string().trim().min(1).optional(),
     modelId: z.string().trim().min(1).optional(),
@@ -37,25 +39,26 @@ export const ScmDiffSummaryModelSelectorSchema = z
   .refine(
     (value) => Boolean(value.profileId || value.modelId || value.backendTargetKey),
     { message: 'modelSelector requires profileId, modelId, or backendTargetKey' },
-  );
+  ));
 export type ScmDiffSummaryModelSelector =
   z.infer<typeof ScmDiffSummaryModelSelectorSchema>;
 
 export const SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION = 1;
 
-export const ScmDiffSummaryResolvedSelectorSchema = z.object({
+export const ScmDiffSummaryResolvedSelectorSchema = lazyZodSchema(() => z.object({
   catalogId: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type ScmDiffSummaryResolvedSelector =
   z.infer<typeof ScmDiffSummaryResolvedSelectorSchema>;
 
-export const ScmDiffSummaryCachePolicySchema = z.object({
+export const ScmDiffSummaryCachePolicySchema = lazyZodSchema(() => z.object({
   mode: z.enum(['read_write', 'bypass']),
   reason: z.string().min(1).optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryCachePolicy =
   z.infer<typeof ScmDiffSummaryCachePolicySchema>;
 
+// Retain concrete identity for shared Control input JSON Schema references.
 export const ScmDiffSummaryGenerateInputSchema = z
   .object({
     cwd: z.string().min(1),
@@ -118,6 +121,7 @@ export type ScmDiffSummaryGenerateInput =
   z.infer<typeof ScmDiffSummaryGenerateInputSchema>;
 
 /** Capture current evidence, or read an exact retained comparison without model admission. */
+// Retain concrete identity for shared Control input JSON Schema references.
 export const ScmComparisonCaptureInputSchema = z.object({
   cwd: z.string().min(1), sessionId: z.string().min(1).optional(),
   comparisonId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -133,37 +137,37 @@ export const ScmComparisonCaptureInputSchema = z.object({
 });
 export type ScmComparisonCaptureInput = z.infer<typeof ScmComparisonCaptureInputSchema>;
 
-export const ScmDiffSummaryTruncationReasonSchema = z.enum([
+export const ScmDiffSummaryTruncationReasonSchema = lazyZodSchema(() => z.enum([
   'fileBudget',
   'diffBytes',
   'fileCount',
-]);
+]));
 export type ScmDiffSummaryTruncationReason =
   z.infer<typeof ScmDiffSummaryTruncationReasonSchema>;
 
-export const ScmDiffSummaryTruncationSchema = z.object({
+export const ScmDiffSummaryTruncationSchema = lazyZodSchema(() => z.object({
   reason: ScmDiffSummaryTruncationReasonSchema,
   droppedFiles: z.number().int().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 export type ScmDiffSummaryTruncation =
   z.infer<typeof ScmDiffSummaryTruncationSchema>;
 
-export const ScmDiffSummaryGenerationStateSchema = z.enum([
+export const ScmDiffSummaryGenerationStateSchema = lazyZodSchema(() => z.enum([
   'complete',
   'partial',
-]);
+]));
 export type ScmDiffSummaryGenerationState =
   z.infer<typeof ScmDiffSummaryGenerationStateSchema>;
 
-export const ScmDiffSummaryCostMetadataSchema = z.object({
+export const ScmDiffSummaryCostMetadataSchema = lazyZodSchema(() => z.object({
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   estimatedUsd: z.number().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 export type ScmDiffSummaryCostMetadata =
   z.infer<typeof ScmDiffSummaryCostMetadataSchema>;
 
-export const ScmDiffSummaryMetadataSchema = z.object({
+export const ScmDiffSummaryMetadataSchema = lazyZodSchema(() => z.object({
   source: ScmDiffSummarySourceSchema,
   sourceKey: z.string().min(1),
   turnId: z.string().min(1).optional(),
@@ -175,46 +179,47 @@ export const ScmDiffSummaryMetadataSchema = z.object({
     'shared_worktree',
     'unknown',
   ]).optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryMetadata =
   z.infer<typeof ScmDiffSummaryMetadataSchema>;
 
-export const ScmDiffSummaryErrorCodeSchema = z.enum([
+export const ScmDiffSummaryErrorCodeSchema = lazyZodSchema(() => z.enum([
   'TURN_CHANGE_SET_REQUIRED',
   'CHECKPOINT_NOT_FOUND',
   'CHECKPOINT_UNAVAILABLE',
   'DIFF_UNAVAILABLE',
   'MODEL_UNAVAILABLE',
   'SUMMARY_FAILED',
-]);
+]));
 export type ScmDiffSummaryErrorCode =
   z.infer<typeof ScmDiffSummaryErrorCodeSchema>;
 
-export const ScmDiffSummaryOutputKindSchema = z.enum(['summary', 'walkthrough', 'commitPlan']);
+export const ScmDiffSummaryOutputKindSchema = lazyZodSchema(() => z.enum(['summary', 'walkthrough', 'commitPlan']));
 export type ScmDiffSummaryOutputKind = z.infer<typeof ScmDiffSummaryOutputKindSchema>;
-export const ScmDiffSummaryOutputStateSchema = z.enum(['pending', 'writing', 'complete', 'partial', 'failed', 'cancelled']);
+export const ScmDiffSummaryOutputStateSchema = lazyZodSchema(() => z.enum(['pending', 'writing', 'complete', 'partial', 'failed', 'cancelled']));
 export type ScmDiffSummaryOutputState = z.infer<typeof ScmDiffSummaryOutputStateSchema>;
 
-export const ScmDiffSummarySummarySchema = z.object({
+export const ScmDiffSummarySummarySchema = lazyZodSchema(() => z.object({
   summaryMarkdown: z.string().trim().min(1), risks: z.array(z.string().trim().min(1)).optional(),
   testImpact: z.string().trim().min(1).optional(), suggestedPrBody: z.string().trim().min(1).optional(),
-}).strict();
-export const ScmReviewFindingIdentitySchema = z.object({ runId: z.string().min(1), findingId: z.string().min(1) }).strict();
-export const ScmReviewExplanationRequesterSchema = z.object({
+}).strict());
+export const ScmReviewFindingIdentitySchema = lazyZodSchema(() => z.object({ runId: z.string().min(1), findingId: z.string().min(1) }).strict());
+export const ScmReviewExplanationRequesterSchema = lazyZodSchema(() => z.object({
   kind: z.enum(['user', 'agent', 'plugin', 'automation', 'workflow', 'unknown']), id: z.string().min(1).optional(),
-}).strict();
+}).strict());
 export type ScmReviewExplanationRequester = z.infer<typeof ScmReviewExplanationRequesterSchema>;
+// Retain concrete identity for shared Control target JSON Schema references.
 export const ScmReviewExplanationTargetsSchema = z.array(z.object({
   stopId: z.string().min(1), findingRefs: z.array(ScmReviewFindingIdentitySchema).min(1),
 }).strict()).min(1).refine(targets => new Set(targets.map(target => target.stopId)).size === targets.length, 'Explanation stop ids must be unique');
-export const ScmReviewExplanationSchema = z.object({
+export const ScmReviewExplanationSchema = lazyZodSchema(() => z.object({
   markdown: z.string().trim().min(1), findingRefs: z.array(ScmReviewFindingIdentitySchema).min(1),
   provenance: z.object({ requestedBy: ScmReviewExplanationRequesterSchema,
     requestedAtMs: z.number().int().nonnegative(), generatedAtMs: z.number().int().nonnegative(),
     modelId: z.string().min(1).optional(), runId: z.string().min(1).optional(),
   }).strict(),
-}).strict();
-export const ScmDiffSummaryWalkthroughSchema = z.object({
+}).strict());
+export const ScmDiffSummaryWalkthroughSchema = lazyZodSchema(() => z.object({
   title: z.string().trim().min(1), intro: z.string(),
   stops: z.array(z.object({
     id: z.string().min(1), title: z.string().trim().min(1), explanationMarkdown: z.string().trim().min(1),
@@ -223,56 +228,56 @@ export const ScmDiffSummaryWalkthroughSchema = z.object({
     reviewExplanations: z.array(ScmReviewExplanationSchema).min(1).optional(),
   }).strict()),
   readingHint: z.string().optional(), otherChangeRefs: z.array(z.string().min(1)),
-}).strict();
+}).strict());
 export type ScmDiffSummaryWalkthrough = z.infer<typeof ScmDiffSummaryWalkthroughSchema>;
-export const ScmDiffSummaryCommitPlanSchema = z.object({
+export const ScmDiffSummaryCommitPlanSchema = lazyZodSchema(() => z.object({
   groups: z.array(z.object({
     id: z.string().min(1), message: z.string().trim().min(1), rationale: z.string(),
     changeRefs: z.array(z.string().min(1)),
   }).strict()), leftOutChangeRefs: z.array(z.string().min(1)),
-}).strict();
+}).strict());
 export type ScmDiffSummaryCommitPlan = z.infer<typeof ScmDiffSummaryCommitPlanSchema>;
 
-export const ScmDiffSummaryModelOutputSchema = ScmDiffSummarySummarySchema.partial().extend({
+export const ScmDiffSummaryModelOutputSchema = lazyZodSchema(() => ScmDiffSummarySummarySchema.partial().extend({
   walkthrough: ScmDiffSummaryWalkthroughSchema.optional(), commitPlan: ScmDiffSummaryCommitPlanSchema.optional(),
   reviewExplanations: z.array(z.object({ stopId: z.string().min(1), markdown: z.string().trim().min(1) }).strict()).min(1).optional(),
-}).strict().refine((value) => Boolean(value.summaryMarkdown || value.walkthrough || value.commitPlan || value.reviewExplanations), 'A structured output is required');
+}).strict().refine((value) => Boolean(value.summaryMarkdown || value.walkthrough || value.commitPlan || value.reviewExplanations), 'A structured output is required'));
 export type ScmDiffSummaryModelOutput = z.infer<typeof ScmDiffSummaryModelOutputSchema>;
 
 function progress<T extends z.ZodType>(value: T) {
   return z.object({ state: ScmDiffSummaryOutputStateSchema, value: value.optional(), reason: z.string().min(1).optional() }).strict()
     .refine((output) => output.state !== 'complete' || output.value !== undefined, 'Complete output requires a value');
 }
-export const ScmDiffSummaryOutputsSchema = z.object({
+export const ScmDiffSummaryOutputsSchema = lazyZodSchema(() => z.object({
   summary: progress(ScmDiffSummarySummarySchema).optional(),
   walkthrough: progress(ScmDiffSummaryWalkthroughSchema).optional(),
   commitPlan: progress(ScmDiffSummaryCommitPlanSchema).optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryOutputs = z.infer<typeof ScmDiffSummaryOutputsSchema>;
-export const ScmDiffSummaryAnalysisCoverageSchema = z.object({
+export const ScmDiffSummaryAnalysisCoverageSchema = lazyZodSchema(() => z.object({
   suppliedChangeRefs: z.array(z.string().min(1)), analysedChangeRefs: z.array(z.string().min(1)),
   remainingChangeRefs: z.array(z.string().min(1)),
   parts: z.object({ admitted: z.number().int().nonnegative(), completed: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(), phase: z.enum(['evidence', 'merge', 'done']),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryAnalysisCoverage = z.infer<typeof ScmDiffSummaryAnalysisCoverageSchema>;
 
 /** Provenance is host-authored. Finding identities always include their owning Run. */
-export const ScmDiffSummaryReviewRunSchema = z.object({
+export const ScmDiffSummaryReviewRunSchema = lazyZodSchema(() => z.object({
   ...ReviewPublicationEvidenceSchema.shape,
   runId: z.string().min(1), callId: z.string().min(1), backendId: z.string().min(1),
   status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'timeout']),
   hasOutput: z.boolean(), comparisonId: z.string().min(1).optional(),
   reviewOutcome: z.enum(['complete', 'partial', 'failed', 'unavailable']).optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryReviewRun = z.infer<typeof ScmDiffSummaryReviewRunSchema>;
-export const ScmDiffSummaryReviewProvenanceSchema = z.object({
+export const ScmDiffSummaryReviewProvenanceSchema = lazyZodSchema(() => z.object({
   reviewedRuns: z.array(ScmDiffSummaryReviewRunSchema).min(1),
   narrationMode: z.enum(['continued_review', 'seeded_narrator']),
   comparisonFreshness: z.enum(['unchanged', 'changed', 'unknown']),
   launchFailures: z.array(ReviewLaunchFailureSchema).optional(),
-}).strict();
+}).strict());
 export type ScmDiffSummaryReviewProvenance = z.infer<typeof ScmDiffSummaryReviewProvenanceSchema>;
 
 const envelope = {
@@ -343,7 +348,7 @@ export function normalizeScmDiffSummaryModelOutput(value: unknown, params: Reado
   return output;
 }
 
-export const ScmDiffSummaryGenerateSuccessSchema = z.object({
+export const ScmDiffSummaryGenerateSuccessSchema = lazyZodSchema(() => z.object({
   success: z.literal(true),
   summaryMarkdown: z.string().min(1).optional(),
   sourceKey: z.string().min(1),
@@ -356,11 +361,11 @@ export const ScmDiffSummaryGenerateSuccessSchema = z.object({
   testImpact: z.string().min(1).optional(),
   suggestedPrBody: z.string().min(1).optional(),
   ...envelope,
-}).strict().refine((value) => Boolean(value.summaryMarkdown || value.comparison), 'A comparison or summary is required');
+}).strict().refine((value) => Boolean(value.summaryMarkdown || value.comparison), 'A comparison or summary is required'));
 export type ScmDiffSummaryGenerateSuccess =
   z.infer<typeof ScmDiffSummaryGenerateSuccessSchema>;
 
-export const ScmDiffSummaryGenerateFailureSchema = z.object({
+export const ScmDiffSummaryGenerateFailureSchema = lazyZodSchema(() => z.object({
   success: z.literal(false),
   error: z.string().min(1),
   errorCode: ScmDiffSummaryErrorCodeSchema,
@@ -369,11 +374,11 @@ export const ScmDiffSummaryGenerateFailureSchema = z.object({
   metadata: ScmDiffSummaryMetadataSchema.optional(),
   cost: ScmDiffSummaryCostMetadataSchema.optional(),
   ...envelope,
-}).strict();
+}).strict());
 export type ScmDiffSummaryGenerateFailure =
   z.infer<typeof ScmDiffSummaryGenerateFailureSchema>;
 
-export const ScmDiffSummaryGenerateOutputSchema = z.union([
+export const ScmDiffSummaryGenerateOutputSchema = lazyZodSchema(() => z.union([
   ScmDiffSummaryGenerateSuccessSchema,
   ScmDiffSummaryGenerateFailureSchema,
 ]).superRefine((value, ctx) => {
@@ -417,17 +422,17 @@ export const ScmDiffSummaryGenerateOutputSchema = z.union([
       issue(['outputs', kind, 'value'], error instanceof Error ? error.message : 'Invalid captured occurrence references');
     }
   }
-});
+}));
 export type ScmDiffSummaryGenerateOutput =
   z.infer<typeof ScmDiffSummaryGenerateOutputSchema>;
 
-export const ScmComparisonCaptureOutputSchema = z.discriminatedUnion('success', [
+export const ScmComparisonCaptureOutputSchema = lazyZodSchema(() => z.discriminatedUnion('success', [
   z.object({ success: z.literal(true), comparison: ScmComparisonSchema, metadata: ScmDiffSummaryMetadataSchema }).strict(),
   z.object({ success: z.literal(false), error: z.string().min(1), errorCode: ScmDiffSummaryErrorCodeSchema }).strict(),
-]);
+]));
 export type ScmComparisonCaptureOutput = z.infer<typeof ScmComparisonCaptureOutputSchema>;
 
-export const ScmDiffSummaryCacheKeyDescriptorSchema = z
+export const ScmDiffSummaryCacheKeyDescriptorSchema = lazyZodSchema(() => z
   .object({
     source: ScmDiffSummarySourceSchema,
     checkpointReceiptId: z.string().trim().min(1).optional(),
@@ -484,17 +489,17 @@ export const ScmDiffSummaryCacheKeyDescriptorSchema = z
         });
       }
     }
-  });
+  }));
 export type ScmDiffSummaryCacheKeyDescriptor =
   z.infer<typeof ScmDiffSummaryCacheKeyDescriptorSchema>;
 
-export const ScmDiffSummaryCacheEntrySchema = z.object({
+export const ScmDiffSummaryCacheEntrySchema = lazyZodSchema(() => z.object({
   key: ScmDiffSummaryCacheKeyDescriptorSchema,
   checkpointRef: z.string().min(1).optional(),
   value: ScmDiffSummaryGenerateOutputSchema,
   createdAtMs: z.number().int().nonnegative().optional(),
   updatedAtMs: z.number().int().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 export type ScmDiffSummaryCacheEntry =
   z.infer<typeof ScmDiffSummaryCacheEntrySchema>;
 

@@ -1,4 +1,5 @@
 import { ensureWorkspacePackagesBuiltForComponent, pmSpawnScript } from '../proc/pm.mjs';
+import { WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 
 export async function ensureSourceServerWorkspacePackagesBuilt(
   {
@@ -16,6 +17,7 @@ export async function ensureSourceServerWorkspacePackagesBuilt(
   const result = await ensureWorkspacePackagesBuiltForComponentImpl(serverDir, {
     quiet,
     env,
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
   });
   return { ran: true, reason: 'source-server', result };
 }

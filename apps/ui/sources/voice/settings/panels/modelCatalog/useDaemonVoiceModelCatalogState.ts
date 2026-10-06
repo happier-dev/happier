@@ -6,6 +6,9 @@ import {
 } from '@happier-dev/protocol';
 
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
+import { buildModelCatalogRows } from './buildModelCatalogRows';
+import { invokeDaemonModelPackOperation } from './invokeDaemonModelPackOperation';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     DaemonVoiceInferenceClient,
     type DaemonVoiceInferenceModelMachineScope,
@@ -95,11 +98,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
 }>): Readonly<{
     state: DaemonVoiceModelCatalogState;
     refresh: () => Promise<void>;
-    install: (
-        packId: string,
-        prepare?: (isCurrent: () => boolean) => Promise<boolean>,
-    ) => Promise<void>;
-    acceptLicense: (review: NonNullable<DaemonVoiceInferenceModelStatus['licenseReview']>) => Promise<void>;
+    install: (packId: string) => Promise<void>;
     remove: (packId: string) => Promise<void>;
     cancel: () => void;
 }> {
@@ -273,6 +272,8 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         const actionToken = ++nextActionTokenRef.current;
         const actionScopeGeneration = actionScopeGenerationRef.current;
         const actionAbortController = new AbortController();
+        const account = captureActiveServerAccountScopeCurrentness();
+        const retirement = account.onRetire(() => actionAbortController.abort());
         activeActionTokenRef.current = actionToken;
         activeActionAbortControllerRef.current = actionAbortController;
         const actionStillOwnsState = () => (
@@ -287,7 +288,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             errorCode: null,
         }));
         try {
-            await action(packId, actionStillOwnsState, actionAbortController.signal);
+            await action(packId, () => actionStillOwnsState() && account.isCurrent(), actionAbortController.signal);
         } catch (error) {
             if (!actionStillOwnsState()) return;
             if (actionAbortController.signal.aborted) return;
@@ -297,6 +298,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
                 actionError: { packId, operation, errorCode },
             }));
         } finally {
+            retirement.dispose();
             if (!actionStillOwnsState()) return;
             setState((current) => ({ ...current, actionPackId: null }));
             activeActionTokenRef.current = null;
@@ -307,54 +309,25 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             // lifecycle phases. Do not keep the row visually/action-locked
             // while route discovery or a remote status request is slow; the
             // refresh owns its own error handling and stale-response guard.
-            void refresh();
+            if (account.isCurrent()) void refresh();
         }
     }, [enabled, refresh]);
 
-    const install = React.useCallback(
-        (
-            packId: string,
-            prepare?: (isCurrent: () => boolean) => Promise<boolean>,
-        ) => runAction(packId, 'install', async (id, isCurrent, signal) => {
-            // License review is part of the same user-visible catalog
-            // operation. Acquire the one existing mutation owner before the
-            // confirmation opens so another row cannot race the review.
-            if (prepare && !(await prepare(isCurrent))) return;
-            if (!isCurrent()) return;
-            if (machineScope) await client.installModel({ packId: id, signal }, machineScope);
-            else await client.installModel({ packId: id, signal });
-        }),
-        [client, machineScope, runAction],
-    );
-
-    const acceptLicense = React.useCallback(async (
-        review: NonNullable<DaemonVoiceInferenceModelStatus['licenseReview']>,
-    ) => {
-        const input = {
-            qualifiedPackId: `${review.pluginId}/${review.packId}`,
-            pluginId: review.pluginId,
-            packId: review.packId,
-            pluginVersion: review.pluginVersion,
-            packVersion: review.packVersion,
-            licenseId: review.licenseId,
-            licenseSourceUrl: review.licenseSourceUrl,
-            licenseTextDigest: review.licenseTextDigest,
-            artifactBinding: review.artifactBinding,
-        };
-        if (machineScope) await client.acceptModelPackLicense(input, machineScope);
-        else await client.acceptModelPackLicense(input);
-    }, [client, machineScope]);
-
-    const remove = React.useCallback(
-        (packId: string) => runAction(packId, 'remove', (id) => (
-            machineScope ? client.removeModel(id, machineScope) : client.removeModel(id)
-        )),
-        [client, machineScope, runAction],
-    );
+    const mutate = React.useCallback((packId: string, operation: 'install' | 'remove') =>
+        runAction(packId, operation, async (id, isCurrent, signal) => {
+            const groups = buildModelCatalogRows({ statuses: state.statuses,
+                statusUnavailable: state.errorCode !== null || state.loading,
+                selectedSttPackId: null, selectedTtsPackId: null });
+            const row = [...groups.stt, ...groups.tts].find(candidate => candidate.packId === id);
+            if (!row) return;
+            await invokeDaemonModelPackOperation({ operation, row, client, scope: machineScope, signal, isCurrent });
+        }), [client, machineScope, runAction, state.statuses, state.errorCode, state.loading]);
+    const install = React.useCallback((packId: string) => mutate(packId, 'install'), [mutate]);
+    const remove = React.useCallback((packId: string) => mutate(packId, 'remove'), [mutate]);
 
     const cancel = React.useCallback(() => {
         activeActionAbortControllerRef.current?.abort();
     }, []);
 
-    return { state, refresh, install, acceptLicense, remove, cancel };
+    return { state, refresh, install, remove, cancel };
 }

@@ -1,18 +1,7 @@
 import { isAbsolute, resolve } from 'node:path';
 
-import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmHostingRepositoryDescribePublishTargetsRequest,
-    type ScmHostingRepositoryDescribePublishTargetsResponse,
-    type ScmHostingRepositoryPublishRequest,
-    type ScmHostingRepositoryPublishResponse,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-    type ScmRepositoryInitRequest,
-    type ScmRepositoryInitResponse,
-    type ScmRepositoryRemoveIndexLockRequest,
-    type ScmRepositoryRemoveIndexLockResponse,
-} from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
 
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { resolveScmBackendById, type ScmBackendRegistry } from '@/scm/registry';

@@ -17,6 +17,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { createSessionBoardActionDeps } from './sessionBoardActionDeps';
+import { validateSessionSystemRecordOpenedContent } from '@/session/systemRecords/sessionSystemRecordCodec';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import {
   CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
@@ -74,6 +75,43 @@ describe('CLI Board Action family', () => {
     });
   });
   afterEach(async () => { restore(); vi.restoreAllMocks(); await app.close(); });
+  it('reads additive stored fields and keeps canonical writes and strict Action admission', async () => {
+    const canonicalLayout = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'status', width: 'wide' }] }] };
+    const storedItem = { ...installed, extra: true, source: { ...installed.source, extra: true,
+      instance: { ...installed.source.instance, extra: true, definition: { ...installed.source.instance.definition,
+        surface: { ...installed.source.instance.definition.surface, extra: true } } } } };
+    const storedLayout = { ...canonicalLayout, extra: true, tabs: [{ ...canonicalLayout.tabs[0], extra: true,
+      items: [{ ...canonicalLayout.tabs[0].items[0], extra: true }] }] };
+    expect(() => validateSessionSystemRecordOpenedContent({ owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'status' },
+      storedItem, 'plugin_session_record_invalid_request')).toThrow();
+    app.get('/v2/sessions/session-one/system-records/record', async (request) => {
+      const kind = (request.query as Record<string, string>).kind;
+      return { record: { id: kind === 'layout.v1' ? 'layout-row' : 'item-row',
+        address: { owner: 'host', namespace: 'surface', kind, localId: kind === 'layout.v1' ? 'layout' : 'status' },
+        content: { t: 'plain', v: kind === 'layout.v1' ? storedLayout : storedItem }, revision,
+        createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' } };
+    });
+    const writes: unknown[] = [];
+    app.put('/v2/sessions/session-one/board', async (request) => {
+      writes.push(request.body);
+      return { operation: 'upsert_item', itemId: 'status', outcome: 'updated', itemRevision: revision, layoutRevision: revision };
+    });
+    const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null },
+      serverId: 'home-a', serverHttpBaseUrl: 'http://board.test' });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home-a' };
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.get', context,
+      input: { sessionId: 'session-one', itemIds: ['status'] } }))
+      .resolves.toMatchObject({ layout: { document: canonicalLayout }, items: [{ item: installed }], incomplete: false });
+    const input = { sessionId: 'session-one', itemId: 'status', expectedItemRevision: revision, item: installed,
+      placement: { tabId: 'overview', width: 'wide' as const } };
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context, input }))
+      .resolves.toMatchObject({ result: { outcome: 'updated' } });
+    expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: installed },
+      placement: { expectedLayoutRevision: revision, layoutContent: { t: 'plain', v: canonicalLayout } } })]);
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context,
+      input: { ...input, item: storedItem } })).resolves.toMatchObject({ ok: false });
+    expect(writes).toHaveLength(1);
+  });
   it('rejects a partially qualified fixed Home before constructing the transport', () => {
     expect(() => createSessionBoardActionDeps({
       credentials: { token: 'token', encryption: null },

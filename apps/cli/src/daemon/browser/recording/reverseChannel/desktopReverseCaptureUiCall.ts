@@ -1,4 +1,5 @@
-import { RPC_METHODS, type UiBrowserRecordingCaptureFrameRequestV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { UiBrowserRecordingCaptureFrameRequestV1 } from '@happier-dev/protocol';
 
 import type { ReverseDesktopBrowserRecordingCaptureUiCall } from '../adapters/reverseCaptureInvoke';
 

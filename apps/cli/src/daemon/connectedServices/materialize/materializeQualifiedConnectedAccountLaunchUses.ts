@@ -1,8 +1,5 @@
-import {
-  qualifiedPurposeKey,
-  type QualifiedConnectedAccountRef,
-  type QualifiedConnectedAccountPurposeV1,
-} from '@happier-dev/protocol';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { QualifiedConnectedAccountRef, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 
 import type {
   StablePluginConnectedAccountsOwner,

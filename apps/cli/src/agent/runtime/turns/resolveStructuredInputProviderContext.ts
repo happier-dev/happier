@@ -1,37 +1,13 @@
-import {
-  AgentDispatchStructuredInputV1Schema,
-  buildComposerAttachmentDedupeKeyV1,
-  COMPOSER_REFERENCE_MENTION_KIND_V1,
-  ComposerAttachmentInputV1Schema,
-  ComposerAttachmentResolveRequestV1,
-  ComposerAttachmentResolveRequestV2,
-  ComposerAttachmentResolveResultV1Schema,
-  MENTION_BOUNDS,
-  MENTION_KIND_V1,
-  ResolvedComposerAttachmentDispatchV1Schema,
-  SessionSkillCatalogListResponseV1Schema,
-  SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND,
-  SessionVendorPluginCatalogListResponseV1Schema,
-  readComposerReferenceMentionV1,
-  readMentionRefOpaqueForKindV1,
-  readStructuredInputMentionSourcesV1,
-  renderSessionInputContextPromptV1,
-  resolveSkillCatalogItemIdentityV1,
-  type ComposerAttachmentContextBlockEntryV1,
-  type ComposerAttachmentInputV1,
-  type ComposerAttachmentResolveResultV1,
-  type ComposerAttachmentValueV1,
-  type ComposerReferenceContextBlockEntryV1,
-  type ComposerReferenceResolutionV1,
-  type HappierStructuredInputV1,
-  type BrowserScreenshotMediaReferenceV1,
-  type MentionRefV1,
-  type PluginContributionIdentityV1,
-  type PluginExecutionScopeV1,
-  type ResolvedComposerAttachmentDispatchV1,
-  type SessionMediaItemV1,
-  type StructuredInputDispatchContextV1,
-} from '@happier-dev/protocol';
+import { AgentDispatchStructuredInputV1Schema, readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { buildComposerAttachmentDedupeKeyV1, ComposerAttachmentInputV1Schema, ResolvedComposerAttachmentDispatchV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { COMPOSER_REFERENCE_MENTION_KIND_V1, readComposerReferenceMentionV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import { MENTION_BOUNDS, MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { resolveSkillCatalogItemIdentityV1 } from '@happier-dev/protocol/runtime/catalog/skills';
+import type { ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveRequestV2, ComposerAttachmentContextBlockEntryV1, ComposerAttachmentInputV1, ComposerAttachmentResolveResultV1, ComposerAttachmentValueV1, ComposerReferenceContextBlockEntryV1, ComposerReferenceResolutionV1, HappierStructuredInputV1, BrowserScreenshotMediaReferenceV1, MentionRefV1, PluginContributionIdentityV1, PluginExecutionScopeV1, ResolvedComposerAttachmentDispatchV1, SessionMediaItemV1, StructuredInputDispatchContextV1 } from '@happier-dev/protocol';
+import { ComposerAttachmentResolveResultV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
+import { SessionSkillCatalogListResponseV1Schema, SessionVendorPluginCatalogListResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND } from '@happier-dev/protocol/runtime/input/imageInputV1';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import {
   buildSessionReferenceContextBlockForDispatch,
 } from '../prompt/sessionReferenceBlock';

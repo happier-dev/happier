@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Platform, Text, type ScrollView } from 'react-native';
+import { Platform, StyleSheet, Text, type ScrollView } from 'react-native';
 import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1, TodoReorderInputV1Schema,
     type TodoReorderInputV1 } from '@happier-dev/protocol';
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
@@ -11,7 +11,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useEntityDragDropRuntime } from '../entityDragDropHooks';
 import type { EntityDragDropRuntime } from '../entityDragDropTypes';
 import { EntityFlatReorderList, EntityFlatReorderRow, settleEntityReorderWrite, type EntityFlatReorderBinding } from './EntityFlatReorder';
-import { EntityStagedMoveDock } from './EntityReleasePreview';
+import { EntityDragGripTrigger, EntityStagedMoveDock } from './EntityReleasePreview';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -57,7 +57,7 @@ function fixture(scrollRef?: React.RefObject<ScrollView | null>) {
             }
             return { status: 'allowed', effect: { actionId: 'todos.reorder',
                 input: { scope: model.scope, sourceId, position: { ...position } },
-                preview: { verb: 'Move', target: position.anchorId ?? 'List edge' } } };
+                preview: { glyph: position.placement === 'before' ? 'above' : 'below', verb: 'Move', target: position.anchorId ?? 'List edge' } } };
         },
         // The fixture's external receiving boundary captures portable effects. Runtime, schema,
         // geometry, source/target lifecycle and gesture adapters above it remain real.
@@ -126,6 +126,39 @@ afterEach(async () => {
 });
 
 describe('shared flat reorder UI binding', () => {
+    it('moves through a grip accessibility action and exposes the same focus target for restoration', async () => {
+        const moves: string[] = [];
+        let focusTarget: unknown;
+        const node = { focus: vi.fn() };
+        const screen = await renderScreen(<EntityDragGripTrigger accessibilityLabel="Move task" testID="accessible-grip"
+            onPress={() => {}} accessibilityActions={[{ name: 'moveRight', label: 'Move right' }]}
+            onAccessibilityAction={event => moves.push(event.nativeEvent.actionName)}
+            controlRef={target => { focusTarget = target; }} />, { createNodeMock: () => node });
+        screens.push(screen);
+        const grip = screen.findHostByTestId('accessible-grip')!;
+        expect(grip.props.accessibilityActions).toEqual([{ name: 'moveRight', label: 'Move right' }]);
+        await act(async () => { grip.props.onAccessibilityAction({ nativeEvent: { actionName: 'moveRight' } }); });
+        expect(moves).toEqual(['moveRight']);
+        expect(focusTarget).toBe(node);
+    });
+    it('tints the grip during a press and clears it on release without opening Move early', async () => {
+        const onPress = vi.fn();
+        const screen = await renderScreen(<EntityDragGripTrigger accessibilityLabel="Move task" density="touch"
+            testID="press-grip" onPress={onPress} />);
+        screens.push(screen);
+        const grip = screen.findHostByTestId('press-grip')!;
+        const background = (pressed: boolean) => StyleSheet.flatten(
+            typeof grip.props.style === 'function' ? grip.props.style({ pressed }) : grip.props.style,
+        )?.backgroundColor;
+        const resting = background(false);
+        expect(background(true)).toBeTruthy();
+        expect(background(true)).not.toBe(resting);
+        expect(background(false)).toBe(resting);
+        expect(onPress).not.toHaveBeenCalled();
+        await act(async () => { grip.props.onPress(); });
+        expect(onPress).toHaveBeenCalledTimes(1);
+    });
+
     it('settles checked save acknowledgements and preserves definitive versus uncertain Action failures', async () => {
         expect(await settleEntityReorderWrite(async () => {})).toEqual({ status: 'applied' });
         for (const [code, status] of [

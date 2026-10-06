@@ -5,7 +5,8 @@ import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY } 
 import { classifyTransportErrorToProbeResult } from '@/api/connection/classifyTransportErrorToProbeResult';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { SessionMessageContentSchema } from '@/api/types';
-import { UpdateContainerSchema, EphemeralUpdateSchema, type UpdateContainer } from '@happier-dev/protocol/updates';
+import { UpdateContainerSchema, EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
+import type { UpdateContainer } from '@happier-dev/protocol/updates';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {

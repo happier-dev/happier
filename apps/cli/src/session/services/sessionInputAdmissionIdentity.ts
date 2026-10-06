@@ -1,34 +1,11 @@
-import {
-  buildTrustedHostSessionInputAdmissionV1,
-  PluginContributionLocalIdSchema,
-  PluginIdSchema,
-  PluginSessionInputSourceV1Schema,
-  SessionInputCausalPermissionAuthorityV1Schema,
-  SessionInputRequestV1Schema,
-  SessionInputRequestV2Schema,
-  SessionInputWorkflowV2Schema,
-  SessionInputSourceSessionV1Schema,
-  SessionMessageProvenanceV1Schema,
-  SessionMessageProvenanceV2Schema,
-  readPendingLocalId,
-  requiresAuthenticatedMachineAdmissionForSessionInput,
-  type ActionPluginCaller,
-  type ActionCaller,
-  type ActionSurfaces,
-  type ExternalActionExecutionAuthorizationV1,
-  type PluginInvocationSurfaceV1,
-  type PluginSessionInputSourceV1,
-  type SessionInputCausalPermissionAuthorityV1,
-  type SessionInputRequestV1,
-  type SessionInputRequestV2,
-  type SessionInputRequest,
-  type SessionInputSourceAuthorityV1,
-  type SessionInputWorkflowV2,
-  type SessionMessageProvenanceV1,
-  type SessionMessageProvenanceV2,
-} from '@happier-dev/protocol';
+import { buildTrustedHostSessionInputAdmissionV1, PluginSessionInputSourceV1Schema, SessionInputCausalPermissionAuthorityV1Schema, SessionInputRequestV1Schema, SessionInputRequestV2Schema, SessionInputWorkflowV2Schema, SessionInputSourceSessionV1Schema, SessionMessageProvenanceV2Schema, requiresAuthenticatedMachineAdmissionForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { SessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import type { ActionPluginCaller, ActionCaller, ActionSurfaces, ExternalActionExecutionAuthorizationV1, PluginInvocationSurfaceV1, PluginSessionInputSourceV1, SessionInputCausalPermissionAuthorityV1, SessionInputRequestV1, SessionInputRequestV2, SessionInputRequest, SessionInputSourceAuthorityV1, SessionInputWorkflowV2, SessionMessageProvenanceV1, SessionMessageProvenanceV2 } from '@happier-dev/protocol';
 
-export { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol';
+export { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 /** Protected E2EE equality and authenticated caller facts require the Machine seam. */
 export function requiresMachineAdmissionForSessionInput(params: Readonly<{

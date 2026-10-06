@@ -1,30 +1,10 @@
 import { randomBytes } from 'node:crypto';
 
-import {
-  prepareExternalActionResponseEnvelopeV1,
-  ExternalActionActionIdV1Schema,
-  ExternalActionExecutionAuthorizationV1Schema,
-  ExternalActionRequestEnvelopeSchema,
-  computeExternalActionRequestEnvelopeDigestV1,
-  externalActionTargetsEqualV1,
-  isExternalActionRequestWithinLimit,
-  openExternalActionRequestV2,
-  SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS,
-  prepareExternalActionResponseV2,
-  PublicActionIdSchema,
-  SignedRootActionIdSchema,
-  projectExternalActionExecutionResultV1,
-  readExternalActionProtectedRequestId,
-  signExternalActionApprovalInputV1,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ExternalActionResponseEnvelopeV1,
-  type ExternalActionTargetV1,
-  type PreparedExternalActionResponseEnvelope,
-  type ExternalActionEncryptionBindingV2,
-  type ExternalActionExecutionAuthorizationV1,
-  type SignedRootActionId,
-} from '@happier-dev/protocol/actions';
+import { prepareExternalActionResponseEnvelopeV1, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponseEnvelopeV1, ExternalActionTargetV1, PreparedExternalActionResponseEnvelope, ExternalActionEncryptionBindingV2, ExternalActionExecutionAuthorizationV1, SignedRootActionId } from '@happier-dev/protocol/actions';
 
 import { reconcileExternalActionTarget } from './reconcileExternalActionTarget';
 import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -70,6 +50,8 @@ export type ExternalActionExecutor = Readonly<{
  */
 export type ResolveExternalActionTarget = (input: Readonly<{
   actionId: SignedRootActionId;
+  /** Decoded Action input when checking live ingress placement. Origin-only checks have no input. */
+  actionInput?: unknown;
   target: ExternalActionTargetV1 | undefined;
   currentMachineId: string;
   signal?: AbortSignal;
@@ -269,6 +251,7 @@ export async function executeExternalAction(input: Readonly<{
   try {
     target = await input.resolveTarget({
       actionId: actionId.data,
+      actionInput: decodedInput,
       target: reconciliation.target,
       currentMachineId: input.currentMachineId,
       ...(input.signal ? { signal: input.signal } : {}),

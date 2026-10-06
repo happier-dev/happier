@@ -1,10 +1,5 @@
-import {
-  DaemonNpmRegistryProfileMutationRequestV1Schema,
-  DaemonNpmRegistryProfileMutationResponseV1Schema,
-  DaemonNpmRegistryProfilesGetRequestV1Schema,
-  DaemonNpmRegistryProfilesGetResponseV1Schema,
-  RPC_METHODS,
-} from '@happier-dev/protocol/rpc';
+import { DaemonNpmRegistryProfileMutationRequestV1Schema, DaemonNpmRegistryProfileMutationResponseV1Schema, DaemonNpmRegistryProfilesGetRequestV1Schema, DaemonNpmRegistryProfilesGetResponseV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { createNpmRegistryProfileService } from '@/plugins/distribution/npm/profiles/service';

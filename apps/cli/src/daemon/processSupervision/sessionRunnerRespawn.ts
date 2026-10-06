@@ -5,7 +5,7 @@
  * while ensuring stop requests never trigger restart loops.
  */
 
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import {
   SESSION_RUNNER_EXIT_CODES,

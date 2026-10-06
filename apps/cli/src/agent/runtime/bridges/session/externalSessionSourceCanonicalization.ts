@@ -3,10 +3,8 @@ import type {
   ExternalSessionsSource,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
-import {
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import type {
   ExternalSessionExecutionSurface,
   ExternalSessionLinkIdentity,

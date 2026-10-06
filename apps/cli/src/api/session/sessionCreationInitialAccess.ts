@@ -1,25 +1,14 @@
-import {
-  encodeBase64,
-  ENCRYPTED_DATA_KEY_V1_BYTES,
-  PatchSessionDataKeyEnvelopesResultV1Schema,
-  PatchSessionDataKeyEnvelopesV1Schema,
-  prepareSessionDataKeyEnvelopeItemV1,
-  runSessionDataKeyPreparationPass,
-  SessionDataKeyEnvelopePageV1Schema,
-  type PatchSessionDataKeyEnvelopesV1,
-  type SessionDataKeyEnvelopeItemV1,
-  type SessionDataKeyPreparationPassResult,
-  OperationUpdateRequiredV1Schema,
-  sealEncryptedDataKeyEnvelopeV1,
-  SessionInitialAccessDraftV1Schema,
-  SessionInitialAccessMaterializedV1Schema,
-  SessionSpawnNewInputV2Schema,
-  SessionAccessErrorCodeV1Schema,
-  type OperationUpdateRequiredV1,
-  type SessionAccessErrorCodeV1,
-  type SessionInitialAccessDraftV1,
-  type SessionInitialAccessMaterializedV1,
-} from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeFormatV1';
+import { PatchSessionDataKeyEnvelopesResultV1Schema, PatchSessionDataKeyEnvelopesV1Schema, SessionDataKeyEnvelopePageV1Schema } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import { SessionInitialAccessDraftV1Schema, SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { prepareSessionDataKeyEnvelopeItemV1 } from '@happier-dev/protocol/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1';
+import { runSessionDataKeyPreparationPass } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
+import type { PatchSessionDataKeyEnvelopesV1, SessionDataKeyEnvelopeItemV1, SessionDataKeyPreparationPassResult, OperationUpdateRequiredV1, SessionAccessErrorCodeV1, SessionInitialAccessDraftV1, SessionInitialAccessMaterializedV1 } from '@happier-dev/protocol';
+import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import axios from 'axios';
 import { setImmediate } from 'node:timers/promises';
 

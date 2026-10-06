@@ -10,29 +10,12 @@ import {
   type SessionMetadataTupleMutationSnapshotV1,
   type SessionMetadataTupleMutationV1,
 } from '@happier-dev/cli-common/sessionMetadata';
-import {
-  createPlainSessionOwnerMetadataEnvelopeV1,
-  createAccountScopedCryptoMaterialSnapshotV1,
-  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-  openSessionOwnerMetadataEnvelopeV1,
-  projectSessionMetadataAgentVocabularyWriteCompatibilityV1,
-  projectSessionMetadataForWire,
-  normalizeSessionMetadataForRead,
-  projectSessionOwnerCompatibilityViewV1,
-  sealSessionOwnerMetadataEnvelopeV1,
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionOwnerMetadataEnvelopeV1Schema,
-  SessionSharedMetadataV1Schema,
-  type SessionMetadataInactiveModelIntentExpectationV1,
-  type SessionMetadataInactiveModelIntentOwnerPatchV1,
-  type AccountScopedCryptoMaterial,
-  type SessionOwnerMetadataEnvelopeV1,
-  type SessionOwnerMetadataV1,
-  type SessionMetadataOwnerPatchV1,
-  type SessionMetadataPublisherPreconditionV1,
-  type SessionMetadataTuplePatchV1,
-  type AccountEncryptionCurrentnessResponse,
-} from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { projectSessionMetadataForWire, normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import type { SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, AccountScopedCryptoMaterial, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionMetadataOwnerPatchV1, SessionMetadataPublisherPreconditionV1, SessionMetadataTuplePatchV1, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type {
   SessionTeamCredentialBindingIntentListV1,
   SessionTeamCredentialBindingMutationOperationV1,

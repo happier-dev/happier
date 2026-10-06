@@ -1,7 +1,5 @@
-import {
-  SessionCreateOriginFieldsV1Schema,
-  type SessionCreateOriginFieldsV1,
-} from '@happier-dev/protocol';
+import { SessionCreateOriginFieldsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
+import type { SessionCreateOriginFieldsV1 } from '@happier-dev/protocol';
 
 export const HAPPIER_SESSION_CREATE_ORIGIN_ENV_KEY = 'HAPPIER_SESSION_CREATE_ORIGIN_V1_JSON';
 

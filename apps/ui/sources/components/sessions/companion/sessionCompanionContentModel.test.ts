@@ -67,6 +67,10 @@ describe('resolveSessionCompanionContentItems', () => {
         expect(canAddSessionCompanionItem({ kind: 'pane', paneId: 'git' }, null)).toBe(true);
         expect(canAddSessionCompanionItem({ kind: 'pane', paneId: 'not-a-pane' }, runtime)).toBe(false);
     });
+    it('admits a personal saved definition reference without requiring a Session plugin runtime', () => {
+        expect(canAddSessionCompanionItem({ kind: 'instance', instance: { v: 1, id: 'saved-copy',
+            definition: { kind: 'artifact', artifactId: 'account-definition' }, bindings: {} } }, null)).toBe(true);
+    });
     it('preserves preference order and resolves widgets from the shared Board snapshot', () => {
         const boardItem = item('widget-a');
         expect(resolveSessionCompanionContentItems({

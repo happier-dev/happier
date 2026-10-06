@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizeProviderPublicHeaders } from './safety/index.js';
+import { normalizeProviderPublicHeaders } from './safety/headers.js';
 
 export const ProviderPublicHeadersV1Schema = z.record(z.string(), z.string()).transform((value, ctx) => {
   try {

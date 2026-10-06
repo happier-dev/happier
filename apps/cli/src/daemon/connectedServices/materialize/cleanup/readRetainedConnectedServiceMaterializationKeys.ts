@@ -1,4 +1,4 @@
-import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol';
+import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 
 import type { StoredCredentials } from '@/persistence';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';

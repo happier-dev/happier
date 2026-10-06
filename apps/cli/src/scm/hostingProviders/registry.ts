@@ -1,8 +1,5 @@
-import {
-    ScmHostingProviderKindSchema,
-    type ScmHostingProviderContribution,
-    type ScmHostingProviderKind,
-} from '@happier-dev/protocol';
+import { ScmHostingProviderKindSchema } from '@happier-dev/protocol/scm/pullRequests';
+import type { ScmHostingProviderContribution, ScmHostingProviderKind } from '@happier-dev/protocol';
 import type {
     HostingProviderResolvedRemote,
     HostingProviderPullRequestCheckoutCapability,

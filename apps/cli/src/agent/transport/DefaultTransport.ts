@@ -16,7 +16,7 @@ import type {
 } from './TransportHandler';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { filterJsonObjectOrArrayLine } from './utils/jsonStdoutFilter';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 
 /**

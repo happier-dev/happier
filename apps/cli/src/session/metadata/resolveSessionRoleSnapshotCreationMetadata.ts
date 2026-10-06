@@ -1,4 +1,5 @@
-import { readSessionRolesV1, type V2SessionByIdResponse } from '@happier-dev/protocol';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { V2SessionByIdResponse } from '@happier-dev/protocol';
 
 /**
  * A host snapshot carries a candidate memory reference, not Account authority.

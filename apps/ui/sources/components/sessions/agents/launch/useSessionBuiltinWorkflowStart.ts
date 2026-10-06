@@ -110,7 +110,8 @@ export function useSessionBuiltinWorkflowStart(params: Readonly<{
         serverId: params.serverId ?? null,
         onRun: (inputs, roleOverrides) => { void admit(pending, inputs, roleOverrides); },
         onCancel: cancel,
-        pending: runNow.stateFor(pendingRunIdRef.current ?? '') === 'submitting',
+        pending: runNow.isPending(pendingRunIdRef.current ?? ''),
+        reconciling: runNow.stateFor(pendingRunIdRef.current ?? '') === 'reconciling',
     }, [admit, cancel, changeRawTextValues, changeValues, machineId, params.serverId, pending, runNow]);
     useWorkflowRunComposerModal({ open: pending !== null, props: modalProps });
 

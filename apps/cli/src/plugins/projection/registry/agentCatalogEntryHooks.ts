@@ -24,13 +24,10 @@ import type {
     AgentSessionStartupContributionV1,
     AgentTerminalPromptSubmitVerificationPolicyV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import {
-    buildQualifiedPluginContributionKey,
-    isPluginAgentCliAuthBackgroundCheckSafe,
-    StrictJsonValueSchema,
-    type PluginAgentCliMetadata,
-    type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginAgentCliMetadata, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
 import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';

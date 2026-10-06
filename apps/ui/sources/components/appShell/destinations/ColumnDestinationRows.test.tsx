@@ -7,11 +7,12 @@ import type { RightSidebarPluginTabDefinition } from '@/components/appShell/righ
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveSessionListDensityViewState } from '@/components/sessions/shell/resolveSessionListDensityViewState';
+import { NavigationSurfacePlacementsV1Schema, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
 import {
     resolveCompactAppDestinations,
     type CompactAppDestination,
-    type CompactAppDestinationPreferencesV1,
 } from './compactAppDestinationCatalog';
 
 const routeState = vi.hoisted(() => ({
@@ -19,11 +20,15 @@ const routeState = vi.hoisted(() => ({
     pathname: '/',
 }));
 const openUniversalSearch = vi.hoisted(() => vi.fn());
-const surfaceState = vi.hoisted(() => ({
-    platformOS: 'web' as 'web' | 'ios' | 'android',
-    isTablet: false,
-    sessionListDensity: 'narrow' as string,
-}));
+const surfaceState = vi.hoisted(() => {
+    const localSettings: Pick<LocalSettings, 'navigationSurfacePlacementsV1'> = { navigationSurfacePlacementsV1: {} };
+    return {
+        platformOS: 'web' as 'web' | 'ios' | 'android',
+        isTablet: false,
+        sessionListDensity: 'narrow' as string,
+        localSettings,
+    };
+});
 const catalogState = vi.hoisted(() => ({ value: [] as readonly CompactAppDestination[] }));
 
 vi.mock('expo-router', async () => {
@@ -59,10 +64,13 @@ vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     useIsTablet: () => surfaceState.isTablet,
 }));
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock, createUseLocalSettingMock, createUseLocalSettingMutableMock } = await import('@/dev/testkit/mocks/storage');
+    const useLocalSetting = createUseLocalSettingMock({ values: surfaceState.localSettings });
     return createStorageModuleMock({
         importOriginal,
         overrides: {
+            useLocalSetting,
+            useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),
             useSetting: ((key: string) => (
                 key === 'sessionListDensity' ? surfaceState.sessionListDensity : undefined
             )) as typeof import('@/sync/domains/state/storage')['useSetting'],
@@ -116,13 +124,13 @@ function setCatalog(input: Readonly<{
     pages?: readonly PluginAppPage[];
     externalSessions?: boolean;
     tabs?: readonly RightSidebarPluginTabDefinition[];
-    preferences?: CompactAppDestinationPreferencesV1;
+    navigationPlacements?: NavigationSurfacePlacementsV1;
 }>) {
+    surfaceState.localSettings.navigationSurfacePlacementsV1 = NavigationSurfacePlacementsV1Schema.parse(input.navigationPlacements ?? {});
     catalogState.value = resolveCompactAppDestinations({
         builtins: { externalSessions: input.externalSessions ?? true, inbox: true, workflows: true, friends: true },
         pages: input.pages ?? [],
         ...(input.tabs ? { rightSidebarTabs: input.tabs } : {}),
-        ...(input.preferences ? { preferences: input.preferences } : {}),
     });
 }
 
@@ -190,6 +198,7 @@ describe('ColumnDestinationRows', () => {
             'sessions-search-all-button',
             'compact-app-destination:workflows',
             'compact-app-destination:boards',
+            'compact-app-destination:artifacts',
             'external-sessions-browse-button',
             'compact-app-destination:plugin:acme.log:log',
             'compact-app-destination:plugins',
@@ -260,14 +269,17 @@ describe('ColumnDestinationRows', () => {
         expect(row?.props.subtitle).not.toBe('feature_disabled');
     });
 
-    it('does not list a destination the person hid', async () => {
+    it('keeps column and phone discovery visible when the rail icon is hidden', async () => {
         setCatalog({
             pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })],
-            preferences: { orderedDestinationIds: [], hiddenDestinationIds: ['plugin:acme.notes:notes'] },
+            navigationPlacements: { appRail: { orderedIds: ['plugin:acme.notes:notes'], placements: { 'plugin:acme.notes:notes': 'hidden' } } },
         });
         const { ColumnDestinationRows } = await import('./ColumnDestinationRows');
         const screen = await render(<ColumnDestinationRows column="sessions" />);
 
-        expect(screen.findByTestId('compact-app-destination:plugin:acme.notes:notes')).toBeNull();
+        expect(screen.findByTestId('compact-app-destination:plugin:acme.notes:notes')).not.toBeNull();
+        expect(rowIds(screen)[0]).toBe('external-sessions-browse-button');
+        const launcher = await render(<ColumnDestinationRows />);
+        expect(launcher.findByTestId('compact-app-destination:plugin:acme.notes:notes')).not.toBeNull();
     });
 });

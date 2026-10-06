@@ -11,6 +11,7 @@ export type StreamedTranscriptWriter = Readonly<{
   overrideThinkingText: (text: string, opts?: { sidechainId?: string | null }) => boolean;
   enableDurableCommits: () => void;
   discard: () => void;
+  hasPendingSegments: () => boolean;
   flushAll: (opts: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useApplySettings } from '@/sync/store/settingsWriters';
-import { useSettings } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/hooks';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
@@ -24,7 +24,10 @@ export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeB
     setDefault: (agentId: string, makeDefault: boolean) => void;
 }> {
     const { agentEntries, agentsKnown } = useConnectedServicesIndex({ agents: 'cached' });
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+    }));
     const applySettings = useApplySettings();
     const defaultSettings = React.useMemo(() => ({
         connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,

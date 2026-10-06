@@ -7,12 +7,90 @@ import type { ArtifactUpdateRequest, DecryptedArtifact } from '@/sync/domains/ar
 import { decodePlainArtifactStoredContent, type ArtifactBlobReferenceV1 } from '@happier-dev/protocol';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
+import { signAccountContentKeyBindingV1, verifyAccountContentKeyBindingV1, openEncryptedDataKeyEnvelopeV1,
+  type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol';
+import { decodeBase64 } from '@/encryption/base64';
+import { encodeHex } from '@/encryption/hex';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { openArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 
 
 const fileReference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62',
   mime: 'application/zip', sizeBytes: 3, sha256: 'a'.repeat(64) };
 
 describe('updateArtifactWithHeaderViaApi', () => {
+  it.each([['editor', false], ['editor', true], ['owner', false]] as const)('initializes legacy provenance to the owner when %s saves (first CAS refused: %s)', async (callerId, refuseFirst) => {
+    const artifactId = '11111111-1111-4111-8111-111111111111';
+    const ownerSecret = new Uint8Array(32).fill(15);
+    const editorSecret = new Uint8Array(32).fill(16);
+    const editorEncryption = await Encryption.createFromContentKeyPair({ publicKey: x25519.getPublicKey(editorSecret), machineKey: editorSecret });
+    const ownerEncryption = await Encryption.createFromContentKeyPair({ publicKey: x25519.getPublicKey(ownerSecret), machineKey: ownerSecret });
+    const encryption = callerId === 'owner' ? ownerEncryption : editorEncryption;
+    const dataKey = new Uint8Array(32).fill(17);
+    const codec = new ArtifactEncryption(dataKey);
+    const ownerContentEnvelope = encodeBase64(await ownerEncryption.encryptEncryptionKey(dataKey));
+    const editorContentEnvelope = encodeBase64(await editorEncryption.encryptEncryptionKey(dataKey));
+    const callerContentEnvelope = callerId === 'owner' ? ownerContentEnvelope : editorContentEnvelope;
+    const recipients = [ ['owner', ownerSecret], ['editor', editorSecret] ] as const;
+    const recipientRows = recipients.map(([recipientAccountId, contentSecret], index) => {
+      const signingSecret = new Uint8Array(32).fill(30 + index);
+      const signingPublic = ed25519.getPublicKey(signingSecret);
+      const contentPublic = x25519.getPublicKey(contentSecret);
+      const signature = signAccountContentKeyBindingV1({ accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic });
+      const fingerprint = verifyAccountContentKeyBindingV1({ accountSigningPublicKey: signingPublic, contentPublicKey: contentPublic, signature })!.contentPublicKeyFingerprint;
+      return { recipientAccountId, contentKey: { status: 'available' as const, accountSigningPublicKey: encodeHex(signingPublic),
+        contentPublicKey: encodeBase64(contentPublic), contentPublicKeySignature: encodeBase64(signature) }, contentPublicKeyFingerprint: fingerprint,
+        encryptedDataKey: recipientAccountId === 'owner' ? ownerContentEnvelope : editorContentEnvelope,
+        recipientContentPublicKeyFingerprint: fingerprint, encryptedProvenanceDataKey: null as string | null };
+    });
+    let stored = { id: artifactId, ownerAccountId: 'owner', access: callerId === 'owner' ? 'owner' as const : 'edit' as const, encryptionMode: 'e2ee' as const,
+      header: await codec.encryptHeader({ title: 'Legacy' }), body: await codec.encryptBody({ body: 'Before' }),
+      dataEncryptionKey: callerContentEnvelope, provenance: null as string | null, provenanceDataEncryptionKey: null as string | null,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    const cache: ArtifactDataKeyCache = new Map([[artifactId, { envelope: callerContentEnvelope, dataKey }]]);
+    let current: DecryptedArtifact = { ...stored, title: 'Legacy', rawHeader: { title: 'Legacy' }, header: { title: 'Legacy' },
+      body: 'Before', provenance: undefined, storageMode: 'e2ee', isDecrypted: true };
+    let refused = false;
+    let write: ArtifactUpdateRequest | undefined;
+    const request = async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/recipients')) return Response.json({ artifactId, ownerAccountId: 'owner', access: stored.access, encryptionMode: 'e2ee',
+        dataEncryptionKey: ownerContentEnvelope, callerDataEncryptionKey: callerContentEnvelope,
+        provenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
+        callerProvenanceDataEncryptionKey: callerId === 'owner' ? stored.provenanceDataEncryptionKey : recipientRows[1]!.encryptedProvenanceDataKey, recipients: recipientRows });
+      if (path.endsWith('/key-envelopes')) {
+        const commit = JSON.parse(String(init?.body)) as ArtifactRecipientKeyEnvelopeCommitInputV1;
+        expect(commit.expectedProvenanceDataEncryptionKey).toBe(stored.provenanceDataEncryptionKey);
+        for (const prepared of commit.recipientKeyEnvelopes) {
+          const recipient = recipientRows.find(row => row.recipientAccountId === prepared.recipientAccountId);
+          if (recipient) recipient.encryptedProvenanceDataKey = prepared.encryptedProvenanceDataKey ?? null;
+        }
+        return Response.json({ appliedRecipientAccountIds: ['editor'], skippedRecipientAccountIds: [] });
+      }
+      if (init?.method !== 'POST') return Response.json(stored);
+      write = JSON.parse(String(init?.body)) as ArtifactUpdateRequest;
+      if (refuseFirst && !refused) { refused = true; return Response.json({ success: false, error: 'version-mismatch' }); }
+      stored = { ...stored, body: write.body!, provenance: write.provenance ?? null,
+        provenanceDataEncryptionKey: write.provenanceDataEncryptionKey ?? stored.provenanceDataEncryptionKey, bodyVersion: 2 };
+      return Response.json({ success: true, headerVersion: 1, bodyVersion: 2 });
+    };
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    const save = () => updateArtifactWithHeaderViaApi({ credentials: { token: createAccountTokenForTests(callerId) }, artifactId,
+      header: { title: 'Legacy' }, body: 'After', savedBy: { kind: 'person', accountId: callerId }, encryption,
+      artifactDataKeys: cache, request, getArtifact: () => current, updateArtifact: row => { current = row; } });
+    if (refuseFirst) {
+      await expect(save()).rejects.toMatchObject({ code: 'version_mismatch' });
+      expect(cache.get(artifactId)?.provenanceDataKey).toBeUndefined();
+    }
+    await save();
+    expect(stored.provenanceDataEncryptionKey).toBeTruthy();
+    const privateKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(stored.provenanceDataEncryptionKey!), recipientSecretKeyOrSeed: ownerSecret });
+    expect(privateKey).not.toBeNull();
+    await expect(openArtifactPrivateRevisionMetadata({ mode: 'e2ee', artifactId, bodyVersion: 2, provenance: stored.provenance,
+      dataKey: privateKey })).resolves.toEqual({ savedBy: { kind: 'person', accountId: callerId } });
+    const editorPrivateKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(recipientRows[1]!.encryptedProvenanceDataKey!), recipientSecretKeyOrSeed: editorSecret });
+    expect(editorPrivateKey).toEqual(privateKey);
+  });
   it.each(['plain', 'e2ee'] as const)('deliberately clears a %s file through the binary-aware route and keeps later text edits on the ordinary route', async (mode) => {
     const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
     const dataKey = ArtifactEncryption.generateDataEncryptionKey();

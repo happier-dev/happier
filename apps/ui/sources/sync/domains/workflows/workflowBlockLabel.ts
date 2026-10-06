@@ -1,5 +1,25 @@
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
-export { workflowBlockReferenceLabel } from '@happier-dev/protocol/workflows';
+import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { t } from '@/text';
+import { resolveWorkflowActionTitle } from './workflowActionPresentation';
+
+/** Document headings and reference tokens share human names; ids stay in bindings only. */
+export function workflowBlockReferenceLabel(block: WorkflowBlock): string {
+  switch (block.kind) {
+    case 'step': return t('workflows.editor.addStep');
+    case 'wait': return t('workflows.page.blocks.waitTitle');
+    case 'action': return resolveWorkflowActionTitle(block.actionId, listActionSpecs().find(spec => spec.id === block.actionId) ?? null);
+    case 'workflow': {
+      const builtin = getBuiltinWorkflowCatalogV1().find(entry => entry.id === block.workflowRef);
+      return builtin === undefined ? t('workflows.page.blocks.menuRun') : t(builtin.titleKey as never);
+    }
+    case 'parallel': return t('workflows.editor.addParallel');
+    case 'if': return t('workflows.editor.addIf');
+    case 'loop': return block.repetition.kind === 'items' ? t('workflows.loop.modeItems')
+      : block.repetition.kind === 'until' ? t('workflows.loop.modeUntil') : t('workflows.editor.addLoop');
+  }
+}
 
 function workflowStepFirstPromptLine(step: WorkflowStep): string | null {
   return step.document.text

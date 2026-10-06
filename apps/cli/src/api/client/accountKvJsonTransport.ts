@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { z } from 'zod';
-import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-  StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import type { ScmReviewedMarksJsonTransport } from '@happier-dev/protocol/scm';
 import type { StoredCredentials } from '@/persistence';
 import { decodeBase64, encodeBase64, decryptResult, encrypt } from '@/api/encryption';

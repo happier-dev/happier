@@ -445,6 +445,79 @@ describe('plugin development source observation', () => {
     }
   });
 
+  it.each(['adopted', 'retained'] as const)('does not resubmit unchanged inputs after preparation writes (%s)', async (delivery) => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-preparation-feedback-'));
+    let releasePreparation!: () => void;
+    const preparing = new Promise<void>((resolve) => { releasePreparation = resolve; });
+    let startedPreparation!: () => void;
+    const started = new Promise<void>((resolve) => { startedPreparation = resolve; });
+    const observations: Array<readonly string[] | undefined> = [];
+    let handle: Awaited<ReturnType<typeof startPluginDevelopmentSourceObserver>> | undefined;
+    try {
+      await writeProject(projectRoot);
+      const starting = startPluginDevelopmentSourceObserver({
+        projectRoot,
+        debounceMs: 10,
+        onObservation: async (observation) => {
+          if (!observation.ok) return 'retained';
+          observations.push(observation.request.changedPaths);
+          if (observations.length === 1) {
+            startedPreparation();
+            await preparing;
+          }
+          return delivery;
+        },
+      });
+      await started;
+      // Use the real filesystem watcher, including root events for excluded
+      // node_modules and transient install configuration while preparation runs.
+      await mkdir(join(projectRoot, 'node_modules', '.pnpm'), { recursive: true });
+      await writeFile(join(projectRoot, 'pnpm-workspace.yaml'), '# Happier transient public author workspace\noverrides: {}\n');
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await rm(join(projectRoot, 'pnpm-workspace.yaml'));
+      releasePreparation();
+      handle = await starting;
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      expect(observations).toEqual([undefined]);
+
+      await writeFile(join(projectRoot, 'src', 'index.ts'), 'export const changed = true;\n');
+      await vi.waitFor(() => expect(observations).toHaveLength(2));
+      expect(observations[1]).toEqual(delivery === 'adopted' ? ['src/index.ts'] : undefined);
+    } finally {
+      releasePreparation();
+      handle?.stop();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores marker-owned install configuration while preserving author-owned configuration changes', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-transient-config-'));
+    const observations: Array<readonly string[] | undefined> = [];
+    let handle: Awaited<ReturnType<typeof startPluginDevelopmentSourceObserver>> | undefined;
+    try {
+      await writeProject(projectRoot);
+      handle = await startPluginDevelopmentSourceObserver({
+        projectRoot, debounceMs: 10,
+        onObservation: (observation) => {
+          if (observation.ok) observations.push(observation.request.changedPaths);
+          return 'adopted';
+        },
+      });
+      await writeFile(join(projectRoot, 'pnpm-workspace.yaml'), '# Happier transient public author workspace\noverrides: {}\n');
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      expect(observations).toEqual([undefined]);
+      await rm(join(projectRoot, 'pnpm-workspace.yaml'));
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      expect(observations).toEqual([undefined]);
+      await writeFile(join(projectRoot, 'pnpm-workspace.yaml'), 'packages:\n  - plugins/*\n');
+      await vi.waitFor(() => expect(observations).toHaveLength(2));
+      expect(observations[1]).toEqual(['pnpm-workspace.yaml']);
+    } finally {
+      handle?.stop();
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it('observes the first package edit immediately after the real filesystem observer starts', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-watch-live-'));
     try {

@@ -43,15 +43,8 @@ import {
     type AgentExternalSessionTakeoverResolveLaunchRequest,
     type AgentExternalSessionTakeoverResolveLaunchResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import {
-    ExternalAgentObservationLinkEvidenceBatchV1Schema,
-    ExternalAgentObservationLinkKeyV1Schema,
-    ExternalAgentObservationReconcileRequestV1Schema,
-    ExternalAgentObservationReconcileResultV1Schema,
-    ExternalAgentObservationResourceGroupingV1Schema,
-    ExternalAgentObservationResourceKeyV1Schema,
-    type PluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { ExternalAgentObservationLinkEvidenceBatchV1Schema, ExternalAgentObservationLinkKeyV1Schema, ExternalAgentObservationReconcileRequestV1Schema, ExternalAgentObservationReconcileResultV1Schema, ExternalAgentObservationResourceGroupingV1Schema, ExternalAgentObservationResourceKeyV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';

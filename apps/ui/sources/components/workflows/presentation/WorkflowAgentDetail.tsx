@@ -1,6 +1,9 @@
+import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { Platform, View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
@@ -34,6 +37,7 @@ export type WorkflowAgentDetailProps = Readonly<{
  * a long summary never floods the popover (U-20). No raw markdown/JSON source dumps.
  */
 export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) => {
+    const { theme } = useUnistyles();
     const find = useToolFindState(props.messageId);
     const [expanded, setExpanded] = React.useState(false);
     const rowLayoutMutation = useTranscriptRowLayoutMutation();
@@ -47,8 +51,9 @@ export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) 
         <View style={styles.container} testID={props.detailTestID}>
             <ToolFindText messageId={props.messageId} blockId={props.findBlockId ?? 'tool-workflow-detail'} text={body} style={[styles.text, normalized.kind === 'json' ? styles.mono : null]} testID={bodyTestID} />
             {clamped.clamped && !find.active ? (
-                <Pressable
+                <HappierPressable
                     accessibilityRole="button"
+                    expanded={expanded}
                     onPress={() => {
                         rowLayoutMutation({
                             reason: expanded ? 'collapse' : 'expand',
@@ -57,14 +62,15 @@ export const WorkflowAgentDetail = React.memo<WorkflowAgentDetailProps>((props) 
                         setExpanded(!expanded);
                     }}
                     testID={toggleTestID}
-                    style={styles.toggle}
+                    style={(state) => [styles.toggle, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={styles.toggleText}>
                         {expanded
                             ? t('tools.workflowActivityView.detailShowLess')
                             : t('tools.workflowActivityView.detailShowMore')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     );
@@ -73,31 +79,32 @@ WorkflowAgentDetail.displayName = 'WorkflowAgentDetail';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        marginLeft: 26,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        borderRadius: 8,
+        marginLeft: 18 + theme.margins.sm,
+        paddingHorizontal: theme.margins.sm,
+        paddingVertical: theme.margins.sm,
+        borderRadius: theme.borderRadius.md,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
-        gap: 6,
+        gap: theme.margins.xs,
     },
     text: {
-        fontSize: 12,
-        lineHeight: 17,
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
     },
     mono: {
-        fontFamily: 'monospace',
+        ...Typography.mono(),
     },
     toggle: {
         alignSelf: 'flex-start',
         minHeight: MINIMUM_TARGET_SIZE,
         justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     toggleText: {
-        fontSize: 12,
-        fontWeight: '600',
+        ...Typography.rowMeta(),
+        ...Typography.default('semiBold'),
         color: theme.colors.text.link,
     },
 }));

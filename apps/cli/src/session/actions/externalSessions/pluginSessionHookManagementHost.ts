@@ -1,23 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import {
-    PluginSessionHookInstallPreviewV1Schema,
-    PluginSessionHookInstallResponseV1Schema,
-    PluginSessionHookToggleResponseV1Schema,
-    PluginSessionHookUninstallResponseV1Schema,
-    PluginDiagnosticDataV1Schema,
-    type PluginContributionIdentityV1,
-    type PluginDiagnosticDataV1,
-    type PluginSessionHookInstallInputV1,
-    type PluginSessionHookInstallPreviewV1,
-    type PluginSessionHookInstallResponseV1,
-    type PluginSessionHookInstallationMutationInputV1,
-    type PluginSessionHookInstallationStatusV1,
-    type PluginSessionHookStatusInputV1,
-    type PluginSessionHookStatusResponseV1,
-    type PluginSessionHookToggleResponseV1,
-    type PluginSessionHookUninstallResponseV1,
-} from '@happier-dev/protocol';
+import { PluginSessionHookInstallPreviewV1Schema, PluginSessionHookInstallResponseV1Schema, PluginSessionHookToggleResponseV1Schema, PluginSessionHookUninstallResponseV1Schema } from '@happier-dev/protocol/sessions/external/hookManagementV1';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginContributionIdentityV1, PluginDiagnosticDataV1, PluginSessionHookInstallInputV1, PluginSessionHookInstallPreviewV1, PluginSessionHookInstallResponseV1, PluginSessionHookInstallationMutationInputV1, PluginSessionHookInstallationStatusV1, PluginSessionHookStatusInputV1, PluginSessionHookStatusResponseV1, PluginSessionHookToggleResponseV1, PluginSessionHookUninstallResponseV1 } from '@happier-dev/protocol';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
 } from '@happier-dev/plugin-sdk/sessions/external';

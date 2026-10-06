@@ -1,11 +1,6 @@
 import axios from "axios";
-import {
-    ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
-    AccountApiTokenIntrospectionSubjectFailureV1Schema,
-    AccountApiTokenIntrospectionSuccessV1Schema,
-    parseAccountApiTokenBearerV1,
-    type AccountApiTokenIntrospectionRequestV1,
-} from "@happier-dev/protocol";
+import { ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1, AccountApiTokenIntrospectionSubjectFailureV1Schema, AccountApiTokenIntrospectionSuccessV1Schema, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { AccountApiTokenIntrospectionRequestV1 } from '@happier-dev/protocol';
 
 import { normalizeServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 

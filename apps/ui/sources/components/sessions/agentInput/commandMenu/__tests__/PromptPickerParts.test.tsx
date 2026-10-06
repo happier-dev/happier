@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 import { buildPromptPickerRows, type PromptPickerRow } from '../promptPickerRows';
+import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -20,6 +21,8 @@ const history: UserMessageHistoryEntriesSnapshot = {
 describe('picker coverage and preview read admission', () => {
     it.each([false, true])('retains partial history coverage after known paging ends (hardware=%s)', async (hardwareKeyboard) => {
         const screen = await renderScreen(<PromptPickerFooter history={history} hardwareKeyboard={hardwareKeyboard} canSend applyError={false} />);
+        expect(screen.findAllByType(KeyHint).map((hint) => hint.props.label)).toEqual(hardwareKeyboard
+            ? ['↑↓', '↵', 'Ctrl+Enter', 'Ctrl+D'] : []);
         expect(screen.findByTestId('prompt-picker-history-coverage')).not.toBeNull();
         expect(screen.getTextContent()).toContain('agentInput.promptPicker.partialHistory');
         await screen.update(<PromptPickerFooter history={{ ...history, coverage: 'loaded', hasMore: true }} hardwareKeyboard={hardwareKeyboard} canSend applyError={false} />);

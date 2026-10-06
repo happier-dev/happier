@@ -7,21 +7,19 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { SessionBoardController } from '@/components/sessions/board/useSessionBoardController';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
-import { InstalledWidgetSurface } from '@/components/widgets/InstalledWidgetSurface';
 import { useYourWidgetCandidates } from '@/components/widgets/definitions/useYourWidgetCandidates';
 import { runWidgetDefinitionCommand } from '@/components/widgets/definitions/widgetDefinitionCommands';
-import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { widgetProvidedContext, widgetSetupFieldsForCandidate } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
 import { useSessionWidgetSurface } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { SESSION_BOARD_OVERVIEW_VIEW_ID } from '@/sync/domains/session/board';
 
 import { WidgetAddPopover } from './WidgetAddPopover';
 import { buildBoardWidgetAddContent } from './widgetAddSections';
-import type { WidgetSetupDraft, WidgetSetupSubmitResult } from './widgetSetupModel';
+import { proposeWidgetSetupDraft, type WidgetSetupDraft, type WidgetSetupSubmitResult } from './widgetSetupModel';
 
 const PLUGINS_ROUTE = '/plugins';
 
@@ -83,21 +81,11 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
                 },
             }),
         } : {}),
-        // Saved definitions demand their body through the App runtime even without an installed
-        // Session widget runtime. Installed surfaces still require that runtime's admitted read.
-        renderPluginPreview: (candidate: WidgetCandidate) => candidate.surface && pluginRuntime ? (
-            <InstalledWidgetSurface
-                testID={`${testID}.preview.${candidate.key}`}
-                target={{ kind: 'session', sessionId, ...(session ? { session } : {}) }}
-                recordRevision={`add-preview:${candidate.key}`}
-                source={{ kind: 'installedSurface', surface: candidate.surface }}
-                presentation="content"
-                runtime={pluginRuntime}
-            />
-        ) : scope && (candidate.definition?.kind === 'artifact' || candidate.definition?.kind === 'inline') ? (
-            <WidgetSurface scope={scope} providedContext={widgetProvidedContext(context)} descriptor={candidate}
-                instance={{ v: 1, id: `add-preview:${candidate.key}`, definition: candidate.definition, bindings: {} }}
-                appRuntime={appRuntime} presentation="content" recordRevision={`add-preview:${candidate.key}`}
+        // Gallery and setup both enter configured admission, which selects the actual App/Session
+        // target before any installed body mounts. Missing-input tiles keep their glyph.
+        renderPluginPreview: (candidate: WidgetCandidate) => scope ? (
+            <WidgetSetupPreview scope={scope} providedContext={widgetProvidedContext(context)} candidate={candidate}
+                draft={proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context, 'shared'))}
                 testID={`${testID}.preview.${candidate.key}`} />
         ) : null,
         // The step's live preview, mounted through the configured-target owner (exact authority).
@@ -113,7 +101,7 @@ function OpenBoardWidgetAddPopover(props: React.ComponentProps<typeof BoardWidge
             ),
         } : {}),
         openPlugins: () => { router.push(PLUGINS_ROUTE as never); },
-    }), [allCandidates, appRuntime, canPublish, context, controller.activeView, intents, pluginRuntime, router, run, scope, session, sessionId, snapshot, testID]);
+    }), [allCandidates, canPublish, context, controller.activeView, intents, router, run, scope, snapshot, testID]);
 
     return (
         <WidgetAddPopover

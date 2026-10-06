@@ -1,8 +1,6 @@
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderSettingsLimitError,
-  createProviderErrorV1,
-} from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderSettingsLimitError } from '@happier-dev/protocol/providers/settings/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ZodError } from 'zod';
 
 import type {

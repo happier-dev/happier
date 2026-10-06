@@ -224,6 +224,24 @@ export function useWorkflowDefinitionLibrary(options?: Readonly<{ enabled?: bool
     };
 }
 
+/** Resolve one plugin source through the same scoped pages as the library and pickers. */
+export function useWorkflowPluginSource(workflow: string | null, enabled = true): Readonly<{
+    source: WorkflowPluginSourceV1 | null;
+    status: 'idle' | 'loading' | 'failed' | 'missing' | 'ready';
+    retry: () => void;
+}> {
+    const library = useWorkflowDefinitionLibrary({ enabled: enabled && workflow !== null });
+    const source = library.pluginWorkflows.find((entry) => entry.workflow === workflow) ?? null;
+    React.useEffect(() => {
+        if (enabled && workflow !== null && source === null && library.status === 'loaded'
+            && library.hasMore && !library.loadingMore && !library.loadMoreFailed) library.loadMore();
+    }, [enabled, workflow, source, library.status, library.hasMore, library.loadingMore, library.loadMoreFailed, library.loadMore]);
+    return { source, status: !enabled || workflow === null ? 'idle' : source !== null ? 'ready'
+        : library.status === 'failed' || library.loadMoreFailed ? 'failed'
+            : library.status !== 'loaded' || library.hasMore ? 'loading' : 'missing',
+        retry: library.loadMoreFailed ? library.loadMore : library.retry };
+}
+
 // ---- Run windows ------------------------------------------------------------------------------
 
 type RunReadStatus = ReadStatus & Readonly<{ knownAt: number | null }>;

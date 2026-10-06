@@ -450,7 +450,21 @@ export async function resolveTrustedStackRuntimeServerPort(runtimeState, context
   const trustContext = resolveStackRuntimeProcessTrustContext(context);
   const serverProcessKey = runtimeState?.serverProxy?.mode === 'proxy' ? 'proxyPid' : 'serverPid';
   const serverPid = normalizeRuntimePid(runtimeState?.processes?.[serverProcessKey]);
-  if (!serverPid) return null;
+  if (!serverPid) {
+    const serverTarget = String(runtimeState?.placement?.server ?? '').trim();
+    if (!serverTarget || serverTarget === 'local' || runtimeState?.remoteTargets?.[serverTarget]?.services?.server !== true) return null;
+    if (!await hasTrustedStackRuntimeLifecycle(runtimeState, trustContext, options)) return null;
+    try {
+      const listenerPid = await (options.resolveStackOwnedListenPidImpl ?? resolveStackOwnedListenPid)(
+        { port, stackName: trustContext.stackName, envPath: trustContext.envPath },
+        options.listenerOwnershipOptions ?? {},
+      );
+      return normalizeRuntimePid(listenerPid) ? port : null;
+    } catch (error) {
+      if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') return null;
+      throw error;
+    }
+  }
   const serverTrusted = await isStackRuntimeProcessTrusted(
     serverPid,
     { ...trustContext, key: serverProcessKey },

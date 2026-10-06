@@ -541,14 +541,13 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     const files: Record<string, Uint8Array> = {};
     if (!request.fileIds.includes(CODEX_AUTH_FILE_ID)) return { kind: 'files', files };
     const accessToken = await readCredential(context.credentials, ACCESS_TOKEN_KEY, options);
-    const refreshToken = await readCredential(context.credentials, REFRESH_TOKEN_KEY, options);
     const idToken = await readCredential(context.credentials, ID_TOKEN_KEY, options);
     const providerAccountId = await readCredential(
       context.credentials,
       PROVIDER_ACCOUNT_ID_KEY,
       options,
     );
-    if (!accessToken || !refreshToken || !idToken) {
+    if (!accessToken) {
       throw new Error('OpenAI Codex connected-account credentials are unavailable');
     }
     const lastRefreshAt = Number(
@@ -560,8 +559,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     files[CODEX_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(
       buildCodexCloudAuthFile({
         accessToken,
-        refreshToken,
-        idToken,
+        idToken: idToken || null,
         accountId: providerAccountId || null,
         lastRefreshIso,
       }),

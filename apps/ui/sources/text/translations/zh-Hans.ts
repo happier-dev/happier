@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -850,6 +851,7 @@ const zhHansValues = {
     connectedServicesSetup: connectedServicesSetupTranslations['zh-Hans'],
     homeWidgets: homeWidgetTranslations['zh-Hans'],
     widgetFrame: widgetFrameTranslations['zh-Hans'],
+    navigationPlacement: navigationPlacementTranslations['zh-Hans'],
     inputPicker: inputPickerTranslations['zh-Hans'],
     widgetAdd: widgetAddTranslations['zh-Hans'],
     widgetDefinition: widgetDefinitionTranslations['zh-Hans'],
@@ -3540,6 +3542,19 @@ const zhHansValues = {
       invalidGroup: '此账号组无效。请检查设置后重试。',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '连接服务操作失败。请刷新后重试。',
+      accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+      accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+      accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+      accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+      accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+      accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+      accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+      accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+      accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+      accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+      accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+      accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     },
     diagnostics: {
       title: {
@@ -10459,6 +10474,8 @@ settingsSession: {
 	        attentionPromotionModeGlobalSubtitle: '在其他会话上方显示一个注意事项分组',
 	        attentionPromotionModeWithinGroupsTitle: '移到当前分组顶部',
 	        attentionPromotionModeWithinGroupsSubtitle: '将会话保留在其文件夹或工作区内',
+	        reminderAutoClearOnOpenTitle: "打开时清除提醒",
+	        reminderAutoClearOnOpenSubtitle: "关闭后需手动移除已到期的提醒。未来的提醒仍按计划保留。",
 	        attentionStandingDefaultTitle: '将会话保留在需要注意',
 	        attentionStandingDefaultEnabledSubtitle: '每个会话都会一直保留，直到你移除它',
 	        attentionStandingDefaultDisabledSubtitle: '逐个保留会话',
@@ -10620,14 +10637,14 @@ settingsSession: {
     providerUsageGauge: {
       title: "提供方使用量",
       footer:
-        "当有可靠的提供方使用量数据时，控制输入框旁显示的配额仪表。在已连接的账号上固定一个用量窗口，即可将其显示为额外的仪表。",
+        "为所有账户选择输入框上方的用量仪表。仪表遵循每个池所选的用量限制。收藏的限额会为当前账户添加额外仪表。",
       visibilityTitle: "显示提供方使用量仪表",
       labelsTitle: "显示标签",
       labelsSubtitle: "为输入框旁的上下文和用量仪表加上名称。",
       visibilityEnabledSubtitle:
         "可用时在输入框旁显示提供方剩余配额。",
       visibilityHiddenSubtitle: "在输入框旁隐藏提供方配额。",
-      windowTitle: "仪表窗口",
+      windowTitle: "仪表时间窗口",
       windowMostConstrainedTitle: "最受限制",
       windowMostConstrainedSubtitle:
         "显示可靠配额窗口中剩余最少的窗口。",
@@ -10635,8 +10652,8 @@ settingsSession: {
       windowDailySubtitle: "优先使用每日配额窗口。",
       windowWeeklyTitle: "每周",
       windowWeeklySubtitle: "优先使用每周配额窗口。",
-      windowSessionTitle: "会话",
-      windowSessionSubtitle: "优先使用当前会话配额窗口。",
+      windowSessionTitle: "短期窗口",
+      windowSessionSubtitle: "显示短期配额窗口，例如五小时限额。",
       windowPrimaryTitle: "主要",
       windowPrimarySubtitle: "优先使用提供方主要配额窗口。",
       windowSecondaryTitle: "次要",
@@ -11144,7 +11161,7 @@ settingsSession: {
       byo: "我的 ElevenLabs 账户",
       byoSubtitle: "使用您自己的 ElevenLabs API 密钥和代理",
       openaiRealtime: "OpenAI Realtime",
-      openaiRealtimeSubtitle: "使用已保存的 API 密钥或显式选择的 OpenAI 账户",
+      openaiRealtimeSubtitle: "使用你的 OpenAI 账户或 API 密钥",
       grokRealtime: "Grok Voice",
       grokRealtimeSubtitle: "使用你的 xAI API 密钥",
     },

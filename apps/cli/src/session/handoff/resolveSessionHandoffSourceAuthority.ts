@@ -1,9 +1,7 @@
-import {
-  normalizeSessionHandoffWorkspaceRootPath,
-  resolveLinkedExternalSessionAuthorityV1,
-  readSessionDirectoryKind,
-  type SessionHandoffStorageMode,
-} from '@happier-dev/protocol';
+import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import type { SessionHandoffStorageMode } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';

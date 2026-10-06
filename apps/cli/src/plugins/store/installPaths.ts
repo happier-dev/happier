@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 
-import { encodePluginIdForFilesystem } from '@happier-dev/protocol';
+import { encodePluginIdForFilesystem } from '@happier-dev/protocol/plugins/plugin-id';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 function assertPathWithinRoot(rootDir: string, candidatePath: string, label: string): void {

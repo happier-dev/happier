@@ -1,8 +1,5 @@
-import {
-    compilePluginJsonSchema,
-    type PluginJsonSchemaValidator,
-    type PluginSettingFieldV2,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { PluginJsonSchemaValidator, PluginSettingFieldV2 } from '@happier-dev/protocol';
 
 const validatorsByField = new WeakMap<PluginSettingFieldV2, PluginJsonSchemaValidator>();
 

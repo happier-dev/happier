@@ -182,11 +182,11 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useOrdinarySessionListMembershipByServerId: () => ({}),
     useSessionListQueryMembershipByKey: () => EMPTY_QUERY_MEMBERSHIP,
     useSessionListRowsByServerId: () => ({}),
-    useSettings: () => ({
+    useSetting: (key: 'sessionListActiveGroupingV1' | 'sessionListInactiveGroupingV1' | 'sessionListSectionModeV1') => ({
         sessionListActiveGroupingV1: 'project',
         sessionListInactiveGroupingV1: 'project',
         sessionListSectionModeV1: 'single',
-    }),
+    })[key],
     useSocketStatus: () => 'connected',
 }));
 

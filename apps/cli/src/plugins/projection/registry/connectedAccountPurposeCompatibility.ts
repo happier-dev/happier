@@ -1,11 +1,7 @@
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ConnectedServiceIdSchema,
-    parseQualifiedPluginContributionKey,
-    readBuiltInLegacyConnectedServiceIdForQualifiedService,
-    type ConnectedServiceId,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import {
     isBuiltInLegacyConnectedAccountPeerOperationSupported,
 } from '@/api/client/qualifiedConnectedAccountApi';

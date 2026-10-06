@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import {
-  ExternalSessionsSourceSchema,
-  type RuntimeDescriptorV1,
-  type SessionHandoffResumePlan,
-} from '@happier-dev/protocol';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { RuntimeDescriptorV1, SessionHandoffResumePlan } from '@happier-dev/protocol';
 import {
   registerServerRoutedTransferResponder,
   resolveServerRoutedTransferTimeoutMs,

@@ -1,5 +1,5 @@
 import type { SpawnSessionNonceResolution } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 

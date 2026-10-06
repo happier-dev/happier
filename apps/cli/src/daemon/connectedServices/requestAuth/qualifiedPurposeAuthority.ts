@@ -1,7 +1,5 @@
-import {
-  buildQualifiedPluginContributionKey,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { ConnectedServiceBindingSelection } from '../parseConnectedServicesBindings';
 import type { AgentSpawnQualifiedPurposeBindingSnapshot } from './prepareConnectedAccountRequestAuthForSpawn';

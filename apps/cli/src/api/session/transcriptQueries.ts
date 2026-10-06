@@ -2,7 +2,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import axios from 'axios';
 
 import { resolveLatestPermissionIntent } from '@happier-dev/agents';
-import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol';
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import { logger } from '@/ui/logger';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';

@@ -549,6 +549,9 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
   }
   lines.push('});');
   lines.push('');
+  // Defaults are the plugin's whole settings default projection; the protocol
+  // writer reads only its own keys. Bind them to a constant so later plugin
+  // settings never trip excess-property checks, retaining literal field types.
   for (const source of sources) {
     if (!source.predecessorMessageMetaWriter) continue;
     lines.push(`const ${toAgentConstPrefix(source.agentId)}_PREDECESSOR_MESSAGE_META_DEFAULTS = ${renderJsonLiteral(source.predecessorMessageMetaWriter.defaults)} as const;`);

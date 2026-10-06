@@ -7,7 +7,7 @@ import type {
   AccountPetCreateResponseV1,
   DaemonPetImportResponseV1,
 } from '@happier-dev/protocol';
-import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol';
+import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 
 import { createPetSourceKey } from '../discovery/createPetSourceKey';
 import { splitSafePetSpritesheetRelativePath } from '../validation/validatePetManifest';

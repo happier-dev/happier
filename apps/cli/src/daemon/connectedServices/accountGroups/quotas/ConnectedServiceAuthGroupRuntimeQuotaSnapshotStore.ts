@@ -2,7 +2,7 @@ import type {
   ConnectedServiceId,
   ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
-import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol';
+import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol/connect/quotaObservationTime';
 
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from './projection';
 import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';

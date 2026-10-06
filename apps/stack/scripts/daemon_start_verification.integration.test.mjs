@@ -14,7 +14,7 @@ import {
   matchDaemonEnvLine,
   resolveAttendedStartupTimeoutMs,
   resolveStackDaemonStartVerifyTimeoutMs,
-  shouldContinueAttendedDaemonStartVerification,
+  shouldContinueDaemonStartVerification,
   startLocalDaemonWithAuth,
 } from './daemon.mjs';
 import { killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
@@ -140,18 +140,16 @@ test('stack daemon start verification default matches the daemon restart wait bu
   assert.equal(resolveStackDaemonStartVerifyTimeoutMs({ HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1234' }), 1234);
 });
 
-test('attended daemon verification only extends a checkpoint for a live daemon process', () => {
-  assert.equal(shouldContinueAttendedDaemonStartVerification({
-    isTui: true,
+test('daemon verification extends a checkpoint only for a live startup', () => {
+  assert.equal(shouldContinueDaemonStartVerification({
     state: { status: 'starting', pid: 123 },
   }), true);
-  assert.equal(shouldContinueAttendedDaemonStartVerification({
-    isTui: false,
-    state: { status: 'starting', pid: 123 },
-  }), false);
-  assert.equal(shouldContinueAttendedDaemonStartVerification({
-    isTui: true,
-    state: { status: 'not_running' },
+  assert.equal(shouldContinueDaemonStartVerification({
+    state: { status: 'stopped' },
+    startWrapperAlive: true,
+  }), true);
+  assert.equal(shouldContinueDaemonStartVerification({
+    state: { status: 'stopped' },
   }), false);
 });
 
@@ -806,7 +804,7 @@ process.exit(0);
   }
 });
 
-test('startLocalDaemonWithAuth cancels and joins timed-out or shutdown daemon start wrappers before retry', async () => {
+test('startLocalDaemonWithAuth cancels and joins shutdown daemon start wrappers before retry', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-start-timeout-cancel-'));
   const cliHomeDir = join(tmp, 'stack', 'cli');
   const cliBin = join(tmp, 'bin', 'happier');
@@ -818,7 +816,6 @@ test('startLocalDaemonWithAuth cancels and joins timed-out or shutdown daemon st
     await mkdir(dirname(cliBin), { recursive: true });
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
-    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
     await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
     await chmod(cliBin, 0o755);
     await writeFile(
@@ -845,7 +842,7 @@ setInterval(() => {}, 1_000);
       cliHomeDir,
       internalServerUrl: 'http://127.0.0.1:4301',
       publicServerUrl: 'http://localhost:4301',
-      isShuttingDown: () => false,
+      isShuttingDown: () => existsSync(wrapperPidPath),
       forceRestart: true,
       env: {
         ...createFixtureStackEnv(tmp),
@@ -871,7 +868,7 @@ setInterval(() => {}, 1_000);
     assert.ok(Number.isFinite(wrapperPid) && wrapperPid > 1);
     assert.throws(
       () => process.kill(wrapperPid, 0),
-      `timed-out daemon start wrapper ${wrapperPid} must exit before another reconciliation can start`,
+      `cancelled daemon start wrapper ${wrapperPid} must exit before another reconciliation can start`,
     );
 
     await writeFile(wrapperPidPath, '', 'utf-8');
@@ -2841,6 +2838,66 @@ test('startLocalDaemonWithAuth gives nested daemon start the stack-owned readine
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+for (const { isTui, detached } of [
+  { isTui: false, detached: false },
+  { isTui: true, detached: false },
+  { isTui: false, detached: true },
+  { isTui: true, detached: true },
+]) {
+  test(`startLocalDaemonWithAuth preserves a live slow daemon startup beyond readiness checkpoints (TUI=${isTui}, detached=${detached})`, { timeout: 15_000 }, async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-slow-wrapper-'));
+    const cliHomeDir = join(tmp, 'cli');
+    const cliCommandScript = join(tmp, 'slow-daemon.mjs');
+    const wrapperPidPath = join(tmp, 'wrapper.pid');
+    try {
+      await mkdir(cliHomeDir, { recursive: true });
+      await mkdir(join(cliHomeDir, 'servers', 'stack_dev__id_default'), { recursive: true });
+      await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n');
+      await writeFile(cliCommandScript, detached
+        ? buildDelayedDaemonStartCliScript({ cliHomeDir, startDelayMs: 300, childPidPath: wrapperPidPath })
+        : `
+import { writeFileSync } from 'node:fs';
+if (process.argv[2] === 'daemon' && process.argv[3] === 'start') {
+  writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
+}
+${buildSynchronousDaemonStartCliScript({ cliHomeDir, startDelayMs: 300 })}`);
+
+      await startLocalDaemonWithAuth({
+        cliBin: cliCommandScript,
+        cliCommand: process.execPath,
+        cliCommandArgs: [cliCommandScript],
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        forceRestart: true,
+        isShuttingDown: () => false,
+        env: {
+          ...createFixtureStackEnv(tmp),
+          HAPPIER_STACK_TUI: isTui ? '1' : '0',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '10',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '100',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+      });
+      const state = checkDaemonState(cliHomeDir, {
+        serverUrl: 'http://127.0.0.1:4301',
+        env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
+      });
+      assert.equal(state.status, 'running', 'a live startup must reach readiness after multiple checkpoints');
+      assert.equal(state.pid, Number(await readFile(wrapperPidPath, 'utf-8')));
+    } finally {
+      if (existsSync(wrapperPidPath)) {
+        killDetachedProcessGroup(Number(await readFile(wrapperPidPath, 'utf-8')), 'SIGKILL');
+      }
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
 
 test('startLocalDaemonWithAuth returns once a synchronous daemon start command becomes stably running', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

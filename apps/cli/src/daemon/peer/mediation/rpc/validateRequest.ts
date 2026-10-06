@@ -1,16 +1,8 @@
-import {
-    PEER_MEDIATION_RECEIPTS,
-    PeerMachineRpcDirectRequestV2Schema,
-    createPeerMachineRpcRequestHashV1,
-    isMachineRpcDirectRoutePolicy,
-    resolveMachineRpcRoutePolicy,
-    type DirectPeerRouteKindV1,
-    type PeerFlowKindV1,
-    type PeerMachineRpcDirectFallbackReasonCodeV1,
-    type PeerMachineRpcDirectRequestV2,
-    type PeerMachineRpcDirectResponseV2,
-    type SignedDirectRouteGrantV2,
-} from '@happier-dev/protocol';
+import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
+import { PeerMachineRpcDirectRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
+import { createPeerMachineRpcRequestHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
+import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import type { DirectPeerRouteKindV1, PeerFlowKindV1, PeerMachineRpcDirectFallbackReasonCodeV1, PeerMachineRpcDirectRequestV2, PeerMachineRpcDirectResponseV2, SignedDirectRouteGrantV2 } from '@happier-dev/protocol';
 
 import {
     verifyDirectRouteGrantV2,

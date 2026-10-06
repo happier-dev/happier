@@ -1,10 +1,5 @@
-import {
-  computeTeamCredentialSourceMemberKeyV1,
-  type TeamCredentialDirectMaterialPreparationResponseV1,
-  type TeamCredentialDirectMaterialUpsertRequestV1,
-  type TeamCredentialSourceBindingV1,
-  type TeamCredentialSourceMemberV1,
-} from '@happier-dev/protocol/teams';
+import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import type { TeamCredentialDirectMaterialPreparationResponseV1, TeamCredentialDirectMaterialUpsertRequestV1, TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';

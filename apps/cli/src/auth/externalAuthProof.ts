@@ -1,6 +1,6 @@
 import { createHash, randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import { encodeBase64 } from '@happier-dev/protocol';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 /** Process-local proof material for the existing purpose-bound external-auth flow. */
 export function createExternalAuthProof(

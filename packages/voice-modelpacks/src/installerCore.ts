@@ -25,7 +25,7 @@
  */
 
 import type { ModelPackManifest } from '@happier-dev/protocol';
-import { assertManifestPathsSafe, assertPackIdFilesystemSafe, filePathParts } from '@happier-dev/protocol';
+import { assertManifestPathsSafe, assertPackIdFilesystemSafe, filePathParts } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 

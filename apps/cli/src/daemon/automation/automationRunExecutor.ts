@@ -8,29 +8,16 @@ import type {
   SessionServerStartDispatchResultV1,
   SessionServerStartIngressRequestV1,
 } from '@happier-dev/protocol';
-import {
-  AutomationAccountCurrentnessWitnessV1Schema,
-  AutomationRunExecutionInputV1Schema,
-  ExecutionRunStartResponseSchema,
-  ExecutionRunStopResponseSchema,
-  materializeAutomationRunExecutionRecipeV1,
-  sealAutomationRunResultStoredEnvelopeV1,
-  sealAutomationRunFailureDetailStoredEnvelopeV1,
-  sealAutomationSessionStartRequestEnvelopeV1,
-  openAccountScopedBlobCiphertext,
-  parseAutomationRunExecutionRecipeV1,
-  readExecutionRunStartRunCreation,
-  sameAutomationAccountCurrentnessWitnessV1,
-  toAutomationRunExecutionInputV1Origin,
-  validateAutomationRunExecutionRecipeOuterV1,
-  readAutomationTemplateStoredEnvelopeV1,
-  type AutomationAccountCurrentnessWitnessV1,
-  type AutomationRunCause,
-  type AutomationRunExecutionInputV1,
-  type AutomationRunExecutionRecipeV1,
-  type AutomationV3WorkerExecutionDispatchOutcome,
-  type AutomationV3WorkerResultDelivery,
-} from '@happier-dev/protocol';
+import { AutomationAccountCurrentnessWitnessV1Schema, sameAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { AutomationRunExecutionInputV1Schema, toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
+import { ExecutionRunStartResponseSchema, ExecutionRunStopResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { materializeAutomationRunExecutionRecipeV1, parseAutomationRunExecutionRecipeV1, validateAutomationRunExecutionRecipeOuterV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { sealAutomationRunResultStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationReplyHandoffStoredContent';
+import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationRunFailureDetailStoredContent';
+import { sealAutomationSessionStartRequestEnvelopeV1 } from '@happier-dev/protocol/automations/automationSessionStartRequestEnvelopeV1';
+import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { readAutomationTemplateStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
+import type { AutomationAccountCurrentnessWitnessV1, AutomationRunCause, AutomationRunExecutionInputV1, AutomationRunExecutionRecipeV1, AutomationV3WorkerExecutionDispatchOutcome, AutomationV3WorkerResultDelivery } from '@happier-dev/protocol';
 
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
@@ -1425,6 +1412,7 @@ export async function executeClaimedRun(params: {
           }),
           accountCurrentness: claimed.accountCurrentness,
           definitionEnvelope: claimed.run.executionInputEnvelope,
+          acceptedEnvelope: claimed.run.workflowAcceptedSnapshotEnvelope,
           workflowDefinitionId: claimed.automation.workflowDefinitionId,
           scopeSessionId: claimed.automation.scopeSessionId,
           causeWorkDepth: claimed.run.causeWorkDepth,

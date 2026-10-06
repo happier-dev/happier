@@ -1,13 +1,10 @@
 import { z } from 'zod';
 
-import {
-  MemorySearchQueryV1Schema,
-  type MemorySearchResultV1,
-  MemoryStatusV1Schema,
-  MemoryWindowV1Schema,
-  type MemoryWindowV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MemorySearchQueryV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import type { MemorySearchResultV1, MemoryWindowV1 } from '@happier-dev/protocol';
+import { MemoryStatusV1Schema } from '@happier-dev/protocol/memory/memoryStatus';
+import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { searchTier1Memory, searchTier2Memory } from '@/daemon/memory/searchMemory';
 import { getMemoryWindow } from '@/daemon/memory/getMemoryWindow';

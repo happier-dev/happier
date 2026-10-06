@@ -3,7 +3,7 @@ import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { readCredentials, readSettings, updateSettings, writeCredentialsDataKey } from '@/persistence';
+import { readCredentials, readSettings, updateSettings, writeCredentialsDataKey, writeCredentialsTokenOnlyForServerId } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl } from '@/server/serverId';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
@@ -25,9 +25,61 @@ describe('server profiles', () => {
   }
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     envScope.restore();
     envScope = createEnvKeyScope(envKeys);
     vi.resetModules();
+  });
+
+  it.each(['refresh', 'alias', 'other-home', 'stale', 'public', 'unsafe-http'] as const)('reconciles a changed descriptor endpoint through authenticated Home publication: %s', async (scenario) => {
+    await withTempDir('happier-cli-profile-port-', async (homeDir) => {
+      envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+        HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+      reloadConfiguration();
+      const { setServerProfileEndpointsById, adoptServerProfileHomeConnectionDescriptor, getServerProfile } = await import('./serverProfiles');
+      const id = 'stack_qa__id_default';
+      const oldOrigin = 'http://qa.localhost:3014';
+      const newOrigin = 'http://qa.localhost:3012';
+      const requestedOrigin = scenario === 'alias' ? 'http://localhost:3012' : newOrigin;
+      await setServerProfileEndpointsById({ id, serverUrl: oldOrigin, webappUrl: oldOrigin, use: true });
+      const oldDescriptor = { v: 1 as const, homeServerIdentityId: 'srv_port_home', canonicalServerUrl: oldOrigin,
+        revision: 1, endpoints: [{ kind: 'https' as const, url: oldOrigin }] };
+      await adoptServerProfileHomeConnectionDescriptor({ descriptor: oldDescriptor, expectedProfileId: id, observation: 'exact' });
+      await writeCredentialsTokenOnlyForServerId(id, { token: 'fixture-port-token' });
+      if (scenario === 'refresh') {
+        // Reproduce the live Stack state: its ordinary URLs were already
+        // rewritten, but the saved authoritative descriptor still has 3014.
+        await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
+          [id]: { ...settings.servers![id], serverUrl: newOrigin,
+            localServerUrl: 'http://127.0.0.1:3012', webappUrl: newOrigin },
+        } }));
+      }
+      const published = { ...oldDescriptor, canonicalServerUrl: newOrigin,
+        homeServerIdentityId: scenario === 'other-home' ? 'srv_other_home' : oldDescriptor.homeServerIdentityId,
+        revision: scenario === 'stale' ? 1 : 2, endpoints: [{ kind: 'https' as const, url: newOrigin }] };
+      // Only the network boundary is mocked; schema parsing, credential lookup,
+      // identity verification, revision admission and profile persistence are real.
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, init) => {
+        if (scenario === 'unsafe-http') throw new Error('Unsafe carrier must not receive a credential');
+        if (scenario === 'public' && String(url).endsWith('/authenticated')) return new Response(null, { status: 404 });
+        if (scenario === 'public') return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: published.homeServerIdentityId } }, homeConnectionDescriptor: published });
+        expect(String(url)).toBe('http://127.0.0.1:3012/v1/features/authenticated');
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer fixture-port-token');
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: published.homeServerIdentityId } },
+          homeConnectionDescriptor: published });
+      }));
+      const update = setServerProfileEndpointsById({ id, serverUrl: requestedOrigin,
+        localServerUrl: scenario === 'unsafe-http' ? 'http://unsafe.example.test:3012' : 'http://127.0.0.1:3012', webappUrl: requestedOrigin, use: true });
+      if (scenario === 'refresh' || scenario === 'alias') {
+        await expect(update).resolves.toMatchObject({ id, serverUrl: requestedOrigin, localServerUrl: 'http://127.0.0.1:3012',
+          homeConnectionDescriptor: published, homeConnectionDescriptorAuthority: 'exact' });
+        expect((await getServerProfile(id)).homeConnectionDescriptor).toEqual(published);
+      } else {
+        await expect(update).rejects.toThrow();
+        expect(await getServerProfile(id)).toMatchObject({ serverUrl: oldOrigin, homeConnectionDescriptor: oldDescriptor });
+        if (scenario === 'unsafe-http') expect(fetch).not.toHaveBeenCalled();
+      }
+    });
   });
 
   it('adds a server profile and can switch active server', async () => {

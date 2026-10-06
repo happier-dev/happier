@@ -60,7 +60,7 @@ import {
     writeVoiceConversationScopeMetadata,
     type VoiceConversationScopeMetadata,
 } from './voiceConversationScopeMetadata';
-import { persistVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSettings';
+import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSettings';
 import {
     findPreferredVoiceConversationSystemSession,
     findReusableVoiceConversationRuntimeSessionId,
@@ -293,7 +293,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     const voice = canonicalState.settings.voice as VoiceSettings;
     const configuredOriginId = voice.executionMachine.mode === 'fixed'
         ? voice.executionMachine.machineId
-        : voice.executionMachine.autoMachineId;
+        : readVoiceAutoTargetMachineId(canonicalState);
     const directory =
         resolveVoiceHomeDirectory(canonicalState, machineId)
         ?? resolveRecentVoiceDirectoryForMachine(canonicalState, configuredOriginId)

@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseBuildSelection } from './build_targets.mjs';
+import { parseBuildSelection, parseRuntimeBuildTarget } from './build_targets.mjs';
+
+test('build target is an explicit canonical runtime target independent of the publishing host', () => {
+  assert.deepEqual(parseRuntimeBuildTarget({ argv: ['--target=linux-x64'] }), { platform: 'linux', arch: 'x64' });
+  assert.deepEqual(parseRuntimeBuildTarget({ argv: ['--target=windows-arm64'] }), { platform: 'win32', arch: 'arm64' });
+  assert.throws(() => parseRuntimeBuildTarget({ argv: ['--target=linux-unknown'] }), /invalid.*target/);
+});
 
 test('parseBuildSelection defaults to web-only build when no component flags are provided', () => {
   const selection = parseBuildSelection({ argv: [] });

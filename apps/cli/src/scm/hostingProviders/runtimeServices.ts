@@ -1,9 +1,7 @@
-import {
-    ConnectedAccountHttpHeadersRequestSchema,
-    ScmHostingProviderRefSchema,
-    sameQualifiedConnectedAccountRef,
-    type ManagedExecutableRef,
-} from '@happier-dev/protocol';
+import { ConnectedAccountHttpHeadersRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { ScmHostingProviderRefSchema } from '@happier-dev/protocol/scm/pullRequests';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type {
     HostingProviderRuntimeCommandResult as ScmHostingProviderRuntimeCommandResult,
     HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,

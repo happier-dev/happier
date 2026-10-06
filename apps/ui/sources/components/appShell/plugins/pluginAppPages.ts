@@ -45,8 +45,8 @@ export type PluginAppPage = PluginSurfaceDestination & Readonly<{
     routePath: string;
     /**
      * The page's own shell column, when it declares one and its renderer is available: the same
-     * placement (binding, authority, runtime) bound to the column renderer, under its own mount id
-     * so the page and its column are two surfaces.
+     * destination and authority, with the producer's column-specific renderer binding and its own
+     * mount id so the page and its column are two surfaces.
      */
     columnPlacement?: PluginUiSurfacePlacementProjection;
 }>;
@@ -60,6 +60,7 @@ function resolvePluginAppPageColumnPlacement(
     return Object.freeze({
         ...placement,
         id: `${placement.id}:column`,
+        binding: column.binding,
         renderer: column.renderer,
         availability: column.availability,
     });

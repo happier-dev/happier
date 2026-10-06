@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 export const SESSION_FOLDER_MAX_COUNT = 500;
 export const SESSION_FOLDER_MAX_DEPTH = 8;
@@ -38,6 +39,7 @@ export const SessionFolderWorkspaceRefV1Schema = z.discriminatedUnion('t', [
   }).strict(),
 ]);
 export type SessionFolderWorkspaceRefV1 = z.infer<typeof SessionFolderWorkspaceRefV1Schema>;
+export const SessionFolderWorkspaceRefV1StoredSchema = createStoredReadSchema(SessionFolderWorkspaceRefV1Schema);
 
 export const SessionFolderV1Schema = z
   .object({
@@ -60,6 +62,7 @@ export const SessionFoldersV1Schema = z
   })
   .strict();
 export type SessionFoldersV1 = z.infer<typeof SessionFoldersV1Schema>;
+export const SessionFoldersV1StoredSchema = createStoredReadSchema(SessionFoldersV1Schema);
 
 export const DefaultSessionFoldersV1: SessionFoldersV1 = {
   v: 1,

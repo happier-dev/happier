@@ -1,32 +1,16 @@
-import {
-    buildWorktreeRelativePath as canonicalBuildWorktreeRelativePath,
-    hasForbiddenGitRefName as canonicalHasForbiddenGitRefName,
-    normalizeWorktreeDisplayName as canonicalNormalizeWorktreeDisplayName,
-    createScmCapabilities as canonicalCreateScmCapabilities,
-    evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy,
-    isScmPatchBoundToPath as canonicalIsScmPatchBoundToPath,
-    normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef,
-    normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity,
-    normalizeScmRemoteName as canonicalNormalizeScmRemoteName,
-    normalizeScmRemoteRequest as canonicalNormalizeScmRemoteRequest,
-    normalizeScmRemoteUrl as canonicalNormalizeScmRemoteUrl,
-    normalizeScmOperationOutcome as canonicalNormalizeScmOperationOutcome,
-    sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity,
-    resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths,
-    SCM_COMMIT_MESSAGE_MAX_LENGTH as canonicalScmCommitMessageMaxLength,
-    SCM_COMMIT_PATCH_MAX_COUNT as canonicalScmCommitPatchMaxCount,
-    SCM_COMMIT_PATCH_MAX_LENGTH as canonicalScmCommitPatchMaxLength,
-    SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes,
-    SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN as canonicalScmWorktreeRemoveAuthorizationToken,
-    ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema,
-    ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema,
-    ScmSelectedMutationPathSchema as canonicalScmSelectedMutationPathSchema,
-    ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema,
-    ScmOperationOutcomeSchema as canonicalScmOperationOutcomeSchema,
-    SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema,
-    ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema,
-    ScmComparisonSchema as canonicalScmComparisonSchema,
-} from '@happier-dev/protocol/scm';
+import { buildWorktreeRelativePath as canonicalBuildWorktreeRelativePath, hasForbiddenGitRefName as canonicalHasForbiddenGitRefName, normalizeWorktreeDisplayName as canonicalNormalizeWorktreeDisplayName } from '@happier-dev/protocol/scm/worktreeName';
+import { createScmCapabilities as canonicalCreateScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import { evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy, isScmPatchBoundToPath as canonicalIsScmPatchBoundToPath, normalizeScmOperationOutcome as canonicalNormalizeScmOperationOutcome, SCM_COMMIT_MESSAGE_MAX_LENGTH as canonicalScmCommitMessageMaxLength, SCM_COMMIT_PATCH_MAX_COUNT as canonicalScmCommitPatchMaxCount, SCM_COMMIT_PATCH_MAX_LENGTH as canonicalScmCommitPatchMaxLength, ScmOperationOutcomeSchema as canonicalScmOperationOutcomeSchema } from '@happier-dev/protocol/scm';
+import { normalizeScmBranchSourceRef as canonicalNormalizeScmBranchSourceRef, normalizeScmRemoteName as canonicalNormalizeScmRemoteName, normalizeScmRemoteRequest as canonicalNormalizeScmRemoteRequest, normalizeScmRemoteUrl as canonicalNormalizeScmRemoteUrl } from '@happier-dev/protocol/scm/remoteNormalization';
+import { normalizeScmHostingRepositoryIdentity as canonicalNormalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity as canonicalSameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { resolveScmScopedChangedPaths as canonicalResolveScmScopedChangedPaths } from '@happier-dev/protocol/scm/pathScope';
+import { SCM_OPERATION_ERROR_CODES as canonicalScmOperationErrorCodes } from '@happier-dev/protocol/scm/operationError';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN as canonicalScmWorktreeRemoveAuthorizationToken } from '@happier-dev/protocol/scm/worktrees';
+import { ProviderRefreshPolicySchema as canonicalScmRefreshPolicySchema } from '@happier-dev/protocol/scm/freshness';
+import { ScmCapabilitiesSchema as canonicalScmCapabilitiesSchema, ScmWorkingSnapshotSchema as canonicalScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
+import { ScmSelectedMutationPathSchema as canonicalScmSelectedMutationPathSchema } from '@happier-dev/protocol/scm/selectedMutationPath';
+import { SourceControlCloneProtocolSchema as canonicalScmCloneProtocolSchema } from '@happier-dev/protocol/scm/cloneProtocol';
+import { ScmComparisonSourceProtocolSchema as canonicalScmComparisonSourceProtocolSchema, ScmComparisonSchema as canonicalScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparison, ScmComparisonSource as CanonicalScmComparisonSource } from '@happier-dev/protocol/scm';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type { ProtocolComposableSchema } from '../protocol/index.js';

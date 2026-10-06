@@ -365,6 +365,8 @@ export type AgentConnectedAccountStateSharingDescriptorTransformV1 = Readonly<{
       tablePath: readonly string[];
       keyPrefixEntry: string;
       keyPrefixSuffix: string;
+      /** Relocate matching native-source keys before overlaying profile-owned entries. Values remain unchanged. */
+      rebaseSourceKeys?: boolean;
     }>[];
   }>;
 }>;

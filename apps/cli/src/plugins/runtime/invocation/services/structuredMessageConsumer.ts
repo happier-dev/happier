@@ -1,9 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    type PluginContributionIdentityV1,
-    type PluginResourceKindV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginContributionIdentityV1, PluginResourceKindV2 } from '@happier-dev/protocol';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { HostStructuredMessageDescriptorV1 } from './structuredMessageDescriptor';
 

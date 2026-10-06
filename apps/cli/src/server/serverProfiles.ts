@@ -1,16 +1,16 @@
-import { readSettings, updateSettings, type Settings } from '@/persistence';
+import { readSettings, readStoredCredentialsForServerId, updateSettings, type Settings } from '@/persistence';
 import { deriveServerIdFromName, deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
-import {
-  createServerUrlComparableKey,
-  HomeConnectionDescriptorV1Schema,
-  type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
+import { HomeApplicationOriginV1Schema, HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
+import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { resolveAuthenticatedExactHomeConnectionDescriptorObservation } from '@/auth/terminalAuthEnrollmentClient';
 
 function normalizeServerUrlForEnvId(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -734,6 +734,33 @@ export async function setServerProfileEndpointsById(opts: Readonly<{
   const webappUrl = String(opts.webappUrl ?? '').trim();
   const requestedName = String(opts.name ?? '').trim();
   const shouldUse = opts.use === true;
+  const before = await readSettings();
+  const previous = before.servers?.[id] ? requireProfileProjection(before.servers[id], id) : null;
+  const previousDescriptor = previous?.homeConnectionDescriptor;
+  // A URL change cannot rewrite Home authority. Refresh the published routes
+  // through the requested carrier, retaining the profile's established identity.
+  // Compare against the descriptor itself: a prior launcher may already have
+  // updated the ordinary URLs while leaving the descriptor on the old port.
+  if (previousDescriptor && previousDescriptor.canonicalServerUrl !== serverUrl) {
+    const probeUrl = HomeApplicationOriginV1Schema.parse(
+      (opts.localServerUrl !== undefined ? localServerUrl : previous?.localServerUrl) || serverUrl,
+    );
+    const credentials = await readStoredCredentialsForServerId(id);
+    if (!credentials?.token) throw new Error('Home endpoint refresh requires the profile credential');
+    const snapshot = await observeServerFeaturesSnapshot({ serverUrl: probeUrl, token: credentials.token });
+    const observation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({
+      snapshot, expectedHomeServerIdentityId: previousDescriptor.homeServerIdentityId,
+    });
+    if (observation.kind !== 'available') {
+      throw new Error('Home endpoint refresh requires a matching authenticated descriptor');
+    }
+    const adopted = await adoptServerProfileHomeConnectionDescriptor({
+      descriptor: observation.descriptor, expectedProfileId: id, observation: 'exact',
+    });
+    if (adopted.outcome === 'stale') {
+      throw new Error('Home endpoint refresh was rejected by descriptor revision admission');
+    }
+  }
   const now = Date.now();
   let updatedProfile!: ServerProfile;
 

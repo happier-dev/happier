@@ -22,6 +22,27 @@ describe('serverProfiles adoption authority', () => {
         vi.resetModules();
     });
 
+    it('reads additive stored descriptor fields tolerantly while keeping incoming descriptor admission strict', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_stored_home',
+            canonicalServerUrl: 'https://stored-home.example.test', revision: 7,
+            endpoints: [{ kind: 'https' as const, url: 'https://stored-home.example.test' }] };
+        const additiveDescriptor = { ...descriptor, futurePresentation: 'ignored',
+            endpoints: [{ ...descriptor.endpoints[0], futureTransportHint: 'ignored' }] };
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        storage.set('server-state-v1', JSON.stringify({ activeServerId: 'saved', servers: { saved: {
+            id: 'saved', name: 'Saved Home', serverUrl: descriptor.canonicalServerUrl,
+            serverIdentityId: descriptor.homeServerIdentityId, homeConnectionDescriptor: additiveDescriptor,
+        } } }));
+        const profiles = await importFresh();
+        const saved = profiles.getServerProfileById('saved');
+        expect(saved?.homeConnectionDescriptor).toEqual(descriptor);
+        await expect(profiles.adoptHomeProfile({ descriptor: additiveDescriptor, source: 'qr' }))
+            .rejects.toThrow('Invalid Home connection descriptor');
+        expect(profiles.getServerProfileById('saved')).toEqual(saved);
+    });
+
     it('fails direct adoption closed on divergent facts at an equal descriptor revision', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         const profiles = await importFresh();

@@ -7,10 +7,8 @@ import {
   SyncedSessionAuthoringFieldIdV1Schema,
   SyncedSessionAuthoringValueV1Schema,
 } from '../sessions/authoring/syncedSessionAuthoringV1.js';
-import {
-  SessionAuthoringExecutionTargetV2Schema,
-  SyncedSessionAuthoringValueV2Schema,
-} from '../sessions/authoring/index.js';
+import { SessionAuthoringExecutionTargetV2Schema } from '../sessions/authoring/fieldCatalog.js';
+import { SyncedSessionAuthoringValueV2Schema } from '../sessions/authoring/index.js';
 import {
   ExecutionRunIdSchema,
   SessionDiscussionIdSchema,

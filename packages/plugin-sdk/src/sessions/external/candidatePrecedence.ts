@@ -1,7 +1,7 @@
 /** @moduleRealm daemon */
 import { createHash } from 'node:crypto';
 
-import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 

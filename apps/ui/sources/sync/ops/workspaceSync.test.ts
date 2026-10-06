@@ -5,9 +5,9 @@ import {
     decodePlainArtifactStoredContent,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -64,13 +64,10 @@ const features = {
 
 describe('workspace sync UI operations', () => {
     let actionServerId: string;
-    const artifacts = new Map<string, ArtifactCreateRequest & {
-        headerVersion: number;
-        bodyVersion: number;
-        seq: number;
-        createdAt: number;
-        updatedAt: number;
-    }>();
+    const artifacts = createArtifactStoreBoundary({
+        ownerAccountId: () => 'workspace-sync-account',
+        encryptionMode: 'plain',
+    });
 
     beforeEach(async () => {
         getStorage().setState(initialStorageState, true);
@@ -87,40 +84,8 @@ describe('workspace sync UI operations', () => {
             const pathname = new URL(String(url)).pathname;
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (pathname === '/v1/artifacts' && init?.method === 'POST') {
-                const request = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                const artifact = {
-                    ...request,
-                    headerVersion: 1,
-                    bodyVersion: 1,
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                };
-                artifacts.set(request.id, artifact);
-                return Response.json(artifact);
-            }
-            if (pathname.startsWith('/v1/artifacts/')) {
-                const artifact = artifacts.get(pathname.split('/').at(-1)!);
-                if (!artifact) return Response.json({}, { status: 404 });
-                if (init?.method === 'POST') {
-                    const update = JSON.parse(String(init.body)) as Partial<ArtifactCreateRequest>;
-                    if (update.header !== undefined) {
-                        artifact.header = update.header;
-                        artifact.headerVersion += 1;
-                    }
-                    if (update.body !== undefined) {
-                        artifact.body = update.body;
-                        artifact.bodyVersion += 1;
-                    }
-                    return Response.json({
-                        success: true,
-                        headerVersion: artifact.headerVersion,
-                        bodyVersion: artifact.bodyVersion,
-                    });
-                }
-                return Response.json(artifact);
-            }
+            const artifactResponse = artifacts.handle(pathname, init);
+            if (artifactResponse) return artifactResponse;
             throw new Error(`Unexpected workspace sync Action request: ${pathname}`);
         });
         machineRpcWithServerScope.mockReset();
@@ -248,9 +213,9 @@ describe('workspace sync UI operations', () => {
                 },
             },
         });
-        const persistedApproval = artifacts.get(conflictRpc.payload.actionReceiptId);
-        expect(persistedApproval).toBeDefined();
-        const persistedBodyEnvelope = decodePlainArtifactStoredContent(persistedApproval!.body);
+        const persistedApproval = artifacts.read(conflictRpc.payload.actionReceiptId);
+        if (typeof persistedApproval?.body !== 'string') throw new Error('Workspace conflict approval body was not persisted');
+        const persistedBodyEnvelope = decodePlainArtifactStoredContent(persistedApproval.body);
         expect(persistedBodyEnvelope).toMatchObject({ body: expect.any(String) });
         if (
             !persistedBodyEnvelope

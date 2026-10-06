@@ -1,26 +1,11 @@
 import axios from 'axios';
 
-import {
-  AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1,
-  AutomationEventSourceDefinitionV1Schema,
-  AutomationEventStoredDefinitionsReadHttpRequestV1Schema,
-  AutomationEventStoredDefinitionsReadResultV1Schema,
-  AutomationEventTriggerDefinitionStoredPayloadV1Schema,
-  AutomationTriggerDefinitionBindingV1Schema,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  compilePluginJsonSchema,
-  openAutomationTriggerDefinitionStoredEnvelopeV1,
-  type AccountEncryptionCurrentnessResponse,
-  type AccountScopedCryptoMaterialSnapshotV1,
-  type AutomationEventActionHttpCallerV1,
-  type AutomationEventDeclarationReleaseV1,
-  type AutomationEventStoredDefinitionProjectionV1,
-  type AutomationEventSourcesListInputV1,
-  type AutomationEventSourcesListTransportV1,
-  type PluginJsonSchemaValidator,
-  type PluginMachineMaterializationRefV1,
-  type PluginWebhookInvocationReferenceV1,
-} from '@happier-dev/protocol';
+import { AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1, AutomationEventStoredDefinitionsReadHttpRequestV1Schema, AutomationEventStoredDefinitionsReadResultV1Schema, AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '@happier-dev/protocol/automations/event';
+import { AutomationEventSourceDefinitionV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationTriggerDefinitionBindingV1Schema, openAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import type { AccountEncryptionCurrentnessResponse, AccountScopedCryptoMaterialSnapshotV1, AutomationEventActionHttpCallerV1, AutomationEventDeclarationReleaseV1, AutomationEventStoredDefinitionProjectionV1, AutomationEventSourcesListInputV1, AutomationEventSourcesListTransportV1, PluginJsonSchemaValidator, PluginMachineMaterializationRefV1, PluginWebhookInvocationReferenceV1 } from '@happier-dev/protocol';
 
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

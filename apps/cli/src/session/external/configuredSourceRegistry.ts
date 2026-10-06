@@ -1,10 +1,5 @@
-import {
-  ExternalSessionAgentIdSchema,
-  ExternalSessionSourceIdSchema,
-  type ExternalSessionAgentId,
-  type ExternalSessionSourceId,
-  type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+import { ExternalSessionAgentIdSchema, ExternalSessionSourceIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { ExternalSessionAgentId, ExternalSessionSourceId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { clonePluginPlainData } from '../../plugins/runtime/plainData';
 import type { ResolvedExternalSessionSourceProjection } from '../../plugins/projection/registry/externalSessionSources';

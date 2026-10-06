@@ -17,6 +17,7 @@ import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/c
 import { normalizeSessionListWorkingPlacementMode } from '@/sync/domains/session/listing/sessionListAttentionPlacement';
 import {
     isSessionListWorkingPlacementReason,
+    type SessionListRetainedAttentionPlacement,
 } from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
 import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { resolveSelectedSessionIdForList } from '@/sync/domains/session/listing/resolveSelectedSessionIdForList';
@@ -175,17 +176,12 @@ function resolveSessionRowFromState(
     return readSessionListRowForServerId(sessionRowStateByServerId, normalizedServerId, normalizedSessionId);
 }
 
-/**
- * Keys only. Retention exists so the row the user is READING cannot slide out
- * of the band under them; the reason that put it there is a live fact about the
- * session, so placement re-derives it rather than replaying the one that has
- * since been resolved.
- */
-function resolveRetainedAttentionSessionKeys(params: Readonly<{
+/** Hold only the opened row; ordering survives while its status remains live. */
+function resolveRetainedAttentionPlacements(params: Readonly<{
     previousVisibleIndex: ReadonlyArray<SessionListIndexItem> | null | undefined;
     activeSessionId: string | null;
     activeSessionServerId: string | null;
-}>): ReadonlyArray<string> {
+}>): ReadonlyArray<SessionListRetainedAttentionPlacement> {
     const activeSessionId = String(params.activeSessionId ?? '').trim();
     if (!activeSessionId) return [];
     if (!params.previousVisibleIndex) return [];
@@ -203,7 +199,9 @@ function resolveRetainedAttentionSessionKeys(params: Readonly<{
         // in the band until they navigate elsewhere.
         if (item.attentionPlacementReason === 'standing') continue;
         const key = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
-        return key ? [key] : [];
+        const ordering = item.attentionPlacementOrdering ?? (item.attentionPlacementReason
+            ? { reason: item.attentionPlacementReason, timestamp: 0 } : null);
+        return key && ordering ? [{ key, ...ordering }] : [];
     }
     return [];
 }
@@ -384,7 +382,11 @@ function areVisibleSessionListProjectionInputsEqual(
         && areSessionFolderListsEqual(left.sessionFoldersV1, right.sessionFoldersV1)
         && left.sessionFolderViewModeV1 === right.sessionFolderViewModeV1
         && areScalarRecordsEqual(left.sessionFolderAssignmentsBySessionKey, right.sessionFolderAssignmentsBySessionKey)
-        && areStringListsEqual(left.retainAttentionSessionKeys, right.retainAttentionSessionKeys)
+        && left.retainAttentionPlacements.length === right.retainAttentionPlacements.length
+        && left.retainAttentionPlacements.every((placement, index) => {
+            const other = right.retainAttentionPlacements[index];
+            return placement.key === other?.key && placement.reason === other.reason && placement.timestamp === other.timestamp;
+        })
         && areStringListsEqual(left.retainWorkingSessionKeys, right.retainWorkingSessionKeys);
 }
 
@@ -434,7 +436,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
     sessionFoldersV1: SessionFolderList;
     sessionFolderViewModeV1: unknown;
     sessionFolderAssignmentsBySessionKey: Readonly<Record<string, string | null>>;
-    retainAttentionSessionKeys: ReadonlyArray<string>;
+    retainAttentionPlacements: ReadonlyArray<SessionListRetainedAttentionPlacement>;
     retainWorkingSessionKeys: ReadonlyArray<string>;
     nowMs: number;
 }>): ReadonlyArray<SessionListIndexItem> | null {
@@ -469,7 +471,7 @@ function buildVisibleSessionListIndex(params: Readonly<{
         sessionListFolderSortModeV1: params.sessionListFolderSortModeV1,
         attentionPlacement: {
             mode: params.sessionListAttentionPromotionModeV1,
-            retainSessionKeys: params.retainAttentionSessionKeys,
+            retainPlacements: params.retainAttentionPlacements,
             standingPolicy: params.sessionAttentionStandingPolicy,
         },
         workingPlacement: {
@@ -609,10 +611,10 @@ export function useVisibleSessionListViewState(
         previousVisibleSessionListIndexRef.current,
         options.retainedVisibleSessionListIndex,
     );
-    const selectedSessionPathname = previousVisibleSessionListIndexRef.current === null
-        && previousVisibleSessionListIndexForRetention
-        && options.retainedPathname
-        ? options.retainedPathname
+    // A retained root pane still represents its foreground route on subsequent projections.
+    // Its owner updates retainedPathname when navigation leaves that Session.
+    const selectedSessionPathname = effectivePathname === '/'
+        ? options.retainedPathname ?? effectivePathname
         : effectivePathname;
     const activeSessionId = React.useMemo(() => resolveSelectedSessionIdForList({
         selectable: true,
@@ -702,7 +704,7 @@ export function useVisibleSessionListViewState(
         sessionFoldersV1,
         sessionFolderViewModeV1,
         sessionFolderAssignmentsBySessionKey,
-        retainAttentionSessionKeys: resolveRetainedAttentionSessionKeys({
+        retainAttentionPlacements: resolveRetainedAttentionPlacements({
             previousVisibleIndex: previousVisibleSessionListIndexForRetention,
             activeSessionId,
             activeSessionServerId,

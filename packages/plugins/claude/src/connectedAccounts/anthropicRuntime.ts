@@ -9,6 +9,11 @@ type ConnectedAccountCredentialReader =
 const TOKEN_CREDENTIAL_KEY = 'token';
 const ANTHROPIC_ORIGIN = 'https://api.anthropic.com';
 
+// Input admission only: retained credentials stay readable without revalidation.
+export const ANTHROPIC_API_KEY_INPUT_SCHEMA = Object.freeze({
+  type: 'string', minLength: 1, pattern: '^\\s*sk-ant-[A-Za-z0-9_-]+\\s*$',
+} as const);
+
 function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
@@ -47,16 +52,45 @@ const anthropicConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
         kind: 'manual',
         async complete(input, context) {
           const token = input.fields.token?.trim() ?? '';
-          if (!token) {
+          if (!new RegExp(ANTHROPIC_API_KEY_INPUT_SCHEMA.pattern).test(token)) {
             return {
               status: 'rejected',
               diagnostic: diagnostic(
                 'anthropic_api_key_invalid',
-                'Anthropic requires a non-empty API key.',
+                'Enter an Anthropic API key beginning with sk-ant-.',
               ),
             };
           }
-          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token);
+          const signal = context.signal;
+          let response: Awaited<ReturnType<typeof context.services.http.request>>;
+          try {
+            // Authentication-only read; no model inference or billable prompt.
+            response = await context.services.http.request({
+              url: `${ANTHROPIC_ORIGIN}/v1/models`, method: 'GET',
+              headers: { 'x-api-key': token, 'anthropic-version': '2023-06-01' },
+              redirect: 'error',
+            }, { signal });
+          } catch (error) {
+            if (signal.aborted) throw error;
+            return { status: 'unavailable', diagnostic: diagnostic(
+              'anthropic_api_key_verification_unavailable',
+              'Could not verify the Anthropic key. Retry when the service is available.',
+            ) };
+          }
+          signal.throwIfAborted();
+          if (response.status === 401 || response.status === 403) {
+            return { status: 'rejected', diagnostic: diagnostic(
+              'anthropic_api_key_rejected',
+              'Anthropic rejected this key. Retry with an active API key.',
+            ) };
+          }
+          if (response.status !== 200) {
+            return { status: 'unavailable', diagnostic: diagnostic(
+              'anthropic_api_key_verification_unavailable',
+              'Could not verify the Anthropic key. Retry when the service is available.',
+            ) };
+          }
+          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token, { signal });
           return {
             status: 'connected',
             ...(context.attempt.kind === 'reconnect'

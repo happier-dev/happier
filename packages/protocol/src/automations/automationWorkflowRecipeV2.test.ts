@@ -62,6 +62,18 @@ describe('AutomationStoredWorkflowDefinitionRecipeV2', () => {
     }).success).toBe(true);
   });
 
+  it('reads unknown recipe and inline-definition fields while canonical inputs stay strict', () => {
+    const stored = { ...recipe, extra: true, workflow: { ...recipe.workflow, extra: true,
+      v: { ...recipe.workflow.v, extra: true, workspace: { directory: '/workspace/project', extra: true },
+        inlineDefinition: { ...definition, extra: true, blocks: [{ ...definition.blocks[0], extra: true }] } } } };
+    const opened = parseAutomationStoredWorkflowDefinitionRecipeV2(JSON.stringify(stored));
+    expect(opened.kind).toBe('available');
+    if (opened.kind !== 'available') throw new Error('expected readable stored recipe');
+    expect(opened.recipe).toEqual(recipe);
+    expect(AutomationStoredWorkflowDefinitionRecipeV2Schema.safeParse(stored).success).toBe(false);
+    expect(serializeAutomationStoredWorkflowDefinitionRecipeV2(stored).kind).toBe('contentInvalid');
+  });
+
   it('rejects legacy prompt content, occurrence evidence, and authored authority', () => {
     expect(AutomationStoredWorkflowDefinitionRecipeV2Schema.safeParse({
       ...recipe,

@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createSessionTurnLifecycle } from './lifecycle';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 let nextRuntimeEventSequence = 0;
 
@@ -21,6 +22,39 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('createSessionTurnLifecycle', () => {
+    it('awaits startup failure persistence before draining without daemon marker callbacks', async () => {
+        let releasePersistence!: () => void;
+        const persistence = new Promise<void>((resolve) => { releasePersistence = resolve; });
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({
+            session: {
+                sessionId: 'session-1',
+                // Durable mutation persistence is the system boundary.
+                enqueueSessionTurnMutation: async (mutation) => {
+                    if (mutation.action === 'fail') await persistence;
+                    mutations.push(mutation);
+                },
+            },
+        });
+        let drained = false;
+        const failure = lifecycle.failTurn({
+            allocateWhenIdle: true,
+            issue: classifyPrimarySessionRuntimeIssue({
+                cause: 'session_error', error: { code: 'daemon_plugin_catalog_unavailable' },
+            }),
+        }).then(() => { drained = true; });
+        try {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(drained).toBe(false);
+            releasePersistence();
+            await failure;
+            expect(mutations.map((mutation) => mutation.action)).toEqual(['begin', 'fail']);
+        } finally {
+            releasePersistence();
+            await failure;
+        }
+    });
+
     it('freezes host turn facts into begin before later inputs change the host snapshot', async () => {
         const mutations: SessionTurnMutationV1[] = [];
         let facts = { initiator: 'agent_session' as const, workDepth: 5 };

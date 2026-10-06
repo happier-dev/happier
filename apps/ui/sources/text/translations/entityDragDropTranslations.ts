@@ -7,7 +7,7 @@
  */
 const en = {
     files: { attach: "Attach", uploadHere: "Upload here" },
-    composer: { addContext: "Add context", target: "Composer", readOnly: "This composer is read-only", otherWorkspace: "It isn’t part of this workspace", unavailable: "This reference is unavailable" },
+    composer: { addContext: "Add context", consequence: "Sent with your next message · nothing sends yet", target: "Composer", readOnly: "This composer is read-only", otherWorkspace: "It isn’t part of this workspace", unavailable: "This reference is unavailable" },
     surface: {
         scopeMismatch: 'It’s in another Home or account',
         widgetMoveUnavailable: 'This widget can’t move to this surface',
@@ -31,6 +31,12 @@ const en = {
         unknownTitle: 'Not sure this moved',
         unknownDetail: 'Check the list in a moment before trying again',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }: { item: string; target: string }) => `Couldn’t put ${item} under ${target}`,
+        refused: ({ verb }: { verb: string }) => `${verb} didn’t go through`,
+        unknown: ({ verb }: { verb: string }) => `Not sure “${verb}” went through`,
+        dismiss: 'Dismiss',
+    },
     reasons: {
         read: 'It’s shared with you read-only, so it can’t take reports',
         input: 'You can’t send to it, so it can’t take reports',
@@ -49,6 +55,8 @@ const en = {
         generic: 'This place can’t take it',
     },
     chooser: {
+        putUnderTitle: ({ item }: { item: string }) => `Put ${item} under…`,
+        checking: 'Checking which sessions can take reports…',
         cantTakeReports: 'Can’t take reports',
         unavailable: 'Unavailable',
     },
@@ -97,7 +105,7 @@ type EntityDragDropTranslations = typeof en;
 
 const ca: EntityDragDropTranslations = {
     files: { attach: "Adjunta", uploadHere: "Puja aquí" },
-    composer: { addContext: "Afegeix context", target: "Redactor", readOnly: "Aquest redactor és de només lectura", otherWorkspace: "No forma part d’aquest espai de treball", unavailable: "Aquesta referència no està disponible" },
+    composer: { addContext: "Afegeix context", consequence: "S’envia amb el teu proper missatge · encara no s’envia res", target: "Redactor", readOnly: "Aquest redactor és de només lectura", otherWorkspace: "No forma part d’aquest espai de treball", unavailable: "Aquesta referència no està disponible" },
     surface: {
         scopeMismatch: 'És en un altre Home o compte',
         widgetMoveUnavailable: 'Aquest giny no es pot moure a aquesta superfície',
@@ -121,6 +129,12 @@ const ca: EntityDragDropTranslations = {
         unknownTitle: 'No és segur que s’hagi mogut',
         unknownDetail: 'Revisa la llista d’aquí a un moment abans de tornar-ho a provar',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `No s’ha pogut posar ${item} sota ${target}`,
+        refused: ({ verb }) => `${verb}: no s’ha completat`,
+        unknown: ({ verb }) => `No és segur que «${verb}» s’hagi completat`,
+        dismiss: 'Descarta',
+    },
     reasons: {
         read: 'La comparteixen amb tu només per llegir, així que no pot rebre informes',
         input: 'No hi pots enviar res, així que no pot rebre informes',
@@ -138,7 +152,7 @@ const ca: EntityDragDropTranslations = {
         gone: 'Aquest lloc acaba de desaparèixer',
         generic: 'Aquest lloc no ho pot acceptar',
     },
-    chooser: { cantTakeReports: 'No poden rebre informes', unavailable: 'No disponible' },
+    chooser: { putUnderTitle: ({ item }) => `Posa ${item} sota…`, checking: 'Comprovant quines sessions poden rebre informes…', cantTakeReports: 'No poden rebre informes', unavailable: 'No disponible' },
     keyboard: {
         choose: 'Tria un lloc', putUnder: 'Posa sota', topLevel: 'Nivell superior', drop: 'Deixa anar', cancel: 'Cancel·la', escapeKey: 'Esc',
         hintsA11y: 'Les fletxes trien un lloc, Retorn el deixa anar, Escapada cancel·la',
@@ -172,7 +186,7 @@ const ca: EntityDragDropTranslations = {
 
 const de: EntityDragDropTranslations = {
     files: { attach: "Anhängen", uploadHere: "Hier hochladen" },
-    composer: { addContext: "Kontext hinzufügen", target: "Eingabe", readOnly: "Diese Eingabe ist schreibgeschützt", otherWorkspace: "Gehört nicht zu diesem Arbeitsbereich", unavailable: "Diese Referenz ist nicht verfügbar" },
+    composer: { addContext: "Kontext hinzufügen", consequence: "Geht mit deiner nächsten Nachricht mit · noch wird nichts gesendet", target: "Eingabe", readOnly: "Diese Eingabe ist schreibgeschützt", otherWorkspace: "Gehört nicht zu diesem Arbeitsbereich", unavailable: "Diese Referenz ist nicht verfügbar" },
     surface: {
         scopeMismatch: 'Es ist in einem anderen Home oder Konto',
         widgetMoveUnavailable: 'Dieses Widget kann nicht auf diese Oberfläche verschoben werden',
@@ -196,6 +210,12 @@ const de: EntityDragDropTranslations = {
         unknownTitle: 'Nicht sicher, ob es verschoben wurde',
         unknownDetail: 'Prüfe die Liste gleich, bevor du es erneut versuchst',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `${item} konnte nicht unter ${target} eingeordnet werden`,
+        refused: ({ verb }) => `${verb}: hat nicht geklappt`,
+        unknown: ({ verb }) => `Unklar, ob „${verb}“ geklappt hat`,
+        dismiss: 'Ausblenden',
+    },
     reasons: {
         read: 'Sie ist nur lesend mit dir geteilt und kann keine Berichte annehmen',
         input: 'Du kannst ihr nichts senden, deshalb kann sie keine Berichte annehmen',
@@ -213,7 +233,7 @@ const de: EntityDragDropTranslations = {
         gone: 'Dieser Ort ist gerade verschwunden',
         generic: 'Dieser Ort kann das nicht aufnehmen',
     },
-    chooser: { cantTakeReports: 'Können keine Berichte annehmen', unavailable: 'Nicht verfügbar' },
+    chooser: { putUnderTitle: ({ item }) => `${item} einordnen unter…`, checking: 'Prüfe, welche Sitzungen Berichte annehmen können…', cantTakeReports: 'Können keine Berichte annehmen', unavailable: 'Nicht verfügbar' },
     keyboard: {
         choose: 'Ort wählen', putUnder: 'Einordnen', topLevel: 'Oberste Ebene', drop: 'Ablegen', cancel: 'Abbrechen', escapeKey: 'Esc',
         hintsA11y: 'Pfeiltasten wählen einen Ort, Eingabe legt ab, Escape bricht ab',
@@ -247,7 +267,7 @@ const de: EntityDragDropTranslations = {
 
 const es: EntityDragDropTranslations = {
     files: { attach: "Adjuntar", uploadHere: "Subir aquí" },
-    composer: { addContext: "Añadir contexto", target: "Redactor", readOnly: "Este redactor es de solo lectura", otherWorkspace: "No forma parte de este espacio de trabajo", unavailable: "Esta referencia no está disponible" },
+    composer: { addContext: "Añadir contexto", consequence: "Se envía con tu próximo mensaje · aún no se envía nada", target: "Redactor", readOnly: "Este redactor es de solo lectura", otherWorkspace: "No forma parte de este espacio de trabajo", unavailable: "Esta referencia no está disponible" },
     surface: {
         scopeMismatch: 'Está en otro Home o cuenta',
         widgetMoveUnavailable: 'Este widget no se puede mover a esta superficie',
@@ -271,6 +291,12 @@ const es: EntityDragDropTranslations = {
         unknownTitle: 'No es seguro que se haya movido',
         unknownDetail: 'Revisa la lista en un momento antes de volver a intentarlo',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `No se pudo poner ${item} debajo de ${target}`,
+        refused: ({ verb }) => `${verb}: no se completó`,
+        unknown: ({ verb }) => `No está claro si «${verb}» se completó`,
+        dismiss: 'Descartar',
+    },
     reasons: {
         read: 'Se compartió contigo solo para leer, así que no puede recibir informes',
         input: 'No puedes enviarle nada, así que no puede recibir informes',
@@ -288,7 +314,7 @@ const es: EntityDragDropTranslations = {
         gone: 'Ese lugar acaba de desaparecer',
         generic: 'Este lugar no lo admite',
     },
-    chooser: { cantTakeReports: 'No pueden recibir informes', unavailable: 'No disponible' },
+    chooser: { putUnderTitle: ({ item }) => `Poner ${item} debajo de…`, checking: 'Comprobando qué sesiones pueden recibir informes…', cantTakeReports: 'No pueden recibir informes', unavailable: 'No disponible' },
     keyboard: {
         choose: 'Elige un lugar', putUnder: 'Poner debajo', topLevel: 'Nivel superior', drop: 'Soltar', cancel: 'Cancelar', escapeKey: 'Esc',
         hintsA11y: 'Las flechas eligen un lugar, Intro suelta, Escape cancela',
@@ -322,7 +348,7 @@ const es: EntityDragDropTranslations = {
 
 const fr: EntityDragDropTranslations = {
     files: { attach: "Joindre", uploadHere: "Importer ici" },
-    composer: { addContext: "Ajouter du contexte", target: "Éditeur", readOnly: "Cet éditeur est en lecture seule", otherWorkspace: "Ne fait pas partie de cet espace de travail", unavailable: "Cette référence est indisponible" },
+    composer: { addContext: "Ajouter du contexte", consequence: "Envoyé avec votre prochain message · rien n’est encore envoyé", target: "Éditeur", readOnly: "Cet éditeur est en lecture seule", otherWorkspace: "Ne fait pas partie de cet espace de travail", unavailable: "Cette référence est indisponible" },
     surface: {
         scopeMismatch: 'Cet élément est dans un autre Home ou compte',
         widgetMoveUnavailable: 'Ce widget ne peut pas être déplacé vers cette surface',
@@ -346,6 +372,12 @@ const fr: EntityDragDropTranslations = {
         unknownTitle: 'Pas sûr que ce soit déplacé',
         unknownDetail: 'Vérifie la liste dans un instant avant de réessayer',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `Impossible de placer ${item} sous ${target}`,
+        refused: ({ verb }) => `${verb} : n’a pas abouti`,
+        unknown: ({ verb }) => `Pas sûr que « ${verb} » ait abouti`,
+        dismiss: 'Ignorer',
+    },
     reasons: {
         read: 'Elle est partagée avec toi en lecture seule, elle ne peut donc pas recevoir de comptes rendus',
         input: 'Tu ne peux rien lui envoyer, elle ne peut donc pas recevoir de comptes rendus',
@@ -363,7 +395,7 @@ const fr: EntityDragDropTranslations = {
         gone: 'Cet emplacement vient de disparaître',
         generic: 'Cet emplacement ne peut pas l’accueillir',
     },
-    chooser: { cantTakeReports: 'Ne peuvent pas recevoir de comptes rendus', unavailable: 'Indisponible' },
+    chooser: { putUnderTitle: ({ item }) => `Placer ${item} sous…`, checking: 'Vérification des sessions qui peuvent recevoir des comptes rendus…', cantTakeReports: 'Ne peuvent pas recevoir de comptes rendus', unavailable: 'Indisponible' },
     keyboard: {
         choose: 'Choisir un emplacement', putUnder: 'Placer sous', topLevel: 'Premier niveau', drop: 'Déposer', cancel: 'Annuler', escapeKey: 'échap',
         hintsA11y: 'Les flèches choisissent un emplacement, Entrée dépose, Échap annule',
@@ -397,7 +429,7 @@ const fr: EntityDragDropTranslations = {
 
 const it: EntityDragDropTranslations = {
     files: { attach: "Allega", uploadHere: "Carica qui" },
-    composer: { addContext: "Aggiungi contesto", target: "Compositore", readOnly: "Questo compositore è di sola lettura", otherWorkspace: "Non fa parte di questo spazio di lavoro", unavailable: "Questo riferimento non è disponibile" },
+    composer: { addContext: "Aggiungi contesto", consequence: "Inviato con il tuo prossimo messaggio · per ora non si invia nulla", target: "Compositore", readOnly: "Questo compositore è di sola lettura", otherWorkspace: "Non fa parte di questo spazio di lavoro", unavailable: "Questo riferimento non è disponibile" },
     surface: {
         scopeMismatch: 'Si trova in un’altra Home o in un altro account',
         widgetMoveUnavailable: 'Questo widget non può essere spostato su questa superficie',
@@ -421,6 +453,12 @@ const it: EntityDragDropTranslations = {
         unknownTitle: 'Non è certo che sia stata spostata',
         unknownDetail: 'Controlla l’elenco tra un momento prima di riprovare',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `Impossibile mettere ${item} sotto ${target}`,
+        refused: ({ verb }) => `${verb}: non è andato a buon fine`,
+        unknown: ({ verb }) => `Non è chiaro se «${verb}» sia andato a buon fine`,
+        dismiss: 'Ignora',
+    },
     reasons: {
         read: 'È condivisa con te in sola lettura, quindi non può ricevere resoconti',
         input: 'Non puoi inviarle nulla, quindi non può ricevere resoconti',
@@ -438,7 +476,7 @@ const it: EntityDragDropTranslations = {
         gone: 'Quel posto è appena scomparso',
         generic: 'Questo posto non può accoglierla',
     },
-    chooser: { cantTakeReports: 'Non possono ricevere resoconti', unavailable: 'Non disponibile' },
+    chooser: { putUnderTitle: ({ item }) => `Metti ${item} sotto…`, checking: 'Verifica delle sessioni che possono ricevere resoconti…', cantTakeReports: 'Non possono ricevere resoconti', unavailable: 'Non disponibile' },
     keyboard: {
         choose: 'Scegli un posto', putUnder: 'Metti sotto', topLevel: 'Livello principale', drop: 'Rilascia', cancel: 'Annulla', escapeKey: 'Esc',
         hintsA11y: 'Le frecce scelgono un posto, Invio rilascia, Esc annulla',
@@ -472,7 +510,7 @@ const it: EntityDragDropTranslations = {
 
 const ja: EntityDragDropTranslations = {
     files: { attach: "添付", uploadHere: "ここにアップロード" },
-    composer: { addContext: "コンテキストを追加", target: "入力欄", readOnly: "この入力欄は読み取り専用です", otherWorkspace: "このワークスペースに含まれていません", unavailable: "この参照は利用できません" },
+    composer: { addContext: "コンテキストを追加", consequence: "次のメッセージと一緒に送信 · まだ何も送信されません", target: "入力欄", readOnly: "この入力欄は読み取り専用です", otherWorkspace: "このワークスペースに含まれていません", unavailable: "この参照は利用できません" },
     surface: {
         scopeMismatch: '別の Home またはアカウントにあります',
         widgetMoveUnavailable: 'このウィジェットはこの表示領域に移動できません',
@@ -496,6 +534,12 @@ const ja: EntityDragDropTranslations = {
         unknownTitle: '移動できたか確認できません',
         unknownDetail: '少し待ってから一覧を確認し、もう一度試してください',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `${item} を ${target} の下に置けませんでした`,
+        refused: ({ verb }) => `${verb}：完了しませんでした`,
+        unknown: ({ verb }) => `「${verb}」が完了したか不明です`,
+        dismiss: '閉じる',
+    },
     reasons: {
         read: '読み取り専用で共有されているため、報告を受けられません',
         input: 'このセッションには送信できないため、報告を受けられません',
@@ -513,7 +557,7 @@ const ja: EntityDragDropTranslations = {
         gone: 'その場所はなくなりました',
         generic: 'この場所には置けません',
     },
-    chooser: { cantTakeReports: '報告を受けられないセッション', unavailable: '利用できません' },
+    chooser: { putUnderTitle: ({ item }) => `${item} を次の下に置く…`, checking: '報告を受けられるセッションを確認しています…', cantTakeReports: '報告を受けられないセッション', unavailable: '利用できません' },
     keyboard: {
         choose: '場所を選ぶ', putUnder: '下に置く', topLevel: '最上位', drop: 'ドロップ', cancel: 'キャンセル', escapeKey: 'Esc',
         hintsA11y: '矢印キーで場所を選び、Enter でドロップ、Escape でキャンセル',
@@ -547,7 +591,7 @@ const ja: EntityDragDropTranslations = {
 
 const pl: EntityDragDropTranslations = {
     files: { attach: "Dołącz", uploadHere: "Prześlij tutaj" },
-    composer: { addContext: "Dodaj kontekst", target: "Edytor", readOnly: "Ten edytor jest tylko do odczytu", otherWorkspace: "Nie należy do tego obszaru roboczego", unavailable: "To odwołanie jest niedostępne" },
+    composer: { addContext: "Dodaj kontekst", consequence: "Wysyłane z następną wiadomością · nic jeszcze nie zostanie wysłane", target: "Edytor", readOnly: "Ten edytor jest tylko do odczytu", otherWorkspace: "Nie należy do tego obszaru roboczego", unavailable: "To odwołanie jest niedostępne" },
     surface: {
         scopeMismatch: 'Znajduje się w innym Home lub na innym koncie',
         widgetMoveUnavailable: 'Tego widżetu nie można przenieść do tego obszaru',
@@ -571,6 +615,12 @@ const pl: EntityDragDropTranslations = {
         unknownTitle: 'Nie wiadomo, czy przeniesiono',
         unknownDetail: 'Sprawdź listę za chwilę, zanim spróbujesz ponownie',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `Nie udało się umieścić ${item} pod ${target}`,
+        refused: ({ verb }) => `${verb}: nie udało się`,
+        unknown: ({ verb }) => `Nie wiadomo, czy „${verb}” się udało`,
+        dismiss: 'Zamknij',
+    },
     reasons: {
         read: 'Udostępniono ci ją tylko do odczytu, więc nie może przyjmować raportów',
         input: 'Nie możesz nic do niej wysłać, więc nie może przyjmować raportów',
@@ -588,7 +638,7 @@ const pl: EntityDragDropTranslations = {
         gone: 'To miejsce właśnie zniknęło',
         generic: 'To miejsce nie może tego przyjąć',
     },
-    chooser: { cantTakeReports: 'Nie mogą przyjmować raportów', unavailable: 'Niedostępne' },
+    chooser: { putUnderTitle: ({ item }) => `Umieść ${item} pod…`, checking: 'Sprawdzanie, które sesje mogą przyjmować raporty…', cantTakeReports: 'Nie mogą przyjmować raportów', unavailable: 'Niedostępne' },
     keyboard: {
         choose: 'Wybierz miejsce', putUnder: 'Umieść pod', topLevel: 'Najwyższy poziom', drop: 'Upuść', cancel: 'Anuluj', escapeKey: 'Esc',
         hintsA11y: 'Strzałki wybierają miejsce, Enter upuszcza, Escape anuluje',
@@ -622,7 +672,7 @@ const pl: EntityDragDropTranslations = {
 
 const pt: EntityDragDropTranslations = {
     files: { attach: "Anexar", uploadHere: "Enviar aqui" },
-    composer: { addContext: "Adicionar contexto", target: "Editor", readOnly: "Este editor é somente leitura", otherWorkspace: "Não faz parte deste espaço de trabalho", unavailable: "Esta referência está indisponível" },
+    composer: { addContext: "Adicionar contexto", consequence: "Enviado com sua próxima mensagem · nada é enviado ainda", target: "Editor", readOnly: "Este editor é somente leitura", otherWorkspace: "Não faz parte deste espaço de trabalho", unavailable: "Esta referência está indisponível" },
     surface: {
         scopeMismatch: 'Está em outro Home ou conta',
         widgetMoveUnavailable: 'Este widget não pode ser movido para esta superfície',
@@ -646,6 +696,12 @@ const pt: EntityDragDropTranslations = {
         unknownTitle: 'Não é certo que tenha sido movida',
         unknownDetail: 'Confira a lista daqui a pouco antes de tentar de novo',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `Não foi possível colocar ${item} sob ${target}`,
+        refused: ({ verb }) => `${verb}: não foi concluído`,
+        unknown: ({ verb }) => `Não está claro se “${verb}” foi concluído`,
+        dismiss: 'Dispensar',
+    },
     reasons: {
         read: 'Foi compartilhada com você só para leitura, então não pode receber relatórios',
         input: 'Você não pode enviar nada a ela, então não pode receber relatórios',
@@ -663,7 +719,7 @@ const pt: EntityDragDropTranslations = {
         gone: 'Esse lugar acabou de desaparecer',
         generic: 'Este lugar não pode recebê-la',
     },
-    chooser: { cantTakeReports: 'Não podem receber relatórios', unavailable: 'Indisponível' },
+    chooser: { putUnderTitle: ({ item }) => `Colocar ${item} sob…`, checking: 'Verificando quais sessões podem receber relatórios…', cantTakeReports: 'Não podem receber relatórios', unavailable: 'Indisponível' },
     keyboard: {
         choose: 'Escolha um lugar', putUnder: 'Colocar sob', topLevel: 'Nível superior', drop: 'Soltar', cancel: 'Cancelar', escapeKey: 'Esc',
         hintsA11y: 'As setas escolhem um lugar, Enter solta, Esc cancela',
@@ -697,7 +753,7 @@ const pt: EntityDragDropTranslations = {
 
 const ru: EntityDragDropTranslations = {
     files: { attach: "Прикрепить", uploadHere: "Загрузить сюда" },
-    composer: { addContext: "Добавить контекст", target: "Редактор", readOnly: "Этот редактор доступен только для чтения", otherWorkspace: "Не относится к этому рабочему пространству", unavailable: "Эта ссылка недоступна" },
+    composer: { addContext: "Добавить контекст", consequence: "Отправится с вашим следующим сообщением · пока ничего не отправляется", target: "Редактор", readOnly: "Этот редактор доступен только для чтения", otherWorkspace: "Не относится к этому рабочему пространству", unavailable: "Эта ссылка недоступна" },
     surface: {
         scopeMismatch: 'Находится в другом Home или другой учётной записи',
         widgetMoveUnavailable: 'Этот виджет нельзя переместить в эту область',
@@ -721,6 +777,12 @@ const ru: EntityDragDropTranslations = {
         unknownTitle: 'Неясно, переместилось ли',
         unknownDetail: 'Проверьте список чуть позже, прежде чем повторять',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `Не удалось поместить ${item} под ${target}`,
+        refused: ({ verb }) => `${verb}: не получилось`,
+        unknown: ({ verb }) => `Неясно, получилось ли «${verb}»`,
+        dismiss: 'Скрыть',
+    },
     reasons: {
         read: 'Она доступна вам только для чтения, поэтому не может принимать отчёты',
         input: 'Вы не можете ей ничего отправить, поэтому она не может принимать отчёты',
@@ -738,7 +800,7 @@ const ru: EntityDragDropTranslations = {
         gone: 'Это место только что исчезло',
         generic: 'Сюда это поместить нельзя',
     },
-    chooser: { cantTakeReports: 'Не могут принимать отчёты', unavailable: 'Недоступно' },
+    chooser: { putUnderTitle: ({ item }) => `Поместить ${item} под…`, checking: 'Проверяем, какие сессии могут принимать отчёты…', cantTakeReports: 'Не могут принимать отчёты', unavailable: 'Недоступно' },
     keyboard: {
         choose: 'Выбрать место', putUnder: 'Подчинить', topLevel: 'Верхний уровень', drop: 'Отпустить', cancel: 'Отмена', escapeKey: 'Esc',
         hintsA11y: 'Стрелки выбирают место, Enter отпускает, Escape отменяет',
@@ -772,7 +834,7 @@ const ru: EntityDragDropTranslations = {
 
 const zhHans: EntityDragDropTranslations = {
     files: { attach: "附加", uploadHere: "上传到这里" },
-    composer: { addContext: "添加上下文", target: "输入框", readOnly: "此输入框为只读", otherWorkspace: "不属于此工作区", unavailable: "此引用不可用" },
+    composer: { addContext: "添加上下文", consequence: "随你的下一条消息发送 · 暂不发送任何内容", target: "输入框", readOnly: "此输入框为只读", otherWorkspace: "不属于此工作区", unavailable: "此引用不可用" },
     surface: {
         scopeMismatch: '它在另一个 Home 或账户中',
         widgetMoveUnavailable: '此组件无法移到这个界面区域',
@@ -796,6 +858,12 @@ const zhHans: EntityDragDropTranslations = {
         unknownTitle: '不确定是否已移动',
         unknownDetail: '请稍后查看列表，再决定是否重试',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `无法将 ${item} 放到 ${target} 之下`,
+        refused: ({ verb }) => `${verb}：未完成`,
+        unknown: ({ verb }) => `不确定“${verb}”是否已完成`,
+        dismiss: '关闭',
+    },
     reasons: {
         read: '它以只读方式与你共享，因此无法接收汇报',
         input: '你无法向它发送内容，因此它无法接收汇报',
@@ -813,7 +881,7 @@ const zhHans: EntityDragDropTranslations = {
         gone: '那个位置刚刚消失了',
         generic: '这里无法放置',
     },
-    chooser: { cantTakeReports: '无法接收汇报', unavailable: '不可用' },
+    chooser: { putUnderTitle: ({ item }) => `将 ${item} 放到…之下`, checking: '正在检查哪些会话可以接收汇报…', cantTakeReports: '无法接收汇报', unavailable: '不可用' },
     keyboard: {
         choose: '选择位置', putUnder: '放到下面', topLevel: '顶层', drop: '放下', cancel: '取消', escapeKey: 'Esc',
         hintsA11y: '方向键选择位置，Enter 放下，Escape 取消',
@@ -847,7 +915,7 @@ const zhHans: EntityDragDropTranslations = {
 
 const zhHant: EntityDragDropTranslations = {
     files: { attach: "附加", uploadHere: "上傳到這裡" },
-    composer: { addContext: "新增上下文", target: "輸入框", readOnly: "此輸入框為唯讀", otherWorkspace: "不屬於此工作區", unavailable: "此參照無法使用" },
+    composer: { addContext: "新增上下文", consequence: "隨你的下一則訊息送出 · 暫不送出任何內容", target: "輸入框", readOnly: "此輸入框為唯讀", otherWorkspace: "不屬於此工作區", unavailable: "此參照無法使用" },
     surface: {
         scopeMismatch: '它在另一個 Home 或帳戶中',
         widgetMoveUnavailable: '此元件無法移到這個介面區域',
@@ -871,6 +939,12 @@ const zhHant: EntityDragDropTranslations = {
         unknownTitle: '不確定是否已移動',
         unknownDetail: '請稍後查看清單，再決定是否重試',
     },
+    settled: {
+        refusedPutUnder: ({ item, target }) => `無法將 ${item} 放到 ${target} 之下`,
+        refused: ({ verb }) => `${verb}：未完成`,
+        unknown: ({ verb }) => `不確定「${verb}」是否已完成`,
+        dismiss: '關閉',
+    },
     reasons: {
         read: '它以唯讀方式與你共用，因此無法接收回報',
         input: '你無法傳送內容給它，因此它無法接收回報',
@@ -888,7 +962,7 @@ const zhHant: EntityDragDropTranslations = {
         gone: '那個位置剛剛消失了',
         generic: '這裡無法放置',
     },
-    chooser: { cantTakeReports: '無法接收回報', unavailable: '無法使用' },
+    chooser: { putUnderTitle: ({ item }) => `將 ${item} 放到…之下`, checking: '正在檢查哪些工作階段可以接收回報…', cantTakeReports: '無法接收回報', unavailable: '無法使用' },
     keyboard: {
         choose: '選擇位置', putUnder: '放到下面', topLevel: '最上層', drop: '放下', cancel: '取消', escapeKey: 'Esc',
         hintsA11y: '方向鍵選擇位置，Enter 放下，Escape 取消',

@@ -8,16 +8,8 @@ import type {
   PermissionModeIntentV1,
   SessionMetadata,
 } from '@happier-dev/protocol';
-import {
-  projectSessionModelSelectionIntentToLegacyModelOverrideV1,
-  readSessionModelSelectionIntentSourceV1,
-  SessionModelSelectionIntentV1Schema,
-} from '@happier-dev/protocol/providers/model-selection';
-import {
-  AcpConfigOptionOverridesV1Schema,
-  AcpSessionModeOverrideV1Schema,
-  ModelOverrideV1Schema,
-} from '@happier-dev/protocol/sessions/metadata/overrides';
+import { projectSessionModelSelectionIntentToLegacyModelOverrideV1, readSessionModelSelectionIntentSourceV1, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { AcpConfigOptionOverridesV1Schema, AcpSessionModeOverrideV1Schema, ModelOverrideV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 import { parsePermissionIntentAlias } from '../../../permissions/index.js';
 import { resolveTimestampedFieldUpdate } from '../../timestamps/resolveTimestampedFieldUpdate.js';

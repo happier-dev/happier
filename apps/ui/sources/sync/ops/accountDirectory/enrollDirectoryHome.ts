@@ -9,7 +9,7 @@ import { resolveServerProfileForPortableIdentity, resolveServerProfileScopeId } 
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
-export type DirectoryHomeEnrollmentResult = HomeLoginContinuationResult | Readonly<{ kind: 'failed'; error?: unknown }>;
+export type DirectoryHomeEnrollmentResult = HomeLoginContinuationResult;
 type ResumableHomeLoginContinuation =
     | Extract<HomeLoginContinuationResult, { kind: 'approval_required' }>
     | (Extract<HomeLoginContinuationResult, { kind: 'transport_unavailable' }> & Readonly<{

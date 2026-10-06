@@ -21,6 +21,10 @@ import { WorkflowStartPicker } from './WorkflowStartPicker';
 import { WorkflowRunComposer } from './WorkflowRunComposer';
 import { resetWorkflowLibraryReadsForTests } from '../library/workflowLibraryReads';
 import { WorkflowsColumnActions } from '../column/WorkflowsColumnActions';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { WorkflowEditorBody } from '../screens/WorkflowEditorBody';
+import { WorkflowBuiltinSessionButton } from '../library/WorkflowBuiltinsSection';
+import { SelectionList } from '@/components/ui/selectionList';
 
 const execute = vi.hoisted(() => vi.fn());
 const routing = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
@@ -80,15 +84,55 @@ afterEach(async () => {
 });
 
 describe('WorkflowStartPicker plugin workflows', () => {
+    it('keeps readable start choices when neighboring definitions are unavailable', async () => {
+        const revision = { headerVersion: 1, bodyVersion: 1 };
+        execute.mockImplementation(async (id: string, input: { definitionId?: string }) => {
+            if (id === 'workflow.definition.list') return { ok: true, result: { definitions: [
+                { kind: 'workflow-definition.v1', definitionId: 'missing-title', revision: null, metadata: null,
+                    contentStatus: 'unavailable', contentUnavailableReason: 'invalid_header', stepCount: null, triggers: [], nextRunAt: null },
+                { kind: 'workflow-definition.v1', definitionId: 'bad-body', revision, metadata: { title: 'Unavailable recipe' },
+                    contentStatus: 'unavailable', contentUnavailableReason: 'invalid_body', stepCount: null, triggers: [], nextRunAt: null },
+                { kind: 'workflow-definition.v1', definitionId: 'readable', revision, metadata: { title: 'Readable recipe' },
+                    contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null },
+            ] } };
+            if (id === 'workflow.definition.get' && input.definitionId === 'readable') return { ok: true, result: {
+                definitionId: 'readable', revision, metadata: { title: 'Readable recipe' }, access: 'owner',
+                definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition,
+            } };
+            return { ok: false, errorCode: 'content_unavailable', error: 'workflow_definition_content_unavailable',
+                details: { reason: 'invalid_body' } };
+        });
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<WorkflowStartPicker onSelect={onSelect} onRequestClose={() => {}} maxHeight={600} />);
+        await act(async () => { await Promise.resolve(); });
+        const root: React.ComponentProps<typeof SelectionList>['rootStep'] = screen.findByType(SelectionList).props.rootStep;
+        const section = root.sections.find(entry => entry.kind === 'dynamic' && entry.id === 'library');
+        if (section?.kind !== 'dynamic') throw new Error('missing_library_options');
+        const choices = await section.resolve('recipe', new AbortController().signal);
+        expect(choices.options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'bad-body', disabled: true, subtitle: t('workflows.contentReasons.invalidBody') }),
+            expect.objectContaining({ id: 'readable', label: 'Readable recipe' }),
+        ]));
+        await act(async () => { screen.findByType(SelectionList).props.onSelect('bad-body'); });
+        expect(onSelect).not.toHaveBeenCalled();
+        const allChoices = await section.resolve('', new AbortController().signal);
+        expect(allChoices.options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'missing-title', disabled: true, subtitle: t('workflows.contentReasons.invalidHeader') }),
+        ]));
+    });
     it.each(['builtin:keep-going', 'builtin:review-and-converge'])('offers Choose a session, never Run now, for %s', async (id) => {
         routeParams.id = id;
         routeParams.intent = 'run';
-        const screen = await renderScreen(<SavedWorkflowRoute />);
-        expect(screen.findByTestId('workflow-builtin:session')).not.toBeNull();
-        expect(screen.findByTestId('workflow-builtin:run')).toBeNull();
+        const screen = await renderScreen(<SavedWorkflowRoute />, {
+            wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
+        });
+        expect(screen.findByType(WorkflowBuiltinSessionButton).props.entry.id).toBe(id);
+        expect(screen.getTextContent()).toContain(t('workflows.examples.chooseSession'));
+        expect(screen.findByType(WorkflowEditorBody).props.onRunNow).toBeUndefined();
+        expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(0);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(execute.mock.calls.some(([action]) => action === 'workflow.run.start')).toBe(false);
-        await screen.pressByTestIdAsync('workflow-builtin:duplicate');
+        await screen.pressByTestIdAsync('workflow-builtin-duplicate');
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
         expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
@@ -99,6 +143,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
     it('opens the shared example picker from the column + menu without saving', async () => {
         const screen = await renderScreen(<WorkflowsColumnActions canCreate />);
         const addMenu = screen.findAllByType(DropdownMenu).find((menu) => menu.props.testID === 'workflows-column:add:menu')!;
+        expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(['new', 'agent', 'trigger', 'example', 'import']);
         await act(async () => { addMenu.props.onSelect('example'); });
         for (const example of WORKFLOW_STARTER_EXAMPLES_V1) expect(screen.findByTestId(`workflow-examples:${example.key}:use`)).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-examples:review-pull-request:use');
@@ -112,8 +157,10 @@ describe('WorkflowStartPicker plugin workflows', () => {
         execute.mockImplementation(async (id: string, input: { runId: string }) => ({ ok: true, result: id === 'workflow.run.start'
             ? { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId }) }
             : { definitions: [] } }));
-        const screen = await renderScreen(<SavedWorkflowRoute />);
-        await screen.pressByTestIdAsync('workflow-builtin:run');
+        const screen = await renderScreen(<SavedWorkflowRoute />, {
+            wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
+        });
+        await screen.pressByTestIdAsync('workflow-builtin-run-now');
         expect(execute.mock.calls.some(([id]) => id === 'workflow.run.start')).toBe(false);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
@@ -159,11 +206,13 @@ describe('WorkflowStartPicker plugin workflows', () => {
 
     it('opens the contribution read-only and duplicates as an unsaved portable draft without a write', async () => {
         execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [plugin] } });
-        const screen = await renderScreen(<SavedWorkflowRoute />);
+        const screen = await renderScreen(<SavedWorkflowRoute />, {
+            wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
+        });
         await act(async () => { await Promise.resolve(); });
-        expect(screen.findAllByTestId('workflow-plugin:read-only').length).toBeGreaterThan(0);
-        expect(screen.findAllByTestId('workflow-editor-name').length).toBe(0);
-        await screen.pressByTestIdAsync('workflow-plugin:duplicate');
+        expect(screen.findByType(WorkflowEditorBody).props.documentPresentation.editable).toBe(false);
+        expect(screen.findByType(WorkflowEditorBody).props.onSave).toBeUndefined();
+        await screen.pressByTestIdAsync('workflow-plugin-duplicate');
         expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.create' || id === 'workflow.definition.update')).toBe(false);
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
@@ -210,6 +259,37 @@ describe('WorkflowStartPicker plugin workflows', () => {
         expect(pluginItem).toMatchObject({ title: plugin.title, category: 'workflows.plugins.fromPlugins' });
         await act(async () => { menu.props.onSelect(pluginItem!.id); });
         expect(startPluginWorkflow).toHaveBeenCalledWith(plugin);
+    });
+    it('keeps unavailable rows visible and refuses them in the Work launch submenu', async () => {
+        const revision = { headerVersion: 1, bodyVersion: 1 };
+        execute.mockResolvedValue({ ok: true, result: { definitions: [
+            { kind: 'workflow-definition.v1', definitionId: 'missing-title', revision: null, metadata: null,
+                contentStatus: 'unavailable', contentUnavailableReason: 'invalid_header', stepCount: null, triggers: [], nextRunAt: null },
+            { kind: 'workflow-definition.v1', definitionId: 'bad-body', revision, metadata: { title: 'Unavailable recipe' },
+                contentStatus: 'unavailable', contentUnavailableReason: 'invalid_body', stepCount: null, triggers: [], nextRunAt: null },
+            { kind: 'workflow-definition.v1', definitionId: 'readable', revision, metadata: { title: 'Readable recipe' },
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null },
+        ], pluginWorkflows: [plugin] } });
+        const launcher = { unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
+            openConversation: vi.fn(), openRun: vi.fn(), openDetails: vi.fn(), startBuiltinWorkflow: vi.fn(), startPluginWorkflow: vi.fn() };
+        const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} />);
+        await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+        await act(async () => { await Promise.resolve(); });
+        const menu = screen.findByType(DropdownMenu);
+        const items: React.ComponentProps<typeof DropdownMenu>['items'] = menu.props.items;
+        const rows = items.find(item => item.id === 'run-workflow')!.submenu!.items;
+        for (const id of ['missing-title', 'bad-body']) {
+            const row = rows.find(item => item.id === `workflow:${id}`);
+            expect(row).toMatchObject({ disabled: true, subtitle: expect.any(String) });
+            await act(async () => { menu.props.onSelect(`workflow:${id}`); });
+        }
+        expect(routing.push).not.toHaveBeenCalled();
+        expect(rows.find(item => item.id === 'workflow:readable')?.disabled).not.toBe(true);
+        await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { screen.findByType(DropdownMenu).props.onSelect('workflow:readable'); });
+        expect(routing.push).toHaveBeenCalledWith({ pathname: '/workflows/[id]', params: { id: 'readable', intent: 'run' } });
+        expect(rows.find(item => item.id === `plugin-workflow:${plugin.workflow}`)?.title).toBe(plugin.title);
     });
     it('does not retain or select a previous Account catalog while the closed menu changes Account', async () => {
         execute.mockResolvedValueOnce({ ok: true, result: { definitions: [{ kind: 'workflow-definition.v1',

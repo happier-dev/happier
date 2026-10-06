@@ -1,6 +1,4 @@
-import {
-    ScmBackendContributionSchema as canonicalScmBackendContributionSchema,
-} from '@happier-dev/protocol';
+import { ScmBackendContributionSchema as canonicalScmBackendContributionSchema } from '@happier-dev/protocol/plugins/contributions/scmBackends';
 
 import type { PluginJsonValueV2 } from '../identity.js';
 

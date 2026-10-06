@@ -1,7 +1,5 @@
-import {
-    SessionStateUsageLimitRecoveryValueSchema,
-    SessionStateWorkStateValueSchema,
-} from '@happier-dev/protocol';
+import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 
 import {
     createRegisteredSessionStateFieldMutation,

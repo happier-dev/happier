@@ -72,6 +72,9 @@ describe('Add a Home focus at entry', () => {
             expect(profiles.getActiveServerId()).toBe(existing.id);
             await TokenStorage.setCredentialsForServerUrl(added.serverUrl, { serverId: added.id }, { token: accountToken });
             await vi.waitFor(() => expect(projection.readUsableHomeServerIds()).toEqual(expect.arrayContaining([existing.id, added.id])));
+            await renderer.act(async () => { await next.getCurrent().homeConnected(added); });
+            expect(next.getCurrent().pane.pane).not.toBe('home_sign_in');
+            expect(next.getCurrent().completion).toMatchObject({ kind: 'connected', profile: added });
             const selection = await import('@/sync/domains/server/selection/homeViewSelectionState');
             await selection.updateEffectiveHomeViewState((current) => ({
                 ...current, activeTargetKind: 'server', activeTargetId: existing.id,

@@ -1,9 +1,12 @@
 import {
-  WorkflowDefinitionArtifactBodyV1Schema,
+  WorkflowDefinitionArtifactBodyV1ReadSchema,
   WorkflowDefinitionArtifactHeaderV1Schema,
+  WorkflowDefinitionArtifactHeaderV1ReadSchema,
   WorkflowDefinitionMetadataV1Schema,
+  WorkflowArtifactRevisionV1Schema,
   type WorkflowArtifactRevisionV1,
   type WorkflowDefinitionSavedByV1,
+  type WorkflowDefinitionContentUnavailableReasonV1,
 } from '../../workflows/workflowDefinitionV1.js';
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema,
   type WorkflowDefinitionListResultV1 } from '../../workflows/actionsV1.js';
@@ -16,20 +19,23 @@ import type { WorkflowDefinitionV1, WorkflowIngressContextV1 } from '../../workf
 import type { WorkflowActionExecuteArgs } from './types.js';
 import type { z } from 'zod';
 import type { ArtifactCallerAccessV1 } from '../../artifacts/artifactAccessV1.js';
-import { artifactSavedByFromActionContextV1, type ArtifactBodyV1, type ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
+import { artifactSavedByFromActionContextV1, type ArtifactBodyV1, type ArtifactRevisionProvenanceV1, type ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 import { workflowDefinitionArtifactSharingAdapterV1 } from '../../artifacts/artifactSharingV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { WorkflowDefinitionIdV1Schema } from '../../workflows/workflowIdsV1.js';
 import type { WorkflowPluginSourceReaderV1, WorkflowPluginSourceV1 } from '../../workflows/workflowPluginSourceV1.js';
 
 export type WorkflowDefinitionArtifactHeaderRow = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number; updatedAt: number;
   ownerAccountId: string; access: ArtifactCallerAccessV1;
   body?: ArtifactBodyV1 | null; bodyVersion?: number;
+  provenance?: ArtifactRevisionProvenanceV1;
 }>;
 export type WorkflowDefinitionArtifactOperations = Readonly<{
   read: (artifactId: string, options?: Readonly<{ signal?: AbortSignal }>) => Promise<Readonly<{
     artifactId: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null; revision: WorkflowArtifactRevisionV1;
     ownerAccountId: string; access: ArtifactCallerAccessV1;
+    provenance?: ArtifactRevisionProvenanceV1;
   }> | null>;
   list: (options: Readonly<{ limit?: number; cursor?: string; includeBody?: boolean; signal?: AbortSignal }>) => Promise<Readonly<{
     items: readonly WorkflowDefinitionArtifactHeaderRow[]; nextCursor?: string;
@@ -62,10 +68,9 @@ function savedBy(caller?: DefinitionCaller): WorkflowDefinitionSavedByV1 | undef
   return artifactSavedByFromActionContextV1(caller);
 }
 
-function header(definitionId: string, revision: WorkflowArtifactRevisionV1, metadata: Metadata, definition: WorkflowDefinitionV1, caller?: DefinitionCaller) {
-  const actor = savedBy(caller);
+function header(definitionId: string, revision: WorkflowArtifactRevisionV1, metadata: Metadata, definition: WorkflowDefinitionV1) {
   return WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId, revision, metadata,
-    previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks), ...(actor ? { savedBy: actor } : {}) });
+    previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) });
 }
 
 function assertRevisionMatches(actual: WorkflowArtifactRevisionV1, expected: WorkflowArtifactRevisionV1) {
@@ -84,15 +89,19 @@ function headerMatchesArtifact(
   });
 }
 
+function contentUnavailable(reason: WorkflowDefinitionContentUnavailableReasonV1) {
+  return Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable', details: { reason } });
+}
+
 function openDefinitionBody(body: ArtifactBodyV1 | null | undefined): WorkflowDefinitionV1 {
-  const unavailable = () => Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
-  if (typeof body !== 'string') throw unavailable();
+  if (body === null || body === undefined) throw contentUnavailable('missing_body');
+  if (typeof body !== 'string') throw contentUnavailable('invalid_body');
   let candidate: unknown;
-  try { candidate = JSON.parse(body); } catch { throw unavailable(); }
-  const parsedBody = WorkflowDefinitionArtifactBodyV1Schema.safeParse(candidate);
-  if (!parsedBody.success) throw unavailable();
+  try { candidate = JSON.parse(body); } catch { throw contentUnavailable('invalid_body'); }
+  const parsedBody = WorkflowDefinitionArtifactBodyV1ReadSchema.safeParse(candidate);
+  if (!parsedBody.success) throw contentUnavailable('invalid_body');
   const validation = validateWorkflowDefinition(parsedBody.data.definition);
-  if (!validation.valid || !validation.normalizedDefinition) throw unavailable();
+  if (!validation.valid || !validation.normalizedDefinition) throw contentUnavailable('invalid_body');
   return validation.normalizedDefinition;
 }
 
@@ -107,22 +116,23 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   const readPluginWorkflows: WorkflowPluginSourceReaderV1 = params.readPluginWorkflows ?? (() => []);
   const get = async ({ definitionId, signal }: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
     const artifact = await params.artifactStore.read(definitionId, signal ? { signal } : undefined);
-    if (!artifact) throw Object.assign(new Error('workflow_definition_not_found'), { code: 'content_unavailable' });
-    const parsedHeader = WorkflowDefinitionArtifactHeaderV1Schema.safeParse(artifact.header);
-    if (!parsedHeader.success || !headerMatchesArtifact({
+    if (!artifact) throw contentUnavailable('not_found');
+    const parsedHeader = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header);
+    if (!parsedHeader.success) throw contentUnavailable('invalid_header');
+    if (!headerMatchesArtifact({
       artifactId: artifact.artifactId,
       headerVersion: artifact.revision.headerVersion,
       bodyVersion: artifact.revision.bodyVersion,
-    }, parsedHeader.data) || typeof artifact.body !== 'string') {
-      throw Object.assign(new Error('workflow_definition_content_unavailable'), { code: 'content_unavailable' });
+    }, parsedHeader.data)) {
+      throw contentUnavailable('revision_mismatch');
     }
     return { definitionId, revision: artifact.revision, definition: openDefinitionBody(artifact.body), metadata: parsedHeader.data.metadata, access: artifact.access,
-      ...(parsedHeader.data.savedBy ? { savedBy: parsedHeader.data.savedBy } : {}) };
+      ...(artifact.provenance ? { savedBy: artifact.provenance.savedBy } : {}) };
   };
   const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, access: ArtifactCallerAccessV1, caller?: DefinitionCaller) => {
     const nextRevision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
     const result = await params.artifactStore.update({ artifactId: input.definitionId,
-      expectedRevision: input.expectedRevision, header: header(input.definitionId, nextRevision, input.metadata, definition, caller),
+      expectedRevision: input.expectedRevision, header: header(input.definitionId, nextRevision, input.metadata, definition),
       body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), savedBy: savedBy(caller) });
     if (!result.ok) throw Object.assign(new Error(result.error), {
       code: result.errorCode === 'version_mismatch' ? 'currentness_conflict' : 'content_unavailable',
@@ -175,12 +185,15 @@ export function createWorkflowDefinitionActions(params: Readonly<{
           throw error;
         }
         for (const artifact of page.items) {
-          const parsed = WorkflowDefinitionArtifactHeaderV1Schema.safeParse(artifact.header);
-          if (!parsed.success || !headerMatchesArtifact({
+          if (artifact.header.kind !== 'workflow-definition.v1') continue;
+          const identity = WorkflowDefinitionIdV1Schema.safeParse(artifact.artifactId);
+          if (!identity.success) continue;
+          const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header);
+          const readableHeader = parsed.success && headerMatchesArtifact({
             artifactId: artifact.artifactId,
             headerVersion: artifact.headerVersion,
             bodyVersion: artifact.bodyVersion,
-          }, parsed.data)) continue;
+          }, parsed.data) ? parsed.data : null;
           if (!triggerSummaries) {
             if (!params.readWorkflowTriggerSummaries) {
               throw Object.assign(new Error('workflow_trigger_summary_unavailable'), { code: 'target_unavailable' });
@@ -188,19 +201,35 @@ export function createWorkflowDefinitionActions(params: Readonly<{
             triggerSummaries = await params.readWorkflowTriggerSummaries();
           }
           let opened: WorkflowDefinitionV1 | null = null;
+          let reason: WorkflowDefinitionContentUnavailableReasonV1 = readableHeader ? 'missing_body'
+            : parsed.success ? 'revision_mismatch' : 'invalid_header';
           try {
-            if (artifact.bodyVersion !== undefined) opened = openDefinitionBody(artifact.body);
+            if (readableHeader && artifact.bodyVersion !== undefined) opened = openDefinitionBody(artifact.body);
           } catch (error) {
             // Only this record's validated content failure is isolated. Transport,
             // authorization, currentness and Account-mode errors stay at their owners.
             if (!error || typeof error !== 'object' || Reflect.get(error, 'code') !== 'content_unavailable') throw error;
+            reason = artifact.body == null ? 'missing_body' : 'invalid_body';
           }
           const summary = triggerSummaries.get(artifact.artifactId);
-          const definition: WorkflowDefinitionListResultV1['definitions'][number] = { ...parsed.data,
+          const facts = {
             ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+            ...(artifact.provenance ? { savedBy: artifact.provenance.savedBy } : {}),
             triggers: [...(summary?.triggers ?? [])], nextRunAt: summary?.nextRunAt ?? null,
-            ...(opened ? { contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks) }
-              : { contentStatus: 'unavailable', stepCount: null }) };
+          };
+          // Rejected header bytes remain rejected. List presentation uses the
+          // authorized Artifact identity/revision and only validated display facts;
+          // absent facts are explicit, never a repaired stored header or readable body.
+          const physicalRevision = WorkflowArtifactRevisionV1Schema.safeParse({
+            headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
+          });
+          const displayMetadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(artifact.header.metadata);
+          const definition: WorkflowDefinitionListResultV1['definitions'][number] = opened && readableHeader
+            ? { ...readableHeader, ...facts, contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks) }
+            : { kind: 'workflow-definition.v1', definitionId: identity.data,
+              revision: readableHeader?.revision ?? (physicalRevision.success ? physicalRevision.data : null),
+              metadata: displayMetadata.success ? displayMetadata.data : null, ...facts,
+              contentStatus: 'unavailable', stepCount: null, contentUnavailableReason: reason };
           const isExhaustedAtPageEnd = page.items.at(-1)?.artifactId === artifact.artifactId && !page.nextCursor;
           const rowCursor = params.encodeListCursor(artifact);
           // Size the exact page this row could close, inside the complete public
@@ -237,7 +266,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       const initialRevision = { headerVersion: 1, bodyVersion: 1 };
       try {
         await params.artifactStore.create({ artifactId: input.definitionId,
-          header: header(input.definitionId, initialRevision, input.metadata, definition, caller),
+          header: header(input.definitionId, initialRevision, input.metadata, definition),
           body: JSON.stringify({ kind: 'workflow-definition.v1', definition }), savedBy: savedBy(caller) });
       } catch (error) {
         // A lost response or same-id race may have committed the Artifact.
@@ -283,7 +312,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     },
     delete: async ({ definitionId }: Readonly<{ definitionId: string }>) => {
       const artifact = await params.artifactStore.read(definitionId);
-      const parsedHeader = artifact ? WorkflowDefinitionArtifactHeaderV1Schema.safeParse(artifact.header) : null;
+      const parsedHeader = artifact ? WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(artifact.header) : null;
       if (!artifact || !parsedHeader?.success) {
         throw Object.assign(new Error('workflow_definition_not_found'), { code: 'content_unavailable' });
       }

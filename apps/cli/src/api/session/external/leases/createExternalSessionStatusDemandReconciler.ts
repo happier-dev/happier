@@ -1,9 +1,5 @@
-import {
-    ExternalSessionStatusDemandDaemonMessageV1Schema,
-    isExternalSessionStatusDemandRevisionNewerV1,
-    type ExternalSessionStatusDemandDaemonMessageV1,
-    type ExternalSessionStatusDemandLevelV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionStatusDemandDaemonMessageV1Schema, isExternalSessionStatusDemandRevisionNewerV1 } from '@happier-dev/protocol/sessions/external/statusDemandV1';
+import type { ExternalSessionStatusDemandDaemonMessageV1, ExternalSessionStatusDemandLevelV1 } from '@happier-dev/protocol';
 
 import { computeExponentialBackoffMs } from '@/subprocess/supervision/backoff';
 

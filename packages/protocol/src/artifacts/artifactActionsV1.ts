@@ -18,11 +18,6 @@ export const ArtifactRevisionV1Schema = z.object({
   headerVersion: z.number().int().positive(), bodyVersion: z.number().int().positive(),
 }).strict();
 export type ArtifactRevisionV1 = z.infer<typeof ArtifactRevisionV1Schema>;
-export const ArtifactProvenanceV1Schema = z.object({
-  sessionId: z.string().min(1), runId: z.string().min(1).optional(), machineId: z.string().min(1),
-  path: z.string().min(1), sha: z.string().min(1).optional(),
-}).strict();
-export type ArtifactProvenanceV1 = z.infer<typeof ArtifactProvenanceV1Schema>;
 // Headers belong to their content-kind owners. Preserve JSON metadata; it never supplies authority.
 export const ArtifactHeaderMetadataV1Schema = z.record(z.string(), StrictJsonValueSchema);
 
@@ -64,6 +59,7 @@ export const ArtifactHeaderV1Schema = subject.extend({
 }).strict();
 export const ArtifactDocumentV1Schema = ArtifactHeaderV1Schema.omit({ headerVersion: true }).extend({
   body: ArtifactBodyV1Schema.nullable(), revision: ArtifactRevisionV1Schema,
+  provenance: ArtifactRevisionProvenanceV1Schema.optional(),
 }).strict();
 export const ArtifactQuotaExceededV1Schema = z.object({
   error: z.literal('quota_exceeded'), budget: z.enum(['document', 'account']),
@@ -78,6 +74,7 @@ export type ArtifactStorageUsageV1 = z.infer<typeof ArtifactStorageUsageV1Schema
 export const ArtifactStoredBodyRevisionV1Schema = z.object({
   bodyVersion: z.number().int().positive(), body: z.string(), createdAt: z.number().int().nonnegative(),
   sizeBytes: z.number().int().nonnegative(),
+  provenance: z.string().nullable().optional(),
 }).strict();
 export const ArtifactRevisionListResponseV1Schema = z.object({
   revisions: z.array(ArtifactStoredBodyRevisionV1Schema), retentionCount: z.number().int().nonnegative(),

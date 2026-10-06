@@ -77,7 +77,7 @@ export const triageEntrySessionDropTargetRuntime: PluginDropTargetRuntime = {
       effect: {
         actionId: `plugin:${TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1}/${TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1}`,
         input: input.data,
-        preview: parsed.data.preview,
+        preview: { ...parsed.data.preview, glyph: 'add' },
       },
     };
   },

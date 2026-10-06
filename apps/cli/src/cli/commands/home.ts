@@ -26,16 +26,9 @@ import {
   preparePersonalHomeRelocationUpload,
   type PersonalHomeRelocationSourceResult,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import {
-  SYSTEM_TASK_PROTOCOL_VERSION,
-  HomeConnectionDescriptorV1Schema,
-  SystemTaskJsonValueSchema,
-  type SystemTaskEvent,
-  type SystemTaskJsonObject,
-  type SystemTaskJsonValue,
-  type SystemTaskSpec,
-  type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { SYSTEM_TASK_PROTOCOL_VERSION, SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskJsonValue, SystemTaskSpec, HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import {
   answerRemoteBackgroundServiceReplacementPrompt,

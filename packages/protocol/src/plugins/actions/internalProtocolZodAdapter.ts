@@ -7,6 +7,9 @@
  * internal Zod parent is migrated.
  */
 import { z } from 'zod';
+import * as mini from 'zod/mini';
+import { rehydrateCanonicalProtocolComposableSchema } from './protocolComposableSchema.js';
+import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 
 import type {
   ProtocolSchemaSafeParseResult,
@@ -27,37 +30,81 @@ type ProtocolComposableSchemaForZod<TInput, TOutput> = Readonly<{
   nullable(): unknown;
 }>;
 
-function addProtocolZodFailure<TOutput>(
-  parsed: Exclude<ProtocolSchemaSafeParseResult<TOutput>, Readonly<{ success: true }>>,
-  context: z.RefinementCtx,
-): void {
-  context.addIssue({
-    code: z.ZodIssueCode.custom,
-    message: parsed.error.issues[0]?.message ?? 'Value does not match the canonical Protocol schema',
-  });
-}
+// Catalog parents repeatedly compose the same immutable neutral definitions.
+// Share their one facade by definition identity, never by JSON document shape.
+const protocolZodFacades = new WeakMap<object, z.ZodType>();
 
 export function asProtocolZod<TInput, TOutput>(
   schema: ProtocolComposableSchemaForZod<TInput, TOutput>,
 ): z.ZodType<TOutput, TInput> {
-  const adapter = z.unknown().superRefine((value, context) => {
-    const parsed = schema.safeParse(value);
-    if (!parsed.success) addProtocolZodFailure(parsed, context);
-  }).transform((value): TOutput => {
-    // `superRefine` has admitted this value through the canonical owner. Read
-    // the same normalized output once more rather than exposing a local Zod
-    // projection to the parent schema.
-    const parsed = schema.safeParse(value);
-    if (!parsed.success) throw parsed.error;
-    return parsed.data;
+  const existing = protocolZodFacades.get(schema);
+  // Each definition identity fixes the input/output projections of its facade.
+  if (existing) return existing as z.ZodType<TOutput, TInput>;
+  // This bridge exposes only ZodType, so Zod's native lazy combinator can
+  // retain the actual adapter identity used by recursive JSON Schema exports.
+  const facade = z.lazy(() => {
+    // Keep refinement-before-transform: parent refinements explicitly opting
+    // into failed admission must observe the original input, not NEVER.
+    const createAdapter = (safeParse: (value: unknown) => ProtocolSchemaSafeParseResult<TOutput>) => {
+      const admitted = mini.custom<TInput>().check(mini.superRefine((value, context) => {
+        const parsed = safeParse(value);
+        if (!parsed.success) {
+          context.addIssue({
+            code: 'custom',
+            message: parsed.error.issues[0]?.message ?? 'Value does not match the canonical Protocol schema',
+          });
+        }
+      }));
+      const adapter = mini.pipe(admitted, mini.transform((value: TInput): TOutput => {
+        const parsed = safeParse(value);
+        if (!parsed.success) throw parsed.error;
+        return parsed.data;
+      }));
+      return adapter;
+    };
+    const adapter = createAdapter((value) => schema.safeParse(value));
+
+    const storedJsonSchema = () => {
+      // Derive the stored policy from the DSL's own projection, never a second validator.
+      // The canonical DTO is strict ordinary JSON. Keep stored parsing usable
+      // in hosts without the structured-clone Web API, with no new polyfill.
+      const projection = JSON.parse(JSON.stringify(schema.jsonSchema)) as object;
+      const openObjects = (raw: unknown): void => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+        const value = raw as Record<string, unknown>;
+        if (value.type === 'object' && value.properties) value.additionalProperties = true;
+        for (const key of ['properties', 'definitions', '$defs']) {
+          const children = value[key];
+          if (children && typeof children === 'object' && !Array.isArray(children)) Object.values(children).forEach(openObjects);
+        }
+        for (const key of ['anyOf', 'oneOf', 'allOf']) if (Array.isArray(value[key])) value[key].forEach(openObjects);
+        openObjects(value.items);
+      };
+      openObjects(projection);
+      const stored = rehydrateCanonicalProtocolComposableSchema(projection);
+      if (!stored) throw new Error('Stored Protocol projection is not a canonical composable schema');
+      return stored;
+    };
+
+    // Zod cannot infer the portable schema hidden behind this neutral adapter.
+    // Project the canonical Protocol-owned JSON Schema into exporters so public
+    // authoring schemas retain the same admission constraints as runtime.
+    adapter._zod.processJSONSchema = (_context, jsonSchema) => {
+      Object.assign(jsonSchema, structuredClone(schema.jsonSchema));
+    };
+
+    return defineStoredReadProjection<z.core.$ZodType<TOutput, TInput>>(adapter, () => {
+      // The incumbent portable-schema owner already derives additive-open/drop
+      // readers; keep its constraints rather than introducing another validator.
+      const stored = storedJsonSchema();
+      return createAdapter((value) => {
+        const projected = stored.safeParse(value);
+        // Re-admit the normalized projection through its typed canonical owner.
+        // A generic JSON projection alone cannot establish TOutput.
+        return projected.success ? schema.safeParse(projected.data) : projected;
+      });
+    });
   });
-
-  // Zod cannot infer the portable schema hidden behind this neutral adapter.
-  // Project the canonical Protocol-owned JSON Schema into exporters so public
-  // authoring schemas retain the exact same admission constraints as runtime.
-  adapter._zod.processJSONSchema = (_context, jsonSchema) => {
-    Object.assign(jsonSchema, structuredClone(schema.jsonSchema));
-  };
-
-  return adapter as unknown as z.ZodType<TOutput, TInput>;
+  protocolZodFacades.set(schema, facade);
+  return facade;
 }

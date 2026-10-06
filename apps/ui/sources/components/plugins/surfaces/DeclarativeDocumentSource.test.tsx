@@ -1123,7 +1123,7 @@ describe('useDeclarativeDocumentSource', () => {
         });
     });
 
-    it('reports a failed Resource refresh while retaining dynamic LKG, then clears it after retry', async () => {
+    it.each(['transient', 'denied'] as const)('reports a %s Resource refresh and retains only authorized dynamic LKG', async (failure) => {
         const adopted = resourceRead({
             version: 1,
             root: { kind: 'text', text: 'Adopted dashboard' },
@@ -1134,7 +1134,7 @@ describe('useDeclarativeDocumentSource', () => {
         }, { digest: `sha256:${'6'.repeat(64)}` });
         const readResource = vi.fn()
             .mockResolvedValueOnce(adopted)
-            .mockRejectedValueOnce(new Error('refresh_unavailable'))
+            .mockRejectedValueOnce(Object.assign(new Error('refresh_unavailable'), failure === 'denied' ? { code: 'denied' } : {}))
             .mockResolvedValueOnce(recovered);
         const hostApi = createDocumentHost({ readResource });
         let tree!: ReturnType<typeof create>;
@@ -1151,12 +1151,12 @@ describe('useDeclarativeDocumentSource', () => {
         });
         const failedOutput = tree.root.findByType('output');
         expect(failedOutput.props).toMatchObject({
-            value: 'Adopted dashboard',
+            value: failure === 'denied' ? 'Static dashboard' : 'Adopted dashboard',
             sourceError: true,
-            documentPresentation: 'staleReconnectingLkg',
-            freshness: 'stale',
+            documentPresentation: failure === 'denied' ? 'terminalUnavailable' : 'staleReconnectingLkg',
+            freshness: failure === 'denied' ? 'unknown' : 'stale',
             pending: 'idle',
-            subscription: 'unsupported',
+            subscription: failure === 'denied' ? 'ended' : 'unsupported',
             resourceError: { message: 'refresh_unavailable' },
         });
 

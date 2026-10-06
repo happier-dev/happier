@@ -1,9 +1,5 @@
-import {
-  EXTERNAL_AGENT_OBSERVATION_METADATA_KEY,
-  ExternalAgentObservationSnapshotV1Schema,
-  type SessionMetadata,
-  type SessionStateFieldValue,
-} from '@happier-dev/protocol';
+import { EXTERNAL_AGENT_OBSERVATION_METADATA_KEY, ExternalAgentObservationSnapshotV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import type { SessionMetadata, SessionStateFieldValue } from '@happier-dev/protocol';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

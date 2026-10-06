@@ -1,5 +1,5 @@
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol/local/services/preview/v1";
-import { isLoopbackHostname } from "@happier-dev/protocol/server/urls";
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { isPreviewAuthorityCookie, previewTargetUrl } from "./headers.js";
 
 type ResponseHeaderValue = string | readonly string[];

@@ -3,7 +3,7 @@ import {
     pickSessionRuntimeLocalMetadata,
     type SessionRuntimeLocalMetadata,
 } from '@/agent/runtime/identity';
-import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
+import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 type MetadataRecord = Record<string, unknown>;
 

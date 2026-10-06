@@ -1,12 +1,7 @@
 import * as z from 'zod';
 
-import {
-    createTranscriptRawRecordV1Schema,
-    type TranscriptRawAgentContentV1,
-    type TranscriptRawAgentEventV1,
-    type TranscriptRawRecordV1,
-    type TranscriptRawUsageDataV1,
-} from '@happier-dev/protocol';
+import { createTranscriptRawRecordV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import type { TranscriptRawAgentContentV1, TranscriptRawAgentEventV1, TranscriptRawRecordV1, TranscriptRawUsageDataV1 } from '@happier-dev/protocol';
 
 import { MessageMetaSchema } from "../messages/messageMetaTypes.js";
 
@@ -20,4 +15,3 @@ export type AgentEvent = TranscriptRawAgentEventV1;
 export type UsageData = TranscriptRawUsageDataV1;
 
 export const RawRecordSchema = rawRecordSchema;
-

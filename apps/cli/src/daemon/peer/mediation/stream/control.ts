@@ -1,10 +1,5 @@
-import {
-    validateMachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlLeaseV1,
-    type MachineLiveStreamControlSidebandV1,
-    type MachineLiveStreamControlSourceV1,
-    type MachineLiveStreamCaptureSourceKindV1,
-} from '@happier-dev/protocol';
+import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type { MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSidebandV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1 } from '@happier-dev/protocol';
 
 export type MachineLiveStreamControlDispatchResult = Readonly<
     | { ok: true }

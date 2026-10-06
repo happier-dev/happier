@@ -1,10 +1,6 @@
-import {
-    BrowserProfileV1Schema,
-    BrowserSidecarProfileBindingV1Schema,
-    type BrowserProfileV1,
-    type BrowserSidecarErrorCodeV1,
-    type BrowserSidecarProfileBindingV1,
-} from '@happier-dev/protocol';
+import { BrowserProfileV1Schema } from '@happier-dev/protocol/browser/profile/v1';
+import { BrowserSidecarProfileBindingV1Schema } from '@happier-dev/protocol/browser/sidecar/v1';
+import type { BrowserProfileV1, BrowserSidecarErrorCodeV1, BrowserSidecarProfileBindingV1 } from '@happier-dev/protocol';
 
 export type SidecarProfileCleanupPlan = Readonly<{
     cleanupOnStop: boolean;

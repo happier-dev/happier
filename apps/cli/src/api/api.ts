@@ -3,47 +3,14 @@ import { createMachineContentCodec } from './machine/machineStoredContent';
 import axios from 'axios'
 import { readSessionCreationInitialTriggerError } from './session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
-import {
-  SESSION_CREATION_AUTHORIZATION_HEADER_V1,
-  PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1,
-  PROVIDER_BROKER_READINESS_AUTHORIZE_HTTP_PATH_V1,
-  PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1,
-  ProviderBrokerModelCatalogAuthorizationV1Schema,
-  ProviderBrokerModelCatalogAuthorizationResponseV1Schema,
-  ProviderBrokerRequestAdmissionV1Schema,
-  ProviderBrokerRequestAdmissionResponseV1Schema,
-  type ProviderBrokerOpenRequestV1,
-  type ProviderBrokerOpenResponseV1,
-  type ProviderBrokerModelCatalogAuthorizationV1,
-  type ProviderBrokerModelCatalogAuthorizationResponseV1,
-  type ProviderBrokerRequestAdmissionV1,
-  type ProviderBrokerRequestAdmissionResponseV1,
-} from '@happier-dev/protocol';
-import {
-  RunnerBrokerReadinessResponseV1Schema,
-  TEAM_CREDENTIAL_EXTERNAL_PROVIDER_ADMISSION_HTTP_PATH_V1,
-  TEAM_CREDENTIAL_EXTERNAL_PROVIDER_TERMINAL_USAGE_HTTP_PATH_V1,
-  TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1,
-  TeamCredentialExternalProviderAdmissionResponseV1Schema,
-  TeamCredentialExternalProviderAdmissionV1Schema,
-  TeamCredentialExternalProviderTerminalUsageResponseV1Schema,
-  TeamCredentialExternalProviderTerminalUsageV1Schema,
-  TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema,
-  TeamCredentialResourceTestAdmissionResponseV1Schema,
-  TeamCredentialResourceTestAdmissionV1Schema,
-  TEAM_CREDENTIAL_ACTION_PATHS_V1,
-  TeamCredentialResourceSummaryV1Schema,
-  type RunnerBrokerReadinessRequestV1,
-  type RunnerBrokerReadinessResponseV1,
-  type TeamCredentialExternalProviderAdmissionResponseV1,
-  type TeamCredentialExternalProviderAdmissionV1,
-  type TeamCredentialExternalProviderTerminalUsageResponseV1,
-  type TeamCredentialExternalProviderTerminalUsageV1,
-  type TeamCredentialExternalProviderModelCatalogAuthorizationV1,
-  type TeamCredentialResourceTestAdmissionResponseV1,
-  type TeamCredentialResourceTestAdmissionV1,
-  type TeamCredentialResourceSummaryV1,
-} from '@happier-dev/protocol/teams';
+import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { PROVIDER_BROKER_MODEL_CATALOG_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_READINESS_AUTHORIZE_HTTP_PATH_V1, PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1, ProviderBrokerModelCatalogAuthorizationV1Schema, ProviderBrokerModelCatalogAuthorizationResponseV1Schema, ProviderBrokerRequestAdmissionV1Schema, ProviderBrokerRequestAdmissionResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1, ProviderBrokerModelCatalogAuthorizationV1, ProviderBrokerModelCatalogAuthorizationResponseV1, ProviderBrokerRequestAdmissionV1, ProviderBrokerRequestAdmissionResponseV1 } from '@happier-dev/protocol';
+import { RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_ADMISSION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_TERMINAL_USAGE_HTTP_PATH_V1, TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1, TeamCredentialExternalProviderAdmissionResponseV1Schema, TeamCredentialExternalProviderAdmissionV1Schema, TeamCredentialExternalProviderTerminalUsageResponseV1Schema, TeamCredentialExternalProviderTerminalUsageV1Schema, TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema, TeamCredentialResourceTestAdmissionResponseV1Schema, TeamCredentialResourceTestAdmissionV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { TEAM_CREDENTIAL_ACTION_PATHS_V1 } from '@happier-dev/protocol/teams/credentials/actionsV1';
+import { TeamCredentialResourceSummaryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { RunnerBrokerReadinessRequestV1, RunnerBrokerReadinessResponseV1, TeamCredentialExternalProviderAdmissionResponseV1, TeamCredentialExternalProviderAdmissionV1, TeamCredentialExternalProviderTerminalUsageResponseV1, TeamCredentialExternalProviderTerminalUsageV1, TeamCredentialExternalProviderModelCatalogAuthorizationV1, TeamCredentialResourceTestAdmissionResponseV1, TeamCredentialResourceTestAdmissionV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import {
   buildCurrentAccountStoredContentCompatibilityHttpHeaders,
   readCliClientUpgradeRequired,
@@ -158,25 +125,13 @@ export {
   isMachineReplacedError,
   isMachineRevokedError,
 } from './machine/machineRegistrationErrors';
-import {
-  ConnectedServiceCredentialHealthV1Schema,
-  ConnectedServiceCredentialCompatibleMutationResponseV1Schema,
-  ConnectedServiceCredentialMutationResponseV1Schema,
-  ConnectedServiceCredentialRevisionV1Schema,
-  parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
-  projectBuiltInLegacyConnectedServiceCredentialRecordV1,
-  SealedConnectedServiceQuotaSnapshotV1Schema,
-  StoredJsonContentEnvelopeSchema,
-  MACHINE_PLAIN_DATA_KEY_MARKER,
-  decodePlainMachineStoredContent,
-  encodePlainMachineStoredContent,
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  SessionOwnerMetadataEnvelopeV1Schema,
-  SessionSharedMetadataV1Schema,
-  SessionOrganizationPlacementV1Schema,
-  sessionCreationCorrespondenceMatchesV1,
-  projectSessionOwnerCompatibilityViewV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialCompatibleMutationResponseV1Schema, ConnectedServiceCredentialMutationResponseV1Schema, ConnectedServiceCredentialRevisionV1Schema, SealedConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { parseBuiltInLegacyConnectedServiceQuotaSnapshotV1, projectBuiltInLegacyConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type {
   ConnectedServiceCredentialHealthV1,
   ConnectedServiceCredentialCompatibleMutationResponseV1,
@@ -204,7 +159,8 @@ import {
 export { SessionMetadataPrivacyUpgradeRequiredError } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { resolveSessionRoleSnapshotCreationMetadata } from '@/session/metadata/resolveSessionRoleSnapshotCreationMetadata';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { SessionReportsToV1Schema, SessionAwarenessOriginV1Schema } from '@happier-dev/protocol';
+import { SessionReportsToV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { SessionAwarenessOriginV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 
 function assertSessionCreationCorrespondenceMatches(
   requested: unknown,

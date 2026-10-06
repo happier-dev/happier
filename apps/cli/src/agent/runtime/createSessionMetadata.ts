@@ -10,13 +10,9 @@
 import os from 'node:os';
 import { resolve } from 'node:path';
 
-import {
-    buildSessionWorkspaceLocationV1,
-    parseSessionMcpSelectionV1Json,
-    type SessionMetadata,
-    type SessionModelSelectionIntentV1,
-    type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { parseSessionMcpSelectionV1Json } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import type { SessionMetadata, SessionModelSelectionIntentV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import {
     applyAcpConfigOptionIntentSessionMetadata,
     applyAcpSessionModeIntentSessionMetadata,

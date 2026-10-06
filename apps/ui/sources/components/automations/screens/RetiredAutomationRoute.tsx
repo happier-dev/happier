@@ -32,10 +32,10 @@ function ResolveAutomation({ id }: Readonly<{ id: string }>): React.ReactElement
             if (!current()) return;
             setDestination(automation === null
                 ? { pathname: '/workflows', params: { automationUnavailable: '1' } }
-                : automation.workflowDefinitionId
-                    ? { pathname: '/workflows/[id]', params: { id: automation.workflowDefinitionId, intent: 'schedule' } }
-                    : automation.scopeSessionId
-                        ? { pathname: '/session/[id]/triggers', params: { id: automation.scopeSessionId, serverId: lifetime.scope.serverId } }
+                : automation.scopeSessionId
+                    ? { pathname: '/session/[id]/triggers', params: { id: automation.scopeSessionId, serverId: lifetime.scope.serverId, trigger: id } }
+                    : automation.workflowDefinitionId
+                        ? { pathname: '/workflows/[id]', params: { id: automation.workflowDefinitionId, intent: 'schedule' } }
                         : { pathname: '/workflows', params: { trigger: id } });
         }).catch((error: unknown) => {
             if (!current()) return;

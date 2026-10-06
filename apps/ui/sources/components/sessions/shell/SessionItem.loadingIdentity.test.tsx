@@ -23,14 +23,6 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        pillLabel: () => ({ fontSize: 10, lineHeight: 12 }),
-        tabular: () => ({ fontVariant: ['tabular-nums'] }),
-    },
-}));
-
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
     TextInput: 'TextInput',
@@ -48,7 +40,6 @@ installSessionShellCommonModuleMocks({
             useProfile: useProfileSpy,
             useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
             useSessionListMeaningfulActivityAt: () => 0,
-            useSetting: () => false,
         });
     },
 });
@@ -104,29 +95,6 @@ vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    isUntitledSessionName: (name: string) => name === 'session.untitled',
-    getSessionName: () => 'session.untitled',
-    getSessionSubtitle: () => '',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        state: 'disconnected',
-        isConnected: false,
-        statusText: '',
-        statusColor: 'status-color',
-        statusDotColor: 'dot-color',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        state: 'disconnected',
-        isConnected: false,
-        statusText: '',
-        shouldShowStatus: false,
-        statusColor: 'status-color',
-        statusDotColor: 'dot-color',
-        isPulsing: false,
-    }),
-}));
 
 function createMetadataPendingSession(id: string) {
     return createSessionFixture({
@@ -156,6 +124,8 @@ function createMetadataUnavailableSession(id: string): SessionListRenderableSess
         thinkingAt: 0,
         presence: 1,
         metadataUnavailable: true,
+        encryptionMode: 'plain',
+        encryptedContentAvailability: 'ready',
     };
 }
 

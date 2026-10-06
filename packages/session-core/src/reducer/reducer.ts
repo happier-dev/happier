@@ -134,11 +134,8 @@ import type { ReducerStoredPermission } from "./helpers/toolCallProjection.js";
 import { isDebugFlagEnabled } from "./helpers/debugFlags.js";
 import { readStreamSegmentMetaV1 } from "./helpers/streamSegmentMeta.js";
 import { compareIncomingTranscriptRowsOldestFirst, normalizeTranscriptSeq } from "../messages/transcriptOrdering.js";
-import {
-    SessionContextUsageSnapshotV1Schema,
-    type MessageStructuredPresentationV1,
-    type SessionContextUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
+import type { MessageStructuredPresentationV1, SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
 import {
     applyTranscriptObservationMetadata,
     isRecoveredHistoryTranscriptObservation,

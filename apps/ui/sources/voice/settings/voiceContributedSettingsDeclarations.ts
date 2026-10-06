@@ -1,5 +1,4 @@
-import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol';
-import { defineSettingsPage, SETTING_VALUE_UNAVAILABLE, type SettingDeclaration, type SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
+import { defineSettingsPage, SETTING_VALUE_UNAVAILABLE, parseSettingScalarValue, type SettingDeclaration, type SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import type { SettingsPageId } from '@/components/settings/catalog/types';
 import { readVoiceProviderSettingsConfig, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { resolvePluginLocalizedText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -10,7 +9,7 @@ import { readRealtimeProviderConfigPath, updateRealtimeProviderConfig } from './
 import { parseRealtimeSettingsDescriptor, type RealtimeSettingsFieldDescriptor } from './panels/realtime/descriptor';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { Settings } from '@/sync/domains/settings/settings';
-import type { SettingScalarValue } from '@/components/settings/catalog/settingDeclarations';
+import type { SettingValue } from '@/components/settings/catalog/settingDeclarations';
 import { readBundledSpeechSettingsDescriptorFromEntry } from './panels/bundledSpeech/descriptor';
 
 export const voiceSettingsDeclarationRegistry = createDefaultVoiceProviderRegistry();
@@ -48,13 +47,22 @@ function providerFieldBinding(entry: VoiceProviderRegistryEntry, path: string, p
         if (typeof value !== 'string') return undefined;
         try { return JSON.parse(value) as unknown; } catch { return undefined; }
     };
-    const mutate = (settings: Settings, value: SettingScalarValue) => {
+    const parse = (value: unknown) => {
+        const scalar = parseSettingScalarValue(value);
+        const candidate = scalar.success ? decode(scalar.value) : undefined;
+        return scalar.success && candidate !== undefined
+            && updateRealtimeProviderConfig(owner, descriptor.defaultConfig, segments, candidate)
+            ? scalar : { success: false as const };
+    };
+    const mutate = (settings: Settings, value: SettingValue) => {
+        const parsed = parse(value);
+        if (!parsed.success) return null;
         if (voiceSettingsDeclarationRegistry.get(entry.providerId)?.providerSettings !== descriptor) return null;
         const envelope = settings.voice.providers[entry.providerId];
         if (envelope && envelope.schemaVersion !== descriptor.schemaVersion) return null;
         const config = envelope ? readVoiceProviderSettingsConfig(settings.voice, entry.providerId) : descriptor.defaultConfig;
         if (!config) return null;
-        const next = updateRealtimeProviderConfig(owner, config, segments, decode(value));
+        const next = updateRealtimeProviderConfig(owner, config, segments, decode(parsed.value));
         return next ? { voice: writeVoiceProviderSettingsConfig(settings.voice, entry.providerId, next) } : null;
     };
     return {
@@ -67,16 +75,12 @@ function providerFieldBinding(entry: VoiceProviderRegistryEntry, path: string, p
             const value = readRealtimeProviderConfigPath(config, segments);
             return compound && value !== undefined ? JSON.stringify(value) : value;
         },
-        parse: (value) => {
-            const scalar = SettingsDeclarationValueV1Schema.safeParse(value);
-            const candidate = decode(value);
-            return scalar.success && candidate !== undefined
-                && updateRealtimeProviderConfig(owner, descriptor.defaultConfig, segments, candidate)
-                ? { success: true, value: scalar.data } : { success: false };
-        },
+        parse,
         mutate,
         prepare: preparesEndpoint || presentation && (presentation.kind === 'privacy_opt_in' || presentation.requiresOptIn === true
             || presentation.kind === 'model' && presentation.movingAliasRequiresOptIn === true) ? async (settings, value, _services, context) => {
+            const parsed = parse(value);
+            if (!parsed.success) return null;
             const { storage } = await import('@/sync/domains/state/storage');
             const scope = storage.getState().settingsScope;
             const isCurrent = () => !context?.signal?.aborted
@@ -85,16 +89,16 @@ function providerFieldBinding(entry: VoiceProviderRegistryEntry, path: string, p
                 && voiceSettingsDeclarationRegistry.get(entry.providerId)?.providerSettings === descriptor;
             if (!isCurrent()) return null;
             if (preparesEndpoint) {
-                if (typeof value !== 'string') return null;
+                if (typeof parsed.value !== 'string') return null;
                 const { prepareSpeechEndpointSettingChange } = await import('./panels/bundledSpeech/prepareEndpointSettingChange');
-                const intent = await prepareSpeechEndpointSettingChange({ entry, settings, value, isCurrent, signal: context?.signal });
+                const intent = await prepareSpeechEndpointSettingChange({ entry, settings, value: parsed.value, isCurrent, signal: context?.signal });
                 return intent ? (latest) => isCurrent() ? intent(latest) : null : null;
             }
             if (presentation) {
                 const { confirmRealtimeProviderSettingChange } = await import('./panels/realtime/confirmRealtimeProviderSettingChange');
-                if (!await confirmRealtimeProviderSettingChange({ field: presentation, value: decode(value), isCurrent, signal: context?.signal })) return null;
+                if (!await confirmRealtimeProviderSettingChange({ field: presentation, value: decode(parsed.value), isCurrent, signal: context?.signal })) return null;
             }
-            return (settings) => isCurrent() ? mutate(settings, value) : null;
+            return (settings) => isCurrent() ? mutate(settings, parsed.value) : null;
         } : undefined,
     };
 }

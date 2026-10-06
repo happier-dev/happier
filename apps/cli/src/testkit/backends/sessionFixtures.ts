@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';

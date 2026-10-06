@@ -2,13 +2,10 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 
-import {
-  parseSessionMcpSelectionV1Json,
-  SessionCreationTagV1Schema,
-  SessionRolesV1Schema,
-  type ConnectedServiceMaterializationIdentityV1,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { parseSessionMcpSelectionV1Json } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { ConnectedServiceMaterializationIdentityV1, SessionMetadata } from '@happier-dev/protocol';
 import { applyAcpSessionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { ApiClient } from '@/api/api';

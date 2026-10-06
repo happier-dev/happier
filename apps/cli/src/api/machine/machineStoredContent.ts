@@ -1,7 +1,4 @@
-import {
-  decodePlainMachineStoredContent,
-  encodePlainMachineStoredContent,
-} from '@happier-dev/protocol';
+import { decodePlainMachineStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
 import {
   decodeBase64,

@@ -1,7 +1,7 @@
 import type { LookupFunction } from 'node:net';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { isLoopbackHostname } from '@happier-dev/protocol';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type {
     PluginDiagnosticData,
     PluginCancellationOptions,

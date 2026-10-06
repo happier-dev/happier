@@ -1,16 +1,11 @@
-import {
-    PluginAccountSettingsValuesV1Schema,
-    PluginIdSchema,
-    PluginJsonSchemaV2Schema,
-    PluginSettingsContributionV2Schema,
-    type PluginJsonSchemaValidator,
-    compilePluginJsonSchema,
-    isBoundedPluginPerActiveServerValueV1,
-    isValidPluginJsonSchemaValue,
-    type PluginSettingFieldV2,
-    type PluginSettingsContributionV2,
-} from '@happier-dev/protocol';
-import { containsEquivalentPluginJsonValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { PluginSettingsContributionV2Schema, isBoundedPluginPerActiveServerValueV1 } from '@happier-dev/protocol/plugins/contributions/settings';
+import type { PluginJsonSchemaValidator, PluginSettingFieldV2, PluginSettingsContributionV2 } from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { containsEquivalentPluginJsonValue } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import {
     isPluginError,
     PluginError,

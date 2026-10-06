@@ -28,7 +28,6 @@ describe('buildAccountSettingsSnapshot', () => {
                 executionMachine: {
                     mode: 'fixed',
                     machineId: 'machine-1',
-                    autoMachineId: null,
                 },
                 ui: {
                     ...settingsDefaults.voice.ui,

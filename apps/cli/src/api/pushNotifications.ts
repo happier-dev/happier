@@ -12,14 +12,9 @@ import {
     readPushFetchTokensFailureCooldownMs,
     readPushFetchTokensTimeoutMs,
 } from './pushNotificationsConfig'
-import {
-    collectExpoPushTokensMarkedUnregistered,
-    getExpoErrorCode,
-    PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
-    PUSH_NOTIFICATION_CATEGORY_IDS,
-    resolvePushNotificationAndroidChannelId,
-    type LiveActivityRemoteUpdateRequestV1,
-} from '@happier-dev/protocol'
+import { collectExpoPushTokensMarkedUnregistered, getExpoErrorCode } from '@happier-dev/protocol/push/expoPushDelivery';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import type { LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration'
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp'
 

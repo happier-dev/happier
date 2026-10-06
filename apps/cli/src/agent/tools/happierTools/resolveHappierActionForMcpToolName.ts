@@ -1,9 +1,6 @@
-import {
-  extractShellCommand,
-  getActionSpec,
-  listActionSpecs,
-  type ActionId,
-} from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionId } from '@happier-dev/protocol';
 
 import type { PermissionMode } from '@/api/types';
 

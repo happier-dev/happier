@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -58,17 +59,22 @@ describe('SessionListRow keyboard carry', () => {
             </InjectedAuthProvider>,
         );
         const row = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onKeyDownCapture === 'function')[0]!;
-        // DOM boundary: closest identifies the focused control; the first primary action is the row surface.
-        const primary = {};
-        const secondary = {};
-        const currentTarget = { querySelector: () => primary };
+        // Real DOM controls preserve closest/matches/querySelector semantics at the web boundary.
+        const currentTarget = document.createElement('div');
+        const primary = document.createElement('button');
+        const secondary = document.createElement('button');
+        secondary.setAttribute('aria-haspopup', 'menu');
+        const nested = document.createElement('span');
+        secondary.append(nested);
+        currentTarget.append(primary, secondary);
         for (const key of [' ', 'Enter']) {
-            const event = { key, nativeEvent: { target: { closest: () => secondary } }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+            const event = { key, nativeEvent: { target: nested }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
             row.props.onKeyDownCapture(event);
             expect(handleRowKey).not.toHaveBeenCalled();
             expect(event.preventDefault).not.toHaveBeenCalled();
+            expect(event.stopPropagation).not.toHaveBeenCalled();
         }
-        const event = { key: ' ', nativeEvent: { target: { closest: () => primary } }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+        const event = { key: ' ', nativeEvent: { target: primary }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };
         row.props.onKeyDownCapture(event);
         expect(handleRowKey).toHaveBeenCalledWith(expect.objectContaining({ sessionKey: 'sess_keyboard', key: ' ' }));
         expect(event.preventDefault).toHaveBeenCalled();

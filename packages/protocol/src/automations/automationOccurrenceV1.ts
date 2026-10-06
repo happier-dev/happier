@@ -2,6 +2,7 @@ import { hmac } from '@noble/hashes/hmac';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { sha256 } from '@noble/hashes/sha2';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import {
@@ -314,6 +315,7 @@ export const AutomationOccurrenceEvidenceV1Schema = z.discriminatedUnion('kind',
 export type AutomationOccurrenceEvidenceV1 = z.infer<
   typeof AutomationOccurrenceEvidenceV1Schema
 >;
+export const AutomationOccurrenceEvidenceV1ReadSchema = createStoredReadSchema(AutomationOccurrenceEvidenceV1Schema);
 
 const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
   z.object({

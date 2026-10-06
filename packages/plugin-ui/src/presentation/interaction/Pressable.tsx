@@ -147,6 +147,9 @@ export type HappierPressableProps = Readonly<{
   webRole?: 'menuitemcheckbox' | 'menuitemradio';
   accessibilityLabel?: string;
   accessibilityHint?: string;
+  /** Native assistive actions, supplied by the owning domain operation. */
+  accessibilityActions?: readonly Readonly<{ name: string; label?: string }>[];
+  onAccessibilityAction?: (event: Readonly<{ nativeEvent: Readonly<{ actionName: string }> }>) => void;
   hitSlop?: number;
   testID?: string;
   /** Internal composite-widget focus registration; disabled controls report no target. */
@@ -238,6 +241,8 @@ export function HappierPressable({
   webRole,
   accessibilityLabel,
   accessibilityHint,
+  accessibilityActions,
+  onAccessibilityAction,
   hitSlop,
   testID,
   controlRef,
@@ -421,6 +426,8 @@ export function HappierPressable({
       {...platformRoleProps}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
+      accessibilityActions={accessibilityActions}
+      onAccessibilityAction={isDisabled ? undefined : onAccessibilityAction}
       // Emitted in BOTH prop shapes on purpose, from one computed fact.
       // `accessibilityState` is React Native's documented primary API and the
       // shape the app's existing renderer assertions read; React Native Web

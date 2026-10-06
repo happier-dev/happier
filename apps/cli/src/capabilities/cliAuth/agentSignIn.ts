@@ -1,10 +1,6 @@
-import {
-  parseQualifiedPluginContributionKey,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type AgentSignInPrepareRequest,
-  type AgentSignInPrepareResponse,
-  type AgentSignInStatusResponse,
-} from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { AgentSignInPrepareRequest, AgentSignInPrepareResponse, AgentSignInStatusResponse } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot, readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { resolveAgentCliLaunchSpecForRuntime } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';

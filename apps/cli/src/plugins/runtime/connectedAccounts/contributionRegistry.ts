@@ -1,8 +1,6 @@
-import {
-    PluginConnectedAccountDescriptorContributionV2Schema,
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 

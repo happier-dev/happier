@@ -379,7 +379,7 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
 /**
  * Run detail says its status once, as the first words of the outcome line
  * (07 §3, §6.1): "{word} — {sentence}". A sentence that already opens with the
- * word ("Completed. 3 items completed.") is the line on its own.
+ * word is the line on its own.
  */
 export function formatWorkflowRunOutcomeLine(params: Readonly<{ word: string; sentence: string }>): string {
     return params.sentence.startsWith(params.word)

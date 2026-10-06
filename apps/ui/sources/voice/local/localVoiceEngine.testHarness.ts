@@ -198,7 +198,7 @@ export const BASE_SETTINGS = {
         providerId: 'local_conversation',
         assistantLanguage: null,
         welcome: { enabled: false, mode: 'immediate', templateId: null },
-        executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+        executionMachine: { mode: 'auto', machineId: null },
         privacy: {
             shareSessionSummary: true,
             shareRecentMessages: true,
@@ -1249,6 +1249,7 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         }
         voiceSessionBindingStore.getState().replacePersistedBindings([]);
         registerVoiceAdapters([]);
+        useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
         useVoiceTargetStore.getState().setScope('global');
         useVoiceTargetStore.getState().setPrimaryActionSessionAddress(null);
         useVoiceTargetStore.getState().setVoiceLiveContextSessionAddresses([]);

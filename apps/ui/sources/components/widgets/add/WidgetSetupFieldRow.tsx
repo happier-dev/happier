@@ -1,23 +1,23 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { resolveHappierActionFieldPresentation, useHappierInputPicker } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, happierPageTextMetrics, resolveHappierActionFieldPresentation, useHappierInputPicker } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol';
 import { readInputOptionValue } from '@happier-dev/protocol/inputs';
 
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import {
     AMBIGUOUS_INLINE_LIMIT,
+    isLiteralWidgetSetupField,
     type WidgetSetupField,
     type WidgetSetupRow,
     type WidgetSetupValue,
@@ -26,13 +26,13 @@ import {
 const FOLLOW_ID = 'follow';
 const ANOTHER_ID = 'another';
 const PICKER_ID = 'picker';
+const RETRY_ID = 'retry';
 const pinId = (index: number) => `pin:${index}`;
-/** Two to four short static choices are a segmented control, all visible (the control table). */
-const SEGMENTED_MAX = 4;
 
 export type WidgetSetupFieldChange =
     | Readonly<{ kind: 'follow'; slot: string }>
-    | Readonly<{ kind: 'pin'; value: JsonValue }>;
+    | Readonly<{ kind: 'pin'; value: JsonValue }>
+    | Readonly<{ kind: 'clear' }>;
 
 /**
  * One input of the Set up / Edit inputs step (lab `dashboards` IN): what it is and one control that
@@ -43,8 +43,8 @@ export type WidgetSetupFieldChange =
  * offers nothing to choose.
  *
  * The field menu lists Follow first, then a few pinnable values, then Another… (search over every
- * choice the one options resolver returned). Plain inputs (text, a switch, 2–4 static choices) use
- * the same controls as Action fields.
+ * choice the one options resolver returned). Literal inputs (nothing to follow, no discovered
+ * choices) are the public typed field itself, as in Action and Workflow forms.
  */
 export function WidgetSetupFieldRow(props: Readonly<{
     entry: WidgetSetupField;
@@ -52,33 +52,23 @@ export function WidgetSetupFieldRow(props: Readonly<{
     /** Pinnable values from the one options resolver (static or dynamic). */
     options: readonly WidgetSetupValue[];
     optionsStatus: 'loading' | 'ready' | 'failed';
+    /** Reads the choices again after a failed read (the one options resolver's retry). */
+    onRetryOptions?: () => void;
     /** A primitive value currently pinned (text, number, boolean) for the plain controls. */
     plainValue: JsonValue | undefined;
     phone: boolean;
+    /** A repair opened the step at this input: its choices start open. */
+    autoOpen?: boolean;
     disabled?: boolean;
     onChange: (change: WidgetSetupFieldChange) => void;
     testID: string;
 }>): React.ReactElement {
     const { entry, row } = props;
     const field = entry.field;
-    const plain = !entry.follow && !entry.viewer ? plainControlKind(field.widget, field.options?.length ?? 0) : null;
-    if (plain) return <PlainFieldRow {...props} kind={plain} />;
     if (entry.viewer) return <ViewerFieldRow {...props} />;
     if (row.kind === 'choices') return <ChoicesFieldRow {...props} row={row} />;
+    if (!entry.follow && isLiteralWidgetSetupField(field)) return <LiteralFieldRow {...props} />;
     return <BindingFieldRow {...props} />;
-}
-
-function plainControlKind(widget: string, staticOptions: number): 'text' | 'number' | 'boolean' | 'segmented' | null {
-    switch (widget) {
-        case 'text':
-        case 'url':
-        case 'textarea': return 'text';
-        case 'number':
-        case 'integer': return 'number';
-        case 'boolean': return 'boolean';
-        case 'select': return staticOptions >= 2 && staticOptions <= SEGMENTED_MAX ? 'segmented' : null;
-        default: return null;
-    }
 }
 
 function rowSubtitle(props: Readonly<{ entry: WidgetSetupField; row: WidgetSetupRow }>): string | undefined {
@@ -93,7 +83,7 @@ function NeededTag(): React.ReactElement {
 function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement {
     const { theme } = useUnistyles();
     const { entry, row, options } = props;
-    const [open, setOpen] = React.useState(false);
+    const [open, setOpen] = React.useState(props.autoOpen === true);
     const [searching, setSearching] = React.useState(false);
     const follow = entry.follow;
     // A few likely values sit in the menu; the rest wait behind Another… (lab IN "Follow or pin").
@@ -151,6 +141,16 @@ function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
                 icon: <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} />,
             });
         }
+        // A failed read says so in the menu and offers to read again, rather than an empty list.
+        if (!searching && props.optionsStatus === 'failed' && props.onRetryOptions) {
+            list.push({
+                id: RETRY_ID,
+                testID: `${props.testID}.retry`,
+                title: t('common.retry'),
+                subtitle: t('widgetAdd.optionsFailed'),
+                icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />,
+            });
+        }
         if (!searching && pickerLabel !== undefined) {
             list.push({
                 id: PICKER_ID,
@@ -162,9 +162,13 @@ function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
             });
         }
         return list;
-    }, [follow, options.length, pickerAccessibilityLabel, pickerLabel, pinCategory, props.optionsStatus, props.testID, row, searching, shortlist, theme.colors.text.secondary]);
+    }, [follow, options.length, pickerAccessibilityLabel, pickerLabel, pinCategory, props.onRetryOptions, props.optionsStatus, props.testID, row, searching, shortlist, theme.colors.text.secondary]);
 
     const select = React.useCallback((id: string) => {
+        if (id === RETRY_ID) {
+            props.onRetryOptions?.();
+            return;
+        }
         if (id === PICKER_ID) {
             setOpen(false);
             void openPicker();
@@ -334,104 +338,62 @@ function ChoicesFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
     );
 }
 
-/** Plain inputs keep the Action field grammar: text is a field, a boolean a switch, 2–4 choices segmented. */
-function PlainFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow> & Readonly<{
-    kind: 'text' | 'number' | 'boolean' | 'segmented';
-}>): React.ReactElement {
-    const field = props.entry.field;
+/**
+ * A literal input — text, a number, a switch, a list, JSON, static choices or several choices — is
+ * the one public typed field (`HappierInputField`, the same Action fields and Workflow inputs use),
+ * set in the step's row: it chooses and draws the control, parses what is typed, keeps multiple
+ * choices a collection and offers the type's own picker. The row adds only the title, the line under
+ * it and the Needed tag. A value typed back to empty clears the input.
+ */
+function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
+    const { entry, row } = props;
+    const field = entry.field;
     const value = props.plainValue;
-    const subtitle = rowSubtitle(props);
-    const titleAccessory = props.row.kind === 'needed' && field.required ? <NeededTag /> : undefined;
-    if (props.kind === 'boolean') {
-        return (
-            <Item
-                testID={props.testID}
-                title={field.title}
-                subtitle={subtitle}
-                titleAccessory={titleAccessory}
-                showChevron={false}
-                rightElement={(
-                    <Switch
-                        testID={`${props.testID}.switch`}
-                        accessibilityLabel={field.title}
-                        value={value === true}
-                        disabled={props.disabled}
-                        onValueChange={(next) => props.onChange({ kind: 'pin', value: next })}
-                    />
-                )}
-            />
-        );
-    }
-    if (props.kind === 'segmented') {
-        const options = field.options ?? [];
-        const selected = options.findIndex((option) => option.value === value);
-        return (
-            <Item
-                testID={props.testID}
-                title={field.title}
-                subtitle={subtitle}
-                titleAccessory={titleAccessory}
-                showChevron={false}
-                accessoryLayout={props.phone ? 'stacked' : 'inline'}
-                rightElement={(
-                    <SegmentedTabBar
-                        role="radiogroup"
-                        accessibilityLabel={field.title}
-                        testIDPrefix={`${props.testID}.segment`}
-                        tabs={options.map((option, index) => ({ id: String(index), label: option.label }))}
-                        activeTabId={selected >= 0 ? String(selected) : ''}
-                        onSelectTab={(id) => {
-                            const option = options[Number(id)];
-                            if (option && typeof option.value === 'string') props.onChange({ kind: 'pin', value: option.value });
-                        }}
-                    />
-                )}
-            />
-        );
-    }
-    return (
-        <PlainTextFieldRow {...props} numeric={props.kind === 'number'} subtitle={subtitle} titleAccessory={titleAccessory} />
-    );
-}
-
-function PlainTextFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow> & Readonly<{
-    numeric: boolean;
-    subtitle: string | undefined;
-    titleAccessory: React.ReactNode;
-}>): React.ReactElement {
-    const field = props.entry.field;
-    const stored = props.plainValue;
-    const [text, setText] = React.useState(() => (typeof stored === 'string' || typeof stored === 'number' ? String(stored) : ''));
-    const onChangeText = (next: string) => {
-        setText(next);
-        if (!props.numeric) {
-            props.onChange({ kind: 'pin', value: next });
-            return;
-        }
-        // The same parsing Action and Workflow fields use: a number pins only once it is complete
-        // and admissible for its widget (an integer field never pins 1.5).
-        const presentation = resolveHappierActionFieldPresentation(field, stored);
-        const value = presentation.kind === 'text' ? presentation.parseText(next) : undefined;
-        if (typeof value === 'number') props.onChange({ kind: 'pin', value });
-    };
+    const multiple = field.widget === 'multiselect';
+    const choices = multiple || field.widget === 'select';
+    const selection = !choices ? undefined : multiple ? (Array.isArray(value) ? value : []) : value;
+    const options = React.useMemo(() => props.options.map((option, index) => ({
+        value: option.value,
+        label: option.label,
+        ...(option.description ? { description: option.description } : {}),
+        ...(option.disabled ? { disabled: true } : {}),
+        testID: `${props.testID}.option.${index}`,
+    })), [props.options, props.testID]);
+    const presentation = resolveHappierActionFieldPresentation(field, value, selection);
+    // A switch or a short field sits beside its title; choices and multi-line text go beneath it.
+    const stacked = props.phone || presentation.kind === 'select' || (presentation.kind === 'text' && presentation.multiline);
     return (
         <Item
             testID={props.testID}
             title={field.title}
-            subtitle={props.subtitle}
-            titleAccessory={props.titleAccessory}
+            // A chosen value that stopped resolving says why; a typed one is still being typed, and the
+            // step's line says what is needed.
+            subtitle={choices ? rowSubtitle(props) : field.description}
+            subtitleLines={0}
+            titleAccessory={row.kind === 'needed' && field.required ? <NeededTag /> : undefined}
             showChevron={false}
-            accessoryLayout={props.phone ? 'stacked' : 'inline'}
+            accessoryLayout={stacked ? 'stacked' : 'inline'}
             rightElement={(
-                <FieldTextInput
-                    testID={`${props.testID}.input`}
-                    accessibilityLabel={field.title}
-                    value={text}
-                    onChangeText={onChangeText}
-                    {...(field.placeholder ? { placeholder: field.placeholder } : {})}
-                    {...(props.numeric ? { inputMode: 'decimal' as const, keyboardType: 'decimal-pad' as const } : {})}
-                    {...(field.widget === 'textarea' ? { multiline: true } : {})}
-                    editable={props.disabled !== true}
+                <HappierInputField<JsonValue>
+                    frame="none"
+                    field={field}
+                    value={value}
+                    selection={selection as JsonValue | readonly JsonValue[] | undefined}
+                    options={options}
+                    optionsStatus={props.optionsStatus}
+                    optionsNotice={props.optionsStatus === 'failed' ? (
+                        <SurfaceStateCard kind="error" size="line" title={t('widgetAdd.optionsFailed')} testID={`${props.testID}.optionsFailed`}
+                            {...(props.onRetryOptions ? { action: { label: t('common.retry'), onPress: props.onRetryOptions } } : {})} />
+                    ) : null}
+                    disabled={props.disabled === true}
+                    isEqual={sameStrictJsonValue}
+                    keyForOption={(_option, index) => String(index)}
+                    controlTestID={`${props.testID}.input`}
+                    testID={`${props.testID}.control`}
+                    theme={presentationTheme}
+                    onChange={(next) => props.onChange(next === undefined ? { kind: 'clear' } : { kind: 'pin', value: next as JsonValue })}
                 />
             )}
         />
@@ -439,5 +401,5 @@ function PlainTextFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRo
 }
 
 const styles = StyleSheet.create((theme) => ({
-    needed: { ...Typography.default('semiBold'), fontSize: 11, lineHeight: 14, color: theme.colors.text.tertiary },
+    needed: { ...Typography.default('semiBold'), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
 }));

@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View, type TextInput } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { AppPaneScopeHost, type AppPaneDestinationDetails } from '@/components/appShell/panes/AppPaneScopeHost';
 import { DEFAULT_MAIN_MIN_PX } from '@/components/ui/panels/paneBreakpoints';
@@ -63,7 +64,7 @@ import {
     setWorkflowStepExecutionField,
     walkWorkflowBlocks,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { insertWorkflowStarterExample, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { insertWorkflowEditorBlock, insertWorkflowStarterExample, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import type { WorkflowEditorHistoryControls } from '../editor/useWorkflowEditorHistory';
 import {
     resolveSessionAuthoringRuntimeDescriptorAvailability,
@@ -74,6 +75,7 @@ import { announceWorkflowCommandRefused, useWorkflowAnnouncements } from '../acc
 import { WorkflowBlockListEditor, type WorkflowDocumentPresentation } from '../editor/WorkflowBlockListEditor';
 import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { WorkflowInspector } from '../editor/WorkflowInspector';
+import { WorkflowAddBlockMenu } from '../editor/WorkflowAddBlockMenu';
 import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -83,7 +85,6 @@ import {
     formatWorkflowWhereSummary,
     type WorkflowProjectTargetControlHandle,
 } from '../editor/WorkflowProjectTargetControl';
-import { workflowPressFeedbackStyle } from '../editor/workflowEditorStyles';
 import {
     WorkflowSaveStatus,
     type WorkflowSaveConflict,
@@ -1014,7 +1015,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             accessibilityRole="button"
             accessibilityLabel={t('workflows.page.issuesToFix', { count: errorCount })}
             onPress={focusFirstIssue}
-            style={(state) => [styles.validity, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+            style={(state) => [styles.validity, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
             <Text style={styles.validityText}>{t('workflows.page.issuesToFix', { count: errorCount })}</Text>
         </HappierPressable>
@@ -1026,7 +1027,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             accessibilityRole="button"
             accessibilityLabel={t('workflows.page.backToRun')}
             onPress={props.onBackToRun}
-            style={(state) => [styles.action, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+            style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
             <Text style={styles.actionLabel}>{t('workflows.page.backToRun')}</Text>
         </HappierPressable>
@@ -1244,17 +1245,33 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     </View>
                 </KeyboardAwareScrollView>
                 <View testID={`${testIDPrefix}-phone-bar`} style={styles.phoneBar}>
+                    {!documentEditable ? null : <WorkflowAddBlockMenu
+                        testID={`${testIDPrefix}-phone-add`}
+                        composerScope={props.composerScope}
+                        scopeLabel={t('workflows.a11y.blockList')}
+                        {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
+                        onAdd={(request) => {
+                            const lastBlock = draft.blocks.at(-1);
+                            const insertion = insertWorkflowEditorBlock(draft, {
+                                request, list: { kind: 'root' },
+                                ...(lastBlock === undefined ? {} : { afterBlockId: lastBlock.id }),
+                            });
+                            onChange(insertion.draft);
+                            props.onSelectBlock(insertion.block.id);
+                            if (insertion.block.kind === 'step' || insertion.block.kind === 'wait') requestPromptFocus(insertion.block.id);
+                        }}
+                    />}
                     {!canOpenSettings ? null : <HappierPressable
                         testID={`${testIDPrefix}-phone-settings`}
                         accessibilityRole="button"
                         accessibilityLabel={t('workflows.page.settings')}
                         onPress={openSettings}
-                        style={(state) => [styles.action, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                        style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Icon name="sidebar-right-open" size={20} color={theme.colors.text.secondary} />
                     </HappierPressable>}
                     <View style={styles.phoneBarSpacer} />
-                    {onSave === undefined || props.saveStatus?.kind !== 'unsaved' ? null : (
+                    {onSave === undefined || !documentEditable || (props.saveStatus !== undefined && !['notSaved', 'unsaved', 'failed'].includes(props.saveStatus.kind)) ? null : (
                         <RoundButton
                             testID={`${testIDPrefix}-phone-save`}
                             size="small"

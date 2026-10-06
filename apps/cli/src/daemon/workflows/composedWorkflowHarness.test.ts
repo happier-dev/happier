@@ -37,6 +37,7 @@ import type { StoredCredentials } from '@/persistence';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
+import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createWorkflowActionExecutor } from '@/session/actions/workflowActionExecutor';
 import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
@@ -656,6 +657,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
     const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId: 'trigger-1', triggerKind: 'schedule',
       triggerRevision: 4, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1',
         evidence: { v: 1, kind: 'schedule', scheduledFor } }), occurredAt: scheduledFor, evidence: { scheduledFor } });
+    if (cause.kind !== 'trigger') throw new Error('schedule_cause_fixture_invalid');
     const material = mode === 'e2ee' ? createAccountScopedCryptoMaterialSnapshotV1({
       accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
     }) : undefined;
@@ -667,19 +669,26 @@ describe('composed Automation workflow claim and optional receipt', () => {
       : { type: 'legacy', secret: new Uint8Array(32).fill(7) } };
     const definitionId = '2e17b7b7-1977-4b5b-9957-781ec43c5b54';
     let storedArtifact: Record<string, unknown> = {};
+    let readClaimResponse: (() => unknown) | undefined;
     // Only opaque HTTP storage is faked: the real Artifact writer seals the
     // header/body/key, and production's saved-source resolver opens them.
-    const post = savedSource ? vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      if (url.endsWith('/v3/automations/runs/claim')) {
+        if (!readClaimResponse) throw new Error('claim_boundary_not_ready');
+        return { status: 200, data: readClaimResponse() };
+      }
       expect(url).toMatch(/\/v1\/artifacts$/);
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('artifact_boundary_invalid_write');
       storedArtifact = { ...body, id: definitionId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
-        headerVersion: 3, bodyVersion: 3, seq: 3, createdAt: 1, updatedAt: 3 };
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
       return { status: 200, data: storedArtifact };
-    }) : undefined;
+    });
     const get = savedSource ? vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       if (url.endsWith(`/v1/artifacts/${definitionId}/access/recipients`)) return { status: 200,
         data: { artifactId: definitionId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
           dataEncryptionKey: storedArtifact.dataEncryptionKey, callerDataEncryptionKey: storedArtifact.dataEncryptionKey,
+          provenanceDataEncryptionKey: storedArtifact.provenanceDataEncryptionKey ?? null,
+          callerProvenanceDataEncryptionKey: storedArtifact.provenanceDataEncryptionKey ?? null,
           recipients: [] } };
       expect(url).toMatch(new RegExp(`/v1/artifacts/${definitionId}$`));
       return { status: 200, data: storedArtifact };
@@ -687,8 +696,8 @@ describe('composed Automation workflow claim and optional receipt', () => {
     try {
       if (savedSource) await createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode }).create({
         artifactId: definitionId, header: { kind: 'workflow-definition.v1', definitionId,
-          revision: { headerVersion: 3, bodyVersion: 3 }, metadata: { title: 'Saved scheduled Wait' },
-          savedBy: { kind: 'person', accountId } },
+          revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Saved scheduled Wait' } },
+        savedBy: { kind: 'person', accountId },
         body: JSON.stringify({ kind: 'workflow-definition.v1', definition }),
       });
       const kit = createWorkflowRunStorageTestkit({ runId, machineId,
@@ -704,12 +713,30 @@ describe('composed Automation workflow claim and optional receipt', () => {
         ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
           material: material.material, payload, randomBytes: (length: number) => new Uint8Array(length).fill(5) }) }
         : { t: 'plain', v: payload });
-      const claim = () => ({ runId, attempt: 0, expectedRevision: kit.run().revision, accountCurrentness: encryption.witness,
-        automationId: 'automation-1', causeWorkDepth: 0, automationCause: cause, automationEvidenceEnvelope: null,
-        ...(savedSource ? { workflowDefinitionId: definitionId } : {}),
-        definitionEnvelope });
-      expect(await workflowDaemonProcess({ storage: kit, sessionInput, directory, encryption, credentials })(claim()))
-        .toMatchObject({ state: 'waiting_for_review' });
+      let parentAttempt = 1;
+      readClaimResponse = () => ({
+        run: { id: runId, attempt: parentAttempt, revision: kit.run().revision, automationId: 'automation-1',
+          recipeKind: 'workflow-v2', executionInputEnvelope: definitionEnvelope,
+          ...(kit.acceptedEnvelope() === null ? {} : { workflowAcceptedSnapshotEnvelope: kit.acceptedEnvelope() }),
+          causeWorkDepth: 0, cause, automationEvidenceEnvelope: null, triggerId: cause.triggerId, triggerRetired: false },
+        automation: { id: 'automation-1', name: 'Scheduled Wait', enabled: true,
+          ...(savedSource ? { workflowDefinitionId: definitionId } : {}) },
+        accountCurrentness: encryption.witness,
+      });
+      const claimClient = createAutomationClaimClient({ token: 'token', createPublisherHeader: async () => null });
+      const executeClaim = async () => {
+        const claimed = await claimClient.claimRun({ machineId, leaseDurationMs: 120_000 });
+        if (claimed.run === null || claimed.automation === null || claimed.accountCurrentness === undefined) {
+          throw new Error('claim_boundary_invalid_response');
+        }
+        await executeClaimedRun({ token: 'token', machineId, claimClient, spawnSession: vi.fn(),
+          heartbeatMs: 60_000, leaseDurationMs: 120_000, claimed,
+          coordinateWorkflowRun: workflowDaemonProcess({ storage: kit, sessionInput, directory, encryption, credentials }),
+        });
+      };
+      await executeClaim();
+      expect(kit.run()).toMatchObject({ state: 'waiting_for_review' });
+      const admittedEnvelope = kit.acceptedEnvelope();
       const resolved = resolveWorkflowRunDataKeyV1({ encryption, census: WorkflowRunRecipientCensusResponseV1Schema.parse(
         await kit.execute({ operation: 'run-key.census', runId })) });
       if (resolved.kind !== 'available') throw new Error(resolved.reason);
@@ -724,11 +751,13 @@ describe('composed Automation workflow claim and optional receipt', () => {
       expect(openRowProgress(kit, kit.rowById(held.id)!.index, runCrypto).result).toBeUndefined();
       // The server's next machine claim changes only public parent state/cursor;
       // the restarted daemon reconstructs the same accepted snapshot and rows.
-      await kit.execute({ operation: 'transition', runId, parentAttempt: 0, expectedRevision: kit.run().revision,
+      parentAttempt += 1;
+      await kit.execute({ operation: 'transition', runId, parentAttempt, expectedRevision: kit.run().revision,
         state: 'claimed', checkpointEnvelope: kit.checkpointEnvelope()! });
-      expect(await workflowDaemonProcess({ storage: kit, sessionInput, directory, encryption, credentials })(claim()))
-        .toMatchObject({ state: 'succeeded' });
+      await executeClaim();
       expect(kit.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
+      expect(kit.acceptedEnvelope()).toBe(admittedEnvelope);
+      expect(kit.operations().filter(operation => operation === 'accepted-snapshot.resolve')).toHaveLength(1);
       expect(kit.rowById(held.id)?.index).toMatchObject({ lifecycle: 'completed', attempt: '0' });
       expect(kit.rows()).toHaveLength(2);
       expect(kit.resultEnvelope()).toBeNull();
@@ -738,7 +767,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
           binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
           envelope: parseWorkflowStoredContentEnvelopeV1(kit.acceptedEnvelope()) });
         expect(accepted).toMatchObject({ kind: 'available', content: { source: { kind: 'automation', definitionId,
-          revision: { headerVersion: 3, bodyVersion: 3 }, savedBy: { kind: 'person', accountId } } } });
+          revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: { kind: 'person', accountId } } } });
       }
     } finally { get?.mockRestore(); post?.mockRestore(); }
   });

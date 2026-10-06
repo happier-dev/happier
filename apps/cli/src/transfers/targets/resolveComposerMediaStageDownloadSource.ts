@@ -1,9 +1,6 @@
-import {
-  ComposerContentHandleV1Schema,
-  ComposerContentInspectRequestV1Schema,
-  SessionIdSchema,
-  type ComposerContentHandleV1,
-} from '@happier-dev/protocol';
+import { ComposerContentHandleV1Schema, ComposerContentInspectRequestV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
 
 import {
   isServerRoutedTransferOverSizeLimit,

@@ -40,6 +40,20 @@ describe('readCodexAuthTokensFromJson', () => {
     });
   });
 
+  it('retains expired externally managed tokens so the host refresh bridge can recover', () => {
+    const accessToken = buildJwt({ exp: 1 });
+    const idToken = buildJwt({ email: 'expired@example.test', exp: 1 });
+    expect(readCodexAuthTokensFromJson({
+      auth_mode: 'chatgptAuthTokens',
+      tokens: { access_token: accessToken, id_token: idToken, account_id: 'acct-from-store' },
+    })).toEqual({
+      accessToken,
+      idToken,
+      accountId: 'acct-from-store',
+      accountLabel: 'expired@example.test',
+    });
+  });
+
   it('reads an exact account id from the Codex auth store', () => {
     expect(readCodexAuthTokensFromJson({
         tokens: {

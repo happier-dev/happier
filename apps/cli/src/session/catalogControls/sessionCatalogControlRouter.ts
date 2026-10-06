@@ -1,5 +1,5 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { resolveInactiveSessionCatalogControls } from '@/agent/catalog/sessionControlAdapters';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

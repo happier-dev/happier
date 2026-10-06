@@ -1,8 +1,6 @@
-import {
-    ScmBackendCapabilitiesSchema,
-    ScmRepoModeSchema,
-    type ScmBackendContribution,
-} from '@happier-dev/protocol/scm';
+import { ScmBackendCapabilitiesSchema } from '@happier-dev/protocol/scm/backendCapabilities';
+import { ScmRepoModeSchema } from '@happier-dev/protocol/scm/workingSnapshot';
+import type { ScmBackendContribution } from '@happier-dev/protocol/scm';
 import type { BackendRuntimeRegistration as ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/backend';
 import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 

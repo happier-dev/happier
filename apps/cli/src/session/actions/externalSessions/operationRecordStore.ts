@@ -3,30 +3,15 @@ import { mkdir, opendir, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-import {
-  decideExternalSessionOperationUpdateV1,
-  externalSessionOperationRetainsDiscardRecoveryV1,
-  isExternalSessionOperationTerminalStatusV1,
-  ExternalSessionOperationAuthorIntentV1Schema,
-  ExternalSessionOperationReferenceV1Schema,
-  ExternalSessionOperationRecordV1Schema,
-  ExternalSessionOperationSharedPresentationV1Schema,
-  projectExternalSessionOperationProgressV1,
-  projectExternalSessionOperationSharedPresentationV1,
-  type ExternalSessionOperationReferenceV1,
-  type ExternalSessionOperationAuthorIntentV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationSemanticRequestV1,
-  type ExternalSessionOperationSharedPresentationV1,
-  type ExternalSessionMaterializeStartInputV1,
-  type ExternalSessionTakeoverStartInputV1,
-  type ExternalSessionOperationUpdateDecisionV1,
-} from '@happier-dev/protocol';
+import { decideExternalSessionOperationUpdateV1, externalSessionOperationRetainsDiscardRecoveryV1, isExternalSessionOperationTerminalStatusV1, ExternalSessionOperationAuthorIntentV1Schema, ExternalSessionOperationRecordV1Schema, ExternalSessionOperationSharedPresentationV1Schema, projectExternalSessionOperationProgressV1, projectExternalSessionOperationSharedPresentationV1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionOperationReferenceV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
+import type { ExternalSessionOperationReferenceV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSemanticRequestV1, ExternalSessionOperationSharedPresentationV1, ExternalSessionMaterializeStartInputV1, ExternalSessionTakeoverStartInputV1, ExternalSessionOperationUpdateDecisionV1 } from '@happier-dev/protocol';
 
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readStoredCredentials } from '@/persistence';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { logger } from '@/ui/logger';
 
 export type ExternalSessionOperationRecordReadFailureReason =
   | 'malformed_json'
@@ -260,7 +245,7 @@ async function resolveCurrentExternalSessionOperationAccountScope(
   );
 }
 
-async function resolveExternalSessionOperationRecordsDirectory(
+export async function resolveExternalSessionOperationRecordsDirectory(
   activeServerDir: string,
   operationId: string,
   accountScope?: ExternalSessionOperationAccountScope,
@@ -434,6 +419,21 @@ export type ExternalSessionOperationStoredEntry = Readonly<
     receipt: ExternalSessionOperationTerminalReceiptV1;
   }
 >;
+
+type ExternalSessionOperationRecordListener = (directory: string, record: ExternalSessionOperationRecordV1) => void;
+const recordListeners = new Set<ExternalSessionOperationRecordListener>();
+
+export function subscribeExternalSessionOperationRecords(listener: ExternalSessionOperationRecordListener): () => void {
+  recordListeners.add(listener);
+  return () => { recordListeners.delete(listener); };
+}
+
+function notifyCommittedRecord(directory: string, record: ExternalSessionOperationRecordV1): void {
+  for (const listener of recordListeners) {
+    try { listener(directory, record); }
+    catch (error) { logger.warn('[external_session.operation_activity_projection]', error); }
+  }
+}
 
 type ExternalSessionOperationInventoryEntry = Readonly<{
   path: string;
@@ -965,6 +965,12 @@ export async function assertExternalSessionOperationRecordAdmission(
 export async function listExternalSessionOperationRecords(
   activeServerDir: string,
 ): Promise<readonly ExternalSessionOperationRecordV1[]> {
+  return (await listExternalSessionOperationStoredEntries(activeServerDir)).flatMap((entry) => entry.kind === 'full_record' ? [entry.record] : []);
+}
+
+export async function listExternalSessionOperationStoredEntries(
+  activeServerDir: string,
+): Promise<readonly ExternalSessionOperationStoredEntry[]> {
   if (!isScopedRecordsDirectory(activeServerDir)) {
     try {
       await stat(join(activeServerDir, 'external-session-operations'));
@@ -991,9 +997,7 @@ export async function listExternalSessionOperationRecords(
     scopedRecordsDirectory,
     'inventory',
   );
-  return inventory.flatMap(({ entry }) =>
-    entry.kind === 'full_record' ? [entry.record] : []
-  );
+  return inventory.map(({ entry }) => entry);
 }
 
 /**
@@ -2242,6 +2246,7 @@ export async function writeExternalSessionOperationRecord(
             );
           }
           await writeJsonAtomic(path, parsed);
+          notifyCommittedRecord(scopedRecordsDirectory, parsed);
           return parsed;
         });
       }
@@ -2250,6 +2255,7 @@ export async function writeExternalSessionOperationRecord(
         return current;
       }
       await writeJsonAtomic(path, parsed);
+      notifyCommittedRecord(scopedRecordsDirectory, parsed);
       return parsed;
     });
   };
@@ -2314,6 +2320,7 @@ export async function mutateExternalSessionOperationRecordAtRevision(
       return { ok: true as const, record: current };
     }
     await writeJsonAtomic(recordPath(scopedRecordsDirectory, operationId), next);
+    notifyCommittedRecord(scopedRecordsDirectory, next);
     return { ok: true as const, record: next };
   });
 }

@@ -32,6 +32,7 @@ import { insertWorkflowStarterExample } from '@/sync/domains/workflows/workflowE
 import { removeWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
 import { t } from '@/text';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
 type WorkflowEditorBodyProps = React.ComponentProps<
     typeof import('./WorkflowEditorBody').WorkflowEditorBody
@@ -259,6 +260,20 @@ afterEach(async () => {
 });
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it('shows an unavailable header reason when the saved definition cannot open', async () => {
+        definitionActions.get.mockRejectedValueOnce(new WorkflowActionError({ rawCode: 'content_unavailable', message: 'private internal text',
+            failure: { ok: false, errorCode: 'content_unavailable', error: 'workflow_definition_content_unavailable',
+                details: { reason: 'invalid_header' } } }));
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const state = screen.tree.findHostByTestId('workflow-editor-error');
+        expect(state).not.toBeNull();
+        const text = state!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n');
+        expect(text).toContain(t('common.unavailable'));
+        expect(text).toContain(t('workflows.contentReasons.invalidHeader'));
+        expect(text).not.toContain('private internal text');
+        expect(latestBodyProps).toBeNull();
+        await screen.unmount();
+    });
     it('discards a pristine unsaved draft through the navigation owner without a write', async () => {
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new' }} />);
         const discard = latestBodyProps?.menuActions?.find((action) => action.id === 'discard');

@@ -33,5 +33,5 @@ export function resolveWidgetAreaEntityDrop(input: Readonly<{
         if (anchor === -1) return widgetMovementRefused('anchor-gone', input.preview);
         index = anchor === null ? position.placement === 'before' ? 0 : ids.length : anchor + (position.placement === 'after' ? 1 : 0);
     }
-    return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref, to: { surface: input.surface, index } }, preview: input.preview } };
+    return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref, to: { surface: input.surface, index } }, preview: { ...input.preview, glyph: 'move' } } };
 }

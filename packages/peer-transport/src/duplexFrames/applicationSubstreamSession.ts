@@ -1,8 +1,5 @@
 /** Application-substream session: admission, credit, bounded pending dispatch, teardown. */
-import {
-    decodePeerTcpTunnelBinaryFrameV2,
-    encodePeerTcpTunnelBinaryFrameV2,
-} from '@happier-dev/protocol';
+import { decodePeerTcpTunnelBinaryFrameV2, encodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 import { peerTcpTunnelBinaryDecodeFailureReason } from './binaryCodec.js';
 import { substreamAbortFrame, isSchedulableTimeoutMs } from './primitives.js';
 import type { PeerTcpTunnelApplicationSubstreamSessionResult } from './types.js';

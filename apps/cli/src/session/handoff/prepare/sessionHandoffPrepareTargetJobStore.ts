@@ -5,11 +5,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { z } from 'zod';
 
-import {
-  SessionHandoffPrepareTargetRequestSchema,
-  SessionHandoffPrepareTargetResultGetSuccessResponseSchema,
-  SessionHandoffStatusSchema,
-} from '@happier-dev/protocol';
+import { SessionHandoffPrepareTargetRequestSchema, SessionHandoffPrepareTargetResultGetSuccessResponseSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SessionHandoffStatusSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 
 import {
   releaseSessionHandoffPrepareTargetJobLease,

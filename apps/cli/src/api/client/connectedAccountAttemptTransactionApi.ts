@@ -1,8 +1,6 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import {
-  StoredJsonContentEnvelopeSchema,
-  type StoredJsonContentEnvelope,
-} from '@happier-dev/protocol';
+import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import type { StoredJsonContentEnvelope } from '@happier-dev/protocol';
 import axios from 'axios';
 import { z } from 'zod';
 

@@ -7,7 +7,7 @@ import {
 import type {
     AgentSessionRunnerFactoryLocatorV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';

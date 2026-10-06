@@ -1,35 +1,16 @@
-import {
-  AgentProviderRequirementsV1Schema,
-  ProviderBoundModelRefSchema,
-  ProviderModelDescriptorV1Schema,
-  SessionProviderBindingMetadataV1Schema,
-  createProviderBindingSecurityFingerprintV1,
-  createProviderErrorV1,
-  createProviderManagedRuntimeBindingEqualityKeyV1,
-  mergeProviderCatalogV1,
-  createProviderObservationAuthorizationFingerprintV1,
-  createProviderManagedProbeRequestFingerprintV1,
-  createProviderProbeRequestFingerprintV1,
-  normalizeProviderEndpointUrlSyntax,
-  readOwnRecordValue,
-  readProviderSettingsFromAccountSettingsV1,
-  resolveProviderCatalogReferenceV1,
-  resolveProviderManagedRuntimeDeclarationV1,
-  selectProviderRuntimeCredentialTransportV1,
-  type AgentProviderRequirementsV1,
-  type ProviderBindingAuthorizationTicketV1,
-  type ProviderCredentialTransportV1,
-  type ProviderErrorV1,
-  type ProviderModelLoadDescriptorV1,
-  type ProviderModelDescriptorV1,
-  type ProviderSettingsV1,
-  type ProviderObservationAuthorizationFingerprintV1,
-  type ProviderProbeRequestFingerprintV1,
-  type ResolvedProviderManagedRuntimeDeclarationV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-} from '@happier-dev/protocol';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
+import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { createProviderBindingSecurityFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { mergeProviderCatalogV1, resolveProviderCatalogReferenceV1 } from '@happier-dev/protocol/providers/catalog/merge';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
+import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingPrepared,
   AgentProviderBindingResolvedFacts,

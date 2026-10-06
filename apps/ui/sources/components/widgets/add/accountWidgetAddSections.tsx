@@ -3,9 +3,7 @@ import type { WidgetInputBindingsV1, WidgetInstanceV1, WidgetSurfaceRefV1 } from
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useHomeWidgetCandidates } from '@/components/hub/layout/useHomeWidgetCandidates';
-import { InstalledWidgetSurface } from '@/components/widgets/InstalledWidgetSurface';
 import { useYourWidgetCandidates } from '@/components/widgets/definitions/useYourWidgetCandidates';
-import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import {
     buildWidgetCandidateSetup,
     countWidgetInstances,
@@ -16,6 +14,7 @@ import {
     widgetProvidedContext,
     widgetSetupFieldsForCandidate,
     type WidgetSurfaceContext,
+    type WidgetSetupCommandResult,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { WidgetSetupPreview } from '@/components/widgets/surface/WidgetSetupPreview';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -43,8 +42,8 @@ export type AccountWidgetAddInput = Readonly<{
     candidates: readonly WidgetCandidate[];
     /** The surface's current copies; the gallery counts them by definition. */
     instances: readonly WidgetInstanceV1[];
-    /** The surface's one add intent (Home layout Artifact, WorkBoard `widget_add`); rejects on refusal. */
-    addInstance: (instance: WidgetInstanceV1) => Promise<unknown>;
+    /** The surface's one add intent: rejects on refusal or returns its explicit acknowledged step result. */
+    addInstance: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
     scope: WidgetSurfaceRefV1 | null;
     labels: AccountWidgetSurfaceLabels;
     /** What the surface fills on its own ("This page", "This checkout"); none on Home or a WorkBoard. */
@@ -112,7 +111,7 @@ export function buildAccountWidgetAddSections(input: AccountWidgetAddInput): rea
 export function useAccountWidgetAddSections(input: Readonly<{
     scope: WidgetSurfaceRefV1 | null;
     instances: readonly WidgetInstanceV1[];
-    addInstance: (instance: WidgetInstanceV1) => Promise<unknown>;
+    addInstance: (instance: WidgetInstanceV1) => Promise<WidgetSetupCommandResult>;
     labels: AccountWidgetSurfaceLabels;
     context?: WidgetSurfaceContext;
     testID: string;
@@ -129,27 +128,10 @@ export function useAccountWidgetAddSections(input: Readonly<{
         scope,
         labels,
         ...(context ? { context } : {}),
-        renderTilePreview: (candidate) => candidate.surface ? (
-            <InstalledWidgetSurface
-                testID={`${testID}.preview.${candidate.key}`}
-                target={{ kind: 'app' }}
-                recordRevision={`add-preview:${candidate.key}`}
-                source={{ kind: 'installedSurface', surface: candidate.surface }}
-                presentation="content"
-                runtime={appRuntime}
-            />
-        ) : (candidate.definition?.kind === 'artifact' || candidate.definition?.kind === 'inline') && scope ? (
-            // One of your own widgets draws its real body through the instance body every surface uses.
-            <WidgetSurface
-                scope={scope}
-                providedContext={NO_PROVIDED_CONTEXT}
-                descriptor={candidate}
-                instance={{ v: 1, id: `add-preview:${candidate.key}`, definition: widgetDefinitionOfCandidate(candidate), bindings: {} }}
-                appRuntime={appRuntime}
-                presentation="content"
-                recordRevision={`add-preview:${candidate.key}`}
-                testID={`${testID}.preview.${candidate.key}`}
-            />
+        renderTilePreview: (candidate) => scope ? (
+            <WidgetSetupPreview scope={scope} providedContext={context ? widgetProvidedContext(context) : NO_PROVIDED_CONTEXT}
+                candidate={candidate} draft={proposeWidgetSetupDraft(widgetSetupFieldsForCandidate(candidate, context ?? NO_CONTEXT, 'personal'))}
+                testID={`${testID}.preview.${candidate.key}`} />
         ) : null,
         ...(scope ? {
             renderSetupPreview: (candidate: WidgetCandidate, preview: Readonly<{ draft: { bindings: WidgetInputBindingsV1 } }>) => (

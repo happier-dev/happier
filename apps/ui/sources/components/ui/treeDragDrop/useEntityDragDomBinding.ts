@@ -17,24 +17,37 @@ export function useEntityDragDomBinding(input: Readonly<{
     const latest = React.useRef(input);
     latest.current = input;
     const host = React.useRef<HTMLElement | null>(null);
+    const requestedHost = React.useRef<HTMLElement | null>(null);
     const detach = React.useRef<(() => void) | null>(null);
     const carry = React.useRef<EntityDragCarry | null>(null);
     const stopMove = React.useRef<(() => void) | null>(null);
+    const retireHost = React.useCallback(() => {
+        detach.current?.();
+        detach.current = null;
+        stopMove.current?.();
+        const active = carry.current;
+        carry.current = null;
+        host.current = null;
+        active?.cancel('source-retired');
+    }, []);
     React.useEffect(() => {
         host.current?.setAttribute('draggable', input.enabled ? 'true' : 'false');
         if (!input.enabled) { stopMove.current?.(); carry.current?.cancel('source-retired'); carry.current = null; }
     }, [input.enabled, input.runtime, input.sourceId]);
-    React.useEffect(() => () => { detach.current?.(); stopMove.current?.(); carry.current?.cancel('source-retired'); }, []);
+    React.useEffect(() => () => { requestedHost.current = null; retireHost(); }, [retireHost]);
     return React.useCallback((node: unknown) => {
-        detach.current?.();
-        detach.current = null;
-        carry.current?.cancel('source-retired');
-        stopMove.current?.();
-        carry.current = null;
-        host.current = null;
         if (Platform.OS !== 'web') return;
-        const element = node as HTMLElement | null;
-        if (!element?.addEventListener) return;
+        const candidate = node as HTMLElement | null;
+        requestedHost.current = candidate?.addEventListener ? candidate : null;
+        const element = requestedHost.current;
+        if (element === host.current) return;
+        if (!element) {
+            // React platform/style wrappers can detach then reattach the same host
+            // within a feedback commit. Retire only if it stays detached after that commit.
+            queueMicrotask(() => { if (!requestedHost.current) retireHost(); });
+            return;
+        }
+        retireHost();
         host.current = element;
         element.setAttribute('draggable', latest.current.enabled ? 'true' : 'false');
         const move = (event: DragEvent) => {
@@ -74,7 +87,7 @@ export function useEntityDragDomBinding(input: Readonly<{
             element.removeEventListener('dragend', end);
             stopMove.current?.();
         };
-    }, []);
+    }, [retireHost]);
 }
 
 /** Nested DOM targets consume an app carry once; OS files remain with their file owner. */
@@ -97,6 +110,7 @@ export function useEntityDropDomBinding(runtime: EntityDragDropRuntime | undefin
             const owner = latest.current.runtime;
             if (!owner || owner.getSnapshot().phase !== 'carrying') return;
             owner.move({ x: event.clientX, y: event.clientY });
+            if (!acceptsDelivery(owner)) return;
             event.preventDefault();
         };
         const drop = (event: DragEvent) => {
@@ -104,6 +118,7 @@ export function useEntityDropDomBinding(runtime: EntityDragDropRuntime | undefin
             if (!owner || owner.getSnapshot().phase !== 'carrying') return;
             latest.current.options?.beforeRelease?.();
             owner.move({ x: event.clientX, y: event.clientY });
+            if (!acceptsDelivery(owner)) return;
             event.preventDefault();
             event.stopPropagation();
             void owner.release();
@@ -115,6 +130,10 @@ export function useEntityDropDomBinding(runtime: EntityDragDropRuntime | undefin
             return snapshot?.phase === 'carrying' && snapshot.item
                 && latest.current.options?.captureKinds?.includes(entityDragKindV1(snapshot.item));
         };
+        // Explicit kind capture shields nested editors even on refusal; ordinary targets
+        // become browser drop targets only after the canonical owner admits the move.
+        const acceptsDelivery = (owner: EntityDragDropRuntime) => owner.getSnapshot().phase === 'carrying'
+            && (owner.getSnapshot().admission?.status === 'allowed' || captures());
         const captureOver = (event: DragEvent) => { if (captures()) { over(event); event.stopPropagation(); } };
         const captureDrop = (event: DragEvent) => { if (captures()) drop(event); };
         const bubbleOver = (event: DragEvent) => over(event);

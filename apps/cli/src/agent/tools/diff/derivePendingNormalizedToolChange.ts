@@ -1,11 +1,6 @@
-import {
-    ChangeConfidenceSchema,
-    ChangeEvidenceSourceSchema,
-    FileChangeKindSchema,
-    RepositoryCheckpointTurnMetadataSchema,
-} from '@happier-dev/protocol';
+import { ChangeConfidenceSchema, ChangeEvidenceSourceSchema, FileChangeKindSchema, RepositoryCheckpointTurnMetadataSchema } from '@happier-dev/protocol/sessions/changes/schemas';
 import type { TurnChangeSet } from '@happier-dev/protocol';
-import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
+import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2/patch';
 
 import type { PendingNormalizedToolChange } from './normalizedToolChangeTypes';
 

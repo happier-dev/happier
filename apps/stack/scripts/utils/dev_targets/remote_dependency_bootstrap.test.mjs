@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDependencyRefresh, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
 import {
   REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS,
@@ -12,6 +14,63 @@ import {
 } from './remote_dependency_bootstrap.mjs';
 
 const runDependencyRefreshImmediately = async (_options, refresh) => await refresh({});
+
+test('runtime worker bootstrap retains coherent last-green output in explicit QA mode while release stays strict', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'happier-runtime-bootstrap-qa-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
+  for (const name of ['cli', 'ui', 'server', 'stack']) {
+    await mkdir(join(repoDir, 'apps', name), { recursive: true });
+    await writeFile(join(repoDir, 'apps', name, 'package.json'), JSON.stringify({
+      name: `@fixture/${name}`, ...(name === 'stack' ? { dependencies: { '@fixture/emitted': '1.0.0' } } : {}),
+    }));
+  }
+  const packageDir = join(repoDir, 'packages/emitted');
+  await mkdir(join(packageDir, 'src'), { recursive: true });
+  const source = join(packageDir, 'src/index.ts');
+  await writeFile(source, 'export const value: string = "green";\n');
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@fixture/emitted', version: '1.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+    scripts: { build: 'node compile.mjs' },
+  }));
+  await writeFile(join(packageDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+    target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src', declaration: true, strict: true, types: [],
+  }, include: ['src/**/*.ts'] }));
+  const compiler = resolveTypeScriptCliInvocation({});
+  await writeFile(join(packageDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
+const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { stdio: 'inherit', env: process.env });
+if (result.error) throw result.error;
+process.exitCode = result.status ?? 1;
+`);
+  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { quiet: true, env: { ...process.env, [WORKSPACE_BUILD_MODE_ENV]: 'strict' } });
+  const recordPath = join(packageDir, 'dist/.happier-build-inputs.json');
+  const greenRecord = JSON.parse(await readFile(recordPath, 'utf8'));
+  for (const domain of ['workspaces', 'process']) {
+    await mkdir(join(repoDir, 'packages/cli-common/dist', domain), { recursive: true });
+    await writeFile(join(repoDir, 'packages/cli-common/dist', domain, 'index.js'), 'export {};\n');
+  }
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(source, 'export const value: string = 1;\n');
+  // Installed dependency admission is separate from package compilation. The
+  // real bootstrap, Stack package-manager adapter and compiler all run below it.
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
+  const bootstrap = (extraEnv = {}) => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', env: { ...env, ...extraEnv } });
+  await bootstrap();
+  const stale = await inspectWorkspaceQaStalePackages(repoDir, ['@fixture/emitted']);
+  assert.equal(stale.length, 1);
+  assert.equal(stale[0].lastGreenBuildRecord.fingerprint, greenRecord.fingerprint);
+  assert.match(stale[0].diagnosticSummary, /TS2322/);
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
+  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { env, quiet: false });
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/,
+    'the default package-manager adapter applies the same verbose QA contract');
+  await assert.rejects(bootstrap({ [WORKSPACE_BUILD_MODE_ENV]: 'strict' }));
+  await assert.rejects(bootstrap({ npm_lifecycle_event: 'prepack' }));
+  await writeFile(source, 'export const value: string = "fixed";\n');
+  await bootstrap();
+  assert.deepEqual(await inspectWorkspaceQaStalePackages(repoDir, ['@fixture/emitted']), []);
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /fixed/);
+});
 
 test('scriptless source-test refresh cannot admit changed UI patch inputs as postinstall-ready', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-scriptless-ui-patch-'));

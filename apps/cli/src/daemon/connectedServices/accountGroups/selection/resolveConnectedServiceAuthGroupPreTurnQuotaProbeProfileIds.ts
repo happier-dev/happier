@@ -4,7 +4,7 @@ import type {
     ConnectedServiceAuthGroupPolicyV1,
 } from './selectConnectedServiceAuthGroupCandidate';
 import { credentialHealthAllowsSelection } from './selectConnectedServiceAuthGroupCandidate';
-import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 
 function normalizeProfileId(value: string | null | undefined): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null;

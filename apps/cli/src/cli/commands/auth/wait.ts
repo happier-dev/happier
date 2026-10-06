@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import tweetnacl from 'tweetnacl';
-import {
-  HomeConnectionDescriptorV1Schema,
-  normalizeServerIdentityIdCapability,
-  type HomeConnectionDescriptorV1,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import { decodeBase64 } from '@/api/encryption';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';

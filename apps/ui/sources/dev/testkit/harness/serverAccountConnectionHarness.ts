@@ -24,12 +24,15 @@ export function installDisconnectedServerSocketBoundary(configure?: (socket: Soc
 /** Apply a real Account lifetime before a test installs its domain data or fake clock. */
 export async function restoreServerAccountForTest(params: Readonly<{
     serverUrl: string;
+    /** Advertised Home identity, established before its Account lifetime starts. */
+    serverIdentityId?: string;
     accountId?: string;
     /** Genuine synthetic credentials for tests exercising encrypted Account/Session owners. */
     credentials?: AuthCredentials;
     request?: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>;
 }>) {
-    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { upsertServerProfileOnly, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
     const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
@@ -43,7 +46,13 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
         return params.request ? params.request(url, init) : new Response('{}', { status: 404 });
     });
-    const home = await upsertAndActivateServer({ serverUrl: params.serverUrl, name: 'Test Home' });
+    let home = await upsertServerProfileOnly({ serverUrl: params.serverUrl, name: 'Test Home' });
+    if (params.serverIdentityId) {
+        const identifiedHome = await setServerProfileIdentityForUrl(home.serverUrl, params.serverIdentityId);
+        if (!identifiedHome) throw new Error('Test Home identity could not be established');
+        home = identifiedHome;
+    }
+    await setActiveServer({ serverId: home.id });
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
     const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
     await restoreConnectionToActiveServer(credentials);

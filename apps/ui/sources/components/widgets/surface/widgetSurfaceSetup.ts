@@ -1,10 +1,12 @@
-import type { JsonValue } from '@happier-dev/protocol';
-import { resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { VoiceTrackedSessionAddressV1Schema, type JsonValue } from '@happier-dev/protocol';
+import { readInputPath } from '@happier-dev/protocol/inputs';
+import { projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardCommandOutcome } from '@/components/sessions/board/useSessionBoardController';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import {
     proposeWidgetSetupDraft,
+    isLiteralWidgetSetupField,
     type WidgetSetup,
     type WidgetSetupDraft,
     type WidgetSetupField,
@@ -126,7 +128,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
     const fields = widgetSetupFieldsForCandidate(candidate, input.context, input.audience);
     const initial: WidgetSetupDraft = mode.kind === 'edit'
         ? { bindings: mode.instance.bindings }
-        : proposeWidgetSetupDraft(fields);
+        : proposeWidgetCandidateSetupDraft(candidate, fields);
     const definition = mode.kind === 'edit' ? mode.instance.definition : widgetDefinitionOfCandidate(candidate);
     const instanceId = mode.kind === 'edit' ? mode.instance.id : 'draft';
     const providedContext = widgetProvidedContext(input.context);
@@ -134,6 +136,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
         title: mode.kind === 'edit' ? t('widgetAdd.editTitle', { widget: candidate.title }) : t('widgetAdd.setupTitle', { widget: candidate.title }),
         hint: mode.kind === 'edit' ? t('widgetAdd.editHint') : candidate.pluginName,
         submitLabel: mode.kind === 'edit' ? t('common.save') : mode.submitLabel,
+        widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon },
         fields,
         initial,
         resolve: (draft) => resolveConfiguredWidgetInputs({
@@ -144,28 +147,52 @@ export function buildWidgetCandidateSetup(input: Readonly<{
             viewerValues: NO_VIEWER_VALUES,
         }),
         ...(input.renderPreview ? { renderPreview: input.renderPreview } : {}),
-        ...(input.scope ? { optionsConsumer: { kind: 'widget' as const, surface: input.scope, definition } } : {}),
+        optionsContext: (draft) => {
+            // Discovery needs the readable bound dependencies even before every required input is
+            // chosen. The canonical binder projects intent; the Action still admits every read.
+            const draftInput = projectWidgetBindingInputV1({ instance: { v: 1, id: instanceId, definition, bindings: draft.bindings },
+                fields: candidate.inputs?.fields ?? [], context: providedContext, viewerValues: NO_VIEWER_VALUES });
+            const selected = candidate.sessionInputPath
+                ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(draftInput, candidate.sessionInputPath)) : null;
+            return { draftInput, ...(input.scope ? { consumer: { kind: 'widget' as const, surface: input.scope, definition,
+                ...(selected?.success ? { selectedSession: selected.data } : {}) } } : {}) };
+        },
         submit: input.submit,
     };
 }
 
-/** A command that resolves on success and throws on refusal, as a step result. */
-export async function runWidgetSetupCommand(run: () => Promise<unknown> | unknown, failure: string): Promise<WidgetSetupSubmitResult> {
+/** Schema defaults are proposals only; the same binder still validates every proposed value. */
+function proposeWidgetCandidateSetupDraft(candidate: WidgetCandidate, fields: readonly WidgetSetupField[]): WidgetSetupDraft {
+    const proposed = proposeWidgetSetupDraft(fields);
+    const bindings = { ...proposed.bindings };
+    for (const entry of fields) {
+        if (Object.hasOwn(bindings, entry.field.path) || entry.follow || entry.viewer || !isLiteralWidgetSetupField(entry.field)) continue;
+        let schema = candidate.inputSchema;
+        for (const segment of entry.field.path.split('.')) schema = schema?.properties?.[segment];
+        if (schema?.default !== undefined) bindings[entry.field.path] = { kind: 'value', value: schema.default };
+    }
+    return { bindings };
+}
+
+/** An acknowledged step result, or a write that resolves only after success and throws on refusal. */
+export type WidgetSetupCommandResult = void | WidgetSetupSubmitResult;
+
+export async function runWidgetSetupCommand(run: () => Promise<WidgetSetupCommandResult> | WidgetSetupCommandResult, failure: string): Promise<WidgetSetupSubmitResult> {
     try {
-        await run();
-        return { ok: true };
+        const result = await run();
+        return result ?? { ok: true };
     } catch {
         return { ok: false, message: failure };
     }
 }
 
 /**
- * A Board command as a step result. Applied (or waiting for someone's approval) finishes the step;
+ * A Board or widget-area command as a step result. Applied (or waiting for someone's approval) finishes the step;
  * anything else keeps it open with the reason, so nothing reads as saved when it was not. The Board
  * controller has already said what happened in its own notice.
  */
-export async function runBoardWidgetSetupCommand(
-    run: () => Promise<SessionBoardCommandOutcome | null | void> | void,
+export async function runAcknowledgedWidgetSetupCommand(
+    run: () => Promise<Pick<SessionBoardCommandOutcome, 'kind'> | Readonly<{ kind: 'refused' }> | null | void> | void,
     failure: string,
 ): Promise<WidgetSetupSubmitResult> {
     try {

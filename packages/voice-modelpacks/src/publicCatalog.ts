@@ -1,19 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils';
 
-import {
-  VOICE_MODEL_PACK_CONTRIBUTION_MAX_COMPONENT_BYTES_V1,
-  VoiceModelPackContributionV1Schema,
-  VoiceModelPackIdentityV1Schema,
-  getModelPackCatalogEntry,
-  resolveCanonicalModelPackId,
-  resolveVoiceModelPackArtifactsV1,
-  type PluginFinalPolicyDecision,
-  type ModelPackRuntimeFamily,
-  type VoiceModelPackContributionV1,
-  type VoiceModelPackExecutionHostV1,
-  type VoiceModelPackIdentityV1,
-} from '@happier-dev/protocol';
+import { VOICE_MODEL_PACK_CONTRIBUTION_MAX_COMPONENT_BYTES_V1, VoiceModelPackContributionV1Schema } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
+import { VoiceModelPackIdentityV1Schema } from '@happier-dev/protocol/voice/modelPacks/identityV1';
+import { getModelPackCatalogEntry, resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
+import { resolveVoiceModelPackArtifactsV1 } from '@happier-dev/protocol/voice/modelPacks/artifactRolesV1';
+import type { PluginFinalPolicyDecision, ModelPackRuntimeFamily, VoiceModelPackContributionV1, VoiceModelPackExecutionHostV1, VoiceModelPackIdentityV1 } from '@happier-dev/protocol';
 
 import {
   DEFAULT_VOICE_MODEL_PACK_RESOURCE_POLICY_V1,

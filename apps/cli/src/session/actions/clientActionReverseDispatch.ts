@@ -1,8 +1,7 @@
-import {
-  RPC_METHODS, RPC_ERROR_CODES, UiActionDispatchRequestV1Schema,
-  clientActionUnavailable, parseClientActionDispatchResult,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { UiActionDispatchRequestV1Schema, clientActionUnavailable, parseClientActionDispatchResult } from '@happier-dev/protocol/actions/clientDispatchV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 export type ClientActionMachineRpc = Readonly<{
   hasConnectedClientRpcHandler(method: string): boolean;

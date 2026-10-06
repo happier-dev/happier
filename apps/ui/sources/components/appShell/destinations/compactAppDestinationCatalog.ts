@@ -32,7 +32,7 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
-import { useLocalSetting, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { UNIVERSAL_SEARCH_ROUTE } from '@/components/appShell/search/universalSearchRoutePresentation';
 import {
@@ -103,10 +103,6 @@ export type AppDestinationPlacement =
 export type AppDestinationActivation = 'navigate' | 'overlay' | 'rightSidebarTab';
 
 export type CompactAppDestinationVisibility = 'visible' | 'hidden';
-export type CompactAppDestinationPreferencesV1 = Readonly<{
-    orderedDestinationIds: readonly string[];
-    hiddenDestinationIds: readonly string[];
-}>;
 
 type CompactAppDestinationCommon = Readonly<{
     title: string;
@@ -267,7 +263,7 @@ const BUILTIN_DESTINATION_ROWS: readonly BuiltinDestinationRow[] = [
     )),
 ];
 
-/** Consumers that are ordinary discovery surfaces honor the catalog's user visibility. */
+/** Ordinary discovery honors contribution visibility; surface preferences remain surface-local. */
 export function isCompactAppDestinationVisible(destination: CompactAppDestination): boolean {
     return destination.visibility !== 'hidden';
 }
@@ -318,7 +314,6 @@ export function resolveCompactAppDestinations(input: Readonly<{
     builtins: AppBuiltinDestinationAvailability;
     pages: readonly PluginAppPage[];
     rightSidebarTabs?: readonly RightSidebarPluginTabDefinition[];
-    preferences?: CompactAppDestinationPreferencesV1;
 }>): readonly CompactAppDestination[] {
     const destinations: CompactAppDestination[] = [];
 
@@ -397,21 +392,9 @@ export function resolveCompactAppDestinations(input: Readonly<{
         }));
     }
 
-    const userOrder = new Map<string, number>();
-    for (const id of input.preferences?.orderedDestinationIds ?? []) {
-        if (!userOrder.has(id)) userOrder.set(id, userOrder.size);
-    }
     const compare = (left: CompactAppDestination, right: CompactAppDestination): number => {
         const byGroup = placementGroupRank(left.placement) - placementGroupRank(right.placement);
         if (byGroup !== 0) return byGroup;
-        // Within a group the person's saved order comes first; it never moves an entry between groups.
-        const leftUser = userOrder.get(left.id);
-        const rightUser = userOrder.get(right.id);
-        if (leftUser !== undefined || rightUser !== undefined) {
-            if (leftUser === undefined) return 1;
-            if (rightUser === undefined) return -1;
-            return leftUser - rightUser;
-        }
         // Host-owned destinations anchor their group. A plugin rank orders only its peers.
         if (left.kind !== right.kind) return left.kind === 'builtin' ? -1 : 1;
         if (left.kind === 'builtin' || right.kind === 'builtin') return left.order - right.order;
@@ -419,22 +402,19 @@ export function resolveCompactAppDestinations(input: Readonly<{
         return byRankHint || left.order - right.order || left.id.localeCompare(right.id);
     };
 
-    const hiddenIds = new Set(input.preferences?.hiddenDestinationIds ?? []);
-    return Object.freeze(destinations.sort(compare).map((destination, order) => Object.freeze({
-        ...destination,
-        order,
-        visibility: destination.visibility === 'hidden' || hiddenIds.has(destination.id) ? 'hidden' : 'visible',
-    })));
+    // Surface-local preferences are resolved by that surface, not shared discovery.
+    return Object.freeze(destinations.sort(compare).map((destination, order) => Object.freeze({ ...destination, order })));
 }
 
 /** The destinations listed in one placement group, visible ones only, in catalog order. */
 export function selectAppDestinationsInPlacement(
     catalog: readonly CompactAppDestination[],
     placement: AppDestinationPlacement,
+    options?: Readonly<{ includeHidden?: boolean }>,
 ): readonly CompactAppDestination[] {
     const key = placementGroupKey(placement);
     return catalog.filter((destination) => (
-        isCompactAppDestinationVisible(destination) && placementGroupKey(destination.placement) === key
+        (options?.includeHidden === true || isCompactAppDestinationVisible(destination)) && placementGroupKey(destination.placement) === key
     ));
 }
 
@@ -710,7 +690,6 @@ function useAppBuiltinDestinationAvailability(): AppBuiltinDestinationAvailabili
 export function useCompactAppDestinations(): readonly CompactAppDestination[] {
     const projection = useAppShellPluginUiProjection();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
-    const preferences = useLocalSetting('compactAppDestinationPreferencesV1');
     const builtins = useAppBuiltinDestinationAvailability();
     const pages = React.useMemo(() => (
         projection.pluginUiProjection
@@ -737,8 +716,7 @@ export function useCompactAppDestinations(): readonly CompactAppDestination[] {
         builtins,
         pages,
         rightSidebarTabs,
-        preferences,
-    }), [builtins, pages, preferences, rightSidebarTabs]);
+    }), [builtins, pages, rightSidebarTabs]);
 }
 
 export type ActivateAppDestination = (

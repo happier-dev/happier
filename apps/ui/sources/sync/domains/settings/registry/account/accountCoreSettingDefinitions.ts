@@ -77,5 +77,6 @@ export const ACCOUNT_CORE_SETTING_ANALYTICS = defineAccountSettingAnalytics({
     sessionNonSteerableSendPrompt: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     sessionProviderUsageGaugeMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     sessionProviderUsageGaugeWindowMode: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    sessionProviderUsageGaugeWindowModes: { trackCurrentState: false, trackChanges: false, valueKind: 'count', privacy: 'safe', identityScope: 'person' },
     sessionUsageGaugeLabels: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
 });

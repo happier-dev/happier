@@ -6,7 +6,7 @@ import {
     PluginUiViewV2Schema,
     createPluginContributionIdentity,
 } from '@happier-dev/protocol';
-import { PLUGIN_UI_HOST_API_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
+import { PLUGIN_UI_HOST_API_VERSION_V1, type PluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { describe, expect, it } from 'vitest';
 
 import { buildPluginProjectionV2 } from '../projection/v2';
@@ -21,6 +21,34 @@ import {
     createPluginRuntimeOccurrenceId,
     type PluginRuntimeOccurrenceId,
 } from '@/plugins/runtime/runtimeSlots';
+
+type ComposedPagePlacement = Readonly<{
+    id: string;
+    pluginId: string;
+    descriptorId: string;
+    binding: PluginUiDestinationBindingV1;
+    renderer: Readonly<Record<string, unknown>>;
+}>;
+
+// Runtime imports keep UI-owned aliases out of the CLI compiler, as in the
+// existing cross-package Voice harness. These signatures bound the test seam;
+// all normalization, catalog resolution and mount validation remain real.
+const { normalizePluginUiProjection }: Readonly<{
+    normalizePluginUiProjection(projection: ReturnType<typeof PluginProjectionV2Schema.parse>, platform: 'web'): unknown;
+}> = await import(new URL('../../../../../../ui/sources/sync/domains/plugins/ui/projection.ts', import.meta.url).href);
+const { resolvePluginAppPages, selectPluginAppPagePlacements }: Readonly<{
+    selectPluginAppPagePlacements(model: unknown): readonly ComposedPagePlacement[];
+    resolvePluginAppPages(input: Readonly<{ placements: readonly ComposedPagePlacement[] }>): readonly Readonly<{
+        placement: ComposedPagePlacement;
+        columnPlacement?: ComposedPagePlacement;
+    }>[];
+}> = await import(new URL('../../../../../../ui/sources/components/appShell/plugins/pluginAppPages.ts', import.meta.url).href);
+const { readPluginSurfaceMountBinding }: Readonly<{
+    readPluginSurfaceMountBinding(input: Readonly<{
+        descriptor: ComposedPagePlacement;
+        renderer: Readonly<Record<string, unknown>>;
+    }>): unknown;
+}> = await import(new URL('../../../../../../ui/sources/components/plugins/surfaces/pluginSurfaceMountBinding.ts', import.meta.url).href);
 
 const admittedOccurrencesByPluginId = new Map<string, PluginRuntimeOccurrenceId>();
 
@@ -754,8 +782,8 @@ describe('plugin UI projection family', () => {
             }],
         } as unknown as ResolvedContributionRegistry;
 
-        const entry = buildPluginProjectionV2({ registry, generation: 1 })
-            .familiesById.pluginUi?.entriesById['surfacePlacement:acme.navigation:navigation-page'];
+        const projection = buildPluginProjectionV2({ registry, generation: 1 });
+        const entry = projection.familiesById.pluginUi?.entriesById['surfacePlacement:acme.navigation:navigation-page'];
 
         expect(entry).toMatchObject({
             display: {
@@ -771,6 +799,13 @@ describe('plugin UI projection family', () => {
                 rankHint: -25,
             },
             column: {
+                binding: {
+                    kind: 'destination',
+                    destination: { pluginId: 'acme.navigation', localId: 'navigation-page' },
+                    renderer: { pluginId: 'acme.navigation', localId: 'column-renderer' },
+                    rendererChain: [{ pluginId: 'acme.navigation', localId: 'column-renderer' }],
+                    container: 'appPage',
+                },
                 renderer: {
                     kind: 'hostedHtml',
                     contributionId: 'column-renderer',
@@ -780,6 +815,27 @@ describe('plugin UI projection family', () => {
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
         });
+
+        // Compose the actual producer, wire parser, UI projection/catalog and physical
+        // mount reader. A renderer-only column would pass projection assertions
+        // while remaining unavailable at the mount boundary.
+        const model = normalizePluginUiProjection(PluginProjectionV2Schema.parse(projection), 'web');
+        const [page] = resolvePluginAppPages({ placements: selectPluginAppPagePlacements(model) });
+        expect(page).toBeDefined();
+        const column = page?.columnPlacement;
+        expect(column).toBeDefined();
+        if (!page || !column) throw new Error('producer must supply both page and column');
+        expect(readPluginSurfaceMountBinding({ descriptor: page.placement, renderer: page.placement.renderer }))
+            .toMatchObject({ kind: 'destination', destinationBinding: page.placement.binding });
+        expect(readPluginSurfaceMountBinding({ descriptor: column, renderer: column.renderer }))
+            .toMatchObject({ kind: 'destination', destinationBinding: column.binding });
+        expect(column.binding.kind === 'destination' && column.binding.destination)
+            .toEqual(page.placement.binding.kind === 'destination' && page.placement.binding.destination);
+        expect(column.id).not.toBe(page.placement.id);
+        expect(readPluginSurfaceMountBinding({ descriptor: column, renderer: page.placement.renderer })).toBeNull();
+        expect(readPluginSurfaceMountBinding({
+            descriptor: { ...column, pluginId: 'acme.other' }, renderer: column.renderer,
+        })).toBeNull();
     });
 
     it('keeps authored literal destination presentation distinct from keyed localized presentation', () => {

@@ -20,12 +20,12 @@ export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
 
 /** The material plane owns paint; this layout is shared by live input and previews. */
-export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
+export function resolveAgentInputPanelLayoutStyle(theme: Theme, readOnly = false) {
     return {
         // The composer stack's radius (`theme.parts.composer`), shared with the banners above it.
         borderRadius: theme.parts.composer.radius,
         ...resolveThemeSurfaceBorderStyle({
-            borderColor: theme.colors.border.surface,
+            borderColor: readOnly ? theme.colors.border.default : theme.colors.border.surface,
             highlightColor: theme.colors.effect.surfaceHighlight,
         }),
         overflow: 'hidden' as const,

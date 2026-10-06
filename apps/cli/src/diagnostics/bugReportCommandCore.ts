@@ -1,23 +1,12 @@
 import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
-import {
-  BUG_REPORT_DEFAULT_ISSUE_OWNER,
-  BUG_REPORT_DEFAULT_ISSUE_REPO,
-  buildBugReportExportBundle,
-  serializeBugReportExportBundle,
-  buildBugReportFallbackIssueUrl as buildFallbackIssueUrl,
-  formatBugReportFallbackIssueBody as formatFallbackIssueBody,
-  appendBugReportReporterToSummary,
-  inferBugReportDeploymentTypeFromServerUrl as inferBugReportDeploymentType,
-  normalizeBugReportProviderUrl,
-  normalizeBugReportReproductionSteps as normalizeReproductionSteps,
-  sanitizeBugReportUrl,
-  searchBugReportSimilarIssues,
-  type BugReportSimilarIssue,
-  type BugReportDeploymentType,
-  type BugReportEnvironmentPayload,
-  type BugReportFormPayload,
-} from '@happier-dev/protocol';
+import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '@happier-dev/protocol/bugs/reports/types';
+import { buildBugReportExportBundle, serializeBugReportExportBundle } from '@happier-dev/protocol/bugs/reports/export';
+import { buildBugReportFallbackIssueUrl as buildFallbackIssueUrl, formatBugReportFallbackIssueBody as formatFallbackIssueBody, normalizeBugReportReproductionSteps as normalizeReproductionSteps } from '@happier-dev/protocol/bugs/reports/fallback';
+import { appendBugReportReporterToSummary } from '@happier-dev/protocol/bugs/reports/reporter';
+import { inferBugReportDeploymentTypeFromServerUrl as inferBugReportDeploymentType, normalizeBugReportProviderUrl, sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { searchBugReportSimilarIssues } from '@happier-dev/protocol/bugs/reports/similarIssues';
+import type { BugReportSimilarIssue, BugReportDeploymentType, BugReportEnvironmentPayload, BugReportFormPayload } from '@happier-dev/protocol';
 
 import packageJson from '../../package.json';
 import {

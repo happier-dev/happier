@@ -1,9 +1,7 @@
-import {
-  AgentNativeResumeIdentityV1Schema,
-  readNonBlankOpaqueIdentifier,
-  readRuntimeDescriptorV1FromMetadata,
-  type SessionMetadata,
-} from '@happier-dev/protocol';
+import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { SessionMetadata } from '@happier-dev/protocol';
 
 import { AGENT_IDS } from '../../../types.js';
 import { getAgentResumeConfig } from '../../../manifest.js';

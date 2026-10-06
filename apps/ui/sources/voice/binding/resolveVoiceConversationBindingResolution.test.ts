@@ -77,7 +77,7 @@ describe('ensureVoiceConversationBindingResolution', () => {
       requestedTargetSessionId: null,
       settings: {
         voice: {
-          executionMachine: { mode: 'auto', machineId: null, autoMachineId: null },
+          executionMachine: { mode: 'auto', machineId: null },
           providers: {
             local_conversation: { schemaVersion: 1, config: {
               conversationMode: 'agent',

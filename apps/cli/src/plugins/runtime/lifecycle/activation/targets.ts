@@ -3,7 +3,7 @@ import type {
     ResolvedContributionRegistry,
     ResolvedContributionSource,
 } from '../../../projection/registry/types';
-import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 export type PluginContributionActivationDemand = Readonly<{
     pluginId: string;

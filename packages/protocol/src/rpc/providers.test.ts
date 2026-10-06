@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
 
 import {
@@ -29,8 +32,8 @@ import {
   DaemonProviderProfileMigrationConfirmResponseV1Schema,
   DaemonProviderProfileMigrationConflictConfirmRequestV1Schema,
   DaemonProviderProfileMigrationConflictConfirmResponseV1Schema,
-  RPC_METHODS,
-} from './index.js';
+} from './providers.js';
+import { RPC_METHODS } from './methods.js';
 
 function reviewedLegacyProfileMapping() {
   return {
@@ -67,6 +70,62 @@ function reviewedLegacyProfileMapping() {
 }
 
 describe('provider machine RPC contracts', () => {
+  it('preserves classic JSON Schema projection for concrete and composed RPC requests', () => {
+    const identity = z.object({
+      connectionId: ProviderConnectionIdSchema,
+      machineId: ProviderMachineIdSchema,
+    }).strict();
+    const modelLoadIdentity = identity.extend({ modelId: ProviderModelIdSchema }).strict();
+    const modelLoad = z.discriminatedUnion('action', [
+      modelLoadIdentity.extend({ action: z.literal('load') }).strict(),
+      modelLoadIdentity.extend({ action: z.literal('cancel') }).strict(),
+    ]);
+
+    for (const target of ['draft-2020-12', 'draft-7'] as const) {
+      expect(zodSchemaToJsonSchemaObject(DaemonProviderModelsRequestV1Schema, { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(identity, { target }));
+      expect(zodSchemaToJsonSchemaObject(DaemonProviderModelLoadRequestV1Schema, { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(modelLoad, { target }));
+      const derived = DaemonProviderModelsRequestV1Schema.extend({
+        label: z.string().trim().min(1).optional(),
+      }).strict();
+      expect(zodSchemaToJsonSchemaObject(derived, { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(identity.extend({
+          label: z.string().trim().min(1).optional(),
+        }).strict(), { target }));
+    }
+    expect(DaemonProviderModelsRequestV1Schema.shape.connectionId).toBe(ProviderConnectionIdSchema);
+    expect(DaemonProviderModelsRequestV1Schema.extend({ enabled: z.boolean().default(true) })
+      .parse({ connectionId: 'pc_test', machineId: 'machine-1' }))
+      .toEqual({ connectionId: 'pc_test', machineId: 'machine-1', enabled: true });
+  });
+
+  it('preserves classic error identity and structural and refinement issue paths', () => {
+    const structural = DaemonProviderModelsRequestV1Schema.safeParse({
+      connectionId: 'pc_test', machineId: 42, extra: true,
+    });
+    expect(structural.success).toBe(false);
+    if (!structural.success) {
+      expect(structural.error).toBeInstanceOf(z.ZodError);
+      expect(structural.error.issues).toMatchObject([
+        { code: 'invalid_type', path: ['machineId'], expected: 'string' },
+        { code: 'unrecognized_keys', path: [], keys: ['extra'] },
+      ]);
+    }
+    expect(() => DaemonProviderModelsRequestV1Schema.parse({
+      connectionId: 'pc_test', machineId: 42,
+    })).toThrow(z.ZodError);
+    const refined = DaemonProviderModelProjectionRequestV1Schema.safeParse({
+      machineId: 'machine-1', agentTargetKey: 'backend:codex',
+      refreshPolicy: 'current_only', forceRefresh: true,
+    });
+    expect(refined.success).toBe(false);
+    if (!refined.success) {
+      expect(refined.error).toBeInstanceOf(z.ZodError);
+      expect(refined.error.issues).toMatchObject([{ code: 'custom', path: ['forceRefresh'] }]);
+    }
+  });
+
   it('uses closed compatibility reason codes and status-correct reason cardinality', () => {
     expect(DaemonProviderAgentCompatibilitySummaryV1Schema.safeParse({
       agentTargetKey: 'backend:codex', agentName: 'Codex',

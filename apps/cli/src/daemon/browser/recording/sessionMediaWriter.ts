@@ -1,10 +1,7 @@
 import { rm } from 'node:fs/promises';
 
-import {
-  BrowserEvidenceSessionMediaReferenceV1Schema,
-  type BrowserEvidenceSessionMediaReferenceV1,
-  type BrowserRecordingSessionV1,
-} from '@happier-dev/protocol';
+import { BrowserEvidenceSessionMediaReferenceV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import type { BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';

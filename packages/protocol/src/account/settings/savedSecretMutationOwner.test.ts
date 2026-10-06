@@ -2207,11 +2207,11 @@ describe('SavedSecret collection capacity', () => {
     )).toThrowError(expect.objectContaining({
       code: 'saved_secret_collection_full',
     }));
-    // The refusal is only correct while the canonical reader really does hide
-    // that entry. Measure the reader instead of restating the owner's constant.
+    // Stored reads preserve predecessor collections beyond today's new-write
+    // budget. Refusing growth must not hide the already-stored entries.
     const oversized = [...fullCollection, savedSecretAt(SAVED_SECRET_COLLECTION_MAX_ENTRIES)];
     expect(accountSettingsParse({ secrets: oversized }).secrets.length)
-      .toBeLessThan(oversized.length);
+      .toBe(oversized.length);
   });
 
   it('accepts an add that exactly reaches the collection maximum', () => {
@@ -2269,7 +2269,7 @@ describe('SavedSecret collection capacity', () => {
     throw new Error('Fixture never reached the SavedSecret byte ceiling');
   })();
 
-  it('refuses an add that would push the collection past the byte ceiling the reader enforces', () => {
+  it('refuses an add past the new-write byte ceiling while preserving oversized stored collections', () => {
     // Preconditions: the starting collection is well inside the cardinality
     // limit and fully visible, so a refusal here cannot be the entry-count
     // guard firing instead.
@@ -2284,13 +2284,12 @@ describe('SavedSecret collection capacity', () => {
       code: 'saved_secret_collection_full',
     }));
 
-    // The refusal is only correct while the canonical reader really does lose
-    // the whole root at that size. Measure the reader instead of restating the
-    // owner's ceiling: an oversized root recovers to its default, so the write
-    // would have hidden every already-working secret, not just the new one.
+    // A read budget must never turn a valid predecessor collection into empty
+    // data. The same oversized value is still readable after write admission
+    // refuses increasing a smaller collection past the current budget.
     const oversized = [...nearByteCeiling.kept, nearByteCeiling.crossing];
     expect(secretsRootBytes(oversized)).toBeGreaterThan(ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES);
-    expect(accountSettingsParse({ secrets: oversized }).secrets.length).toBe(0);
+    expect(accountSettingsParse({ secrets: oversized }).secrets.length).toBe(oversized.length);
   });
 
   it('accepts an add that keeps the collection inside the byte ceiling', () => {

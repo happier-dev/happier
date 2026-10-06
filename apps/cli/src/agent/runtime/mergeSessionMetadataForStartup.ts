@@ -15,14 +15,10 @@ import {
     clearModelIntentSessionMetadata,
     clearPermissionModeIntentSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    readSessionMcpSelectionV1FromMetadata,
-    buildBackendTargetKeyV2,
-    SessionModelSelectionResolutionError,
-    type ProviderBoundModelRef,
-    type SessionModelSelectionIntentV1,
-    type SessionAttachMetadataIdentityPolicy,
-} from '@happier-dev/protocol';
+import { readSessionMcpSelectionV1FromMetadata } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderBoundModelRef, SessionModelSelectionIntentV1, SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 

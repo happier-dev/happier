@@ -1,24 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { installAgentCliForRuntime, resolvePlatformFromNodePlatform, type AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
-import {
-  DaemonAgentInstallStartRequestSchema,
-  DaemonAgentInstallReadRequestSchema,
-  DaemonAgentInstallCancelRequestSchema,
-  PluginAgentCliInstallMetadataSchema,
-  buildQualifiedPluginContributionKey,
-  type AgentInstallJob,
-  type AgentInstallJobEvent,
-  type AgentInstallJobFailureCode,
-  type AgentInstallJobOutcome,
-  type DaemonAgentInstallStartRequest,
-  type DaemonAgentInstallReadRequest,
-  type DaemonAgentInstallCancelRequest,
-  type DaemonAgentInstallStartResponse,
-  type DaemonAgentInstallReadResponse,
-  type DaemonAgentInstallCancelResponse,
-  type DaemonAgentInstallListResponse,
-} from '@happier-dev/protocol';
+import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { PluginAgentCliInstallMetadataSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobFailureCode, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { invalidateCliSnapshots, probeAgentCliForInstall } from '@/capabilities/snapshots/cliSnapshot';

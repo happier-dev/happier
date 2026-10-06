@@ -103,7 +103,9 @@ export function readCodexAuthTokensFromJson(parsed: unknown): CodexEnvironmentAu
   const authStoreAccountId = typeof tokenRecord.account_id === 'string' && tokenRecord.account_id.trim()
     ? tokenRecord.account_id.trim()
     : null;
-  const hasUsableToken = hasUsableJwtLifetime(idToken) || hasUsableJwtLifetime(accessToken);
+  // External auth must retain expired access material and identity for host-owned recovery.
+  const hasUsableToken = (record.auth_mode === 'chatgptAuthTokens' && Boolean(accessToken?.trim()))
+    || hasUsableJwtLifetime(idToken) || hasUsableJwtLifetime(accessToken);
 
   return {
     idToken: hasUsableToken ? idToken : null,

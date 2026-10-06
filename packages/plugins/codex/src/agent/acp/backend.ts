@@ -3,11 +3,13 @@ import type {
   AgentExecutionRunOpenRequest,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { resolveCodexApiKeyAuthMethodId } from '../cli/auth/environment.js';
 import { buildCodexExecutionRunBaseEnv } from '../executionRuns/environment.js';
 import { buildCodexAcpEnvOverrides } from './env.js';
 import { resolveCodexAcpSpawnWithOptions } from './command.js';
+import { resolveCodexConnectedServiceRefreshSelectionFromEnv } from '../auth/services/runtime/auth/generationRequest.js';
 import {
   CODEX_ACP_TOOL_PATTERNS,
   resolveCodexAcpExplicitToolHint,
@@ -20,6 +22,13 @@ export function buildCodexNativeAcpRuntimeOptions(
     processEnv: process.env,
     isolationEnv: request.launchEnvironment?.values,
   }) ?? {};
+  if (resolveCodexConnectedServiceRefreshSelectionFromEnv(env)) {
+    throw new PluginError({
+      code: 'codex_refresh_free_auth_unsupported',
+      message: 'Codex ACP cannot delegate Connected Account refresh to the host. Use App Server routing for this account.',
+      remediation: { kind: 'openSettings', path: '/settings/agents/codex' },
+    });
+  }
   const permissionMode = request.configuration?.permissionIntent.value ?? undefined;
   const spawn = resolveCodexAcpSpawnWithOptions({
     env,

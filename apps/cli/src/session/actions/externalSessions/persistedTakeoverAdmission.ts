@@ -1,12 +1,5 @@
-import {
-  ExternalHistoryImportV1Schema,
-  removeLinkedExternalSessionMetadataV1,
-  type SessionMetadataOwnerPatchV1,
-  type ExternalSessionOperationRecordV1,
-  type ExternalSessionOperationSocketCommandV1,
-  type ExternalSessionOperationSocketResponseV1,
-  type SessionMetadataPublisherPreconditionV1,
-} from '@happier-dev/protocol';
+import { ExternalHistoryImportV1Schema, removeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { SessionMetadataOwnerPatchV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, SessionMetadataPublisherPreconditionV1 } from '@happier-dev/protocol';
 
 import type {
   PersistedTakeoverAdmissionWaiter,

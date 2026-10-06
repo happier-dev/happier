@@ -1,7 +1,5 @@
-import {
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-    type ConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/protocol';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { ConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol';
 
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 

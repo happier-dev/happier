@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { AgentRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { composeNativeAgentSessionRuntimeContext, createNativeAgentSessionHostServices } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';

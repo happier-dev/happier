@@ -1,8 +1,6 @@
 import axios from 'axios';
-import {
-  MachineOperationProtocolCapabilitiesV1Schema,
-  type MachineOperationProtocolCapabilitiesV1,
-} from '@happier-dev/protocol';
+import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

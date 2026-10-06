@@ -57,6 +57,20 @@ function deterministicRandomBytes(length: number): Uint8Array {
 }
 
 describe('Automation reply-handoff stored content', () => {
+  it('opens unknown stored result fields without losing handoff correspondence', () => {
+    const envelope = { t: 'plain', extra: true, v: { v: 1, extra: true,
+      correspondence: { ...correspondence, extra: true }, result: { ...result, extra: true } } };
+    expect(openAutomationRunResultStoredEnvelopeV1({ mode: 'plain', envelope }))
+      .toEqual({ kind: 'available', correspondence, result });
+    expect(parseAutomationRunResultStoredEnvelopeV1(JSON.stringify(envelope)))
+      .toEqual({ t: 'plain', v: { v: 1, correspondence, result } });
+    expect(openAutomationRunResultStoredEnvelopeV1({ mode: 'plain', envelope: { ...envelope,
+      v: { ...envelope.v, correspondence: { ...correspondence, runId: null } } } }))
+      .toEqual({ kind: 'contentInvalid' });
+    expect(openAutomationRunResultStoredEnvelopeV1({ mode: 'plain', envelope: {
+      ...envelope, v: { ...envelope.v, correspondence: { ...correspondence, handoffId: null } } } }))
+      .toEqual({ kind: 'contentInvalid' });
+  });
   it('accepts only precommit occurrence correspondence in a reply-context envelope', () => {
     const precommitReplyContext = {
       t: 'plain',

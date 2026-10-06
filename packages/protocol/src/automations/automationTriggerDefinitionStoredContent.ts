@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import {
@@ -170,7 +171,7 @@ export function validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1(
   }>,
 ): AutomationTriggerDefinitionStoredContentOuterValidationV1 {
   const binding = AutomationTriggerDefinitionBindingV1Schema.safeParse(params.binding);
-  const envelope = AutomationStoredContentEnvelopeV1Schema.safeParse(params.envelope);
+  const envelope = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema).safeParse(params.envelope);
   if (!binding.success || !envelope.success) return { kind: 'contentInvalid' };
   if (
     (params.mode === 'plain' && envelope.data.t !== 'plain')
@@ -183,7 +184,7 @@ export function validateAutomationTriggerDefinitionStoredEnvelopeOuterForModeV1(
       ? { kind: 'available', envelope: envelope.data }
       : { kind: 'contentInvalid' };
   }
-  const payload = AutomationTriggerDefinitionStoredPayloadV1Schema.safeParse(
+  const payload = createStoredReadSchema(AutomationTriggerDefinitionStoredPayloadV1Schema).safeParse(
     envelope.data.v,
   );
   if (!payload.success) return { kind: 'contentInvalid' };
@@ -218,7 +219,7 @@ export function sealAutomationTriggerDefinitionStoredEnvelopeV1(params: Readonly
 
 /**
  * The only Automation definition decrypting reader. It checks the purpose
- * byte, strict wrapper, and exact row binding before revealing inner facts.
+ * byte, required wrapper fields, and exact row binding before revealing inner facts.
  */
 export function openAutomationTriggerDefinitionStoredEnvelopeV1(params: Readonly<{
   mode: 'plain' | 'e2ee';
@@ -248,7 +249,7 @@ export function openAutomationTriggerDefinitionStoredEnvelopeV1(params: Readonly
     if (!opened) return { kind: 'contentInvalid' };
     rawPayload = opened.value;
   }
-  const payload = AutomationTriggerDefinitionStoredPayloadV1Schema.safeParse(rawPayload);
+  const payload = createStoredReadSchema(AutomationTriggerDefinitionStoredPayloadV1Schema).safeParse(rawPayload);
   if (!payload.success) return { kind: 'contentInvalid' };
   if (!sameBinding(payload.data.binding, binding.data)) {
     return { kind: 'bindingMismatch' };

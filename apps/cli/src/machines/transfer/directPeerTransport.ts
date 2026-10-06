@@ -5,12 +5,9 @@ import type { FileHandle } from 'node:fs/promises';
 
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
-import {
-  DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER,
-  isSafeDirectTransferEndpointCandidate,
-  TransferChunkEnvelopeSchema,
-  type TransferEndpointCandidate,
-} from '@happier-dev/protocol';
+import { DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER, isSafeDirectTransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
+import { TransferChunkEnvelopeSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { z } from 'zod';
 import {
   createEncryptedTransferChunkEnvelope,

@@ -1,7 +1,4 @@
-import {
-    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
-    SessionTranscriptObservationCapabilityAckV1Schema,
-} from '@happier-dev/protocol';
+import { SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1, SessionTranscriptObservationCapabilityAckV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import {
     supportsSessionSyncPendingInputV1,

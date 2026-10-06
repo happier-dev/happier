@@ -147,7 +147,7 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
             workStatus: { bucket: 'idle', tone: 'neutral' },
         });
         await expect(mounted.api.readSession('offline')).resolves.toMatchObject({
-            workStatus: { bucket: 'offline', tone: 'attention' },
+            workStatus: { bucket: 'offline', tone: 'neutral' },
         });
         mounted.dispose();
     });

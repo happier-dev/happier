@@ -1,10 +1,7 @@
-import {
-  HomeConnectionDescriptorV1Schema,
-  HomeOwnerClaimAccountIdV1Schema,
-  SystemTaskJsonValueSchema,
-  type HomeConnectionDescriptorV1,
-  type SystemTaskJsonValue,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { HomeOwnerClaimAccountIdV1Schema } from '@happier-dev/protocol/home/governance/claim';
+import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { HomeConnectionDescriptorV1, SystemTaskJsonValue } from '@happier-dev/protocol';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';

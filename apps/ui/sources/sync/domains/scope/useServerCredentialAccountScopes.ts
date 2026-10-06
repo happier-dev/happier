@@ -56,6 +56,7 @@ const RESOLVING_ENTRY: ScopeEntry = Object.freeze({ resolution: RESOLVING });
 const UNKNOWN_HOME_ENTRY: ScopeEntry = Object.freeze({ resolution: UNKNOWN_HOME });
 const UNAVAILABLE_ENTRY: ScopeEntry = Object.freeze({ resolution: UNAVAILABLE });
 const SIGNED_OUT_ENTRY: ScopeEntry = Object.freeze({ resolution: SIGNED_OUT });
+const EMPTY_SCOPE_BINDINGS: ReadonlyMap<string, ServerCredentialAccountScopeBinding> = new Map();
 
 function normalizeCredentialScopeServerId(serverId: string | null | undefined): string {
     return isEmbedWindowContext() ? serverId?.trim() ?? '' : resolveServerProfileScopeIdForIdentifier(serverId);
@@ -262,7 +263,8 @@ function boundScopeEntries(entries: ReadonlyMap<string, ScopeEntry>): ReadonlyMa
     for (const [serverId, entry] of entries) {
         if ('binding' in entry && entry.binding) bindings.set(serverId, entry.binding);
     }
-    return bindings;
+    // Resolution-only transitions do not change an empty authority projection.
+    return bindings.size === 0 ? EMPTY_SCOPE_BINDINGS : bindings;
 }
 
 /** Exact Home credential lifetimes without Session-projection cleanup effects. */

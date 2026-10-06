@@ -1,3 +1,5 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PassthroughEmptyObjectSchema } from './specs/common.js';
 import { InputOptionsConsumerV1Schema } from '../inputs/inputOptionsConsumer.js';
 import { VOICE_CONVERSATION_ACTION_IDS, VOICE_CONVERSATION_ACTION_SPECS, VoiceConversationActionInputSchemas, VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from './voiceConversationActionFamily.js';
 import {
@@ -49,9 +51,9 @@ import {
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../capabilities/machineAgentInventory.js';
 import { DaemonWorkspaceFileSearchRequestSchema, DaemonWorkspaceFileSearchResponseSchema } from '../machines/workspaceFiles.js';
 
-export const WorkspaceFilesSearchActionInputSchema = DaemonWorkspaceFileSearchRequestSchema.extend({
+export const WorkspaceFilesSearchActionInputSchema = lazyZodSchema(() => DaemonWorkspaceFileSearchRequestSchema.extend({
   machineId: z.string().trim().min(1),
-}).strict();
+}).strict());
 import {
   DaemonAgentInstallStartRequestSchema,
   DaemonAgentInstallStartResponseSchema,
@@ -76,6 +78,7 @@ import { TODO_SESSION_LINK_ACTION_SPECS } from './todoSessionLinkAction.js';
 import { WORKFLOW_AUTHORING_ACTION_SPECS } from './workflowAuthoringAction.js';
 import { COMPOSER_INGRESS_ACTION_SPECS } from './composerIngressAction.js';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
+import { readAccountSettingDeclarationV1 } from './accountSettingDeclarations.js';
 import { APP_SHELL_ACTION_IDS, APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
 import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
 import { APP_UPDATE_ACTION_IDS, APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
@@ -479,9 +482,11 @@ import {
 import {
   SkillCatalogItemV1Schema,
   SkillCatalogV1Schema,
+} from '../runtime/catalog/skills.js';
+import {
   VendorPluginCatalogItemV1Schema,
   VendorPluginCatalogV1Schema,
-} from '../runtime/catalog/index.js';
+} from '../runtime/catalog/vendorPlugins.js';
 import {
   ExternalSessionTakeoverInputV1Schema,
   ExternalSessionTakeoverResultV1Schema,
@@ -718,12 +723,12 @@ export type ActionSurfaceBindingTransform = (
   context: ActionSurfaceBindingContext,
 ) => unknown | Promise<unknown>;
 
-const ActionSurfaceBindingTransformSchema = z.custom<ActionSurfaceBindingTransform>(
+const ActionSurfaceBindingTransformSchema = lazyZodSchema(() => z.custom<ActionSurfaceBindingTransform>(
   (value) => typeof value === 'function',
   { message: 'Expected an Action surface binding transform' },
-);
+));
 
-export const ActionSpecSurfaceBindingsSchema = z.object({
+export const ActionSpecSurfaceBindingsSchema = lazyZodSchema(() => z.object({
   api: z.object({
     inputSchema: ZodSchemaLike,
     bindInput: ActionSurfaceBindingTransformSchema.optional(),
@@ -742,13 +747,13 @@ export const ActionSpecSurfaceBindingsSchema = z.object({
     outputSchema: ZodSchemaLike.optional(),
     projectOutput: ActionSurfaceBindingTransformSchema.optional(),
   }).strict().optional(),
-}).strict();
+}).strict());
 export type ActionSpecSurfaceBindings = z.infer<typeof ActionSpecSurfaceBindingsSchema>;
 
-const ActionPluginCallerAdministrativeSelectorSchema = z.object({
+const ActionPluginCallerAdministrativeSelectorSchema = lazyZodSchema(() => z.object({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
+}).strict());
 
 /**
  * A host Action's explicit authority contract when it is callable by a
@@ -762,7 +767,7 @@ const ActionPluginCallerAdministrativeSelectorSchema = z.object({
  * for the one plugin-targeted host Action and makes its exceptional Inspector
  * administration visible at the Action declaration owner.
  */
-export const ActionPluginCallerPolicySchema = z.discriminatedUnion('kind', [
+export const ActionPluginCallerPolicySchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('caller'),
   }).strict(),
@@ -771,7 +776,7 @@ export const ActionPluginCallerPolicySchema = z.discriminatedUnion('kind', [
     targetPluginIdField: z.literal('pluginId'),
     administrativeCallers: z.array(ActionPluginCallerAdministrativeSelectorSchema).min(1),
   }).strict(),
-]);
+]));
 export type ActionPluginCallerPolicy = z.infer<typeof ActionPluginCallerPolicySchema>;
 
 export { ActionSafetySchema, type ActionSafety } from './safety.js';
@@ -803,23 +808,23 @@ export {
   type ActionInputWidget,
 } from './actionInputHints.js';
 
-export const ActionPromptingSchema = z
+export const ActionPromptingSchema = lazyZodSchema(() => z
   .object({
     voiceHotPath: z.boolean().optional(),
   })
-  .passthrough();
+  .passthrough());
 export type ActionPrompting = z.infer<typeof ActionPromptingSchema>;
 
 /** Local declaration only; domain routes retain wire validation and authorization. */
-export const ActionServerTransportSchema = z.object({
+export const ActionServerTransportSchema = lazyZodSchema(() => z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   path: z.string().startsWith('/').refine((path) => !path.startsWith('//'), {
     message: 'Action transport must be a relative Home path',
   }),
-}).strict();
+}).strict());
 export type ActionServerTransport = z.infer<typeof ActionServerTransportSchema>;
 
-export const ActionSpecSchema = z.object({
+export const ActionSpecSchema = lazyZodSchema(() => z.object({
   id: ActionIdSchema,
   title: z.string().min(1),
   description: z.string().min(1).optional(),
@@ -925,6 +930,8 @@ export const ActionSpecSchema = z.object({
   requiredAuthority: ActionRequiredAuthoritySchema.optional(),
   /** Host-owned routing placement; public callers never supply this in Action input. */
   executionPlacement: ActionExecutionPlacementSchema.optional(),
+  /** Host-only selector for an admitted input whose owner varies; never serialized as caller authority. */
+  executionPlacementForInput: z.custom<(input: unknown) => ActionExecutionPlacement>((value) => typeof value === 'function').optional(),
   /** Explicit host-stamped caller authority for a Plugin Action. */
   pluginCallerPolicy: ActionPluginCallerPolicySchema.optional(),
   surfaces: ActionSurfaceSchema,
@@ -1091,7 +1098,7 @@ export const ActionSpecSchema = z.object({
       path: ['surfaceBindings', 'plugin', 'inputSchema'],
     });
   }
-});
+}));
 
 export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: readonly ActionUiPlacement[];
@@ -1151,6 +1158,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   operation?: ParsedActionSpec['operation'];
   requiredAuthority?: ParsedActionSpec['requiredAuthority'];
   executionPlacement?: ParsedActionSpec['executionPlacement'];
+  executionPlacementForInput?: ParsedActionSpec['executionPlacementForInput'];
   pluginCallerPolicy?: ParsedActionSpec['pluginCallerPolicy'];
   surfaces: ParsedActionSpec['surfaces'];
   inputSchema: ParsedActionSpec['inputSchema'];
@@ -1198,50 +1206,49 @@ const DAEMON_ADMIN_INPUT_HINTS = Object.freeze({
   fields: [],
 } satisfies ActionInputHints);
 
-const EmptyObjectSchema = z.object({}).strict();
-const PassthroughEmptyObjectSchema = z.object({}).passthrough();
-const DaemonFilesystemReadFileInputSchema = z.object({
+const EmptyObjectSchema = lazyZodSchema(() => z.object({}).strict());
+const DaemonFilesystemReadFileInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
-}).passthrough();
-const DaemonFilesystemWriteFileInputSchema = z.object({
+}).passthrough());
+const DaemonFilesystemWriteFileInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
   content: z.string(),
   expectedHash: z.string().nullable().optional(),
-}).passthrough();
-const DaemonFilesystemListDirectoryInputSchema = z.object({
+}).passthrough());
+const DaemonFilesystemListDirectoryInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
   includeGitIgnore: z.boolean().optional(),
-}).passthrough();
-const DaemonFilesystemGetDirectoryTreeInputSchema = z.object({
+}).passthrough());
+const DaemonFilesystemGetDirectoryTreeInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
   maxDepth: z.number().int().min(0),
-}).passthrough();
-const BugReportGetLogTailInputSchema = z.object({
+}).passthrough());
+const BugReportGetLogTailInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1).optional(),
   maxBytes: z.number().int().min(1024).max(1_000_000).optional(),
-}).passthrough();
-const BugReportUploadArtifactInputSchema = z.object({
+}).passthrough());
+const BugReportUploadArtifactInputSchema = lazyZodSchema(() => z.object({
   uploadUrl: z.string().optional(),
-}).passthrough();
-const OptionalSessionIdInputSchema = z.object({
+}).passthrough());
+const OptionalSessionIdInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionIdRequiredInputSchema = z.object({
+const SessionIdRequiredInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const SessionTitleSetInputSchema = z.object({
+const SessionTitleSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   title: z.string().trim().min(1),
-}).passthrough();
+}).passthrough());
 
-const SessionPermissionModeSetInputSchema = z.object({
+const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   permissionMode: SessionPermissionModeInputSchema,
-}).passthrough();
+}).passthrough());
 
-export const SessionModelSetInputSchema = z.object({
+export const SessionModelSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   modelId: z.string().trim().min(1).optional(),
   providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
@@ -1263,25 +1270,25 @@ export const SessionModelSetInputSchema = z.object({
   if (value.teamVisibilityGrantConsent && value.teamVisibilityGrantConsent.teamId !== value.teamCredentialModel?.teamId) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['teamVisibilityGrantConsent'], message: 'Consent must match the selected Team' });
   }
-});
+}));
 
-const SessionStatusGetInputSchema = z.object({
+const SessionStatusGetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   live: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionHistoryGetInputSchema = z.object({
+const SessionHistoryGetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(250).optional(),
   format: z.enum(['compact', 'raw']).optional(),
   includeMeta: z.boolean().optional(),
   includeStructuredPayload: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionTranscriptRoleSchema = z.enum(['user', 'assistant']);
-const SessionStoredTranscriptRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
+const SessionTranscriptRoleSchema = lazyZodSchema(() => z.enum(['user', 'assistant']));
+const SessionStoredTranscriptRoleSchema = lazyZodSchema(() => z.enum(['user', 'agent', 'event', 'unknown']));
 
-const SessionTranscriptGetExternalShareableProjectionSchema = z.literal('externalShareableV1');
+const SessionTranscriptGetExternalShareableProjectionSchema = lazyZodSchema(() => z.literal('externalShareableV1'));
 
 /**
  * The largest page `session.transcript.get` will return for one request.
@@ -1313,22 +1320,22 @@ const SessionTranscriptGetInputShape = {
 };
 
 /** Closed semantic transcript input exposed to PAT/API/SDK callers. */
-const SessionTranscriptGetPublicInputSchema = z.object(SessionTranscriptGetInputShape)
+const SessionTranscriptGetPublicInputSchema = lazyZodSchema(() => z.object(SessionTranscriptGetInputShape)
   .omit({ projection: true })
-  .strict();
+  .strict());
 
 /** Exact public input for the closed external-shareable transcript projection. */
-export const SessionTranscriptGetExternalShareableInputV1Schema = z.object({
+export const SessionTranscriptGetExternalShareableInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: SessionTranscriptGetInputShape.sessionId,
   projection: SessionTranscriptGetExternalShareableProjectionSchema,
   limit: SessionTranscriptGetInputShape.limit,
   cursor: SessionTranscriptGetInputShape.cursor,
-}).strict();
+}).strict());
 export type SessionTranscriptGetExternalShareableInputV1 = z.infer<
   typeof SessionTranscriptGetExternalShareableInputV1Schema
 >;
 
-export const SessionTranscriptGetInputSchema = z.object(SessionTranscriptGetInputShape).passthrough().superRefine((value, context) => {
+export const SessionTranscriptGetInputSchema = lazyZodSchema(() => z.object(SessionTranscriptGetInputShape).passthrough().superRefine((value, context) => {
   if (value.projection !== 'externalShareableV1') return;
   const allowedKeys = new Set(['sessionId', 'projection', 'cursor', 'limit']);
   for (const key of Object.keys(value)) {
@@ -1339,18 +1346,18 @@ export const SessionTranscriptGetInputSchema = z.object(SessionTranscriptGetInpu
       message: `${key} is not accepted by the externalShareableV1 projection`,
     });
   }
-});
+}));
 export type SessionTranscriptGetInput = z.infer<typeof SessionTranscriptGetInputSchema>;
-const SessionTranscriptSemanticRoleSchema = z.enum([
+const SessionTranscriptSemanticRoleSchema = lazyZodSchema(() => z.enum([
   'user',
   'assistant',
   'tool',
   'event',
   'reasoning',
   'unknown',
-]);
-const SessionTranscriptStoredMessageRoleSchema = z.enum(['user', 'agent', 'event', 'unknown']);
-const SessionTranscriptGetItemSchema = z.object({
+]));
+const SessionTranscriptStoredMessageRoleSchema = lazyZodSchema(() => z.enum(['user', 'agent', 'event', 'unknown']));
+const SessionTranscriptGetItemSchema = lazyZodSchema(() => z.object({
   id: z.string(),
   seq: z.number().int().nonnegative().optional(),
   createdAt: z.number().int().nonnegative(),
@@ -1367,10 +1374,10 @@ const SessionTranscriptGetItemSchema = z.object({
   raw: z.unknown().optional(),
   truncated: z.boolean().optional(),
   rawTruncated: z.boolean().optional(),
-}).strict();
+}).strict());
 export type SessionTranscriptGetItem = z.infer<typeof SessionTranscriptGetItemSchema>;
 
-const SessionTranscriptGetSemanticSuccessSchema = z.object({
+const SessionTranscriptGetSemanticSuccessSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   sessionId: z.string().min(1),
   items: z.array(SessionTranscriptGetItemSchema).readonly(),
@@ -1382,34 +1389,34 @@ const SessionTranscriptGetSemanticSuccessSchema = z.object({
     scanLimitReached: z.boolean(),
     payloadTruncations: z.number().int().nonnegative(),
   }).strict(),
-}).strict();
+}).strict());
 
-export const SessionTranscriptGetExternalShareableResultV1Schema = ExternalShareableTranscriptPageV1Schema.extend({
+export const SessionTranscriptGetExternalShareableResultV1Schema = lazyZodSchema(() => ExternalShareableTranscriptPageV1Schema.extend({
   ok: z.literal(true),
   sessionId: z.string().min(1),
   projection: z.literal('externalShareableV1'),
-}).strict();
+}).strict());
 
-const SessionTranscriptGetErrorSchema = z.object({
+const SessionTranscriptGetErrorSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   errorCode: z.string().min(1),
   errorMessage: z.string().min(1),
   candidates: z.array(z.string().min(1)).readonly().optional(),
-}).strict();
+}).strict());
 
 /** Canonical strict result envelope for every session.transcript.get Action path. */
-export const SessionTranscriptGetResultSchema = z.union([
+export const SessionTranscriptGetResultSchema = lazyZodSchema(() => z.union([
   SessionTranscriptGetSemanticSuccessSchema,
   SessionTranscriptGetExternalShareableResultV1Schema,
   SessionTranscriptGetErrorSchema,
-]);
+]));
 export type SessionTranscriptGetResult = z.infer<typeof SessionTranscriptGetResultSchema>;
 export type SessionTranscriptGetExternalShareableResultV1 = z.infer<
   typeof SessionTranscriptGetExternalShareableResultV1Schema
 >;
 export type SessionTranscriptGetOutput = SessionTranscriptGetResult;
 
-export const SessionEventsGetInputSchema = z.object({
+export const SessionEventsGetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(200).optional(),
   cursor: z.string().min(1).nullable().optional(),
@@ -1432,7 +1439,7 @@ export const SessionEventsGetInputSchema = z.object({
       path: ['scope'],
     });
   }
-});
+}));
 export type SessionEventsGetInput = z.infer<typeof SessionEventsGetInputSchema>;
 export type SessionEventsGetItem = Readonly<{
   id: string;
@@ -1472,15 +1479,15 @@ export type SessionEventsGetOutput =
       candidates?: readonly string[];
     }>;
 
-const SessionWaitIdleInputSchema = z.object({
+const SessionWaitIdleInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionWaitIdlePublicInputSchema = SessionWaitIdleInputSchema.strict();
+const SessionWaitIdlePublicInputSchema = lazyZodSchema(() => SessionWaitIdleInputSchema.strict());
 
 /** Exact result returned by the canonical Session idle waiter. */
-export const SessionWaitIdleResultSchema = z.union([
+export const SessionWaitIdleResultSchema = lazyZodSchema(() => z.union([
   z.object({
     ok: z.literal(true),
     sessionId: z.string().min(1),
@@ -1499,9 +1506,9 @@ export const SessionWaitIdleResultSchema = z.union([
     ]),
     candidates: z.array(z.string().min(1)).readonly().optional(),
   }).strict(),
-]);
+]));
 
-const SessionGoalSetInputSchema = z.object({
+const SessionGoalSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   objective: z.string().trim().min(1).max(4000).optional(),
   status: SessionWorkStateStatusV1Schema.optional(),
@@ -1510,39 +1517,39 @@ const SessionGoalSetInputSchema = z.object({
   typeof value.objective === 'string'
   || typeof value.status === 'string'
   || Object.prototype.hasOwnProperty.call(value, 'tokenBudget')
-), { message: 'At least one goal mutation field is required' });
+), { message: 'At least one goal mutation field is required' }));
 
-const SessionFollowPreferencesCliInputSchema = z.object({
+const SessionFollowPreferencesCliInputSchema = lazyZodSchema(() => z.object({
   assigned: z.enum(['on', 'off']),
   direct: z.enum(['on', 'off']),
   team: z.enum(['on', 'off']),
   group: z.enum(['on', 'off']),
-}).strict();
+}).strict());
 
-const SessionCatalogListInputSchema = z.object({
+const SessionCatalogListInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   cwd: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionVendorPluginCatalogListOutputSchema = z.object({
+const SessionVendorPluginCatalogListOutputSchema = lazyZodSchema(() => z.object({
   supported: z.boolean().optional(),
   unsupported: z.literal(true).optional(),
   vendorPlugins: z.array(VendorPluginCatalogItemV1Schema).readonly(),
   catalog: VendorPluginCatalogV1Schema.optional(),
   diagnostic: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionSkillCatalogListOutputSchema = z.object({
+const SessionSkillCatalogListOutputSchema = lazyZodSchema(() => z.object({
   supported: z.boolean().optional(),
   unsupported: z.literal(true).optional(),
   skills: z.array(SkillCatalogItemV1Schema).readonly(),
   catalog: SkillCatalogV1Schema.optional(),
   diagnostic: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const BackendTargetKeyInputSchema = z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]);
+const BackendTargetKeyInputSchema = lazyZodSchema(() => z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]));
 
-const IntentStartCommonSchema = z.object({
+const IntentStartCommonSchema = lazyZodSchema(() => z.object({
   roleId: z.string().trim().min(1).optional(),
   launchProfileId: z.string().trim().min(1).optional(),
   sessionId: z.string().min(1).optional(),
@@ -1587,9 +1594,9 @@ const IntentStartCommonSchema = z.object({
   connectedServicesByBackendTargetKey: z
     .record(z.string(), StrictJsonValueSchema)
     .optional(),
-}).passthrough();
+}).passthrough());
 
-const PlanStartInputSchema = IntentStartCommonSchema.extend({
+const PlanStartInputSchema = lazyZodSchema(() => IntentStartCommonSchema.extend({
   target: z.object({ kind: z.literal('detached') }).strict().optional(),
   permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
@@ -1597,21 +1604,21 @@ const PlanStartInputSchema = IntentStartCommonSchema.extend({
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
 }).passthrough().refine((input) => !input.target || input.sessionId === undefined, {
   path: ['sessionId'], message: 'A detached plan cannot target a Session',
-});
+}));
 
-const DelegateStartInputSchema = IntentStartCommonSchema.extend({
+const DelegateStartInputSchema = lazyZodSchema(() => IntentStartCommonSchema.extend({
   permissionMode: ExecutionRunActionPermissionModeSchema.optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('bounded'),
   ioMode: z.enum(['request_response', 'streaming']).default('request_response'),
-}).passthrough();
+}).passthrough());
 
-const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
+const VoiceAgentStartInputSchema = lazyZodSchema(() => IntentStartCommonSchema.extend({
   permissionMode: ExecutionRunActionPermissionModeSchema.default('read_only'),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).default('ephemeral'),
   runClass: z.enum(['bounded', 'long_lived']).default('long_lived'),
   ioMode: z.enum(['request_response', 'streaming']).default('streaming'),
-}).passthrough();
+}).passthrough());
 
 /**
  * Scope is intentionally tri-state: an omitted field resolves to the caller's
@@ -1619,15 +1626,15 @@ const VoiceAgentStartInputSchema = IntentStartCommonSchema.extend({
  * identifies one exact Session. Keep the property optional so the action owner
  * can distinguish omission from explicit `null` by property presence.
  */
-const ExecutionRunScopeSessionIdSchema = z.string().min(1).refine(
+const ExecutionRunScopeSessionIdSchema = lazyZodSchema(() => z.string().min(1).refine(
   (sessionId) => sessionId.trim().length > 0,
   { message: 'sessionId must not be whitespace only' },
-).nullable().optional();
+).nullable().optional());
 
-const ExecutionRunIdInputSchema = z.object({
+const ExecutionRunIdInputSchema = lazyZodSchema(() => z.object({
   sessionId: ExecutionRunScopeSessionIdSchema,
   runId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
 /**
  * Normalize the agent-friendly `connectedServices` simple-form (string / array) into the canonical
@@ -1646,7 +1653,7 @@ function preprocessRunStartConnectedServicesInput(raw: unknown): unknown {
   return { ...record, connectedServices: normalized.bindings };
 }
 
-const ExecutionRunStartActionRequestSchema = ExecutionRunStartRequestBaseSchema.extend({
+const ExecutionRunStartActionRequestSchema = lazyZodSchema(() => ExecutionRunStartRequestBaseSchema.extend({
   // Action callers use the canonical permission-intent vocabulary. The
   // execution-run RPC retains its historical wire tokens, so this shared
   // Action-boundary schema projects `safe-yolo` → `workspace_write` once,
@@ -1681,9 +1688,9 @@ const ExecutionRunStartActionRequestSchema = ExecutionRunStartRequestBaseSchema.
       path: ['waitTimeoutSeconds'],
     });
   }
-});
+}));
 
-const ExecutionRunStartPluginInputSchema = ExecutionRunStartRequestBaseSchema.extend({
+const ExecutionRunStartPluginInputSchema = lazyZodSchema(() => ExecutionRunStartRequestBaseSchema.extend({
   // Trusted plugins share the public Action contract; do not let them carry
   // a second, unnormalized permission-mode vocabulary into execution runs.
   permissionMode: ExecutionRunActionPermissionModeSchema,
@@ -1717,24 +1724,24 @@ const ExecutionRunStartPluginInputSchema = ExecutionRunStartRequestBaseSchema.ex
       path: ['waitTimeoutSeconds'],
     });
   }
-});
+}));
 
-const ExecutionRunStartInputSchema = z.preprocess<
+const ExecutionRunStartInputSchema = lazyZodSchema(() => z.preprocess<
   unknown,
   typeof ExecutionRunStartActionRequestSchema,
   z.input<typeof ExecutionRunStartPluginInputSchema>
 >(
   preprocessRunStartConnectedServicesInput,
   ExecutionRunStartActionRequestSchema,
-);
+));
 
-const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunGetInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   includeStructured: z.boolean().optional(),
   waitForInputId: z.string().trim().min(1).optional(),
   waitForOutput: ReviewWalkthroughObservationSchema.optional(),
-}).passthrough();
+}).passthrough());
 
-export const DetachedExecutionRunSendInputSchema = z.object({
+export const DetachedExecutionRunSendInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.null(),
   runId: z.string().min(1),
   message: z.string().min(1),
@@ -1750,13 +1757,13 @@ export const DetachedExecutionRunSendInputSchema = z.object({
       message: 'resultContract requires exact localInputId correspondence',
     });
   }
-});
+}));
 
-const ExecutionRunEnsureInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunEnsureInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunEnsureOrStartInputSchema = z.object({
+const ExecutionRunEnsureOrStartInputSchema = lazyZodSchema(() => z.object({
   sessionId: ExecutionRunScopeSessionIdSchema,
   runId: z.string().min(1).nullable().optional(),
   start: ExecutionRunStartRequestSchema.optional(),
@@ -1766,43 +1773,43 @@ const ExecutionRunEnsureOrStartInputSchema = z.object({
   if (!runId && !value.start) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'start is required when runId is missing' });
   }
-});
+}));
 
-const ExecutionRunStreamStartInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunStreamStartInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   message: z.string().min(1),
   displayMessage: z.string().min(1).optional(),
   resume: z.boolean().optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunStreamReadInputSchema = ExecutionRunTurnStreamReadRequestSchema.extend({
+const ExecutionRunStreamReadInputSchema = lazyZodSchema(() => ExecutionRunTurnStreamReadRequestSchema.extend({
   sessionId: ExecutionRunScopeSessionIdSchema,
-});
+}));
 
-const ExecutionRunStreamCancelInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunStreamCancelInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   streamId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunActionInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   actionId: z.string().min(1),
   input: StrictJsonValueSchema.optional(),
-}).passthrough();
+}).passthrough());
 
-export const ExecutionRunPermissionRespondInputSchema = z.union([
+export const ExecutionRunPermissionRespondInputSchema = lazyZodSchema(() => z.union([
   z.object({ runId: z.string().trim().min(1), requestId: z.string().trim().min(1), approved: z.boolean() }).strict(),
   z.object({ runId: z.string().trim().min(1), requestId: z.string().trim().min(1), answers: StructuredQuestionAnswersV1Schema }).strict(),
-]);
+]));
 
 export type ExecutionRunPermissionRespondActionInput = z.input<typeof ExecutionRunPermissionRespondInputSchema>;
 
-const ExecutionRunWaitInputSchema = ExecutionRunIdInputSchema.extend({
+const ExecutionRunWaitInputSchema = lazyZodSchema(() => ExecutionRunIdInputSchema.extend({
   timeoutSeconds: z.number().int().min(1).optional(),
   condition: ExecutionRunWaitConditionSchema.optional(),
   after: ExecutionRunGetResponseSchema.optional(),
-}).passthrough();
+}).passthrough());
 
-const ExecutionRunWaitPublicInputSchema = ExecutionRunWaitInputSchema.strict();
+const ExecutionRunWaitPublicInputSchema = lazyZodSchema(() => ExecutionRunWaitInputSchema.strict());
 
-const SessionOpenInputSchema = z.object({
+const SessionOpenInputSchema = lazyZodSchema(() => z.object({
   tabId: z.string().trim().min(1).optional(),
   sessionId: z.string().min(1).optional(),
   sessionTitle: z.string().trim().min(1).optional(),
@@ -1823,16 +1830,16 @@ const SessionOpenInputSchema = z.object({
       path: ['sessionId'],
     });
   }
-});
+}));
 
-const SessionForkInputSchema = z.object({
+const SessionForkInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionRollbackInputSchema = z.object({
+const SessionRollbackInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   target: SessionRollbackTargetSchema.optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * Outcome-oriented public handoff input. Workspace endpoint identity and the
@@ -1840,7 +1847,7 @@ const SessionRollbackInputSchema = z.object({
  * materializes both `WorkspaceRef` values from the Account settings owner, so a
  * caller can neither name nor pin them here.
  */
-const SessionHandoffInputSchema = z.object({
+const SessionHandoffInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   sourceMachineId: z.string().min(1).optional(),
   targetMachineId: z.string().min(1).optional(),
@@ -1854,9 +1861,9 @@ const SessionHandoffInputSchema = z.object({
   handoffTargetReplacementApproval: HandoffTargetReplacementApprovalV1Schema.optional(),
   handoffTargetReplacementApprovalReceiptId: z.string().min(1).max(2_000).optional(),
   handoffTargetReplacementApprovalActionInput: z.unknown().optional(),
-}).strict();
+}).strict());
 
-const SessionHandoffPublicInputSchema = SessionHandoffInputSchema.omit({
+const SessionHandoffPublicInputSchema = lazyZodSchema(() => SessionHandoffInputSchema.omit({
   sourceMachineId: true,
   sessionStorageMode: true,
   preferredTransportStrategies: true,
@@ -1865,12 +1872,12 @@ const SessionHandoffPublicInputSchema = SessionHandoffInputSchema.omit({
   handoffTargetReplacementApproval: true,
   handoffTargetReplacementApprovalReceiptId: true,
   handoffTargetReplacementApprovalActionInput: true,
-}).strict();
+}).strict());
 
 const SessionSpawnNewInputSchema = SessionSpawnNewInputV2Schema;
-const SessionSpawnNewApiInputSchema = SessionSpawnNewInputV2BaseSchema.omit({
+const SessionSpawnNewApiInputSchema = lazyZodSchema(() => SessionSpawnNewInputV2BaseSchema.omit({
   executionTarget: true,
-}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1);
+}).strict().superRefine(refineSessionDirectoryIntentCheckoutV1));
 const SessionSpawnNewInputHints = {
   title: 'Create a new session',
   fields: [
@@ -1929,9 +1936,9 @@ export function projectSessionSpawnNewApiRequest(
 // Action invocations may derive a key from their durable request identity, but
 // RPC retries have no such identity. The transport therefore requires the
 // caller's one logical creation key rather than synthesizing one per attempt.
-const SessionSpawnNewRpcInputSchema = SessionSpawnNewInputV2Schema.safeExtend({
+const SessionSpawnNewRpcInputSchema = lazyZodSchema(() => SessionSpawnNewInputV2Schema.safeExtend({
   creationKey: SessionCreationKeyV1Schema,
-});
+}));
 
 function bindApiSessionSpawnNewInput(
   value: unknown,
@@ -1993,10 +2000,10 @@ function validateStringAliasPair(
   });
 }
 
-const PathsListRecentInputSchema = z.object({
+const PathsListRecentInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(50).optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * The persisted project registry read.
@@ -2008,10 +2015,10 @@ const PathsListRecentInputSchema = z.object({
  * either one changes. The registry is a bounded local read, so the caller
  * receives it and decides.
  */
-const ProjectsListInputSchema = z.object({
+const ProjectsListInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * The Prompt Library invocation inventory read.
@@ -2021,9 +2028,9 @@ const ProjectsListInputSchema = z.object({
  * expanded every referenced document would fetch every artifact in the Library
  * to answer "which prompts exist".
  */
-const PromptInvocationsListInputSchema = z.object({
+const PromptInvocationsListInputSchema = lazyZodSchema(() => z.object({
   limit: z.number().int().min(1).max(500).optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * Resolve ONE Prompt Library invocation to the text it produces.
@@ -2033,33 +2040,33 @@ const PromptInvocationsListInputSchema = z.object({
  * body is the Library's own job, so this is a projection of the incumbent
  * expansion owner rather than a second template renderer.
  */
-const PromptInvocationResolveInputSchema = z.object({
+const PromptInvocationResolveInputSchema = lazyZodSchema(() => z.object({
   invocationId: z.string().min(1),
   argsText: z.string().optional(),
-}).passthrough();
+}).passthrough());
 
-const MachinesListInputSchema = z.object({
+const MachinesListInputSchema = lazyZodSchema(() => z.object({
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * The friendly `happier machines list` bound has always been the whole page. It
  * is a caller default, not an Action default: another surface may page.
  */
 const MACHINES_LIST_CLI_DEFAULT_LIMIT = 200;
-const MachinesListCliInputSchema = z.object({
+const MachinesListCliInputSchema = lazyZodSchema(() => z.object({
   limit: z.number().int().min(1).max(MACHINES_LIST_CLI_DEFAULT_LIMIT).optional(),
-}).strict();
+}).strict());
 
-const ServersListInputSchema = z.object({
+const ServersListInputSchema = lazyZodSchema(() => z.object({
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough();
+}).passthrough());
 
-const ReviewEnginesListInputSchema = z.object({
+const ReviewEnginesListInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   includeDisabled: z.boolean().optional(),
   scope: z.literal('paths').optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * `machineId` scopes the answer to the installed/external Agents one machine's
@@ -2068,13 +2075,13 @@ const ReviewEnginesListInputSchema = z.object({
  * residue: an input the schema does not name is a contract the schema lies
  * about.
  */
-const AgentsBackendsListInputSchema = z.object({
+const AgentsBackendsListInputSchema = lazyZodSchema(() => z.object({
   includeDisabled: z.boolean().optional(),
   limit: z.number().int().min(1).max(200).optional(),
   machineId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const AgentsModelsListInputSchema = z.object({
+const AgentsModelsListInputSchema = lazyZodSchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
@@ -2089,16 +2096,16 @@ const AgentsModelsListInputSchema = z.object({
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-});
+}));
 
-const AgentSpawnOptionsListInputBaseSchema = z.object({
+const AgentSpawnOptionsListInputBaseSchema = lazyZodSchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-});
+}));
 
-const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+const AgentSpawnOptionsListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema.extend({
   serverId: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
@@ -2109,7 +2116,7 @@ const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.ex
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-});
+}));
 
 /**
  * `sessions.spawn.profiles.list` is the one spawn-option source whose agent
@@ -2128,13 +2135,13 @@ const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.ex
  * A contradictory pair is still refused, because half an agent scope is not a
  * weaker filter.
  */
-const SpawnProfilesListInputSchema = AgentSpawnOptionsListInputBaseSchema
+const SpawnProfilesListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema
   .passthrough()
   .superRefine((value, ctx) => {
     validateAgentIdAndBackendTargetKeySelection(value, ctx);
-  });
+  }));
 
-const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+const AgentsConfigOptionsListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema.extend({
   modelId: z.string().min(1).optional(),
   serverId: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -2146,9 +2153,9 @@ const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-});
+}));
 
-const SpawnConnectedServicesListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+const SpawnConnectedServicesListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema.extend({
   includeUnavailable: z.boolean().optional(),
   serverId: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
@@ -2160,9 +2167,9 @@ const SpawnConnectedServicesListInputSchema = AgentSpawnOptionsListInputBaseSche
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-});
+}));
 
-const SpawnMcpServersPreviewInputSchema = z.object({
+const SpawnMcpServersPreviewInputSchema = lazyZodSchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
@@ -2179,31 +2186,31 @@ const SpawnMcpServersPreviewInputSchema = z.object({
     });
   }
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
-});
+}));
 
-const ActionSpecSearchInputSchema = z.object({
+const ActionSpecSearchInputSchema = lazyZodSchema(() => z.object({
   query: z.string().trim().optional(),
   limit: z.number().int().min(1).max(100).optional(),
-}).passthrough();
+}).passthrough());
 
-const ActionSpecSearchCliInputSchema = z.object({
+const ActionSpecSearchCliInputSchema = lazyZodSchema(() => z.object({
   query: z.array(z.string()).default([]),
   limit: z.number().int().min(1).max(100).optional(),
-}).strict();
+}).strict());
 
-const ActionSpecGetInputSchema = z.object({
+const ActionSpecGetInputSchema = lazyZodSchema(() => z.object({
   id: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const ActionSpecSearchResultSchema = z.object({
+const ActionSpecSearchResultSchema = lazyZodSchema(() => z.object({
   actionSpecs: z.array(ActionDiscoveryDefinitionSummaryV1Schema),
-}).strict();
+}).strict());
 
-const ActionSpecGetResultSchema = z.object({
+const ActionSpecGetResultSchema = lazyZodSchema(() => z.object({
   actionSpec: ActionDiscoveryDefinitionV1Schema,
-}).strict();
+}).strict());
 
-const ActionOptionsResolveInputSchema = z.object({
+const ActionOptionsResolveInputSchema = lazyZodSchema(() => z.object({
   actionId: z.string().min(1).optional(),
   fieldPath: z.string().min(1).optional(),
   consumer: InputOptionsConsumerV1Schema.optional(),
@@ -2223,9 +2230,9 @@ const ActionOptionsResolveInputSchema = z.object({
       path: ['actionId'],
     });
   }
-});
+}));
 
-const ActionOptionsResolveResultSchema = z.object({
+const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.object({
   actionId: z.string().min(1).nullable(),
   fieldPath: z.string().min(1).nullable(),
   optionsSourceId: z.string().min(1).nullable(),
@@ -2243,14 +2250,14 @@ const ActionOptionsResolveResultSchema = z.object({
     && (value.actionId !== 'session.spawn_new' || value.fieldPath !== 'modelSelection')) {
     ctx.addIssue({ code: 'custom', path: ['modelCatalog'], message: 'Model catalog belongs to Session spawn model selection' });
   }
-});
+}));
 
 /** Current-UI semantic payloads stay behind the ephemeral opaque command handle. */
-const CurrentUiContextCommandInvokeInputSchema = z.object({
+const CurrentUiContextCommandInvokeInputSchema = lazyZodSchema(() => z.object({
   commandId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-const SessionSendUserTextInputFieldsSchema = z.object({
+const SessionSendUserTextInputFieldsSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   recipient: PluginSessionUserTextAuthoredFieldSchemasV1.recipient,
   // The executor re-admits a plugin-bound input through this canonical shape
@@ -2275,7 +2282,7 @@ const SessionSendUserTextInputFieldsSchema = z.object({
   providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   wait: z.boolean().optional(),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).strict();
+}).strict());
 
 function validateSessionSendProviderSelection(
   value: z.infer<typeof SessionSendUserTextInputFieldsSchema>,
@@ -2303,17 +2310,17 @@ function validateSessionSendProviderSelection(
   }
 }
 
-const SessionSendUserTextInputSchema = SessionSendUserTextInputFieldsSchema
-  .superRefine(requireSessionInputContent).superRefine(validateSessionSendProviderSelection);
+const SessionSendUserTextInputSchema = lazyZodSchema(() => SessionSendUserTextInputFieldsSchema
+  .superRefine(requireSessionInputContent).superRefine(validateSessionSendProviderSelection));
 
 // Public callers author text and routing intent, never plugin source or attachment authority.
-const SessionSendMessagePublicInputSchema = SessionSendUserTextInputFieldsSchema
+const SessionSendMessagePublicInputSchema = lazyZodSchema(() => SessionSendUserTextInputFieldsSchema
   .omit({ idempotencyKey: true, source: true, attachments: true, toolAnswerDelivery: true })
   .superRefine(requireSessionInputContent)
-  .superRefine(validateSessionSendProviderSelection);
+  .superRefine(validateSessionSendProviderSelection));
 
 /** Plugin Session messages carry only host-attributed admission intent. */
-const SessionSendUserTextPluginInputV1Schema = z.object({
+const SessionSendUserTextPluginInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   // Blank only when an attachment carries the input, decided by the one
   // `requireSessionInputContent` owner this binding shares with
@@ -2321,26 +2328,26 @@ const SessionSendUserTextPluginInputV1Schema = z.object({
   // surface refuse an attachment-only input the seam beneath it admits.
   message: z.string(),
   ...PluginSessionUserTextAuthoredFieldSchemasV1,
-}).strict().superRefine(requireSessionInputContent);
+}).strict().superRefine(requireSessionInputContent));
 
-const SessionSendSubagentLaunchPluginInputV1Schema = z.object({
+const SessionSendSubagentLaunchPluginInputV1Schema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   kind: z.literal('sessionSubagentLaunch'),
   launch: SubagentLaunchV1Schema,
   idempotencyKey: PluginSessionInputIdempotencyKeyV1Schema,
-}).strict();
+}).strict());
 
-const SessionSendMessagePluginInputV1Schema = z.union([
+const SessionSendMessagePluginInputV1Schema = lazyZodSchema(() => z.union([
   SessionSendUserTextPluginInputV1Schema,
   SessionSendSubagentLaunchPluginInputV1Schema,
-]);
+]));
 
-const SessionSendMessageInputSchema = z.union([
+const SessionSendMessageInputSchema = lazyZodSchema(() => z.union([
   SessionSendUserTextInputSchema,
   SessionSendSubagentLaunchPluginInputV1Schema,
-]);
+]));
 
-const SessionPermissionRespondInputSchema = z.object({
+const SessionPermissionRespondInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   decision: SessionPermissionRespondActionDecisionV1Schema,
   requestId: z.string().min(1).optional(),
@@ -2353,9 +2360,9 @@ const SessionPermissionRespondInputSchema = z.object({
   execPolicyAmendment: SessionPermissionRespondRpcParamsV1Schema.options[0].shape.execPolicyAmendment,
   updatedPermissions: SessionPermissionRespondRpcParamsV1Schema.options[0].shape.updatedPermissions,
   answers: SessionPermissionRespondRpcParamsV1Schema.options[0].shape.answers,
-}).passthrough();
+}).passthrough());
 
-const SessionUserActionAnswerItemSchema = z.object({
+const SessionUserActionAnswerItemSchema = lazyZodSchema(() => z.object({
   question: z.string().min(1).refine((value) => value.trim().length > 0, {
     message: 'question must not be blank',
   }),
@@ -2370,7 +2377,7 @@ const SessionUserActionAnswerItemSchema = z.object({
   if (value.answer === undefined && value.values === undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer or values is required' });
   }
-});
+}));
 
 function validateSessionUserActionAnswer(
   value: Readonly<{
@@ -2421,39 +2428,39 @@ function validateSessionUserActionAnswer(
   }
 }
 
-const SessionUserActionAnswerInputSchema = z.object({
+const SessionUserActionAnswerInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
   reason: z.string().trim().min(1).optional(),
   answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
   updatedPermissions: StrictJsonValueSchema.optional(),
-}).passthrough().superRefine(validateSessionUserActionAnswer);
+}).passthrough().superRefine(validateSessionUserActionAnswer));
 
-const SessionUserActionAnswerPluginInputSchema = z.object({
+const SessionUserActionAnswerPluginInputSchema = lazyZodSchema(() => z.object({
   requestId: z.string().min(1),
   decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
   reason: z.string().trim().min(1).optional(),
   answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
-}).strict().superRefine(validateSessionUserActionAnswer);
+}).strict().superRefine(validateSessionUserActionAnswer));
 
-const SessionInteractionResponseSuccessSchema = z.object({
+const SessionInteractionResponseSuccessSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
-}).strict();
+}).strict());
 
-const SessionModeSetInputSchema = z.object({
+const SessionModeSetInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   modeId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const SessionPrimaryTargetInputSchema = z.union([
+const SessionPrimaryTargetInputSchema = lazyZodSchema(() => z.union([
   VoiceTrackedSessionAddressV1Schema,
   z.object({ sessionId: z.null() }).strict(),
-]);
+]));
 
 // Uncapped like the canonical Account Voice replace API it forwards to: a
 // complete exact-Home replacement must reach the Follow owner and settle.
-const SessionTrackedTargetsInputSchema = z.union([
+const SessionTrackedTargetsInputSchema = lazyZodSchema(() => z.union([
   z.object({
     sessionAddresses: z.array(VoiceTrackedSessionAddressV1Schema),
   }).strict(),
@@ -2462,14 +2469,14 @@ const SessionTrackedTargetsInputSchema = z.union([
   z.object({
     sessionIds: z.array(z.string().trim().min(1)),
   }).strict(),
-]);
+]));
 
 /**
  * The one typed `session.list` caller contract. Exported so the Action executor parses the
  * admitted input through this owner instead of casting an untyped record into the listing
  * dependency's `SessionListQueryV1` parameter.
  */
-export const SessionListActionInputV1Schema = z.object({
+export const SessionListActionInputV1Schema = lazyZodSchema(() => z.object({
   query: z.lazy(() => SessionListQueryV1Schema).optional(),
   underSessionId: z.string().trim().min(1).optional(),
   view: SessionListViewV1Schema.optional(),
@@ -2492,14 +2499,14 @@ export const SessionListActionInputV1Schema = z.object({
   if (value.view === 'awareness' && Object.prototype.hasOwnProperty.call(value, 'includeLastMessagePreview')) {
     ctx.addIssue({ code: 'custom', path: ['includeLastMessagePreview'], message: 'Awareness does not include message previews' });
   }
-});
+}));
 
 /**
  * The compatibility activity read shares `session.list`'s representation selector so Voice, agent,
  * MCP, UI and trusted plugin callers can ask this stable Action ID for canonical awareness instead
  * of reconstructing it. Omission keeps the released digest.
  */
-const SessionActivityInputSchema = z.object({
+const SessionActivityInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   view: SessionListViewV1Schema.optional(),
   windowSeconds: z.number().int().min(1).max(86_400).optional(),
@@ -2513,99 +2520,99 @@ const SessionActivityInputSchema = z.object({
       message: 'Awareness does not include retained-window message counts',
     });
   }
-});
+}));
 
-const SessionRecentMessagesInputSchema = z.object({
+const SessionRecentMessagesInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1),
   limit: z.number().int().min(1).max(50).optional(),
   cursor: z.string().min(1).nullable().optional(),
   includeUser: z.boolean().optional(),
   includeAssistant: z.boolean().optional(),
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionLogTailInputSchema = z.object({
+const SessionLogTailInputSchema = lazyZodSchema(() => z.object({
   path: z.string().min(1),
   maxBytes: z.number().int().min(1).max(1_000_000).optional(),
   offset: z.number().int().min(0).optional(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptPageInputSchema = z.object({
+const TranscriptPageInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   cursor: z.string().min(1).nullable().optional(),
   maxBytes: z.number().int().min(1).max(1_000_000).optional(),
   maxItems: z.number().int().min(1).max(500).optional(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptReadAfterInputSchema = z.object({
+const TranscriptReadAfterInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   cursor: z.string().min(1),
   maxBytes: z.number().int().min(1).max(1_000_000).optional(),
   maxItems: z.number().int().min(1).max(500).optional(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptFollowInputSchema = TranscriptReadAfterInputSchema.extend({
+const TranscriptFollowInputSchema = lazyZodSchema(() => TranscriptReadAfterInputSchema.extend({
   waitForChanges: z.boolean().optional(),
   leaseId: z.string().min(1).optional(),
   idleTtlMs: z.number().int().min(1).max(3_600_000).optional(),
   projection: z.literal('openedMessagesV1').optional(),
   agentStateVersion: z.number().int().min(-1).optional(),
   sharedMetadataVersion: z.number().int().min(-1).optional(),
-}).strict();
+}).strict());
 
-const TranscriptUnfollowInputSchema = z.object({
+const TranscriptUnfollowInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   leaseId: z.string().min(1),
-}).strict();
+}).strict());
 
-const TranscriptImportInputSchema = z.object({
+const TranscriptImportInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   importId: z.string().trim().min(1).optional(),
   items: z.array(StrictJsonValueSchema).min(1).max(500),
   maxItems: z.number().int().min(1).max(500).optional(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptSearchInputSchema = z.object({
+const TranscriptSearchInputSchema = lazyZodSchema(() => z.object({
   sessionId: z.string().min(1).optional(),
   query: z.string().trim().min(1),
   cursor: z.string().min(1).optional(),
   maxBytes: z.number().int().min(1).max(1_000_000).optional(),
   maxItems: z.number().int().min(1).max(100).optional(),
   maxReads: z.number().int().min(1).max(50).optional(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptPageOutputSchema = z.object({
+const TranscriptPageOutputSchema = lazyZodSchema(() => z.object({
   ok: z.boolean().optional(),
   items: z.array(StrictJsonValueSchema),
   nextCursor: z.string().nullable(),
   hasMore: z.boolean().optional(),
   tailCursor: z.string().nullable().optional(),
   truncated: z.boolean(),
-}).passthrough();
+}).passthrough());
 
-const TranscriptReadAfterOutputSchema = z.object({
+const TranscriptReadAfterOutputSchema = lazyZodSchema(() => z.object({
   ok: z.boolean().optional(),
   items: z.array(StrictJsonValueSchema),
   nextCursor: z.string().nullable(),
   truncated: z.boolean(),
-}).passthrough();
+}).passthrough());
 
 /** Closed authoritative version envelope; the opened Agent-native JSON is opaque preserved content. */
-export const TranscriptOpenedAgentStateV1Schema = z.object({
+export const TranscriptOpenedAgentStateV1Schema = lazyZodSchema(() => z.object({
   version: z.number().int().min(0),
   value: z.record(z.string(), StrictJsonValueSchema).nullable(),
-}).strict();
+}).strict());
 export type TranscriptOpenedAgentStateV1 = z.infer<typeof TranscriptOpenedAgentStateV1Schema>;
 
 /** Only the canonical recipient-safe metadata envelope may cross this opened read. */
-export const TranscriptOpenedSharedMetadataV1Schema = z.object({
+export const TranscriptOpenedSharedMetadataV1Schema = lazyZodSchema(() => z.object({
   version: z.number().int().min(0),
   value: SessionSharedMetadataV1Schema,
-}).strict();
+}).strict());
 export type TranscriptOpenedSharedMetadataV1 = z.infer<typeof TranscriptOpenedSharedMetadataV1Schema>;
 
 // Reuse the canonical row projection. Only its stored-content arm changes for this daemon-opened read.
-const TranscriptOpenedMessageV1Schema = z.union([
+const TranscriptOpenedMessageV1Schema = lazyZodSchema(() => z.union([
   SessionMessageV1Schema.extend({
     content: StrictSessionStoredMessageContentEnvelopeSchema.options[1].extend({
       v: z.record(z.string(), StrictJsonValueSchema),
@@ -2616,18 +2623,18 @@ const TranscriptOpenedMessageV1Schema = z.union([
     content: z.object({ t: z.literal('plain'), v: z.null() }).strict(),
     openFailure: z.enum(['mode_mismatch', 'corrupt_or_unopenable']),
   }),
-]);
+]));
 
 /** Closed follow/cursor envelope; its canonical rows drop unknown presentation fields. */
-export const TranscriptFollowChangeV1Schema = z.discriminatedUnion('kind', [
+export const TranscriptFollowChangeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('append') }).strict(),
   z.object({ kind: z.literal('revision'), messageId: z.string().min(1), seq: z.number().int().min(1) }).strict(),
   z.object({ kind: z.literal('session') }).strict(),
   z.object({ kind: z.literal('reset') }).strict(),
-]);
+]));
 export type TranscriptFollowChangeV1 = z.infer<typeof TranscriptFollowChangeV1Schema>;
 
-export const TranscriptOpenedFollowOutputV1Schema = z.object({
+export const TranscriptOpenedFollowOutputV1Schema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   leaseId: z.string().min(1),
   projection: z.literal('openedMessagesV1'),
@@ -2637,78 +2644,78 @@ export const TranscriptOpenedFollowOutputV1Schema = z.object({
   agentState: TranscriptOpenedAgentStateV1Schema.nullable(),
   sharedMetadata: TranscriptOpenedSharedMetadataV1Schema.nullable(),
   changes: z.array(TranscriptFollowChangeV1Schema).optional(),
-}).strict();
+}).strict());
 export type TranscriptOpenedFollowOutputV1 = z.infer<typeof TranscriptOpenedFollowOutputV1Schema>;
 
-const TranscriptFollowOutputSchema = z.union([TranscriptReadAfterOutputSchema.extend({
+const TranscriptFollowOutputSchema = lazyZodSchema(() => z.union([TranscriptReadAfterOutputSchema.extend({
   changes: z.array(TranscriptFollowChangeV1Schema).optional(),
   leaseId: z.string().min(1).optional(),
   projection: z.never().optional(),
-}).passthrough(), TranscriptOpenedFollowOutputV1Schema]);
+}).passthrough(), TranscriptOpenedFollowOutputV1Schema]));
 
-const TranscriptUnfollowOutputSchema = z.object({
+const TranscriptUnfollowOutputSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   released: z.boolean(),
-}).strict();
+}).strict());
 
-const TranscriptImportOutputSchema = z.object({
+const TranscriptImportOutputSchema = lazyZodSchema(() => z.object({
   ok: z.boolean(),
   imported: z.number().int().min(0).optional(),
   cursor: z.string().nullable().optional(),
-}).passthrough();
+}).passthrough());
 
-const SessionLogTailOutputSchema = z.object({
+const SessionLogTailOutputSchema = lazyZodSchema(() => z.object({
   success: z.boolean().optional(),
   ok: z.boolean().optional(),
   path: z.string().optional(),
   tail: z.string().optional(),
   truncated: z.boolean().optional(),
   error: z.string().optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentListInputSchema = z.object({
+const SubagentListInputSchema = lazyZodSchema(() => z.object({
   parentSessionId: z.string().trim().min(1).optional(),
   groupId: z.string().trim().min(1).nullable().optional(),
   limit: z.number().int().min(1).max(100).optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentGetInputSchema = z.object({
+const SubagentGetInputSchema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   parentSessionId: z.string().trim().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentWatchInputSchema = z.object({
+const SubagentWatchInputSchema = lazyZodSchema(() => z.object({
   parentSessionId: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentStatusUpdateInputSchema = z.object({
+const SubagentStatusUpdateInputSchema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   parentSessionId: z.string().trim().min(1),
   status: SubagentStatusV1Schema,
   lifecycleDetail: SubagentLifecycleDetailV1Schema.optional(),
   completedAt: z.number().int().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentCompleteInputSchema = z.object({
+const SubagentCompleteInputSchema = lazyZodSchema(() => z.object({
   id: z.string().trim().min(1),
   parentSessionId: z.string().trim().min(1),
   status: z.enum(['completed', 'failed', 'aborted']).optional(),
   lifecycleDetail: SubagentLifecycleDetailV1Schema.optional(),
   completedAt: z.number().int().nonnegative().optional(),
-}).passthrough();
+}).passthrough());
 
-const SubagentWatchSnapshotOutputSchema = z.object({
+const SubagentWatchSnapshotOutputSchema = lazyZodSchema(() => z.object({
   kind: z.literal('snapshot'),
   subagents: z.array(SubagentRefV1Schema),
-}).passthrough();
+}).passthrough());
 
-const MemorySearchInputSchema = z.object({
+const MemorySearchInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
   query: MemorySearchQueryV1Schema,
-}).passthrough();
+}).passthrough());
 
-const MemoryGetWindowInputSchema = z.object({
+const MemoryGetWindowInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
   sessionId: z.string().min(1),
   seqFrom: z.number().int().min(0),
@@ -2717,25 +2724,25 @@ const MemoryGetWindowInputSchema = z.object({
   if (value.seqFrom > value.seqTo) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
   }
-});
+}));
 
-const MemoryEnsureUpToDateInputSchema = z.object({
+const MemoryEnsureUpToDateInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
   sessionId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const MemoryEnsureUpToDateOutputSchema = z.object({
+const MemoryEnsureUpToDateOutputSchema = lazyZodSchema(() => z.object({
   ok: z.boolean(),
-}).passthrough();
+}).passthrough());
 
-const ApprovalRequestCreateInputSchema = z.object({
+const ApprovalRequestCreateInputSchema = lazyZodSchema(() => z.object({
   actionId: ActionIdSchema,
   actionArgs: StrictJsonValueSchema,
   summary: z.string().min(1),
   createdBy: ApprovalRequestCreatedBySchema,
   origin: ApprovalRequestOriginV1Schema.optional(),
   preview: StrictJsonValueSchema.optional(),
-}).passthrough();
+}).passthrough());
 
 /**
  * A trusted plugin may ask the present user to approve an Action it could have
@@ -2743,20 +2750,20 @@ const ApprovalRequestCreateInputSchema = z.object({
  * Action the Plugin census excludes. The census set is built from these same
  * rows, so this arm resolves lazily instead of duplicating the exclusion list.
  */
-const PluginSurfaceApprovalRequestCreateInputSchema = ApprovalRequestCreateInputSchema.extend({
+const PluginSurfaceApprovalRequestCreateInputSchema = lazyZodSchema(() => ApprovalRequestCreateInputSchema.extend({
   actionId: z.lazy(() => PluginInvocableActionIdSchema),
-});
+}));
 
-const ApprovalRequestListInputSchema = z.object({
+const ApprovalRequestListInputSchema = lazyZodSchema(() => z.object({
   status: ApprovalRequestV2StatusSchema.optional(),
   limit: z.number().int().min(1).max(100).optional(),
-}).passthrough();
+}).passthrough());
 
-const ApprovalRequestGetInputSchema = z.object({
+const ApprovalRequestGetInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
-}).passthrough();
+}).passthrough());
 
-const ApprovalRequestDecideInputSchema = z.object({
+const ApprovalRequestDecideInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
   decision: z.enum(['approve', 'reject']),
   /** Human picker choice for an open computer.target.select request; never caller authority. */
@@ -2766,25 +2773,25 @@ const ApprovalRequestDecideInputSchema = z.object({
   originServerId: z.string().min(1).optional(),
   /** Stable Home identity selected by the current device before exact-daemon routing. */
   serverIdentityId: z.string().min(1).optional(),
-}).passthrough();
+}).passthrough());
 
-const PromptDocUpdateInputSchema = z.object({
+const PromptDocUpdateInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
   title: z.string().min(1),
   markdown: z.string(),
   folderId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
-}).passthrough();
+}).passthrough());
 
-const PromptBundleUpdateInputSchema = z.object({
+const PromptBundleUpdateInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
   title: z.string().min(1),
   skillMarkdown: z.string(),
   folderId: z.string().min(1).nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
-}).passthrough();
+}).passthrough());
 
-const PromptAssetExportInputSchema = z.object({
+const PromptAssetExportInputSchema = lazyZodSchema(() => z.object({
   artifactId: z.string().min(1),
   machineId: z.string().min(1),
   assetTypeId: z.string().min(1),
@@ -2803,9 +2810,9 @@ const PromptAssetExportInputSchema = z.object({
       path: ['targetPath'],
     });
   }
-});
+}));
 
-const PromptRegistryInstallInputSchema = z.object({
+const PromptRegistryInstallInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
   sourceId: z.string().min(1),
   itemId: z.string().min(1),
@@ -2817,7 +2824,7 @@ const PromptRegistryInstallInputSchema = z.object({
     targetName: z.string().min(1),
     installMode: PromptAssetInstallModeV1Schema.optional(),
   }).optional(),
-}).passthrough();
+}).passthrough());
 
 const ExternalSessionTakeoverActionInputSchema = ExternalSessionTakeoverInputV1Schema;
 
@@ -3591,10 +3598,10 @@ const REVIEW_COMMENT_ACTION_RPC_METHODS: Readonly<Record<ReviewCommentActionIdV1
   'reviews.comments.claimPublicationDispatch': RPC_METHODS.REVIEW_COMMENTS_CLAIM_PUBLICATION_DISPATCH,
 });
 
-const PluginSessionHookAgentPluginInputSchema = z.object({
+const PluginSessionHookAgentPluginInputSchema = lazyZodSchema(() => z.object({
   localId: asProtocolZod(PluginContributionLocalIdSchema),
-}).strict();
-const PluginSessionHookStatusPluginInputV1Schema = z.discriminatedUnion('intent', [
+}).strict());
+const PluginSessionHookStatusPluginInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('intent', [
   z.object({
     intent: z.literal('passive_inventory'),
     agent: PluginSessionHookAgentPluginInputSchema.optional(),
@@ -3614,15 +3621,15 @@ const PluginSessionHookStatusPluginInputV1Schema = z.discriminatedUnion('intent'
     agent: PluginSessionHookAgentPluginInputSchema,
     installationId: z.string().trim().min(1).max(512),
   }).strict(),
-]);
-const PluginSessionHookInstallPluginInputV1Schema = z.object({
+]));
+const PluginSessionHookInstallPluginInputV1Schema = lazyZodSchema(() => z.object({
   agent: PluginSessionHookAgentPluginInputSchema,
   expectedPreviewId: z.string().regex(/^hook-install-preview:v1:[0-9a-f]{64}$/u),
-}).strict();
-const PluginSessionHookMutationPluginInputV1Schema = z.object({
+}).strict());
+const PluginSessionHookMutationPluginInputV1Schema = lazyZodSchema(() => z.object({
   agent: PluginSessionHookAgentPluginInputSchema,
   installationId: z.string().trim().min(1).max(512),
-}).strict();
+}).strict());
 
 function bindPluginSessionHookAgent(
   value: unknown,
@@ -3677,23 +3684,23 @@ const PLUGIN_PERMISSION_GRANT_ACTION_RPC_METHODS: Readonly<Record<PluginPermissi
   'plugins.permissions.grants.dismissRequest': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_DISMISS_REQUEST,
 });
 
-const PluginPermissionSubjectPluginInputSchema = z.discriminatedUnion('kind', [
+const PluginPermissionSubjectPluginInputSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   PluginPermissionSubjectV1Schema.options[0],
   PluginPermissionSubjectV1Schema.options[1].omit({ contribution: true }).extend({
     contribution: z.object({ localId: asProtocolZod(PluginContributionLocalIdSchema) }).strict(),
   }).strict(),
-]);
+]));
 const PluginPermissionGrantListPluginInputSchema =
-  PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.list']
+  lazyZodSchema(() => PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.list']
     .omit({ pluginId: true, grantId: true, subject: true })
     .extend({ subject: PluginPermissionSubjectPluginInputSchema.optional() })
-    .strict();
+    .strict());
 const PluginPermissionGrantRequestPluginInputSchema =
-  PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.request'].omit({
+  lazyZodSchema(() => PluginPermissionGrantActionInputSchemasV1['plugins.permissions.grants.request'].omit({
     pluginId: true,
     requester: true,
     subject: true,
-  }).extend({ subject: PluginPermissionSubjectPluginInputSchema }).strict();
+  }).extend({ subject: PluginPermissionSubjectPluginInputSchema }).strict());
 const PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS = Object.freeze({
   'plugins.permissions.grants.list': PluginPermissionGrantListPluginInputSchema,
   'plugins.permissions.grants.request': PluginPermissionGrantRequestPluginInputSchema,
@@ -3758,7 +3765,7 @@ function bindPluginPermissionSubject(
  * and a fresh plugin therefore renders its first surface on every platform
  * immediately. The executable arms are opt-in.
  */
-export const PluginScaffoldUiModeSchema = z.enum(['declarative', 'hostedWeb', 'reactNative']);
+export const PluginScaffoldUiModeSchema = lazyZodSchema(() => z.enum(['declarative', 'hostedWeb', 'reactNative']));
 export type PluginScaffoldUiMode = z.infer<typeof PluginScaffoldUiModeSchema>;
 
 /**
@@ -3769,57 +3776,57 @@ export type PluginScaffoldUiMode = z.infer<typeof PluginScaffoldUiModeSchema>;
 export const DEFAULT_PLUGIN_SCAFFOLD_UI_MODE: PluginScaffoldUiMode = 'declarative';
 
 /** Optional first-party starting shape; omission retains the generic scaffold. */
-export const PluginScaffoldTemplateSchema = z.enum(['session-agent']);
+export const PluginScaffoldTemplateSchema = lazyZodSchema(() => z.enum(['session-agent']));
 export type PluginScaffoldTemplate = z.infer<typeof PluginScaffoldTemplateSchema>;
 
-const PluginScaffoldActionInputSchema = z.object({
+const PluginScaffoldActionInputSchema = lazyZodSchema(() => z.object({
   targetDir: z.string().trim().min(1),
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
   ui: PluginScaffoldUiModeSchema.optional(),
   template: PluginScaffoldTemplateSchema.optional(),
-}).strict();
+}).strict());
 
-const PluginInstallActionInputSchema = z.object({
+const PluginInstallActionInputSchema = lazyZodSchema(() => z.object({
   path: z.string().trim().min(1),
   dev: z.boolean().optional(),
   dryRun: z.boolean().optional(),
   force: z.boolean().optional(),
-}).strict();
+}).strict());
 
-const PluginUninstallActionInputSchema = z.object({
+const PluginUninstallActionInputSchema = lazyZodSchema(() => z.object({
   pluginId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-const PluginReloadActionInputSchema = z.object({
+const PluginReloadActionInputSchema = lazyZodSchema(() => z.object({
   pluginId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-const PluginDevActionInputSchema = z.object({
+const PluginDevActionInputSchema = lazyZodSchema(() => z.object({
   projectRoot: z.string().trim().min(1),
   sdkRegistryOrigin: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-const PluginAuthorActionInputSchema = z.object({
+const PluginAuthorActionInputSchema = lazyZodSchema(() => z.object({
   projectRoot: z.string().trim().min(1),
   sdkRegistryOrigin: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-const PluginDoctorActionInputSchema = z.object({
+const PluginDoctorActionInputSchema = lazyZodSchema(() => z.object({
   locator: z.string().trim().min(1),
-}).strict();
+}).strict());
 
-const PluginPackActionInputSchema = z.object({
+const PluginPackActionInputSchema = lazyZodSchema(() => z.object({
   locator: z.string().trim().min(1),
   outPath: z.string().trim().min(1).optional(),
   sdkRegistryOrigin: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-const PluginListActionInputSchema = z.object({}).strict();
+const PluginListActionInputSchema = EmptyObjectSchema;
 
-const PluginChangeStatusActionInputSchema = z.object({
+const PluginChangeStatusActionInputSchema = lazyZodSchema(() => z.object({
   pendingChangeId: z.string().trim().min(1),
-}).strict();
+}).strict());
 
 const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
@@ -3837,7 +3844,7 @@ const PluginDevLoopActionInputSchemas = {
   'plugins.change.status': PluginChangeStatusActionInputSchema,
 } as const satisfies Readonly<Record<PluginDevLoopActionIdV1, z.ZodTypeAny>>;
 
-const PluginDevLoopActionResultKindSchema = z.enum([
+const PluginDevLoopActionResultKindSchema = lazyZodSchema(() => z.enum([
   'plugins_scaffold',
   'plugins_install',
   'plugins_uninstall',
@@ -3851,18 +3858,18 @@ const PluginDevLoopActionResultKindSchema = z.enum([
   'plugins_reload',
   'plugins_list',
   'plugins_change_status',
-]);
+]));
 
-const PluginDevLoopPendingReviewSchema = z.object({
+const PluginDevLoopPendingReviewSchema = lazyZodSchema(() => z.object({
   kind: z.literal('reviewRequired'),
   reviewKind: z.enum(['projectTrust', 'installation']),
   pendingChangeId: z.string().trim().min(1),
   // The daemon/CLI change owner retains the review payload contract. Action
   // consumers receive it only as an opaque, nested projection.
   review: z.object({}).passthrough(),
-}).passthrough();
+}).passthrough());
 
-const PluginDevLoopReviewRequiredActionOutputSchema = z.object({
+const PluginDevLoopReviewRequiredActionOutputSchema = lazyZodSchema(() => z.object({
   ok: z.literal(false),
   kind: z.enum(['plugins_install', 'plugins_dev_submit', 'plugins_reload']),
   outcome: z.literal('reviewRequired'),
@@ -3871,17 +3878,17 @@ const PluginDevLoopReviewRequiredActionOutputSchema = z.object({
   pendingReview: PluginDevLoopPendingReviewSchema,
   pendingChangeId: z.never().optional(),
   review: z.never().optional(),
-}).passthrough();
+}).passthrough());
 
-const PluginDevLoopChangeStatusActionOutputSchema = z.object({
+const PluginDevLoopChangeStatusActionOutputSchema = lazyZodSchema(() => z.object({
   ok: z.literal(true),
   kind: z.literal('plugins_change_status'),
   // Status is daemon-lifetime state owned by the CLI change client. Keep its
   // state/result payload opaque here instead of introducing a second owner.
   status: z.object({}).passthrough(),
-}).passthrough();
+}).passthrough());
 
-const PluginDevLoopOrdinaryActionOutputSchema = z.object({
+const PluginDevLoopOrdinaryActionOutputSchema = lazyZodSchema(() => z.object({
   ok: z.boolean(),
   kind: PluginDevLoopActionResultKindSchema.exclude(['plugins_change_status']),
   // Only install currently emits an ordinary outcome. Keeping this bounded
@@ -3890,13 +3897,13 @@ const PluginDevLoopOrdinaryActionOutputSchema = z.object({
   pendingReview: z.never().optional(),
   pendingChangeId: z.never().optional(),
   review: z.never().optional(),
-}).passthrough();
+}).passthrough());
 
-const PluginDevLoopActionOutputSchema = z.union([
+const PluginDevLoopActionOutputSchema = lazyZodSchema(() => z.union([
   PluginDevLoopReviewRequiredActionOutputSchema,
   PluginDevLoopChangeStatusActionOutputSchema,
   PluginDevLoopOrdinaryActionOutputSchema,
-]);
+]));
 
 const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Scaffold plugin',
@@ -4798,11 +4805,11 @@ const WORKFLOW_TRIGGER_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<WorkflowActi
   'session.trigger.remove': '{"sessionId":"session_123","triggerId":"trigger_123"}',
 };
 
-const WorkflowInvocationRetryCliInputV1Schema = WorkflowActionInputSchemasV1[
+const WorkflowInvocationRetryCliInputV1Schema = lazyZodSchema(() => WorkflowActionInputSchemasV1[
   'workflow.run.invocations.retry'
 ].omit({ input: true }).extend({
   retryInput: WorkflowActionInputSchemasV1['workflow.run.invocations.retry'].shape.input,
-}).strict();
+}).strict());
 
 function bindWorkflowInvocationRetryCliInputV1(value: unknown): unknown {
   const { retryInput, ...rest } = WorkflowInvocationRetryCliInputV1Schema.parse(value);
@@ -5001,7 +5008,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
     description: 'Discover declared settings, read or change bound preferences, or request a declared operation through its canonical owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.',
     safety: id === 'settings.set' ? 'danger' : 'safe',
     sideEffectClass: id === 'settings.set' || id === 'settings.invoke' ? 'write' : 'read',
-    requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
+    requiredAuthority: 'account_automation', executionPlacement: id === 'settings.invoke' ? 'client' : 'account', placements: [],
+    executionPlacementForInput: (input: unknown) => id === 'settings.list' ? 'account'
+      : id !== 'settings.invoke' && typeof input === 'object' && input !== null && 'anchor' in input
+        && readAccountSettingDeclarationV1(input.anchor) ? 'account' : 'client',
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true, voice: false },
     inputSchema: SettingsDeclarationActionInputSchemasV1[id], outputSchema: SettingsDeclarationActionOutputSchemasV1[id],
@@ -5103,8 +5113,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
     placements: [],
     surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: false, rpc: false },
     sideEffectClass: 'read',
-    inputSchema: z.object({ sourceId: z.string().min(1), sourceOccurrenceId: z.string().min(1) }).strict(),
-    outputSchema: z.object({ admitted: z.literal(true), sourceId: z.string().min(1), sourceOccurrenceId: z.string().min(1) }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ sourceId: z.string().min(1), sourceOccurrenceId: z.string().min(1) }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ admitted: z.literal(true), sourceId: z.string().min(1), sourceOccurrenceId: z.string().min(1) }).strict()),
     inputHints: { fields: [] },
   },
   ...PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1.map(createPluginSettingsAdministrationActionSpec),
@@ -6108,7 +6118,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       cli: false,
       rpc: true,
     },
-    outputSchema: z.array(SubagentRefV1Schema),
+    outputSchema: lazyZodSchema(() => z.array(SubagentRefV1Schema)),
     inputSchema: SubagentListInputSchema,
     inputHints: {
       title: 'List session subagents',
@@ -6136,7 +6146,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       cli: false,
       rpc: true,
     },
-    outputSchema: SubagentRefV1Schema.nullable(),
+    outputSchema: lazyZodSchema(() => SubagentRefV1Schema.nullable()),
     inputSchema: SubagentGetInputSchema,
     inputHints: {
       title: 'Get session subagent',
@@ -6398,9 +6408,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
 	      },
 	    cli: EXECUTION_RUN_LIST_CLI_PROJECTION,
 	    outputSchema: ExecutionRunListResponseSchema,
-    inputSchema: ExecutionRunListRequestSchema.extend({
+    inputSchema: lazyZodSchema(() => ExecutionRunListRequestSchema.extend({
       sessionId: ExecutionRunScopeSessionIdSchema,
-    }),
+    })),
 	  },
   {
     id: 'execution.run.get',
@@ -6547,7 +6557,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'resume', title: 'Resume if needed', widget: 'boolean' },
       ],
     },
-    outputSchema: z.lazy(() => ExecutionRunTurnStreamStartResponseSchema),
+    outputSchema: lazyZodSchema(() => z.lazy(() => ExecutionRunTurnStreamStartResponseSchema)),
     inputSchema: ExecutionRunStreamStartInputSchema,
   },
   {
@@ -6577,7 +6587,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'maxEvents', title: 'Max events', widget: 'text' },
       ],
     },
-    outputSchema: z.lazy(() => ExecutionRunTurnStreamReadResponseSchema),
+    outputSchema: lazyZodSchema(() => z.lazy(() => ExecutionRunTurnStreamReadResponseSchema)),
     inputSchema: ExecutionRunStreamReadInputSchema,
   },
   {
@@ -6605,7 +6615,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
       ],
     },
-    outputSchema: z.lazy(() => ExecutionRunTurnStreamCancelResponseSchema),
+    outputSchema: lazyZodSchema(() => z.lazy(() => ExecutionRunTurnStreamCancelResponseSchema)),
     inputSchema: ExecutionRunStreamCancelInputSchema,
   },
   {
@@ -6657,7 +6667,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       ],
     },
     outputSchema: ExecutionRunCancelTurnResponseSchema,
-    inputSchema: ExecutionRunCancelTurnRequestSchema.extend({ sessionId: ExecutionRunScopeSessionIdSchema }),
+    inputSchema: lazyZodSchema(() => ExecutionRunCancelTurnRequestSchema.extend({ sessionId: ExecutionRunScopeSessionIdSchema })),
   },
   {
     id: 'execution.run.action',
@@ -6707,7 +6717,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       { path: 'answers', title: 'Question answers (JSON)', widget: 'textarea' },
     ] },
     inputSchema: ExecutionRunPermissionRespondInputSchema,
-    outputSchema: z.object({ ok: z.literal(true) }).strict(),
+    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true) }).strict()),
   },
   {
     id: 'execution.run.wait',
@@ -7683,10 +7693,10 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'machines_agents_install', sdkMethod: 'machines.agents.install.start' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: DaemonAgentInstallStartRequestSchema.extend({
+    inputSchema: lazyZodSchema(() => DaemonAgentInstallStartRequestSchema.extend({
       machineId: z.string().min(1),
       consent: DaemonAgentInstallStartRequestSchema.shape.consent.optional(),
-    }),
+    })),
     outputSchema: DaemonAgentInstallStartResponseSchema,
     inputHints: {
       title: 'Install or update an agent',
@@ -7708,9 +7718,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'machines_agents_install_status' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: DaemonAgentInstallReadRequestSchema.extend({
+    inputSchema: lazyZodSchema(() => DaemonAgentInstallReadRequestSchema.extend({
       machineId: z.string().min(1), cursor: DaemonAgentInstallReadRequestSchema.shape.cursor.optional(),
-    }),
+    })),
     outputSchema: DaemonAgentInstallReadResponseSchema,
     inputHints: { title: 'Read an agent install job', fields: [
       { path: 'machineId', title: 'Machine id', widget: 'text' },
@@ -7726,7 +7736,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'machines_agents_install_cancel' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: DaemonAgentInstallCancelRequestSchema.extend({ machineId: z.string().min(1) }),
+    inputSchema: lazyZodSchema(() => DaemonAgentInstallCancelRequestSchema.extend({ machineId: z.string().min(1) })),
     outputSchema: DaemonAgentInstallCancelResponseSchema,
     inputHints: { title: 'Cancel an agent install job', fields: [
       { path: 'machineId', title: 'Machine id', widget: 'text' },
@@ -8582,8 +8592,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'session_delete' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId' },
-    inputSchema: z.object({ sessionId: z.string().trim().min(1) }).strict(),
-    outputSchema: z.object({ success: z.literal(true) }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ sessionId: z.string().trim().min(1) }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ success: z.literal(true) }).strict()),
     inputHints: { title: 'Delete a session', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }] },
     cli: { commands: [{ path: ['session', 'delete'], positionals: ['sessionId'], visibility: 'canonical' }] },
   },
@@ -8595,7 +8605,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'session_folder_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     serverTransport: { method: 'PUT', path: '/v2/session-organization/folder-assignments/:sessionId' },
-    inputSchema: SetSessionFolderAssignmentRequestSchema.extend({ sessionId: z.string().trim().min(1) }),
+    inputSchema: lazyZodSchema(() => SetSessionFolderAssignmentRequestSchema.extend({ sessionId: z.string().trim().min(1) })),
     outputSchema: SetSessionFolderAssignmentResponseSchema,
     inputHints: { title: 'Assign session folder', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -8611,7 +8621,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'session_tags_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     serverTransport: { method: 'PUT', path: '/v2/session-organization/tag-assignments/:sessionId' },
-    inputSchema: SetSessionTagAssignmentsRequestSchema.extend({ sessionId: z.string().trim().min(1) }),
+    inputSchema: lazyZodSchema(() => SetSessionTagAssignmentsRequestSchema.extend({ sessionId: z.string().trim().min(1) })),
     outputSchema: SetSessionTagAssignmentsResponseSchema,
     inputHints: { title: 'Assign session tags', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9540,8 +9550,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     surfaces: {
       ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
+      agent: true,
+      mcp: true,
       cli: true,
       rpc: true,
     },
@@ -9579,8 +9589,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'enabled', title: 'Enabled', widget: 'boolean', required: true },
     ] },
-    inputSchema: z.object({ sessionId: z.string().trim().min(1), enabled: z.boolean() }).strict(),
-    outputSchema: z.object({ updated: z.literal(true) }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ sessionId: z.string().trim().min(1), enabled: z.boolean() }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ updated: z.literal(true) }).strict()),
   },
   {
     id: 'session.attention.set',
@@ -10360,8 +10370,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'prompt_doc_get' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: z.object({ artifactId: z.string().min(1) }).strict(),
-    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1), title: z.string().min(1), markdown: z.string() }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ artifactId: z.string().min(1) }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1), title: z.string().min(1), markdown: z.string() }).strict()),
     inputHints: { title: 'Read prompt document', fields: [
       { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
     ] },
@@ -10375,9 +10385,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'prompt_doc_create' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: z.object({ title: z.string().min(1), markdown: z.string(), folderId: z.string().nullable().optional(),
-      tags: z.array(z.string()).optional(), favorite: z.boolean().optional() }).strict(),
-    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ title: z.string().min(1), markdown: z.string(), folderId: z.string().nullable().optional(),
+      tags: z.array(z.string()).optional(), favorite: z.boolean().optional() }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict()),
     inputHints: { title: 'Create prompt document', fields: [
       { path: 'title', title: 'Title', widget: 'text', required: true },
       { path: 'markdown', title: 'Markdown', widget: 'textarea', required: true },
@@ -10395,8 +10405,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'prompt_doc_favorite_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: z.object({ artifactId: z.string().min(1), favorite: z.boolean() }).strict(),
-    outputSchema: z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict(),
+    inputSchema: lazyZodSchema(() => z.object({ artifactId: z.string().min(1), favorite: z.boolean() }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true), artifactId: z.string().min(1) }).strict()),
     inputHints: { title: 'Set prompt favourite', fields: [
       { path: 'artifactId', title: 'Prompt artifact id', widget: 'text', required: true },
       { path: 'favorite', title: 'Favourite', widget: 'boolean', required: true },
@@ -10411,11 +10421,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     placements: [],
     bindings: { mcpToolName: 'prompts_library_list' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
-    inputSchema: z.object({ query: z.string().optional(), includeBundles: z.literal(false).optional() }).strict(),
-    outputSchema: z.object({ coverage: z.enum(['complete', 'partial', 'unavailable']), items: z.array(z.object({
+    inputSchema: lazyZodSchema(() => z.object({ query: z.string().optional(), includeBundles: z.literal(false).optional() }).strict()),
+    outputSchema: lazyZodSchema(() => z.object({ coverage: z.enum(['complete', 'partial', 'unavailable']), items: z.array(z.object({
       artifactId: z.string().min(1), title: z.string(), folderId: z.string().nullable(), tags: z.array(z.string()),
       favorite: z.boolean(), updatedAtMs: z.number(),
-    }).strict()) }).strict(),
+    }).strict()) }).strict()),
     inputHints: { title: 'List prompt library', fields: [{ path: 'query', title: 'Search', widget: 'text' }] },
   },
   {
@@ -11392,14 +11402,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     sideEffectClass: 'read',
-    outputSchema: z.union([
+    outputSchema: lazyZodSchema(() => z.union([
       ExternalSessionTranscriptReadAfterResponseSchema,
       ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
-    ]),
-    inputSchema: z.union([
+    ])),
+    inputSchema: lazyZodSchema(() => z.union([
       ExternalSessionTranscriptReadAfterRequestSchema,
       ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
-    ]),
+    ])),
     inputHints: {
       title: 'Read external session transcript after cursor',
       fields: [
@@ -11560,7 +11570,6 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
 const PRESENT_USER_REQUIRED_ACTION_ID_VALUES = [
   ...ARTIFACT_ACCESS_ACTION_IDS_V1,
   'approval.request.decide',
-  'session.permission.respond',
   'session.user_action.answer',
   'account.plugins.data.erase',
   'account.sessions.signOutEverywhere',
@@ -11810,6 +11819,14 @@ function resolveActionExecutionPlacement(
     throw new Error(`Action execution placement missing for: ${spec.id}`);
   }
   return placement;
+}
+
+/** Invoke only with schema-admitted input; the spec remains the sole placement owner. */
+export function resolveActionExecutionPlacementForInput(
+  spec: Pick<ActionSpec, 'executionPlacement' | 'executionPlacementForInput'>,
+  input: unknown,
+): ActionExecutionPlacement {
+  return spec.executionPlacementForInput?.(input) ?? spec.executionPlacement;
 }
 
 function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
@@ -12490,10 +12507,10 @@ export const SIGNED_ROOT_ACTION_IDS = Object.freeze(
 
 const SIGNED_ROOT_ACTION_ID_SET = new Set<string>(SIGNED_ROOT_ACTION_IDS);
 
-export const SignedRootActionIdSchema = z.custom<SignedRootActionId>(
+export const SignedRootActionIdSchema = lazyZodSchema(() => z.custom<SignedRootActionId>(
   (actionId) => typeof actionId === 'string' && SIGNED_ROOT_ACTION_ID_SET.has(actionId),
   { message: 'Action is not available to the signed interactive root' },
-);
+));
 
 const PUBLIC_ACTION_SPECS = SIGNED_ROOT_ACTION_SPECS.filter(
   (spec): spec is ActionSpecWithoutApproval & Readonly<{
@@ -12512,10 +12529,10 @@ export const PUBLIC_ACTION_IDS = Object.freeze(
 const PUBLIC_ACTION_ID_SET = new Set<string>(PUBLIC_ACTION_IDS);
 
 /** Runtime parser for the ActionSpec rows explicitly surfaced to authenticated API callers. */
-export const PublicActionIdSchema = z.custom<PublicActionId>(
+export const PublicActionIdSchema = lazyZodSchema(() => z.custom<PublicActionId>(
   (actionId) => typeof actionId === 'string' && PUBLIC_ACTION_ID_SET.has(actionId),
   { message: 'Action is not available on the public API surface' },
-);
+));
 
 function projectPublicActionInputSchemas(
   specs: readonly ActionSpecWithoutApproval[],

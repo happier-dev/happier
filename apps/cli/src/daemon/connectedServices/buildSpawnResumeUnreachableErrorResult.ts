@@ -1,9 +1,6 @@
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  SPAWN_SESSION_ERROR_CODES,
-  SPAWN_SESSION_ERROR_DETAIL_KINDS,
-  type SpawnSessionResult,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
+import type { SpawnSessionResult } from '@happier-dev/protocol';
 
 import { buildConnectedServiceUxDiagnostic } from './diagnostics/connectedServiceUxDiagnostics';
 import type { ConnectedServiceSpawnResumeUnreachableError } from './resolveConnectedServiceAuthForSpawn';

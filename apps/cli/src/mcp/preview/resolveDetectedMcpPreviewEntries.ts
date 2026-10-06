@@ -1,8 +1,5 @@
-import {
-  McpDetectedProviderV1Schema,
-  type DetectedMcpPreviewEntryV1,
-  type DetectedMcpServerV1,
-} from '@happier-dev/protocol';
+import { McpDetectedProviderV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import type { DetectedMcpPreviewEntryV1, DetectedMcpServerV1 } from '@happier-dev/protocol';
 
 function resolvePreviewProviderScopeKind(sourceKind: DetectedMcpServerV1['source']['kind']): 'providerUser' | 'providerProject' {
   return sourceKind === 'project' ? 'providerProject' : 'providerUser';

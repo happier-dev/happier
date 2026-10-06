@@ -2,8 +2,8 @@ import { realpath } from 'node:fs/promises';
 import { posix, resolve, win32 } from 'node:path';
 
 import { z } from 'zod';
-import { PluginIdSchema } from '@happier-dev/protocol';
-import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { NpmRegistryProfileIdV1Schema } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
 
 import { normalizeNpmPackageName, normalizeNpmRegistryOrigin } from '@/plugins/distribution/npm/normalize';
 import {

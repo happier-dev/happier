@@ -23,7 +23,6 @@ import {
   type EngineResolutionAgent,
   type EngineResolutionBackend,
 } from '../engineRegistryTypes';
-import { resolveBackendRuntimeCore } from './runtimeCore';
 
 const ACCOUNT_CONFIGURED_ACP_SOURCE = Object.freeze({ kind: 'configured' as const });
 
@@ -140,6 +139,7 @@ export async function resolveAccountConfiguredAcpBackend(
     configuration: true,
     executionRunContext: { versions: [1] },
   };
+  const { resolveBackendRuntimeCore } = await import('./runtimeCore');
   const engineAdapter = await resolveBackendRuntimeCore({
     backend,
     agent,

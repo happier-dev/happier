@@ -1,10 +1,7 @@
 /** @moduleRealm daemon */
-export {
-    ReviewFindingSchema,
-    ReviewFindingsV2Schema,
-    ReviewStartInputSchema,
-    parseReviewFindingsV2,
-} from '@happier-dev/protocol';
+export { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
+export { ReviewFindingsV2Schema, parseReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+export { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 export type {
     ReviewFinding,

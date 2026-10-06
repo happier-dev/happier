@@ -1,10 +1,8 @@
 import { lookup } from 'node:dns/promises';
 
-import {
-  normalizeProviderEndpointUrlSyntax,
-  readOwnRecordValue,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 
 import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 

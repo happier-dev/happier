@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { PluginUiHostMethodV1Schema } from './hostApiDefinition.js';
 
 import {
@@ -278,6 +279,19 @@ describe('plugin UI launch input bounds', () => {
 });
 
 describe('plugin UI open and Action components', () => {
+  it('keeps the serialized input bound inline in selected Action settlements', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(PluginUiSelectActionInputResultV1Schema, { target })).toMatchObject({
+        oneOf: expect.arrayContaining([expect.objectContaining({
+          properties: expect.objectContaining({
+            input: expect.objectContaining({
+              'x-happier-max-serialized-utf8-bytes': PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
+            }),
+          }),
+        })]),
+      });
+    }
+  });
     it('accepts only one exact mounted admitted operation and keeps its result closed', () => {
     expect(PluginUiSelectActionInputRequestV1Schema.parse({
       operation: admittedOperation,

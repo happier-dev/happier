@@ -35,6 +35,7 @@ describe('useWorkspaceFileQuery', () => {
         expect(signal.aborted).toBe(true);
         await act(async () => { finishLate({ ok: true, paths: ['stale.ts'], truncated: false }); await vi.advanceTimersByTimeAsync(200); });
         expect(hook.getCurrent().error?.code).toBe('WORKSPACE_FILE_SEARCH_UNAVAILABLE');
+        expect(hook.getCurrent().error).toMatchObject({ errorCode: 'ripgrep_failed' });
         expect(hook.getCurrent().coverage).toBe('unavailable');
         expect(hook.getCurrent().items.some((item) => item.fullPath === 'stale.ts')).toBe(false);
         expect(hook.getCurrent().isSearching).toBe(false);

@@ -41,4 +41,26 @@ describe('Account transition Artifact inventory', () => {
             scope: { ...scope, isCurrent: () => current } })).rejects.toThrow('scope changed');
         expect(request).toHaveBeenCalledTimes(1);
     });
+
+    it('refuses mixed-mode private metadata or client private keys on a Plain Account', async () => {
+        for (const extra of [
+            { provenance: 'encrypted-private-head' },
+            { provenanceDataEncryptionKey: 'client-private-key' },
+            { revisions: [{ ...row(0).revisions[0]!, provenance: 'encrypted-private-revision' }] },
+        ]) {
+            const request = async () => Response.json(page([{ ...row(0), ...extra }], null));
+            await expect(fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'plain' })).rejects.toThrow();
+        }
+    });
+
+    it('requires separate E2EE private key custody for retained-only metadata before returning inventory', async () => {
+        const item = { ...row(0), header: 'encrypted-header', body: 'encrypted-body', dataEncryptionKey: 'content-key',
+            provenance: null, revisions: [{ bodyVersion: 1, body: 'encrypted-revision', provenance: 'encrypted-private-revision' }] };
+        const request = async () => Response.json({ ...page([item], null), encryptionMode: 'e2ee' });
+        await expect(fetchAccountEncryptionMigrationArtifactInventory({ credentials, request, scope, encryptionMode: 'e2ee' })).rejects.toThrow();
+        const complete = { ...item, provenanceDataEncryptionKey: 'private-key' };
+        const admitted = async () => Response.json({ ...page([complete], null), encryptionMode: 'e2ee' });
+        await expect(fetchAccountEncryptionMigrationArtifactInventory({ credentials, request: admitted, scope, encryptionMode: 'e2ee' }))
+            .resolves.toEqual([complete]);
+    });
 });

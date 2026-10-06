@@ -4,8 +4,9 @@ import type { StoredCredentials } from '@/persistence';
 import { discardPendingQueueV2Messages } from '@/api/session/pendingQueueV2Transport';
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionInputCancelExactTurnResultV1Schema, type SessionInputCancelExactTurnResultV1 } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionInputCancelExactTurnResultV1Schema } from '@happier-dev/protocol/sessions/control/exactTurnCancellationV1';
+import type { SessionInputCancelExactTurnResultV1 } from '@happier-dev/protocol';
 
 export type CancelSessionInputResult =
   | Readonly<{ kind: 'pending_retired' }>

@@ -26,6 +26,7 @@ import { createListenerOwnershipObservationScope } from '../utils/server/listene
 import { getProcessGroupId, isPidOwnedByStack } from '../utils/proc/ownership.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
 import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../runtime/shared/borrowed_expo.mjs';
+import { inspectWorkspaceQaStalePackagesForComponent } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -391,7 +392,9 @@ export async function readStackInfoSnapshot({
 
   const repoWorktreeSpec = repoDir ? worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null : null;
   const runtimeMode = resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
-  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir, env: process.env });
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir, env: componentEnv,
+    ...(stackEnv.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? { requiredComponents: ['server'], target: null } : {}),
+  });
   const selectedSnapshotId = runtimeInspection.activeSnapshotId;
   // The state file's snapshot identity is authoritative while a recorded lifecycle
   // process is still trusted as live. A listener is stronger evidence for endpoint
@@ -414,6 +417,15 @@ export async function readStackInfoSnapshot({
     cliDir,
     serverDir,
   };
+  // These are observations of the source workspace outputs, not snapshot
+  // manifests. A remote/borrowed service has a different workspace authority.
+  const sourceWorkspaceStalePackages = runtimeBackedStart ? null : Object.fromEntries(await Promise.all([
+    ['server', serverDir, runtimePlacement?.server],
+    ['cli', cliDir, remoteDaemon.target],
+    ['ui', uiDir, borrowedExpo ? 'borrowed' : remoteExpo.target],
+  ].map(async ([component, dir, target]) => [component,
+    target && target !== 'local' ? null : await inspectWorkspaceQaStalePackagesForComponent(dir),
+  ])));
 
   return {
     ok: true,
@@ -509,6 +521,7 @@ export async function readStackInfoSnapshot({
       valid: runtimeInspection.valid,
       errors: runtimeInspection.errors,
       snapshotComponents: runtimeInspection.manifest?.components ?? null,
+      sourceWorkspaceStalePackages,
     },
     urls: {
       host,

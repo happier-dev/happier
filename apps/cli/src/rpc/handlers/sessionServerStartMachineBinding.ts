@@ -1,5 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
-import { SessionServerStartDispatchResultV1Schema } from '@happier-dev/protocol';
+import { SessionServerStartDispatchResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
 import {
     createAutomationAccountEncryptionMaterialSnapshotV1,
 } from '@/plugins/runtime/automations/automationAccountCurrentness';

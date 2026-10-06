@@ -1,4 +1,8 @@
 import { join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { packControlledRuntimeSnapshot, transferRuntimeFile, removeRemoteRuntimeTransferArchives } from './runtime_artifact_transfer.mjs';
+import { ensureRemoteServerDataReady } from './retained_server_data.mjs';
 import { isAuthFlowEnabled } from '../auth/daemon_gate.mjs';
 import { findExistingStackCredentialPath } from '../auth/credentials_paths.mjs';
 
@@ -13,7 +17,7 @@ import {
   flushDevTargetSync,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
-import { inspectDevTargetSync, runDevTargetDependencyBootstrap } from './executor.mjs';
+import { inspectDevTargetSync, runDevTargetCommand, runDevTargetDependencyBootstrap } from './executor.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
 import { waitForExpoMetroRunning } from '../expo/expo.mjs';
 import { waitForServerReady as waitForHappierServerReady } from '../server/server.mjs';
@@ -26,6 +30,8 @@ import {
   buildRemoteForwardProbeCommand,
   buildRemoteInstallCredentialCommand,
   buildRemoteStackRetirementProbeCommand,
+  buildRemoteRuntimeSnapshotImportCommand,
+  buildRemoteRuntimeSnapshotProbeCommand,
   resolveRemoteStackStatePaths,
   buildSshForwardArgs,
   buildSshWorkerArgs,
@@ -114,6 +120,9 @@ async function defaultWaitForExpoReady({ port, env = process.env, signal } = {})
     intervalMs: 500,
     env,
     signal,
+    // The supervisor owns recovery and must publish a readiness failure at
+    // this deadline even when its parent has an attended TUI.
+    continueOnTimeout: false,
   });
   if (result.ok) return;
   if (result.reason === 'aborted' || signal?.aborted) {
@@ -160,10 +169,11 @@ async function defaultWaitForDaemonReady({
   runProcess,
   env = process.env,
   signal,
+  runtimeMode = 'source',
 } = {}) {
   const timeoutMs = resolveDaemonReadinessTimeoutMs(env);
   const startedAt = Date.now();
-  const command = buildRemoteDaemonReadinessProbeCommand(target, { stackName });
+  const command = buildRemoteDaemonReadinessProbeCommand(target, { stackName, runtimeMode });
   while (!signal?.aborted && Date.now() - startedAt < timeoutMs) {
     const result = await runProcess({
       label: `remote:${target.name}`,
@@ -196,12 +206,13 @@ function requireSuccessful(result, description) {
         'Install Mutagen locally and ensure `mutagen` is available on PATH, or remove this stack’s dev-targets.json.',
     );
   }
-  throw new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
+  const error = new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
+  error.commandExitCode = result?.code;
+  throw error;
 }
 
-function remoteCredentialPaths(target, stackName) {
-  const base = String(target.cliHomeDir).replace(/[\\/]+$/, '');
-  const { activeServerId } = resolveRemoteStackStatePaths(target, { stackName });
+function remoteCredentialPaths(target, stackName, runtimeMode = 'source') {
+  const { activeServerId, cliHomeDir: base } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const stagedPath = `${base}/.access-key-${stackName}.tmp`;
   const finalPath = `${base}/servers/${activeServerId}/access.key`;
   return { stagedPath, finalPath };
@@ -211,6 +222,7 @@ export async function startStackDevTargets(
   {
     stackName,
     stackBaseDir,
+    syncStackBaseDir = stackBaseDir,
     sourceDir,
     localServerPort,
     localExpoPort = null,
@@ -225,10 +237,14 @@ export async function startStackDevTargets(
     cliHomeDir,
     remoteServerRuntimeConfig = null,
     remoteWorkspacePreparation = null,
+    runtimeSnapshot = null,
+    runtimeTarget = null,
+    borrowedExpoProducerStackName = '',
     targets,
     syncTargets = null,
     targetPlans = null,
     onTargetStateChange = null,
+    onServerDataAuthority = null,
     env = process.env,
     instanceId = process.pid,
   },
@@ -246,6 +262,8 @@ export async function startStackDevTargets(
     flushSync = flushDevTargetSync,
     startManagedRuntime = startDevTargetRuntime,
     logger = console,
+    transferFile = transferRuntimeFile,
+    runCommand = runDevTargetCommand,
   } = {},
 ) {
   const plans = Array.isArray(targetPlans)
@@ -261,6 +279,11 @@ export async function startStackDevTargets(
     ? syncTargets
     : plans.map((plan) => plan.target);
   const servicePlans = plans.filter(planRunsRuntimeServices);
+  const controlled = Boolean(runtimeSnapshot);
+  const runtimeMode = controlled ? 'controlled' : 'source';
+  if (controlled && (!runtimeTarget || servicePlans.some(plan => !plan.services.server || plan.services.expo))) {
+    throw new Error('[dev-targets] controlled runtime requires a target identity and colocated server/daemon without owned Expo');
+  }
   // When this supervisor owns runtime services, only their synchronization may
   // gate service startup. Command-only targets are routed and freshness-checked
   // by the command executor; an unrelated target must not keep Expo/daemon down.
@@ -281,6 +304,8 @@ export async function startStackDevTargets(
       String(env.HAPPIER_STACK_LOG_TEE_TIMESTAMPS ?? '').trim() || '1',
   };
   const workersByTarget = new Map();
+  const remoteStackOptionsByTarget = new Map();
+  const startedRemoteTargets = new Set();
   const tunnelsByTarget = new Map();
   const servicePortsByTarget = new Map();
   const targetFailuresByTarget = new Map();
@@ -312,6 +337,7 @@ export async function startStackDevTargets(
       serviceStatus,
       status,
       ...(status === 'running' ? { phase: null, error: null } : {}),
+      ...(controlled && serviceStatus.server === 'running' ? { runtimeSnapshotId: runtimeSnapshot.snapshotId } : {}),
       ...details,
     };
     try {
@@ -333,12 +359,13 @@ export async function startStackDevTargets(
   };
   try {
     syncProject = await ensureDevTargetSyncProject({
-      stackBaseDir,
+      stackBaseDir: syncStackBaseDir,
       sourceDir,
       targets: configuredTargets,
       requiredTargets: requiredSyncPlans.map((plan) => plan.target),
       ownerId: instanceId,
       allowIndependentBorrow: true,
+      borrowOnly: controlled,
       env: infraEnv,
     }, { runProcess });
     const { openSsh, projectFile } = syncProject;
@@ -360,13 +387,20 @@ export async function startStackDevTargets(
     const startTarget = async (plan, index, existingTunnel = null) => {
       const { target, services } = plan;
       const hasServices = Object.values(services).some(Boolean);
-      const deferCompanionPreparation = planDefersRemoteCompanionPreparation(plan);
+      const deferCompanionPreparation = !controlled && planDefersRemoteCompanionPreparation(plan);
       let phase = 'prepare';
       let tunnel = existingTunnel;
       let createdTunnel = false;
       let credentialSeedTask = null;
       let credentialSeeded = false;
       let workspacePreparationCurrent = false;
+      let retainedRemoteData = false;
+      let serverAuthorityPinned = false;
+      const pinServerDataAuthority = async () => {
+        if (serverAuthorityPinned || !controlled || !services.server) return;
+        if (typeof onServerDataAuthority === 'function') await onServerDataAuthority({ targetName: target.name });
+        serverAuthorityPinned = true;
+      };
       deferredCompanionPreparationsByTarget.delete(target.name);
       const beginPhase = (nextPhase) => {
         phase = nextPhase;
@@ -379,7 +413,7 @@ export async function startStackDevTargets(
           : null);
         if (!currentCredentialPath) return false;
         beginPhase('credentials');
-        const { stagedPath, finalPath } = remoteCredentialPaths(target, stackName);
+        const { stagedPath, finalPath } = remoteCredentialPaths(target, stackName, runtimeMode);
         requireSuccessful(
           await runProcess({
             label: `remote:${target.name}`,
@@ -443,6 +477,43 @@ export async function startStackDevTargets(
       const prepareRemoteServices = async () => {
         await beginCredentialSeed();
         beginPhase('bootstrap');
+        if (controlled) {
+          await flushSync({ target, env: mutagenEnv }, { runProcess });
+          if (services.server) {
+            const readiness = await ensureRemoteServerDataReady({ target, stackName, stackBaseDir, syncStackBaseDir, env: infraEnv }, { runCommand });
+            retainedRemoteData = readiness?.retainedRemoteData === true;
+            if (retainedRemoteData) await pinServerDataAuthority();
+          }
+          const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
+          const remoteArchive = `${paths.stackBaseDir}/.runtime-${runtimeSnapshot.snapshotId}.tar`;
+          const temporary = await mkdtemp(join(tmpdir(), 'hstack-controlled-runtime-'));
+          try {
+            const archivePath = join(temporary, 'snapshot.tar');
+            await packControlledRuntimeSnapshot({ snapshot: runtimeSnapshot, target: runtimeTarget, archivePath, env: infraEnv });
+            await transferFile({ target, direction: 'upload', localPath: archivePath, remotePath: remoteArchive });
+            requireSuccessful(await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
+              ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
+              buildRemoteRuntimeSnapshotImportCommand(target, { stackName, archivePath: remoteArchive, snapshotId: runtimeSnapshot.snapshotId,
+                requiredComponents: services.daemon ? undefined : ['server'] }),
+            ], env: infraEnv }), `${target.name} controlled runtime import`);
+          } finally {
+            try {
+              await rm(temporary, { recursive: true, force: true });
+            } finally {
+              try {
+                await removeRemoteRuntimeTransferArchives({ archivePaths: [remoteArchive],
+                  runCommand: commandArgs => runCommand({ target, stackBaseDir, commandArgs,
+                    syncAlreadyVerified: true, dependencyAdmission: 'skip', workspacePreparation: 'skip',
+                    provenance: 'skip', env: infraEnv }),
+                });
+              } catch (error) {
+                logger.error?.(`[dev-targets] ${target.name} transfer archive cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+          }
+          provisionedTargets.add(target.name);
+          return;
+        }
         if (
           !workspacePreparationCurrent
           && planRequiresRemoteCliWorkspacePreparation(plan)
@@ -470,9 +541,9 @@ export async function startStackDevTargets(
       };
       try {
         beginPhase('prepare');
-        if (syncProject.ownership === 'independent' && syncProject.unhealthyTargets?.has(target.name)) {
+        if (syncProject.ownership !== 'owned' && syncProject.unhealthyTargets?.has(target.name)) {
           beginPhase('sync');
-          const syncStatus = await inspectSync({ target, stackBaseDir, env: infraEnv });
+          const syncStatus = await inspectSync({ target, stackBaseDir: syncStackBaseDir, env: infraEnv });
           if (syncStatus.state !== 'ready' && syncStatus.state !== 'synchronizing') {
             throw new Error(
               `[dev-targets] ${target.name} independent synchronization is ${syncStatus.state}`,
@@ -493,7 +564,7 @@ export async function startStackDevTargets(
                 '-o',
                 'BatchMode=yes',
                 target.ssh,
-                buildRemoteEnsureDirectoriesCommand(target),
+                buildRemoteEnsureDirectoriesCommand(target, { stackName, runtimeMode }),
               ],
               env: infraEnv,
             }),
@@ -583,6 +654,9 @@ export async function startStackDevTargets(
           });
         }
         const remoteStackOptions = {
+          runtimeMode,
+          runtimeSnapshotId: runtimeSnapshot?.snapshotId,
+          borrowedExpoProducerStackName,
           services,
           attended: env.HAPPIER_STACK_TUI === '1',
           deferDaemonStartUntilCredentials: services.daemon && (deferCompanionPreparation || !credentialPath),
@@ -600,6 +674,7 @@ export async function startStackDevTargets(
           resolveExpoPublicUrlOnTarget: Boolean(resolveMobilePublicUrlsOnTarget && services.expo),
           startMobile,
         };
+        remoteStackOptionsByTarget.set(target.name, remoteStackOptions);
         beginPhase('stop');
         let retirementResult = null;
         let retirementVerified = (await runProcess({
@@ -610,7 +685,7 @@ export async function startStackDevTargets(
             '-o',
             'BatchMode=yes',
             target.ssh,
-            buildRemoteStackRetirementProbeCommand(target, { stackName }),
+            buildRemoteStackRetirementProbeCommand(target, { stackName, runtimeMode }),
           ],
           env: infraEnv,
         }))?.code === 0;
@@ -637,7 +712,7 @@ export async function startStackDevTargets(
                 '-o',
                 'BatchMode=yes',
                 target.ssh,
-                buildRemoteStackRetirementProbeCommand(target, { stackName }),
+                buildRemoteStackRetirementProbeCommand(target, { stackName, runtimeMode }),
               ],
               env: infraEnv,
             });
@@ -654,6 +729,12 @@ export async function startStackDevTargets(
         }
         const remoteCommand = buildRemoteStackCommand(target, remoteStackOptions);
         beginPhase('tunnel');
+        // A worker-only failure keeps a healthy forward, but that forward can
+        // die while retirement/backoff is pending. Recheck at dispatch.
+        if (tunnel && (tunnel.exitCode != null || tunnel.signalCode != null)) {
+          if (tunnelsByTarget.get(target.name) === tunnel) tunnelsByTarget.delete(target.name);
+          tunnel = null;
+        }
         if (!tunnel) {
           tunnel = spawnProcess({
             label: `remote:${target.name}`,
@@ -710,6 +791,9 @@ export async function startStackDevTargets(
           );
         }
         beginPhase('worker');
+        // Once a server command might create data, its target must remain the
+        // authority even if SSH dies before readiness is observed.
+        await pinServerDataAuthority();
         const worker = spawnProcess({
           label: `remote:${target.name}`,
           command: 'ssh',
@@ -720,6 +804,7 @@ export async function startStackDevTargets(
           env: infraEnv,
         });
         workersByTarget.set(target.name, worker);
+        startedRemoteTargets.add(target.name);
         if (deferCompanionPreparation && !provisionedTargets.has(target.name)) {
           deferredCompanionPreparationsByTarget.set(target.name, {
             run: prepareRemoteServices,
@@ -751,6 +836,12 @@ export async function startStackDevTargets(
             error instanceof Error ? error.message : String(error)
           }`,
         );
+        if (controlled && !startedRemoteTargets.has(target.name)) {
+          const unavailable = error.commandExitCode === 255
+            || (error.name === 'OpenSshExecutionError' && error.code === 'command_failed' && error.status === 255);
+          if (unavailable && !retainedRemoteData && !serverAuthorityPinned) error.remotePreDispatchUnavailable = true;
+          throw error;
+        }
         return null;
       }
     };
@@ -762,7 +853,7 @@ export async function startStackDevTargets(
         let tunnel = initialTunnel;
         let retryAttempt = 0;
         let serverReady = !services.server;
-        let companionPreparationReady = !planDefersRemoteCompanionPreparation(plan)
+        let companionPreparationReady = controlled || !planDefersRemoteCompanionPreparation(plan)
           || provisionedTargets.has(target.name);
         let expoReady = !services.expo;
         let daemonReady = !services.daemon;
@@ -846,6 +937,13 @@ export async function startStackDevTargets(
                     target,
                     env,
                     signal: readinessController.signal,
+                  }).then(async () => {
+                    if (controlled) requireSuccessful(await runProcess({
+                      label: `remote:${target.name}`, command: 'ssh', args: [
+                        ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
+                        buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId: runtimeSnapshot.snapshotId }),
+                      ], env: infraEnv,
+                    }), `${target.name} loaded runtime identity`);
                   }).then(
                     () => ({ kind: 'server-ready' }),
                     (error) => ({ kind: 'server-readiness-failed', error }),
@@ -873,6 +971,7 @@ export async function startStackDevTargets(
                       runProcess,
                       env: infraEnv,
                       signal: readinessController.signal,
+                      runtimeMode,
                     });
                   }).then(
                     () => ({ kind: 'daemon-ready' }),
@@ -977,7 +1076,7 @@ export async function startStackDevTargets(
             tunnel = tunnelsByTarget.get(target.name) ?? null;
             if (worker && tunnel) {
               serverReady = !services.server;
-              companionPreparationReady = !planDefersRemoteCompanionPreparation(plan)
+              companionPreparationReady = controlled || !planDefersRemoteCompanionPreparation(plan)
                 || provisionedTargets.has(target.name);
               expoReady = !services.expo;
               break;
@@ -1023,6 +1122,16 @@ export async function startStackDevTargets(
         if (closed) return;
         closed = true;
         resolveCloseRequested();
+        let stopFailure = null;
+        if (controlled) for (const { target } of servicePlans) {
+          if (!startedRemoteTargets.has(target.name)) continue;
+          const options = remoteStackOptionsByTarget.get(target.name);
+          try {
+            requireSuccessful(await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
+              ...openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh, buildRemoteStackStopCommand(target, options),
+            ], env: infraEnv }), `${target.name} controlled Stack stop`);
+          } catch (error) { stopFailure ??= error; }
+        }
         for (const worker of workersByTarget.values()) {
           await stopProcess(worker);
         }
@@ -1032,11 +1141,19 @@ export async function startStackDevTargets(
         await Promise.allSettled(lifecycleTasks);
         await stopProcess(monitorWorker);
         await syncProject.release('pause');
+        if (stopFailure) throw stopFailure;
       },
     };
   } catch (error) {
     closed = true;
     resolveCloseRequested();
+    if (controlled && syncProject) for (const { target } of servicePlans) {
+      if (!startedRemoteTargets.has(target.name)) continue;
+      await runProcess({ label: `remote:${target.name}`, command: 'ssh', args: [
+        ...syncProject.openSsh.sshArgs, '-o', 'BatchMode=yes', target.ssh,
+        buildRemoteStackStopCommand(target, remoteStackOptionsByTarget.get(target.name)),
+      ], env: infraEnv }).catch(() => {});
+    }
     for (const worker of workersByTarget.values()) {
       await stopProcess(worker).catch(() => {});
     }

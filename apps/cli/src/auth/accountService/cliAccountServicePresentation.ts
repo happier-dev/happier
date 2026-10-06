@@ -1,4 +1,5 @@
-import { AccountDirectoryCapabilitiesSchema, normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
+import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

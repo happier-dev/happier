@@ -51,18 +51,14 @@ import type {
   PluginComposerControlContributionV1,
   PluginComposerRegionContributionV1,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  isDynamicPluginResourceContributionV2,
-  PLUGIN_CONTRIBUTION_CATALOG_V2,
-  pluginActionRequiresConfirmationPresentation,
-  normalizePluginActionInputHintsV2,
-  normalizePluginActionSlashV2,
-  normalizePluginAccountCollectionContractsV1,
-  qualifyPluginEventIdV1,
-  resolvePluginManifestSetReferencesV2,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { pluginActionRequiresConfirmationPresentation, normalizePluginActionInputHintsV2, normalizePluginActionSlashV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1';
+import { resolvePluginManifestSetReferencesV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import type {
   PluginUiArtifactsManifestV2,

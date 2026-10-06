@@ -1,11 +1,6 @@
-import {
-    EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1,
-    ExternalSessionOperationSocketBatchItemV1Schema,
-    makeExternalSessionHistoricalImportBatchIdV1,
-    type ExternalSessionOperationSocketBatchItemV1,
-    type ExternalSessionRequiredItemDiagnosticV1,
-    type ExternalSessionRequiredItemFailuresV1,
-} from '@happier-dev/protocol/sessions';
+import { EXTERNAL_SESSION_REQUIRED_ITEM_DIAGNOSTIC_CAP_V1 } from '@happier-dev/protocol/sessions/external/operationV1';
+import { ExternalSessionOperationSocketBatchItemV1Schema, makeExternalSessionHistoricalImportBatchIdV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
+import type { ExternalSessionOperationSocketBatchItemV1, ExternalSessionRequiredItemDiagnosticV1, ExternalSessionRequiredItemFailuresV1 } from '@happier-dev/protocol/sessions';
 
 import type {
     ExternalSessionOperationOwnedWorkspaceMediaPath,

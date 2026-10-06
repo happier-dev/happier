@@ -1,14 +1,8 @@
 import { join } from 'node:path';
 
-import {
-    createProviderErrorV1,
-    projectAgentSessionProviderBindingV1,
-    type BackendTargetRefV2Input,
-    type ConnectedServiceBindingsV2,
-    type ProviderBoundModelRef,
-    type TeamCredentialProviderModelSelectionV1,
-    type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';

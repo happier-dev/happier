@@ -1,20 +1,6 @@
-import {
-  DaemonVoiceInferenceSttStreamCancelRequestSchema,
-  DaemonVoiceInferenceSttStreamCancelResponseSchema,
-  type DaemonVoiceInferenceSttStreamCancelResponse,
-  DaemonVoiceInferenceSttStreamChunkRequestSchema,
-  DaemonVoiceInferenceSttStreamChunkResponseSchema,
-  type DaemonVoiceInferenceSttStreamChunkResponse,
-  type PeerApplicationEncryptionAuthorityBindingV1,
-  type VoiceMediaApplicationAuthorityV1,
-  DaemonVoiceInferenceSttStreamFinishRequestSchema,
-  DaemonVoiceInferenceSttStreamFinishResponseSchema,
-  DaemonVoiceInferenceSttStreamStartRequestSchema,
-  DaemonVoiceInferenceSttStreamStartResponseSchema,
-  DaemonVoiceInferenceSttStreamStatusRequestSchema,
-  DaemonVoiceInferenceSttStreamStatusResponseSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceInferenceSttStreamCancelRequestSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema, DaemonVoiceInferenceSttStreamChunkRequestSchema, DaemonVoiceInferenceSttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishRequestSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema, DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamStatusRequestSchema, DaemonVoiceInferenceSttStreamStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import type { DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkResponse, PeerApplicationEncryptionAuthorityBindingV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import {
   createVoiceInferenceSpeechStreamManager,

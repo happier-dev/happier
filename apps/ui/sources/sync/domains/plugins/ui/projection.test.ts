@@ -654,10 +654,18 @@ describe('plugin UI projection normalization', () => {
             target: { kind: 'app' },
         });
         const page = placementEntryWithPlatforms({ descriptorId: 'triage', binding: pageBinding, platforms: ['desktop', 'web'] });
+        const columnBinding = binding({
+            pluginId: 'acme.preview',
+            destinationId: 'triage',
+            rendererId: 'views-column',
+            container: 'appPage',
+            target: { kind: 'app' },
+        });
         // The page's own column, as the CLI projection publishes it on the placement row.
         const withColumn: Readonly<Record<string, unknown>> = {
             ...page,
             column: {
+                binding: columnBinding,
                 renderer: { kind: 'reactNative', contributionId: 'views-column' },
                 availability: { state: 'available', reason: 'available', diagnostics: [] },
             },
@@ -674,14 +682,22 @@ describe('plugin UI projection normalization', () => {
             }),
             platforms: ['desktop', 'web'],
         });
-        const brokenColumn: Readonly<Record<string, unknown>> = { ...broken, column: { renderer: 'views-column' } };
+        const brokenColumn: Readonly<Record<string, unknown>> = {
+            ...broken,
+            column: {
+                renderer: { kind: 'reactNative', contributionId: 'views-column' },
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+            },
+        };
         entries['surfacePlacement:acme.preview:broken'] = brokenColumn as typeof broken;
 
         const web = normalizePluginUiProjection(projection, 'web');
         expect(web.surfacePlacementsById['surfacePlacement:acme.preview:triage']?.column).toEqual({
+            binding: columnBinding,
             renderer: { kind: 'reactNative', contributionId: 'views-column' },
             availability: { state: 'available', reason: 'available', diagnostics: [] },
         });
+        expect(web.surfacePlacementsById['surfacePlacement:acme.preview:triage']?.column?.binding).toBe(columnBinding);
         expect(web.surfacePlacementsById['surfacePlacement:acme.preview:broken']).toBeDefined();
         expect(web.surfacePlacementsById['surfacePlacement:acme.preview:broken']?.column).toBeUndefined();
     });

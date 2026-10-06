@@ -1,4 +1,5 @@
 import type { AutomationDefinitionDetail } from '../../automations/automationApiV3.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import {
   isAvailableE2eeAutomationAccountEncryptionV1,
   type AvailableAutomationAccountEncryptionV1,
@@ -84,7 +85,7 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     return { target: { kind: 'inline' as const, definition }, context };
   };
   const open = async (raw: unknown) => {
-    const envelope = AutomationStoredContentEnvelopeV1Schema.parse(raw);
+    const envelope = createStoredReadSchema(AutomationStoredContentEnvelopeV1Schema).parse(raw);
     const current = await params.resolveEncryption();
     if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) {
       if (envelope.t !== 'plain') unavailable();
@@ -105,12 +106,13 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     triggerKind: 'prComment' | 'ciFailed') => AutomationTriggerDefinitionBindingV1Schema.parse({
       v: 1, automationId, triggerId, triggerRevision, triggerKind,
     });
-  const openEvent = (binding: AutomationTriggerDefinitionBindingV1, envelope: unknown, current: AvailableAutomationAccountEncryptionV1) => {
+  const openEvent = (binding: AutomationTriggerDefinitionBindingV1, envelope: unknown, current: AvailableAutomationAccountEncryptionV1, storedRead = false) => {
     const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
       ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
         ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
     if (opened.kind !== 'available') unavailable();
-    return AutomationEventTriggerDefinitionStoredPayloadV1Schema.parse(opened.definition);
+    return (storedRead ? createStoredReadSchema(AutomationEventTriggerDefinitionStoredPayloadV1Schema)
+      : AutomationEventTriggerDefinitionStoredPayloadV1Schema).parse(opened.definition);
   };
   const storedEvent = (row: AutomationDefinitionDetail, triggerId: string, current: AvailableAutomationAccountEncryptionV1) => {
     const trigger = row.triggers.find((item) => item.id === triggerId);
@@ -118,15 +120,16 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     let envelope: unknown;
     try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
     const binding = eventBinding(row.id, trigger.id, trigger.revision, trigger.eventRef, trigger.sourceSelectorId);
-    return { trigger, binding, definition: openEvent(binding, envelope, current) };
+    return { trigger, binding, definition: openEvent(binding, envelope, current, true) };
   };
   const openPullRequest = (binding: AutomationTriggerDefinitionBindingV1, envelope: unknown,
-    current: AvailableAutomationAccountEncryptionV1) => {
+    current: AvailableAutomationAccountEncryptionV1, storedRead = false) => {
     const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
       ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
         ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
     if (opened.kind !== 'available') unavailable();
-    const parsed = AutomationPullRequestTriggerSchema.safeParse(opened.definition);
+    const parsed = (storedRead ? createStoredReadSchema(AutomationPullRequestTriggerSchema)
+      : AutomationPullRequestTriggerSchema).safeParse(opened.definition);
     if (!parsed.success || parsed.data.kind !== binding.triggerKind) unavailable();
     return parsed.data;
   };
@@ -136,7 +139,7 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
     let envelope: unknown;
     try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
     const binding = pullRequestBinding(row.id, trigger.id, trigger.revision, trigger.kind);
-    return { trigger, binding, definition: openPullRequest(binding, envelope, current) };
+    return { trigger, binding, definition: openPullRequest(binding, envelope, current, true) };
   };
   const prepareEvent = (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1,

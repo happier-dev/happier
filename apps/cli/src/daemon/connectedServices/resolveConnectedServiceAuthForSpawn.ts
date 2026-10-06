@@ -1,21 +1,8 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  buildQualifiedPluginContributionKey,
-  isQualifiedConnectedAccountProfileActiveV4,
-  parseQualifiedPluginContributionKey,
-  type AccountSettings,
-  type BuiltInLegacyConnectedAccountCompatibility,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountServiceRef,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { AccountSettings, BuiltInLegacyConnectedAccountCompatibility, ConnectedAccountServiceKey, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceId, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountServiceRef, QualifiedConnectedAccountPurposeBindingV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
@@ -55,6 +42,8 @@ import type {
   ConnectedServicesMaterializationDiagnostic,
 } from './materialization/materializer';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './accountGroups/selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
+import { selectConnectedServiceAuthGroupCandidate, resolveConnectedServiceAuthGroupModelEligibilityBlocker } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES } from './runs/materializeContract';
 import {
   buildQualifiedConnectedAccountAuthGroupSwitchState,
 } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
@@ -138,8 +127,9 @@ type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
     sessionId?: string;
     serviceId: ConnectedAccountServiceKey;
     groupId: string;
-    reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+    reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'plan';
     observedProfileId?: string | null;
+    providerLimitId?: string | null;
     memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
   }>): Promise<Readonly<{
     status: string;
@@ -315,14 +305,14 @@ export class ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError extends 
   readonly groupId: string;
   readonly activeProfileId: string | null;
   readonly selectedProfileId: string;
-  readonly reason: 'usage_limit' | 'soft_threshold' | 'auth_expired';
+  readonly reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'plan';
 
   constructor(params: Readonly<{
     serviceId: ConnectedAccountServiceKey;
     groupId: string;
     activeProfileId: string | null;
     selectedProfileId: string;
-    reason: 'usage_limit' | 'soft_threshold' | 'auth_expired';
+    reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'plan';
   }>) {
     super(`Connected service auth group switch coordinator unavailable (${params.serviceId}/${params.groupId})`);
     this.name = 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError';
@@ -436,6 +426,14 @@ export class ConnectedServiceSpawnAuthGroupAuthorityError extends Error {
 }
 
 type ConnectedServiceSpawnQualifiedGroupState = ConnectedServiceAuthGroupSwitchState<QualifiedConnectedAccountServiceRef>;
+
+export class ConnectedServiceSpawnModelUnavailableError extends Error {
+  readonly code = CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable;
+  constructor(readonly modelId: string) {
+    super(`No enabled pool member can serve model '${modelId}'`);
+    this.name = 'ConnectedServiceSpawnModelUnavailableError';
+  }
+}
 
 async function resolveGroupAfterSpawnSwitchResult(params: Readonly<{
   group: ConnectedServiceSpawnQualifiedGroupState;
@@ -619,6 +617,7 @@ function buildSpawnSwitchState(params: Readonly<{
 
 async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
+  modelId?: string;
   group: QualifiedConnectedAccountGroupV4;
   state: ConnectedServiceSpawnQualifiedGroupState;
   serviceId: ConnectedAccountServiceKey;
@@ -637,6 +636,20 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     serviceId: params.serviceId,
     accountUsageStore: params.accountUsageStore,
   });
+  const modelBlocked = resolveConnectedServiceAuthGroupModelEligibilityBlocker({
+    state: state.memberStatesByProfileId.get(state.activeProfileId ?? ''), modelId: params.modelId, nowMs: params.nowMs,
+  });
+  if (modelBlocked && params.modelId) {
+    const candidates = selectConnectedServiceAuthGroupCandidate({
+      activeProfileId: state.activeProfileId, policy: state.policy, members: state.members,
+      memberStatesByProfileId: state.memberStatesByProfileId, nowMs: params.nowMs,
+      quotaFreshnessMs: params.quotaFreshnessMs, allowCurrentProfileRetry: true, providerLimitId: params.modelId,
+    });
+    if (candidates.reason === 'no_eligible_members') throw new ConnectedServiceSpawnModelUnavailableError(params.modelId);
+    if (!state.policy.autoSwitch || candidates.reason === 'manual_strategy') {
+      throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'resolution_unavailable', serviceId: params.serviceId, groupId: params.groupId });
+    }
+  }
   if (!state.policy.autoSwitch) return state;
   const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
   const memberStateOverridesByProfileId: ConnectedServiceAuthGroupMemberRuntimeStateOverride[] = [];
@@ -656,10 +669,10 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     });
   }
 
-  const activeIssueReason = resolveActiveGroupProfileIssueReason(state, memberStatesByProfileId, params.nowMs);
+  const activeIssueReason = modelBlocked ? 'plan' : resolveActiveGroupProfileIssueReason(state, memberStatesByProfileId, params.nowMs);
   if (activeIssueReason === 'soft_threshold' && !params.accountUsageStore) return state;
   const currentActiveProfileId = readProfileId(state.activeProfileId);
-  if (params.sessionId && params.predictiveSwitchGuard && currentActiveProfileId) {
+  if (activeIssueReason !== 'plan' && params.sessionId && params.predictiveSwitchGuard && currentActiveProfileId) {
     const guardResult = await params.predictiveSwitchGuard({
       sessionId: params.sessionId,
       serviceId: params.serviceId,
@@ -694,14 +707,22 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
         groupId: params.groupId,
         reason: activeIssueReason,
         observedProfileId: state.activeProfileId,
+        ...(params.modelId ? { providerLimitId: params.modelId } : {}),
         ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
       });
-      return await resolveGroupAfterSpawnSwitchResult({
+      const selectedState = await resolveGroupAfterSpawnSwitchResult({
         group: state,
         serviceId: params.serviceId,
         groupId: params.groupId,
         result: switched,
       }) ?? state;
+      if (modelBlocked && resolveConnectedServiceAuthGroupModelEligibilityBlocker({
+        state: state.memberStatesByProfileId.get(selectedState.activeProfileId ?? ''), modelId: params.modelId, nowMs: params.nowMs,
+      })) {
+        if (switched.status === 'no_eligible_member' && params.modelId) throw new ConnectedServiceSpawnModelUnavailableError(params.modelId);
+        throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'resolution_unavailable', serviceId: params.serviceId, groupId: params.groupId });
+      }
+      return selectedState;
     } catch (error) {
       if (
         activeIssueReason === 'soft_threshold'
@@ -726,6 +747,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
 
 async function resolveCredentialBindings(params: Readonly<{
   agentId: CatalogAgentId;
+  modelId?: string;
   api: ApiClient;
   credentials: StoredCredentials;
   selections: ReadonlyArray<ConnectedServiceBindingSelection>;
@@ -908,6 +930,7 @@ async function resolveCredentialBindings(params: Readonly<{
 
     const selectedGroup = await maybeSelectGroupActiveProfileForSpawn({
       agentId: params.agentId,
+      ...(params.modelId ? { modelId: params.modelId } : {}),
       group,
       state,
       serviceId: selection.serviceId,
@@ -1366,6 +1389,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
 
 export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
+  modelId?: string;
   connectedServicesBindingsRaw: unknown;
   materializationKey: string;
   activeServerDir: string;
@@ -1460,6 +1484,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
 
   const resolvedBindings = await resolveCredentialBindings({
     agentId: params.agentId,
+    ...(params.modelId ? { modelId: params.modelId } : {}),
     api: params.api,
     credentials: params.credentials,
     selections,

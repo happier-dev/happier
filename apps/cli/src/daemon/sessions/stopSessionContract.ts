@@ -1,15 +1,8 @@
-import {
-  SessionStopCleanupIncompleteReasonSchema,
-  type StopSessionIncompleteReason,
-  type StopSessionResult,
-} from '@happier-dev/protocol';
+import { SessionStopCleanupIncompleteReasonSchema } from '@happier-dev/protocol/sessions/control/contract';
+import type { StopSessionIncompleteReason, StopSessionResult } from '@happier-dev/protocol';
 
-export {
-  StopSessionIncompleteReasonSchema,
-  StopSessionResultSchema,
-  type StopSessionIncompleteReason,
-  type StopSessionResult,
-} from '@happier-dev/protocol';
+export { StopSessionIncompleteReasonSchema, StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
+export type { StopSessionIncompleteReason, StopSessionResult } from '@happier-dev/protocol';
 
 export function incompleteStopSession(reason: StopSessionIncompleteReason): StopSessionResult {
   return { status: 'incomplete', reason };

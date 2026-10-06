@@ -11,6 +11,7 @@ import { useBoardCards, useBoardMembership, useBoardWidgets, type BoardHomes } f
 import { resolveBoardPruneMembership } from './boardMembership';
 import { buildBoardCards } from './boardCards';
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import { formatWorkflowDefinitionContentUnavailableReason } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 const execute = vi.hoisted(() => vi.fn());
 // The Action executor is the transport boundary. The list client, window, shared Run store,
@@ -51,6 +52,33 @@ function runsBoard(startedBy: readonly ('you' | 'agents' | 'triggers')[] = []) {
 }
 
 describe('Board shared Run filter membership', () => {
+    it('preserves unavailable definition reasons on Board cards beside readable neighbors', async () => {
+        const definitions = [
+            { kind: 'workflow-definition.v1', definitionId: 'header', revision: { headerVersion: 1, bodyVersion: 1 },
+                contentStatus: 'unavailable', contentUnavailableReason: 'invalid_header', metadata: null, stepCount: null, triggers: [], nextRunAt: null },
+            { kind: 'workflow-definition.v1', definitionId: 'body', revision: { headerVersion: 1, bodyVersion: 1 },
+                contentStatus: 'unavailable', contentUnavailableReason: 'invalid_body', metadata: { title: 'Repair me' }, stepCount: null, triggers: [], nextRunAt: null },
+            { kind: 'workflow-definition.v1', definitionId: 'readable', revision: { headerVersion: 1, bodyVersion: 1 },
+                contentStatus: 'available', metadata: { title: 'Readable' }, stepCount: 1, triggers: [], nextRunAt: null },
+        ];
+        execute.mockImplementation(async (id) => id === 'workflow.definition.list'
+            ? { ok: true, result: { definitions } }
+            : id === 'workflow.run.summaries'
+                ? { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } }
+                : { ok: false, errorCode: 'unexpected_action' });
+        const members = definitions.map(definition => {
+            const ref = { kind: 'workflow', qualifiedId: { serverId: homes.activeServerId!, id: definition.definitionId } } as const;
+            return { key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true };
+        });
+        const hook = await renderHook(() => useBoardCards({ members, complete: true }, homes));
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        expect(hook.getCurrent()).toMatchObject([
+            { availability: 'content_unavailable', unavailableReason: formatWorkflowDefinitionContentUnavailableReason('invalid_header'), body: { kind: 'none' } },
+            { availability: 'content_unavailable', title: 'Repair me', unavailableReason: formatWorkflowDefinitionContentUnavailableReason('invalid_body'), body: { kind: 'none' } },
+            { availability: 'ready', title: 'Readable', body: { kind: 'workflow' } },
+        ]);
+        expect(hook.getCurrent().slice(0, 2).every(card => card.status.tone === 'neutral')).toBe(true);
+    });
     it('consumes the definition list scheduler occurrence without deriving a date from its schedule', async () => {
         const definitions = [123_456, null].map((nextRunAt, index) => ({
             kind: 'workflow-definition.v1', definitionId: `scheduled-${index}`,

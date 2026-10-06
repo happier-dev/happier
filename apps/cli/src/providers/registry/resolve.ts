@@ -1,31 +1,13 @@
-import {
-  assessProviderEndpoint,
-  createProviderAccountGrantFingerprintV1,
-  createProviderConnectionSecurityFingerprintV1,
-  createProviderEndpointSetFingerprintV1,
-  createProviderMachineGrantFingerprintV1,
-  normalizeProviderEndpointUrlSyntax,
-  ProviderConnectionIdSchema,
-  ProviderMachineIdSchema,
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1,
-  readOwnRecordValue,
-  resolveProviderManagedRuntimeDeclarationV1,
-  resolveProviderGrantV1,
-  type CustomProviderTemplateV1,
-  type ProviderCatalogProbeV1,
-  type ProviderCatalogCommandFallbackV1,
-  type ProviderConnectionId,
-  type ProviderConnectionV1,
-  type ProviderContributionV1,
-  type ProviderCredentialTransportV1,
-  type ProviderEndpointTemplateV1,
-  type ProviderManagedSecurityEndpointV1,
-  type ProviderModelLoadDescriptorV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { assessProviderEndpoint, normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecurityFingerprintV1, createProviderEndpointSetFingerprintV1, createProviderMachineGrantFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import type { CustomProviderTemplateV1, ProviderCatalogProbeV1, ProviderCatalogCommandFallbackV1, ProviderConnectionId, ProviderConnectionV1, ProviderContributionV1, ProviderCredentialTransportV1, ProviderEndpointTemplateV1, ProviderManagedSecurityEndpointV1, ProviderModelLoadDescriptorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
-import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers';
+import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 
 import { readProviderSettingsForCli } from '../settings/read';
 import { getProviderContribution } from './lookup';

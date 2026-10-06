@@ -18,12 +18,9 @@ import {
   resolveWindowsCommandInvocation,
   resolveWindowsCommandOnPath,
 } from '@happier-dev/cli-common/process';
-import {
-  BUILT_IN_INSTALLABLES_REGISTRY,
-  trimBugReportTextHeadToMaxBytes,
-  type InstallableKey,
-  type InstallablesRegistry,
-} from '@happier-dev/protocol';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import { trimBugReportTextHeadToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { InstallableKey, InstallablesRegistry } from '@happier-dev/protocol';
 
 import { resolveAgentCliCommand } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { buildAgentCliLaunchSpecFromResolution } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';

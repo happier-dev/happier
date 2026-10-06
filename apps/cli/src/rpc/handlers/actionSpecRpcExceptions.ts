@@ -1,5 +1,6 @@
 import type { ActionId } from '@happier-dev/protocol';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export const ACTION_SPEC_RPC_EXCEPTION_REASONS = Object.freeze([
     'legacy_alias',

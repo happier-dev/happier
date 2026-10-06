@@ -1,7 +1,5 @@
-import {
-    AgentProviderRequirementsV1Schema,
-    type PluginHostAccessRequestV2,
-} from '@happier-dev/protocol';
+import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
+import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 
 export function composeProviderBindingProcessAccess(params: Readonly<{
     requests: readonly PluginHostAccessRequestV2[];

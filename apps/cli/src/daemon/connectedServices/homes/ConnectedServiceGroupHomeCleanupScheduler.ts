@@ -2,7 +2,8 @@ import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { AGENT_IDS } from '@happier-dev/agents';
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';

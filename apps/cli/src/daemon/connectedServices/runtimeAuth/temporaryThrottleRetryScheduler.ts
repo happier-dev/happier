@@ -1,9 +1,7 @@
 import { join } from 'node:path';
 
-import {
-  SessionContinuationResumePromptModeV1Schema,
-  type SessionContinuationResumePromptModeV1,
-} from '@happier-dev/protocol';
+import { SessionContinuationResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/continuation/recoveryV1';
+import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import {
   DurableBackoffRecoveryScheduler,

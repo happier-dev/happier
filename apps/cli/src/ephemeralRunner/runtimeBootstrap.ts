@@ -1,14 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import {
-  RunnerRuntimeBootstrapV1Schema,
-} from '@happier-dev/protocol/ephemeralRunner/bootstrap';
-import {
-  computeRunnerMachineContentKeyFingerprintV1,
-  type RunnerMachineContentKeyBindingV1,
-  verifyRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
+import { RunnerRuntimeBootstrapV1Schema } from '@happier-dev/protocol/ephemeralRunner/bootstrap';
+import { computeRunnerMachineContentKeyFingerprintV1, verifyRunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
+import type { RunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol/ephemeralRunner/machineContentKeyBinding';
 
 export type VerifiedRunnerRuntimeBootstrap =
   | Readonly<{ mode: 'plain' }>

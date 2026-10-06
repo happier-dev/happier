@@ -5,7 +5,7 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { searchCodexExternalTranscript } from './transcriptSource.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol';
+import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 
 import {
   createCodexNativeAppServerClient,
@@ -596,6 +596,22 @@ async function listRolloutCandidateOrdering(params: Readonly<{
     throw new CodexExternalSessionCandidateSourceChangedError();
   }
 
+  if (params.searchTarget === 'content') {
+    // Content does not filter candidate metadata. Keep the scanned ordering
+    // cheap and build only the row whose transcript this request can finish.
+    return {
+      rows: chunk.entries.map((entry) => ({
+        kind: 'rolloutEntry' as const,
+        remoteSessionId: entry.remoteSessionId,
+        updatedAtMs: Math.trunc(entry.group.updatedAtMs),
+        entry,
+      })),
+      scan: Object.freeze({ kind: 'chunkScan', boundary: after }),
+      nextBoundary: chunk.nextBoundary,
+      ...(chunk.nextBoundary ? { searchIncomplete: true } : {}),
+    };
+  }
+
   // Candidate search matches on the title and cwd that only a built candidate
   // carries, so this branch has to build every searched row before it can
   // filter. The bounded searched window is what keeps that affordable, and
@@ -615,7 +631,7 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   );
   const filtered = filterCodexRolloutCandidatesBySearchTerm({
     candidates: built,
-    searchTerm: params.searchTarget === 'content' ? '' : params.searchTerm ?? '',
+    searchTerm: params.searchTerm ?? '',
   });
   return {
     rows: filtered.map(toCodexMergedOrderingCandidateRow),
@@ -1069,7 +1085,15 @@ export async function listCodexSessionCandidates(params: Readonly<{
     });
   }
 
-  const appServerListing = params.searchMode === 'fast' && search.target !== 'content'
+  // The existing native probe budget includes startup, fallback and teardown.
+  // If content discovery has already consumed that room, leave native ordering
+  // unresolved in the existing cursor and try it on the next invocation.
+  const deferNativeContentProbe = search.target === 'content'
+    && params.deadlineAtMs !== undefined
+    && params.deadlineAtMs - Date.now() <= resolveCodexExternalSessionAppServerListBudgetMs(params.env);
+  const appServerListing = deferNativeContentProbe
+    ? { active: null, archived: null, incomplete: true }
+    : params.searchMode === 'fast' && search.target !== 'content'
     ? {
       active: null,
       archived: null,
@@ -1094,7 +1118,7 @@ export async function listCodexSessionCandidates(params: Readonly<{
       archived: terminalNativeCandidateCursorState(),
     })
     : cursor;
-  const page = selectBoundedCodexMergedCandidatePage({
+  const pageSelection = {
     rolloutRows: [...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows),
     cursor: nativeCursor,
     activePage: appServerListing.active,
@@ -1104,23 +1128,43 @@ export async function listCodexSessionCandidates(params: Readonly<{
       current: rolloutOrdering.scan,
       nextBoundary: rolloutOrdering.nextBoundary,
     },
-  });
+  };
+  let page = selectBoundedCodexMergedCandidatePage(pageSelection);
   const searchIncomplete = rolloutOrdering.searchIncomplete === true
     || appServerListing.incomplete === true
     || (Boolean(searchTerm) && page.hasPendingNativeContinuation);
 
-  const built = await buildCodexMergedOrderingPage(page.rows, params);
-  let candidates = built;
+  let candidates: CodexExternalSessionCandidate[];
   let contentPartial = page.hasMore || appServerListing.incomplete;
   if (search.target === 'content' && params.ripgrep) {
     candidates = [];
-    for (const candidate of built) {
-      const result = await searchCodexExternalTranscript({ ...params, remoteSessionId: candidate.remoteSessionId, query: searchTerm, ripgrep: params.ripgrep });
-      contentPartial ||= result.partial || result.unsearchable;
-      if (result.match) candidates.push({ ...candidate, match: result.match });
-      else if (result.unsearchable) candidates.push(candidate);
+    let processedRows = 0;
+    let longestRowMs = 0;
+    for (const row of page.rows) {
+      // Reuse the host deadline and the cost observed in this invocation.
+      // Starting another indivisible transcript when it cannot fit would lose
+      // every completed hit to the host's timeout instead of yielding a page.
+      const startedAtMs = Date.now();
+      if (params.deadlineAtMs !== undefined && params.deadlineAtMs - startedAtMs <= longestRowMs) break;
+      throwIfCodexExternalSessionInvocationStopped(params);
+      const built = await buildCodexMergedOrderingPage([row], params);
+      for (const candidate of built) {
+        const result = await searchCodexExternalTranscript({ ...params, remoteSessionId: candidate.remoteSessionId, query: searchTerm, ripgrep: params.ripgrep });
+        contentPartial ||= result.partial || result.unsearchable;
+        if (result.match) candidates.push({ ...candidate, match: result.match });
+        else if (result.unsearchable) candidates.push(candidate);
+      }
+      processedRows += 1;
+      longestRowMs = Math.max(longestRowMs, Date.now() - startedAtMs);
     }
-  }
+    if (processedRows < page.rows.length) {
+      // Re-run the same canonical selector for the completed prefix. Native
+      // offsets, suppressed twins and the rollout scan boundary all advance
+      // together; the unfinished row remains first on the next request.
+      page = selectBoundedCodexMergedCandidatePage({ ...pageSelection, limit: processedRows });
+      contentPartial = true;
+    }
+  } else candidates = await buildCodexMergedOrderingPage(page.rows, params);
   const result: CodexCandidateListPage = {
     candidates,
     nextCursor: page.hasMore

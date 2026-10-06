@@ -1,23 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import {
-    ConnectedAccountAuthFailureRequestV1Schema,
-    ConnectedAccountQuotaFailureRequestV1Schema,
-    OAuthBearerLeaseV1Schema,
-    QualifiedConnectedAccountPurposeV1Schema,
-    RequestAuthFailureOutcomeV1Schema,
-    qualifiedPurposeKey,
-    sameQualifiedConnectedAccountRef,
-    type ConnectedAccountAuthFailureRequestV1,
-    type ConnectedAccountQuotaFailureRequestV1,
-    type OAuthBearerLeaseV1,
-    type QualifiedConnectedAccountPurposeBindingV1,
-    type QualifiedConnectedAccountPurposeV1,
-    type QualifiedConnectedAccountRequestAuthUseV1,
-    type QualifiedConnectedAccountRef,
-    type RequestAuthFailureOutcomeV1,
-    type RequestAuthRequiredHeadersV1,
-} from '@happier-dev/protocol';
+import { ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, OAuthBearerLeaseV1Schema, RequestAuthFailureOutcomeV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ConnectedAccountAuthFailureRequestV1, ConnectedAccountQuotaFailureRequestV1, OAuthBearerLeaseV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, RequestAuthFailureOutcomeV1, RequestAuthRequiredHeadersV1 } from '@happier-dev/protocol';
 
 export type ConnectedAccountRequestAuthErrorCode =
     | 'request_auth_not_active'

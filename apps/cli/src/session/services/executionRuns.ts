@@ -1,34 +1,10 @@
-import {
-    ExecutionRunListRequestSchema,
-    ExecutionRunGetRequestSchema,
-    ExecutionRunGetResponseSchema,
-    ExecutionRunListResponseSchema,
-    ExecutionRunPublicStateSchema,
-    ExecutionRunWaitResultSchema,
-    normalizeExecutionRunWaitTimeoutMs,
-    isExecutionRunTerminalStatus,
-    readExecutionRunStartRunCreation,
-    withExecutionRunStartFailureDetails,
-    FeatureAxisSchema,
-    FeatureBlockerCodeSchema,
-    isFeatureId,
-    type ExecutionRunListRequest,
-    type ExecutionRunPublicState,
-    type ExecutionRunStartFailureDetailsV1,
-    type ExecutionRunStartRunCreation,
-    type ExecutionRunTerminalStatus as ProtocolExecutionRunTerminalStatus,
-    type ExecutionRunWaitLoopResult,
-    type ExecutionRunWaitCondition,
-    type ExecutionRunGetResponse,
-    type FeatureAxis,
-    type FeatureBlockerCode,
-    type FeatureId,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-    isRpcMethodNotAvailableError,
-    isRpcMethodNotFoundError,
-} from '@happier-dev/protocol/rpcErrors';
+import { ExecutionRunListRequestSchema, ExecutionRunGetRequestSchema, ExecutionRunGetResponseSchema, ExecutionRunListResponseSchema, ExecutionRunPublicStateSchema, ExecutionRunWaitResultSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { normalizeExecutionRunWaitTimeoutMs, isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
+import { FeatureAxisSchema, FeatureBlockerCodeSchema } from '@happier-dev/protocol/features/decision';
+import { isFeatureId } from '@happier-dev/protocol/features/catalog';
+import type { ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartFailureDetailsV1, ExecutionRunStartRunCreation, ExecutionRunTerminalStatus as ProtocolExecutionRunTerminalStatus, ExecutionRunWaitLoopResult, ExecutionRunWaitCondition, ExecutionRunGetResponse, FeatureAxis, FeatureBlockerCode, FeatureId } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { configuration } from '@/configuration';
 import { listExecutionRunMarkers, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
@@ -550,7 +526,7 @@ async function callExecutionRunControlRpc(
     }
 }
 
-export { isExecutionRunTerminalStatus } from '@happier-dev/protocol';
+export { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 
 export async function startExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,

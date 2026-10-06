@@ -10,20 +10,27 @@ import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/us
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope, useProfile, useSetting, useSession } from '@/sync/domains/state/storage';
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
-import { resolveConfiguredWidgetTarget, type ConfiguredWidgetTargetResolution } from './widgetBinding';
+import { resolveConfiguredWidgetTarget, withWidgetInputRepairOutcome, type ConfiguredWidgetTargetResolution } from './widgetBinding';
 import { admitWidgetViewerSelectionMetadataV1 } from './widgetViewerSelectionAdmission';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 /** Physical placement supplies context; only the bound exact Session supplies execution facts. */
-export function useConfiguredWidgetTarget(input: Readonly<{
+type ConfiguredWidgetTargetOptions = Readonly<{
     scope: WidgetSurfaceRefV1;
     instance: WidgetInstanceV1;
     descriptor: WidgetCandidate;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
     appRuntime: PluginUiProjectionCurrentness;
     enabled?: boolean;
-}>): ConfiguredWidgetTargetResolution {
+}>;
+
+export function useConfiguredWidgetTarget(input: ConfiguredWidgetTargetOptions): ConfiguredWidgetTargetResolution {
+    return withWidgetInputRepairOutcome(useConfiguredWidgetTargetFacts(input), { instance: input.instance, descriptor: input.descriptor });
+}
+
+function useConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetOptions): ConfiguredWidgetTargetResolution {
     const viewer = useActiveServerAccountScope();
     const profile = useProfile();
     const purposeBindings = useSetting('connectedAccountPurposeBindingsV1');
@@ -73,11 +80,12 @@ export function useConfiguredWidgetTarget(input: Readonly<{
         } : null }, { allowLegacy: true }) : selectedSession?.access;
     const selectedIdentityMatches = requested !== null && selectedSession?.id === requested.sessionId && selectedSession.serverId === requested.serverId;
     const selectedCanRead = selectedIdentityMatches && selectedAccess?.capabilities.readTranscript === true;
-    // Exact target hydration has one lifecycle owner. A pending detail is not
-    // missing authority, nor an input the viewer can repair by selecting again.
+    // A render-cache miss is not absence. Reuse the exact Session's route owner
+    // without waking its transcript; denied cached targets are not hydrated.
     const hydrationAddress = requested && (!selectedSession || selectedCanRead) ? requested : null;
-    const hydration = useHydrateSessionForRoute(hydrationAddress?.sessionId ?? '', 'WidgetSurface.hydrateSession', {
-        ...(hydrationAddress ? { serverId: hydrationAddress.serverId } : {}),
+    const selectedHydration = useHydrateSessionForRoute(hydrationAddress?.sessionId ?? '', 'widgets.target.hydrate', {
+        serverId: hydrationAddress?.serverId ?? input.scope.serverId,
+        hydrateMessages: false,
     });
     const selectedRuntime = useSessionPluginRuntime({ address: !builtin && selectedCanRead ? requested : null });
     const authored = input.descriptor.authoredDefinition;
@@ -109,17 +117,33 @@ export function useConfiguredWidgetTarget(input: Readonly<{
             && !(field.connectedAccountOptions && input.instance.bindings[field.path]?.kind === 'viewer'
                 && !field.options?.length && !field.optionsSourceId && !field.inputType)).map(field => ({ field, consumer, draftInput })),
     });
-    const sessionRefusal = (status: WidgetInputIssueV1['status'], reasonCode: string): ConfiguredWidgetTargetResolution => ({ status, reasonCode,
-        ...(input.descriptor.sessionInputPath ? { fields: [{ path: input.descriptor.sessionInputPath, status, reasonCode }] } : {}) });
+    const sessionRefusal = (status: WidgetInputIssueV1['status'], reasonCode: string): ConfiguredWidgetTargetResolution => withWidgetInputRepairOutcome({ status, reasonCode,
+        ...(input.descriptor.sessionInputPath ? { fields: [{ path: input.descriptor.sessionInputPath, status, reasonCode }] } : {}) }, {
+            instance: input.instance, descriptor: input.descriptor,
+            ...(selectedIdentityMatches && selectedSession ? { sessionLabel: getSessionName(selectedSession, requested.serverId) } : {}),
+        });
     if (input.enabled === false) return { status: 'unavailable', reasonCode: 'widget_inactive' };
     if (!currentViewer) return { status: 'denied', reasonCode: 'widget_viewer_scope_mismatch' };
     if (!currentDefinition) return { status: 'unavailable', reasonCode: 'widget_type_unavailable' };
-    if (hydrationAddress && isSessionRouteHydrationPending(hydration))
+    if (requested && (!selectedSession || selectedCanRead) && isSessionRouteHydrationPending(selectedHydration))
         return { status: 'loading', reasonCode: 'widget_session_hydrating' };
-    if (requested && !selectedSession) return sessionRefusal('unavailable', 'widget_session_unavailable');
+    if (requested && !selectedSession) {
+        if (selectedHydration.kind === 'missing' && selectedHydration.cause !== 'not_found')
+            return sessionRefusal('denied', 'widget_session_access_denied');
+        return sessionRefusal('unavailable', 'widget_session_unavailable');
+    }
     if (requested && !selectedIdentityMatches) return sessionRefusal('denied', 'widget_target_identity_mismatch');
     if (requested && !selectedCanRead) return sessionRefusal('denied', 'widget_session_access_denied');
-    if (!candidate && provisional.status === 'ready') return { status: 'unavailable', reasonCode: 'widget_type_unavailable' };
+    // A readable bound Session is not an absent widget while its exact daemon
+    // projection is still being established. Retained AppShell metadata names
+    // the definition, but never supplies execution authority for that target.
+    if (!candidate && provisional.status === 'ready') {
+        return {
+            status: 'unavailable',
+            reasonCode: !builtin && requested && selectedRuntime.phase === 'establishing'
+                ? 'widget_projection_establishing' : 'widget_type_unavailable',
+        };
+    }
     for (const field of fields) {
         if (builtin && field.path === candidate?.sessionInputPath) continue;
         const value = readInputPath(draftInput, field.path);
@@ -152,6 +176,9 @@ export function useConfiguredWidgetTarget(input: Readonly<{
     return resolveConfiguredWidgetTarget({
         scope: input.scope, definition: input.instance.definition, targetKind: input.descriptor.target,
         resolvedInput: bound,
+        repairContext: { instance: input.instance, descriptor: candidate ?? input.descriptor, connection: { scope: input.scope,
+            machineId: executableRuntime.phase === 'current' && executableRuntime.interactionEnabled ? executableRuntime.machineId : null,
+            resources: Object.values(executableRuntime.pluginUiProjection?.resourcesById ?? {}) } },
         sessionInputPath: candidate?.sessionInputPath, appRuntime: input.appRuntime,
         readSession: ref => {
             if (!requested || requested.serverId !== ref.serverId || requested.sessionId !== ref.sessionId)

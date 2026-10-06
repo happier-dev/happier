@@ -245,7 +245,7 @@ installSettingsViewCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSettings: () => settingsState,
+            useSettingsSelector: <T,>(selector: (settings: typeof settingsState) => T) => selector(settingsState),
             useLocalSettings: () => localSettingsState,
             useSettingsVersion: () => null,
             useAccountSettingsSyncStatus: () => ({ state: 'idle', lastSyncedAt: null }),

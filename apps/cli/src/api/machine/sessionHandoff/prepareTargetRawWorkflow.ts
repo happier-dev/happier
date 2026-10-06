@@ -1,6 +1,4 @@
-import {
-  SessionHandoffPrepareTargetRequestSchema,
-} from '@happier-dev/protocol';
+import { SessionHandoffPrepareTargetRequestSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 
 import { invalidRequest } from './prepareTargetState';
 import {

@@ -1,8 +1,6 @@
-import {
-  SessionCreationTargetPreparationRequestV1Schema,
-  type SessionCreationTargetPreparationResultV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import type { SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
 import { prepareSessionCreationTarget } from './prepareSessionCreationTarget';

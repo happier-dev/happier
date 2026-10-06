@@ -1,9 +1,5 @@
-import {
-  SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
-  SessionConnectedServiceAuthInvalidateTransportsResponseV1Schema,
-  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionConnectedServiceAuthApplyGenerationResponseV1Schema, SessionConnectedServiceAuthInvalidateTransportsResponseV1Schema, SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type {
   SessionConnectedServiceAuthApplyGenerationRequestV1,
   SessionConnectedServiceAuthApplyGenerationResponseV1,

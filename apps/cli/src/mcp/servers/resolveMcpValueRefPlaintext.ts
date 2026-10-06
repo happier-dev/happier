@@ -7,11 +7,8 @@
  */
 
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
-import {
-  decryptSecretValueWithKeysV1,
-  type McpValueRefV1,
-  type SecretStringV1,
-} from '@happier-dev/protocol';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import type { McpValueRefV1, SecretStringV1 } from '@happier-dev/protocol';
 import type {
   SavedSecretMaterializerV1,
   SavedSecretResolutionFailureStatusV1,

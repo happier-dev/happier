@@ -1,10 +1,7 @@
-import {
-  buildBrowserContextAnnotationStructuredBlock,
-  BrowserContextAttachmentV1Schema,
-  classifyBrowserDiagnosticFieldForDestination,
-  type BrowserContextAttachmentV1,
-  type BrowserContextItemV1,
-} from '@happier-dev/protocol';
+import { buildBrowserContextAnnotationStructuredBlock } from '@happier-dev/protocol/browser/context/annotationStructuredBlock';
+import { BrowserContextAttachmentV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { classifyBrowserDiagnosticFieldForDestination } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
+import type { BrowserContextAttachmentV1, BrowserContextItemV1 } from '@happier-dev/protocol';
 
 import type { BrowserContextItemStore } from './store';
 

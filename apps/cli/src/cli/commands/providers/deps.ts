@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import {
-  SavedSecretSchema,
-  type AccountSettings,
-} from '@happier-dev/protocol';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { AccountSettings } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';

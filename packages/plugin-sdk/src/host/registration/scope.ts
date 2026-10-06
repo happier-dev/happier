@@ -1,7 +1,5 @@
-import {
-    COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1,
-    type ComposerAttachmentRuntimeRegistrationFieldV1,
-} from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import type { ComposerAttachmentRuntimeRegistrationFieldV1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import type {
     ActionHandler,
     PluginClientActionHandler,
@@ -21,10 +19,8 @@ import type {
     BackendRuntime,
     HostingProviderRuntime,
 } from '../../activation.js';
-import {
-    PluginContributionLocalIdSchema,
-    type PromptAssetTypeDescriptor,
-} from '@happier-dev/protocol/plugins/manifest';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PromptAssetTypeDescriptor } from '@happier-dev/protocol/plugins/manifest';
 import type {
     PluginConnectedAccountDescriptorContributionV2,
 } from '@happier-dev/protocol';
@@ -63,9 +59,7 @@ import type {
     AgentSessionStartupContributionV1,
     AgentSessionRunnerFactoryLocatorV1,
 } from '../../agentRuntime/index.js';
-import {
-    ConnectedAccountRequestAuthUsesV1Schema,
-} from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import type {
     ConnectedAccountRequestAuthUse,
 } from '../../connectedAccounts.js';

@@ -6,7 +6,7 @@ import {
     useCurrentSecretBindingsByProfileIdMutable,
     useSetting,
     useSettingMutable,
-    useSettings,
+    useSettingsSelector,
 } from '@/sync/domains/state/storage';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
@@ -18,7 +18,6 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
@@ -73,7 +72,12 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
 
     const profile = profileId ? resolveProfileById(profileId, profiles) : null;
 

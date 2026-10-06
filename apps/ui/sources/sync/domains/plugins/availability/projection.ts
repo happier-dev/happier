@@ -28,6 +28,13 @@ import {
 
 const readerStore = createPluginAccountAvailabilityReaderStore();
 
+function subscribeToReactProjection(listener: () => void): () => void {
+    // Account capture can clear the store while a sibling renders. Withdraw
+    // imperative authority synchronously, but notify React after that render;
+    // the listener then reads the latest snapshot, including any successor.
+    return readerStore.subscribe(() => queueMicrotask(listener));
+}
+
 /** Imperative Account consumers use the same scoped projection as mounted surfaces. */
 export function readPluginAccountAvailability(scope: ServerAccountScope): PluginAccountAvailabilityReader {
     return readerStore.bind(scope);
@@ -121,7 +128,7 @@ export function retirePluginAccountAvailabilityProjection(pluginIds: readonly st
  */
 export function useActivePluginAccountAvailabilityReader(): PluginAccountAvailabilityReader | null {
     const scope = useActiveServerAccountScope();
-    const snapshot = React.useSyncExternalStore(readerStore.subscribe, readerStore.getSnapshot, readerStore.getSnapshot);
+    const snapshot = React.useSyncExternalStore(subscribeToReactProjection, readerStore.getSnapshot, readerStore.getSnapshot);
     const serverId = scope?.serverId ?? null;
     const accountId = scope?.accountId ?? null;
 

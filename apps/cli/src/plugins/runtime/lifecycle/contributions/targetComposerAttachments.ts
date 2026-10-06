@@ -3,31 +3,12 @@ import type {
     ComposerAttachmentRuntime,
     PluginScopedInvocationContextV1,
 } from '@happier-dev/plugin-sdk';
-import {
-    compilePluginJsonSchema,
-    ComposerAttachmentDraftV1Schema,
-    ComposerAttachmentInputV1Schema,
-    ComposerAttachmentMessageAcceptedV1Schema,
-    ComposerAttachmentPrepareRequestV1Schema,
-    ComposerAttachmentPrepareResultV1Schema,
-    ComposerAttachmentResolveRequestV1Schema,
-    ComposerAttachmentResolveRequestV2Schema,
-    ComposerAttachmentResolveResultV1Schema,
-    isValidPluginJsonSchemaValue,
-    readComposerAttachmentRuntimeRegistrationFieldsV1,
-    type ComposerAttachmentDraftV1,
-    type ComposerAttachmentInputV1,
-    type ComposerAttachmentMessageAcceptedV1,
-    type ComposerAttachmentPrepareRequestV1,
-    type ComposerAttachmentPrepareResultV1,
-    type ComposerAttachmentResolveRequestV1,
-    type ComposerAttachmentResolveRequestV2,
-    type ComposerAttachmentResolveResultV1,
-    type PluginJsonSchemaV2,
-    type PluginLocalizedStringV2,
-    type PluginContributionIdentityV1,
-    type PluginExecutionScopeV1,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { ComposerAttachmentDraftV1Schema, ComposerAttachmentInputV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerAttachmentMessageAcceptedV1Schema, ComposerAttachmentPrepareRequestV1Schema, ComposerAttachmentPrepareResultV1Schema, ComposerAttachmentResolveRequestV1Schema, ComposerAttachmentResolveRequestV2Schema, ComposerAttachmentResolveResultV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
+import { readComposerAttachmentRuntimeRegistrationFieldsV1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
+import type { ComposerAttachmentDraftV1, ComposerAttachmentInputV1, ComposerAttachmentMessageAcceptedV1, ComposerAttachmentPrepareRequestV1, ComposerAttachmentPrepareResultV1, ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveRequestV2, ComposerAttachmentResolveResultV1, PluginJsonSchemaV2, PluginLocalizedStringV2, PluginContributionIdentityV1, PluginExecutionScopeV1 } from '@happier-dev/protocol';
 
 import type { ContributionRuntimeRegistration } from '@/plugins/runtime/api/registrationRightsHost';
 import { runWithOptionalTimeout } from '@/plugins/runtime/lifecycle/utils';

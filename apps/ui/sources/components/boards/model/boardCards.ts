@@ -27,7 +27,7 @@ import { formatTriggerSetSummary } from '@/components/workflows/triggers/formatT
  * summaries only: no transcript, no full run.
  */
 
-export type BoardCardAvailability = 'ready' | 'not_loaded' | 'home_unavailable';
+export type BoardCardAvailability = 'ready' | 'not_loaded' | 'home_unavailable' | 'content_unavailable';
 
 export type MachineSessionCounts = Readonly<{ running: number; needsYou: number }>;
 
@@ -45,6 +45,7 @@ export type BoardCard = Readonly<{
     ref: BoardItemRefV1;
     picked: boolean;
     availability: BoardCardAvailability;
+    unavailableReason?: string;
     title: string;
     status: WorkStatusPresentation;
     body: BoardCardBody;
@@ -56,6 +57,7 @@ export type BoardWorkflowNextRun = Readonly<{ kind: 'scheduled'; at: number }>
 
 export type BoardWorkflowFacts = Readonly<{
     title: string;
+    unavailableReason?: string;
     triggers?: readonly WorkflowTriggerSummaryInputV1[] | null;
     nextRun?: BoardWorkflowNextRun;
     /** FIN 03's `workflow.run.summaries` entry; `null` until it answers (facts are then omitted). */
@@ -186,6 +188,14 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
         case 'workflow': {
             const workflow = facts.workflow(member.ref);
             if (!workflow) return notLoaded(member, 'not_loaded');
+            if (workflow.unavailableReason) return {
+                ...base,
+                availability: 'content_unavailable',
+                title: workflow.title,
+                unavailableReason: workflow.unavailableReason,
+                status: { bucket: 'idle', tone: 'neutral', word: t('boards.card.unavailable') },
+                body: { kind: 'none' },
+            };
             const needsYouCount = workflow.summary?.needsYouCount ?? 0;
             const lastRun = workflow.summary?.lastRun ?? null;
             const lastRunWord = lastRun ? describeWorkflowRunState(lastRun.state).label : null;
@@ -221,6 +231,7 @@ function isSameCard(a: BoardCard, b: BoardCard): boolean {
     return a.key === b.key
         && a.picked === b.picked
         && a.availability === b.availability
+        && a.unavailableReason === b.unavailableReason
         && a.title === b.title
         && a.status.bucket === b.status.bucket
         && a.status.tone === b.status.tone

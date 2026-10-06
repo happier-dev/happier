@@ -1,18 +1,14 @@
 import { z } from 'zod'
 import { UsageSchema } from './usage'
-import { LocalServiceMachineSummaryV1Schema } from '@happier-dev/protocol/local/services/inventory';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
+import { LocalServiceMachineSummaryV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcRequestPayload as ProtocolSocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc'
-import {
-  ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-  CliUpdateFactsSchema,
-  CallerInputConstraintsV1Schema,
-  SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
-  SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2,
-  SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2,
-  SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2,
-  SentFromSchema,
-} from '@happier-dev/protocol'
+import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
+import { CliUpdateFactsSchema } from '@happier-dev/protocol/machines/cliUpdateFacts';
+import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
+import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
+import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2 } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { SentFromSchema } from '@happier-dev/protocol/sentFrom';
 import type {
   AcceptedPendingSettlementRequestV1,
   AcceptedPendingSettlementResponseV1,
@@ -33,15 +29,12 @@ import type {
   SessionTurnMutationV1,
   SessionOrganizationPlacementV1,
 } from '@happier-dev/protocol'
-import {
-  ContentPublicKeyFingerprintSchema,
-  MachineInstallationProofV1Schema,
-  MachineInstallationPublicKeySchema,
-  MachineReplacementReasonSchema,
-  IrohEndpointDescriptorV1Schema,
-  SessionOrganizationPlacementV1Schema,
-  WorkspaceSyncRuntimeEventV1Schema,
-} from '@happier-dev/protocol'
+import { ContentPublicKeyFingerprintSchema } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { MachineInstallationProofV1Schema, MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MachineReplacementReasonSchema } from '@happier-dev/protocol/machines/identity/machineReplacement';
+import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { WorkspaceSyncRuntimeEventV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import {
   DaemonPublicReleaseChannelLabelSchema,
   DaemonStartupSourceSchema,
@@ -61,26 +54,14 @@ import type {
   SessionRunnerRuntimeStateV1,
   SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol'
-import {
-  SESSION_PERMISSION_MODES,
-  SESSION_RUNNER_RUNTIME_METADATA_KEY,
-  createSessionPermissionModeSchema,
-} from '@happier-dev/protocol'
-import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
-export {
-  EphemeralUpdateSchema,
-  MessageAckResponseSchema,
-  SessionEndAckResponseSchema,
-  UpdateMetadataAckResponseSchema,
-  UpdateStateAckResponseSchema,
-} from '@happier-dev/protocol/updates'
+import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import type { SessionStoredMessageContent } from '@happier-dev/protocol';
+export { EphemeralUpdateSchema, MessageAckResponseSchema, SessionEndAckResponseSchema, UpdateMetadataAckResponseSchema, UpdateStateAckResponseSchema } from '@happier-dev/protocol/updates';
 
-import {
-  SessionBroadcastContainerSchema,
-  UpdateBodySchema as ProtocolUpdateBodySchema,
-  UpdateContainerSchema as ProtocolUpdateContainerSchema,
-} from '@happier-dev/protocol/updates'
-import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol'
+import { SessionBroadcastContainerSchema, UpdateBodySchema as ProtocolUpdateBodySchema, UpdateContainerSchema as ProtocolUpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import type {
   EphemeralUpdate,
   MessageAckResponse,

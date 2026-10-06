@@ -157,6 +157,27 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it.each(['agent', 'mcp'] as const)('requests approval before a %s Session permission answer and executes with a user waiver', async (surface) => {
+    let request: ApprovalRequest | null = null;
+    const delivered: string[] = [];
+    let settings = defaultActionsSettings;
+    // Approval persistence and Session RPC delivery are the system boundaries.
+    const executor = createExecutor({
+      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'permission-answer-approval' }; },
+      sessionPermissionRespond: async ({ requestId }) => { delivered.push(requestId ?? ''); return { ok: true }; },
+    });
+    const input = { sessionId: 's1', requestId: 'permission-1', turnId: 'turn-1', decision: 'allow' };
+    const context = { surface, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } };
+    expect(await executor.execute('session.permission.respond', input, context)).toMatchObject({
+      ok: true, result: { kind: 'approval_request_created', artifactId: 'permission-answer-approval' },
+    });
+    expect(request).toMatchObject({ status: 'open', actionId: 'session.permission.respond', actionArgs: input });
+    expect(delivered).toEqual([]);
+    settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': [surface] } });
+    expect(await executor.execute('session.permission.respond', input, context)).toEqual({ ok: true, result: { ok: true } });
+    expect(delivered).toEqual(['permission-1']);
+  });
   it('copies an Account widget definition into the exact shared approval payload before publication', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const definitions = createWidgetDefinitionArtifactPortV1({ ...boundary.transport,
@@ -195,7 +216,7 @@ describe('createActionExecutor (approvals)', () => {
       document: { version: 1, root: { kind: 'text', text: 'Changed' } } } });
     expect(request).toMatchObject({ actionArgs: { instance: { definition: { kind: 'inline', definition: shared } } } });
   });
-  it('refuses private connection choices before a shared widget approval is persisted', async () => {
+  it('rejects removed viewer override input before a shared widget approval is persisted', async () => {
     let persisted = false;
     const executor = createExecutor({ widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       approvalsCreate: async () => { persisted = true; return { artifactId: 'private-choice' }; },
@@ -205,7 +226,7 @@ describe('createActionExecutor (approvals)', () => {
       instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'example' }, bindings: {} },
       viewerValues: { connection: { service: { pluginId: 'acme.metrics', localId: 'cloud' }, accountId: 'private' } }, placement: {},
     }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
-      serverId: 'home', defaultSessionId: 'shared' })).toMatchObject({ ok: false, errorCode: 'widget_inputs_unavailable' });
+      serverId: 'home', defaultSessionId: 'shared' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(persisted).toBe(false);
   });
   it('persists the human computer access choice with the edited target for the blocking waiter', async () => {
@@ -779,13 +800,13 @@ describe('createActionExecutor (approvals)', () => {
 
     const executor = createExecutor({
       approvalsCreate,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'ui.voice_global.reset' && ctx.surface === 'mcp',
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'ui.voice_global.reset' && ctx.surface === 'cli',
     } as any);
 
     const res = await executor.execute(
       'ui.voice_global.reset' as any,
       {},
-      { surface: 'mcp' },
+      { surface: 'cli' },
     );
 
     expect(res).toEqual(expect.objectContaining({
@@ -794,7 +815,7 @@ describe('createActionExecutor (approvals)', () => {
       error: 'action_disabled',
       details: expect.objectContaining({
         actionId: 'ui.voice_global.reset',
-        surface: 'mcp',
+        surface: 'cli',
         reason: 'unsupported_surface',
       }),
     }));
@@ -1190,7 +1211,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(executionRunStart).not.toHaveBeenCalled();
   });
 
-  it('returns unsupported after creating a blocking approval when no live approval waiter is available', async () => {
+  it.each(['cli', 'mcp'] as const)('routes %s approval custody without executing when no live waiter is available', async (surface) => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const agentsBackendsList = vi.fn(async () => ({ items: [] }));
 
@@ -1203,16 +1224,18 @@ describe('createActionExecutor (approvals)', () => {
     const res = await executor.execute(
       'agents.backends.list' as any,
       {},
-      { surface: 'cli' },
+      { surface },
     );
 
-    expect(res).toEqual({ ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
+    expect(res).toEqual(surface === 'cli'
+      ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'a1', actionId: 'agents.backends.list' } }
+      : { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' });
     expect(agentsBackendsList).not.toHaveBeenCalled();
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'agents.backends.list',
-        approval: { flow: 'blocking', result: 'required' },
-        createdBy: expect.objectContaining({ surface: 'cli' }),
+        approval: { flow: surface === 'cli' ? 'deferred' : 'blocking', result: 'required' },
+        createdBy: expect.objectContaining({ surface }),
       }),
     }));
   });

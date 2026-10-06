@@ -26,6 +26,7 @@ import {
     readDestinationInstanceTitle,
     useActivateAppDestination,
     useCompactAppDestinations,
+    selectAppDestinationsInPlacement,
 } from './compactAppDestinationCatalog';
 
 // Catalog/navigation contracts never access the Session-envelope HTTP API.
@@ -40,7 +41,22 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
     splitStreamingRevealTextParts: () => { throw new Error('Markdown SDK is outside this catalog test'); },
 }));
 
+// Device preference storage is the boundary; catalog and placement owners remain real.
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub, createUseLocalSettingMock, createUseLocalSettingMutableMock } = await import('@/dev/testkit/mocks/storage');
+    const useLocalSetting = createUseLocalSettingMock({ values: {
+        navigationSurfacePlacementsV1: { appRail: { orderedIds: ['settings', 'sessions'], placements: { sessions: 'hidden', personalize: 'pinned' } } },
+    } });
+    return createStorageModuleStub({ useLocalSetting, useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting) });
+});
+
 describe('workspace route identity round trips', () => {
+    it('includes hidden contribution defaults for rail customization only', () => {
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const accountPlacement = { kind: 'rail', region: 'account' } as const;
+        expect(selectAppDestinationsInPlacement(catalog, accountPlacement).map(destination => destination.id)).not.toContain('personalize');
+        expect(selectAppDestinationsInPlacement(catalog, accountPlacement, { includeHidden: true }).map(destination => destination.id)).toContain('personalize');
+    });
     it('names hidden Personalize tabs at every visited step while unknown destinations remain unavailable', () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
@@ -362,32 +378,6 @@ describe('resolveCompactAppDestinations', () => {
         ]);
     });
 
-    it('applies user order within each placement group only, and hides without deleting the destination', () => {
-        const review = pageWith('review', { disabledReason: 'feature_disabled' });
-        const prompts = pageWith('prompts', { requestedPlacement: { kind: 'column', column: 'sessions' } });
-        const destinations = resolveCompactAppDestinations({
-            builtins: ALL_BUILTINS,
-            pages: [page, review, prompts],
-            preferences: {
-                // Saved before placements existed: a plugin page first, and Browse after a column entry.
-                orderedDestinationIds: ['plugin:acme.notes:notes', 'plugin:acme.prompts:prompts', 'browseExistingSessions', 'settings'],
-                hiddenDestinationIds: ['plugin:acme.review:review'],
-            },
-        });
-
-        // The notes page leads its own (plugins) group but never moves ahead of the app's destinations.
-        expect(ids(destinations)).toEqual([
-            'sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts',
-            'plugin:acme.prompts:prompts', 'browseExistingSessions',
-            'plugin:acme.notes:notes', 'plugins', 'plugin:acme.review:review',
-            'settings', 'personalize',
-        ]);
-        expect(destinations.find((destination) => destination.id === 'plugin:acme.review:review')).toMatchObject({
-            visibility: 'hidden',
-            availability: 'unavailable',
-        });
-    });
-
     it('keeps built-in anchors ahead of plugin peers in a group; a plugin rank orders only its peers', () => {
         const destinations = resolveCompactAppDestinations({
             builtins: ALL_BUILTINS,
@@ -583,6 +573,13 @@ describe('useActivateAppDestination', () => {
 });
 
 describe('useCompactAppDestinations', () => {
+    it('keeps rail-only placement preferences out of shared destination discovery', async () => {
+        const screen = await renderScreen(React.createElement(CompactCatalogProbe));
+        const destinations = screen.tree.findByType('CompactCatalogProbe' as never).props.destinations;
+        expect(destinations[0].id).toBe('sessions');
+        expect(destinations.find((destination: { id: string }) => destination.id === 'sessions')?.visibility).not.toBe('hidden');
+        expect(destinations.find((destination: { id: string }) => destination.id === 'personalize')?.visibility).toBe('hidden');
+    });
     it('keeps an admitted app page discoverable while daemon interaction is offline', async () => {
         compactCatalogProjectionState.value = {
             interactionEnabled: false,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ComponentType, type ReactNode } from 'react';
-import { ActivityIndicator, Animated, View } from 'react-native';
+import { ActivityIndicator, Animated, Easing, View } from 'react-native';
+import type { EntityDropPreviewV1 } from '@happier-dev/plugin-sdk';
 
 import { useOptionalHappierUiAccessibility } from '../../environment/context.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
@@ -19,23 +20,7 @@ import { HAPPIER_MOTION_V1 } from './motion.js';
  * refused outcome draws the refusal mark and the owner's reason; targets themselves light nothing.
  */
 
-export type HappierReleaseGlyph =
-  | 'nest'
-  | 'above'
-  | 'below'
-  | 'folder'
-  | 'topLevel'
-  | 'open'
-  | 'tab'
-  | 'goTo'
-  | 'split'
-  | 'splitVertical'
-  | 'here'
-  | 'copy'
-  | 'attach'
-  | 'upload'
-  | 'add'
-  | 'refused';
+export type HappierReleaseGlyph = NonNullable<EntityDropPreviewV1['glyph']>;
 
 export type HappierReleaseOutcome = Readonly<{
   /**
@@ -85,10 +70,17 @@ export type HappierReleasePreviewHost = Readonly<{
  */
 export type HappierReleasePreviewDensity = 'pointer' | 'touch';
 
+/**
+ * One floating material: the carried card, the OS-drag pill and the keyboard dock share one corner
+ * (the floating-overlay radius), so the three never read as three different surfaces. The phone card
+ * keeps the phone list's larger corner.
+ */
+const FLOATING_RADIUS = 12;
+
 const METRICS = {
   pointer: {
     width: 304,
-    radius: 13,
+    radius: FLOATING_RADIUS,
     padX: 12,
     idPadY: 9,
     idGap: 10,
@@ -125,11 +117,26 @@ export const HAPPIER_RELEASE_PREVIEW_METRICS = Object.freeze({
   pointerWidth: METRICS.pointer.width,
   pillMaxWidth: 300,
   dockWidth: 300,
+  radius: FLOATING_RADIUS,
 });
+
+/** The staged move's key row (lab `.dd-keys`): key caps sit inside the dock's own inset. */
+const HINT_METRICS = {
+  rowGap: 4,
+  columnGap: 12,
+  padX: METRICS.pointer.padX,
+  padTop: 8,
+  padBottom: 10,
+  itemGap: 5,
+  keycap: { size: 18, padX: 4, radius: 5 },
+  keyText: { fontSize: 10.5, lineHeight: 14, fontWeight: '600' },
+  label: { fontSize: METRICS.pointer.subtitle.fontSize, lineHeight: 16 },
+} as const;
 
 /** The carried card leans a hair away from the pointer, so it reads as lifted; never under reduced motion. */
 const CARRIED_TILT_DEG = -0.5;
 const ENTER_FROM_SCALE = 0.96;
+const STANDARD_EASING = Easing.bezier(...HAPPIER_MOTION_V1.standardBezier);
 
 function useEnterProgress(reducedMotion: boolean): Animated.Value {
   const progress = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
@@ -138,7 +145,12 @@ function useEnterProgress(reducedMotion: boolean): Animated.Value {
       progress.setValue(1);
       return;
     }
-    const animation = Animated.timing(progress, { toValue: 1, duration: HAPPIER_MOTION_V1.fastMs, useNativeDriver: false });
+    const animation = Animated.timing(progress, {
+      toValue: 1,
+      duration: HAPPIER_MOTION_V1.fastMs,
+      easing: STANDARD_EASING,
+      useNativeDriver: false,
+    });
     animation.start();
     return () => animation.stop();
   }, [progress, reducedMotion]);
@@ -291,7 +303,7 @@ export function HappierReleaseOutcomePill(props: Readonly<{
       testID={props.testID}
       pointerEvents="none"
       style={[
-        { maxWidth: HAPPIER_RELEASE_PREVIEW_METRICS.pillMaxWidth, alignSelf: 'flex-start', ...floatingChrome(props.colors, 11), opacity: progress },
+        { maxWidth: HAPPIER_RELEASE_PREVIEW_METRICS.pillMaxWidth, alignSelf: 'flex-start', ...floatingChrome(props.colors, FLOATING_RADIUS), opacity: progress },
         props.style,
       ] as HappierStyleProp}
     >
@@ -324,7 +336,7 @@ export function HappierStagedMoveDock(props: Readonly<{
       testID={props.testID}
       pointerEvents="none"
       style={[
-        { ...floatingChrome(colors, 12), opacity: progress },
+        { ...floatingChrome(colors, FLOATING_RADIUS), opacity: progress },
         props.style,
       ] as HappierStyleProp}
     >
@@ -334,26 +346,34 @@ export function HappierStagedMoveDock(props: Readonly<{
           style={{
             flexDirection: 'row',
             flexWrap: 'wrap',
-            columnGap: 12,
-            rowGap: 4,
-            paddingHorizontal: 12,
-            paddingTop: 8,
-            paddingBottom: 10,
+            columnGap: HINT_METRICS.columnGap,
+            rowGap: HINT_METRICS.rowGap,
+            paddingHorizontal: HINT_METRICS.padX,
+            paddingTop: HINT_METRICS.padTop,
+            paddingBottom: HINT_METRICS.padBottom,
             borderTopWidth: 1,
             borderTopColor: colors.divider,
           }}
         >
           {props.hints.map((hint) => (
-            <View key={`${hint.keys.join('+')}:${hint.label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <View key={`${hint.keys.join('+')}:${hint.label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: HINT_METRICS.itemGap }}>
               {hint.keys.map((key) => (
                 <View
                   key={key}
-                  style={{ minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.keycapFill }}
+                  style={{
+                    minWidth: HINT_METRICS.keycap.size,
+                    height: HINT_METRICS.keycap.size,
+                    paddingHorizontal: HINT_METRICS.keycap.padX,
+                    borderRadius: HINT_METRICS.keycap.radius,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: colors.keycapFill,
+                  }}
                 >
-                  <Text style={{ fontSize: 10.5, lineHeight: 14, fontWeight: '600', color: colors.text }}>{key}</Text>
+                  <Text style={{ ...HINT_METRICS.keyText, color: colors.text }}>{key}</Text>
                 </View>
               ))}
-              <Text style={{ fontSize: 11.5, lineHeight: 16, color: colors.textSecondary }}>{hint.label}</Text>
+              <Text style={{ ...HINT_METRICS.label, color: colors.textSecondary }}>{hint.label}</Text>
             </View>
           ))}
         </View>

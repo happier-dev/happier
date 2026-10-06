@@ -17,6 +17,7 @@ import type { PluginApi, PluginClientApi } from '../activation.js';
 import type {
     AdmittedTargetedOperationExecutionHandle,
     ActionsService,
+    PluginActionResultById,
     PluginActionExecutionV2,
     PluginClientActionContext,
 } from './index.js';
@@ -165,6 +166,15 @@ describe('single-declaration Action contracts', () => {
                 void context.currentUiContext;
                 void context.ephemeralSharedScope;
                 await context.ui.executeAction('openDetails');
+                const erased = await context.ui.executeAction('account.plugins.data.erase', {
+                    pluginId: 'acme.action-contracts',
+                });
+                expectTypeOf(erased).toEqualTypeOf<PluginActionResultById['account.plugins.data.erase']>();
+                // @ts-expect-error The input cannot widen this known Action reference to the JSON fallback.
+                await context.ui.executeAction('account.plugins.data.erase', { machineId: 'machine' });
+                // @ts-expect-error A known Action retains its exact non-nullable result.
+                const nullableErased: typeof erased = null;
+                void nullableErased;
                 await context.ui.openSurface('details');
                 // @ts-expect-error Client Action handlers never receive daemon services.
                 void context.services;

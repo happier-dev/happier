@@ -1,31 +1,9 @@
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  DaemonTerminalCloseRequestSchema,
-  AGENT_SIGN_IN_PREPARE_RPC_METHOD,
-  AGENT_SIGN_IN_STATUS_RPC_METHOD,
-  AgentSignInPrepareRequestSchema,
-  AgentSignInStatusRequestSchema,
-  DaemonTerminalEnsureRequestSchema,
-  DaemonTerminalListRequestV1Schema,
-  DaemonTerminalListResponseV1Schema,
-  DaemonTerminalInputRequestSchema,
-  DaemonTerminalResizeRequestSchema,
-  DaemonTerminalRestartRequestSchema,
-  DaemonTerminalStreamReadRequestSchema,
-  TerminalStreamAckRequestSchema,
-  TerminalStreamAckResponseSchema,
-  TerminalStreamInputRequestSchema,
-  TerminalStreamInputResponseSchema,
-  TerminalStreamReadRequestSchema,
-  TerminalStreamReadResponseSchema,
-  type DaemonTerminalErrorCode,
-  type TerminalStreamAckRequest,
-  type TerminalStreamAckResponse,
-  type TerminalStreamInputRequest,
-  type TerminalStreamInputResponse,
-  type TerminalStreamReadRequest,
-  type TerminalStreamReadResponse,
-} from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInPrepareRequestSchema, AgentSignInStatusRequestSchema } from '@happier-dev/protocol/daemon/agentSignIn';
+import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
+import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
+import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamAckResponse, TerminalStreamInputRequest, TerminalStreamInputResponse, TerminalStreamReadRequest, TerminalStreamReadResponse } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';

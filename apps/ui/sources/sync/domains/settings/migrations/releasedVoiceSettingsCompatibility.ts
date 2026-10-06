@@ -15,7 +15,7 @@ import {
 export type ReleasedVoiceLegacyRootMigration = Readonly<{
   assistantLanguage?: string | null;
   welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; templateId: string | null }>;
-  executionMachine?: Readonly<{ mode: 'auto' | 'fixed'; machineId: string | null; autoMachineId: string | null }>;
+  executionMachine?: Readonly<{ mode: 'auto' | 'fixed'; machineId: string | null }>;
 }>;
 
 export type ReleasedVoiceLegacyProjectionContext = Readonly<{
@@ -146,7 +146,6 @@ const localConversationCompatibility: ReleasedVoiceSettingsCompatibility = Objec
         executionMachine: Object.freeze({
           mode: parsed.data.agent.machineTargetMode,
           machineId: parsed.data.agent.machineTargetId,
-          autoMachineId: parsed.data.agent.autoTargetMachineId,
         }),
       }),
     });
@@ -164,7 +163,7 @@ const localConversationCompatibility: ReleasedVoiceSettingsCompatibility = Objec
         ...parsed.data.agent,
         machineTargetMode: context.root.executionMachine?.mode ?? 'auto',
         machineTargetId: context.root.executionMachine?.machineId ?? null,
-        autoTargetMachineId: context.root.executionMachine?.autoMachineId ?? null,
+        autoTargetMachineId: null,
         welcome: context.root.welcome ?? { enabled: false, mode: 'immediate', templateId: null },
       },
     } as VoiceProviderSettingsJsonValueV1;

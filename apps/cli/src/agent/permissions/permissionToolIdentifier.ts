@@ -1,7 +1,7 @@
-import { extractShellCommand } from '@happier-dev/protocol';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 import { isShellCommandAllowed } from './shellCommandAllowlist';
 
-export { extractShellCommand } from '@happier-dev/protocol';
+export { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
 
 const SHELL_TOOL_NAMES = new Set(['bash', 'execute', 'shell']);
 

@@ -1,8 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { activate } from '../activate.js';
+import { anthropicConnectedAccountRuntime } from './anthropicRuntime.js';
+
+function manualMode() {
+  const mode = anthropicConnectedAccountRuntime.authentication.modes['api-key'];
+  if (!mode || mode.kind !== 'manual') throw new Error('Missing manual mode');
+  return mode;
+}
+
+function authenticationContext(status = 200) {
+  const credentials = credentialStore();
+  const request = vi.fn(async () => ({
+    status, finalUrl: 'https://api.anthropic.com/v1/models', headers: {},
+    body: new TextEncoder().encode(JSON.stringify({ data: [], has_more: false })),
+  }));
+  const mode = manualMode();
+  const context = {
+    service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+    attempt: { kind: 'connect', attemptId: 'key-admission' },
+    configuration: { target: { kind: 'service', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, modeId: 'api-key' },
+      revision: 'configuration-1', values: {}, async getSecret() { return null; } },
+    signal: new AbortController().signal,
+    services: { http: { request } },
+    attemptCredentials: credentials.store,
+  } as Parameters<typeof mode.complete>[1];
+  return { credentials, request, context };
+}
 
 function credentialStore(values = new Map<string, string>()) {
   return {
@@ -16,6 +42,61 @@ function credentialStore(values = new Map<string, string>()) {
 }
 
 describe('Anthropic API-key Connected Account', () => {
+  it.each(['not-a-valid-key', 'sk-ant-', 'sk-ant-key with spaces'])('rejects malformed input %s before network or credential writes', async (token) => {
+    const h = authenticationContext();
+    await expect(manualMode().complete({ fields: { token } }, h.context)).resolves.toMatchObject({ status: 'rejected' });
+    expect(h.credentials.values.size).toBe(0);
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+  it.each([401, 403])('does not stage a valid-shaped key rejected by Anthropic (%s)', async (status) => {
+    const h = authenticationContext(status);
+    await expect(manualMode().complete({ fields: { token: 'sk-ant-qa-fake' } }, h.context)).resolves.toMatchObject({
+      status: 'rejected', diagnostic: { code: 'anthropic_api_key_rejected' },
+    });
+    expect(h.credentials.values.size).toBe(0);
+  });
+
+  it.each([429, 503])('keeps an unverified key unstored when verification is unavailable (%s)', async (status) => {
+    const h = authenticationContext(status);
+    await expect(manualMode().complete({ fields: { token: 'sk-ant-qa-fake' } }, h.context)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(h.credentials.values.size).toBe(0);
+  });
+
+  it('verifies a valid-shaped key with a read-only provider call before storing it', async () => {
+    const h = authenticationContext();
+    await expect(manualMode().complete({ fields: { token: ' sk-ant-verified ' } }, h.context)).resolves.toMatchObject({ status: 'connected' });
+    expect(h.request).toHaveBeenCalledWith({ url: 'https://api.anthropic.com/v1/models', method: 'GET',
+      headers: { 'x-api-key': 'sk-ant-verified', 'anthropic-version': '2023-06-01' }, redirect: 'error' }, { signal: h.context.signal });
+    expect(h.credentials.values).toEqual(new Map([['token', 'sk-ant-verified']]));
+  });
+
+  it('does not stage credentials after network failure or cancellation during verification', async () => {
+    const unavailable = authenticationContext();
+    unavailable.request.mockRejectedValueOnce(new Error('Network unavailable'));
+    await expect(manualMode().complete({ fields: { token: 'sk-ant-valid' } }, unavailable.context)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(unavailable.credentials.values.size).toBe(0);
+    const cancelled = authenticationContext();
+    const controller = new AbortController();
+    cancelled.request.mockImplementationOnce(async () => {
+      controller.abort();
+      return { status: 200, finalUrl: 'https://api.anthropic.com/v1/models', headers: {}, body: new Uint8Array() };
+    });
+    await expect(manualMode().complete({ fields: { token: 'sk-ant-valid' } }, { ...cancelled.context, signal: controller.signal })).rejects.toThrow();
+    expect(cancelled.credentials.values.size).toBe(0);
+  });
+
+  it('keeps retained predecessor credentials readable without imposing new input admission', async () => {
+    const h = authenticationContext();
+    const credentials = credentialStore(new Map([['token', 'legacy-stored-key']]));
+    const context = { ...h.context, account: { service: h.context.service, accountId: 'retained-account' }, credentials: credentials.store };
+    await expect(anthropicConnectedAccountRuntime.status(context)).resolves.toMatchObject({ status: 'connected' });
+    await expect(anthropicConnectedAccountRuntime.materialize({ kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, context)).resolves.toEqual({
+      kind: 'environment', env: { ANTHROPIC_API_KEY: 'legacy-stored-key' },
+    });
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
   it('registers both Claude-owned Connected Account descriptor runtimes', () => {
     const registrations: Array<Readonly<{ id: string; runtime: PluginConnectedAccountRuntime }>> = [];
     activate({
@@ -94,7 +175,7 @@ describe('Anthropic API-key Connected Account', () => {
         attemptId: 'anthropic-connect',
       },
       signal: new AbortController().signal,
-      services: {},
+      services: authenticationContext().context.services,
       attemptCredentials: firstConnectCredentials.store,
     } as Parameters<typeof mode.complete>[1]);
     expect(firstConnect).toMatchObject({
@@ -115,7 +196,7 @@ describe('Anthropic API-key Connected Account', () => {
         },
       },
       signal: new AbortController().signal,
-      services: {},
+      services: authenticationContext().context.services,
       attemptCredentials: attempted.store,
     } as Parameters<typeof mode.complete>[1])).resolves.toMatchObject({
       status: 'connected',

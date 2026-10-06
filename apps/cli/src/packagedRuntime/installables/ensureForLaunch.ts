@@ -1,9 +1,5 @@
-import {
-  BUILT_IN_INSTALLABLES_REGISTRY,
-  type AccountSettings,
-  type InstallableKey,
-  type InstallablesRegistry,
-} from '@happier-dev/protocol';
+import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
+import type { AccountSettings, InstallableKey, InstallablesRegistry } from '@happier-dev/protocol';
 import { resolveEffectiveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 
 import {

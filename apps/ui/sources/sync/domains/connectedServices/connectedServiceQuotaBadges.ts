@@ -1,6 +1,7 @@
 import type {
   ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol';
+import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol';
 
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 
@@ -63,7 +64,7 @@ export function selectConnectedServiceQuotaSummaryMeters(params: Readonly<{
     return {
       selection: {
         meterId,
-        label: meter?.label ?? meterId,
+        label: resolveConnectedServiceQuotaMeterLabel(meterId, meter?.label),
         utilizationPct,
         remainingPct,
         meter,

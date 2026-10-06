@@ -36,6 +36,7 @@ import { BoardWidgetCard, describeBoardWidgetTitle } from './cards/BoardWidgetCa
 import { AddToBoardButton } from './header/AddToBoardPopover';
 import { BoardSettingsButton } from './header/BoardSettingsPopover';
 import { countBoardCardsNeedingYou, hasWorkBoardContent, type BoardCard } from './model/boardCards';
+import { describeBoardSources } from './model/boardSourcePresentation';
 import { resolveBoardPruneMembership } from './model/boardMembership';
 import { resolveWorkBoardAdd, resolveWorkBoardEntityDrop, workBoardWidgetSurface } from './model/workBoardEntityDrop';
 import { useWorkBoardEntityBinding } from './model/workBoardEntityBinding';
@@ -44,7 +45,7 @@ import { useBoardLiveCards } from './model/useBoardContent';
 import { useBoardWidgetArrivals } from './model/useBoardWidgetArrivals';
 import { resolveBoardCardOpenTarget } from './model/boardCardOpenTarget';
 import { resolveBoardSaveFailure } from './model/boardSaveFailure';
-import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState } from './model/useWorkBoards';
+import { useDispatchWorkBoardIntent, useWorkBoard, useWorkBoardReadState, useWorkBoardSaveQueue, useWorkBoardSaveState, useWorkBoardSummaries } from './model/useWorkBoards';
 import { BoardReadState } from './BoardReadState';
 import { BOARDS_ROUTE } from './boardsRoutes';
 import { BoardSaveFailureLine, describeBoardSaveFailure } from './BoardSaveFailureLine';
@@ -69,6 +70,8 @@ export const BoardScreen = React.memo(function BoardScreen(props: Readonly<{ boa
 const MissingBoard = React.memo(function MissingBoard(props: Readonly<{ boardId: string }>) {
     const saveQueue = useWorkBoardSaveQueue();
     const failure = resolveBoardSaveFailure(useWorkBoardSaveState(), props.boardId);
+    const summary = useWorkBoardSummaries().find(board => board.id === props.boardId);
+    const read = useWorkBoardReadState();
     if (failure) {
         return (
             <EmptyState
@@ -80,6 +83,11 @@ const MissingBoard = React.memo(function MissingBoard(props: Readonly<{ boardId:
                 primaryAction={failure.reason === 'not_found' ? undefined : { label: t('boards.saveFailed.retry'), onPress: () => { void saveQueue.retry(); } }}
             />
         );
+    }
+    if (summary) {
+        return <SurfaceStateCard testID="board-unreadable" kind="error"
+            title={t('surfaceState.couldNotOpen', { name: summary.name })}
+            action={{ label: t('surfaceState.tryAgain'), onPress: read.retry }} accessibilitySemantics="alert" />;
     }
     return (
         <EmptyState
@@ -365,12 +373,7 @@ const BoardSourceLine = React.memo(function BoardSourceLine(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { board } = props;
-    const parts = (board.source.sections ?? []).map((section) => t(`boards.sections.${section}.title`));
-    if (board.source.filter) parts.push(t('boards.sections.filter.title'));
-    const pickedCount = board.source.picked.length;
-    const source = parts.length === 0
-        ? t('boards.meta.handPicked')
-        : pickedCount > 0 ? `${parts.join(', ')} ${t('boards.meta.moreSources', { count: pickedCount })}` : parts.join(', ');
+    const source = describeBoardSources({ sections: [...board.source.sections ?? []], hasFilter: board.source.filter !== undefined, pickedCount: board.source.picked.length });
     return (
         <View style={styles.sourceLine}>
             <Pressable

@@ -1,9 +1,6 @@
-import {
-  UserResponseSchema,
-  UserRecipientEnvelopeResponseSchema,
-  decodeBase64,
-  verifyAccountContentKeyBindingV1,
-} from '@happier-dev/protocol';
+import { UserResponseSchema, UserRecipientEnvelopeResponseSchema } from '@happier-dev/protocol/social/friends';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { decodeHex } from '@/utils/hex';
 

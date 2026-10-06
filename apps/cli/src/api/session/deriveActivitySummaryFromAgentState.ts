@@ -4,11 +4,9 @@ import {
 } from '@happier-dev/agents';
 import type { AgentState } from '../types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
-import {
-  SessionUserActionRequiredOccurrenceV1Schema,
-  resolvePendingRequestAttentionReasonV1,
-  type SessionUserActionRequiredOccurrenceV1,
-} from '@happier-dev/protocol';
+import { SessionUserActionRequiredOccurrenceV1Schema } from '@happier-dev/protocol/sessions/userActionRequiredOccurrenceV1';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
+import type { SessionUserActionRequiredOccurrenceV1 } from '@happier-dev/protocol';
 
 type ActivitySummary = Readonly<{
   pendingPermissionRequestCount: number;

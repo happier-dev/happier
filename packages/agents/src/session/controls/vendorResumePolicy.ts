@@ -1,16 +1,12 @@
-import {
-  AgentNativeResumeIdentityV1Schema,
-  readNonBlankOpaqueIdentifier,
-  isBackendTargetDisabledByAccountSettings,
-  readRuntimeDescriptorV1FromMetadata,
-  type AgentNativeResumeIdentityV1,
-} from '@happier-dev/protocol';
+import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
 import type {
   PluginContributionIdentity,
 } from '@happier-dev/protocol/plugins/manifest';
-import {
-  resolveLinkedExternalSessionMetadataV1,
-} from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { AgentId } from '../../types.js';
 import { getAgentResumeConfig, isRuntimeCheckedExperimentalVendorResume } from '../../manifest.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';

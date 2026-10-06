@@ -1,8 +1,5 @@
-import {
-  type VoiceCredentialBindingIdentityV1,
-  type VoiceCredentialSourceSelection,
-  resolveAccountSettingsVoiceCredentialSource,
-} from '@happier-dev/protocol';
+import type { VoiceCredentialBindingIdentityV1, VoiceCredentialSourceSelection } from '@happier-dev/protocol';
+import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 
 import {
   getActiveAccountSettingsSnapshot,

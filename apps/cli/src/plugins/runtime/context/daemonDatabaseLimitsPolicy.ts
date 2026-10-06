@@ -1,7 +1,4 @@
-import {
-    PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1,
-    PLUGIN_DAEMON_DATABASE_PROTOCOL_MAXIMUM_BYTES_V1,
-} from '@happier-dev/protocol';
+import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1, PLUGIN_DAEMON_DATABASE_PROTOCOL_MAXIMUM_BYTES_V1 } from '@happier-dev/protocol/plugins/data/daemonDatabaseLimitsV1';
 
 import type {
     PluginDaemonDatabaseLimits,

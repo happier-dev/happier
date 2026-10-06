@@ -206,15 +206,24 @@ export function appendBoundedTail(current, chunk, maxChars) {
   return next.length > maxChars ? next.slice(-maxChars) : next;
 }
 
-function redactFailureDiagnostic(output, env) {
+export function redactFailureDiagnostic(output, env = {}) {
   let redacted = String(output ?? '')
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(
       /^(\s*[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)[A-Z0-9_]*\s*[=:]\s*).+$/gim,
       '$1<redacted>',
-    );
+    )
+    .replace(/\b(Bearer\s+)\S+/gi, '$1<redacted>')
+    .replace(/((?:[\w-]*(?:token|password|secret|credential|access[_-]?key|api[_-]?key)[\w-]*)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;}]+)/gi, '$1<redacted>')
+    .replace(/https?:\/\/[^\s"']+/gi, raw => {
+      try {
+        const url = new URL(raw);
+        url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+        return url.toString();
+      } catch { return '<redacted URL>'; }
+    });
   const secretValues = Object.entries(env ?? {})
-    .filter(([key, value]) => SECRET_ENV_KEY_PATTERN.test(key) && String(value ?? '').length >= 4)
+    .filter(([key, value]) => (SECRET_ENV_KEY_PATTERN.test(key) || key === 'K') && String(value ?? '').length >= 4)
     .map(([, value]) => String(value))
     .sort((left, right) => right.length - left.length);
   for (const value of secretValues) {
@@ -245,7 +254,7 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     ...spawnOptions
   } = options ?? {};
 
-  const { shell: shellOverride, ...spawnOptionsRest } = spawnOptions ?? {};
+  const { shell: shellOverride, ownedProcessGroup = false, ...spawnOptionsRest } = spawnOptions ?? {};
   const invocation = resolveProcSpawnInvocation(cmd, args, env, shellOverride);
 
   const outState = { buf: '' };
@@ -296,13 +305,15 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     });
   };
 
-  const child = spawn(invocation.command, invocation.args, {
+  const spawnImplementation = ownedProcessGroup ? spawnForegroundCommand : spawn;
+  const child = spawnImplementation(invocation.command, invocation.args, {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     ...invocation.spawnOptions,
     // Create a new process group so we can kill the whole tree reliably on shutdown.
     detached: process.platform !== 'win32',
     ...spawnOptionsRest,
+    ...(ownedProcessGroup ? { ownedProcessGroup: true } : {}),
   });
   let spawnError = null;
   child.on('error', (error) => {
@@ -542,11 +553,13 @@ export async function run(cmd, args, options = {}) {
     let failureDiagnosticTruncated = false;
     if (shouldCaptureFailure) {
       proc.stdout?.on('data', (chunk) => {
+        if (baseStdio === 'inherit' || (Array.isArray(baseStdio) && baseStdio[1] === 'inherit')) process.stdout.write(chunk);
         const nextLength = capturedOut.length + chunk.length;
         failureDiagnosticTruncated ||= nextLength > streamMaxChars;
         capturedOut = appendBoundedTail(capturedOut, chunk, streamMaxChars);
       });
       proc.stderr?.on('data', (chunk) => {
+        if (baseStdio === 'inherit' || (Array.isArray(baseStdio) && baseStdio[2] === 'inherit')) process.stderr.write(chunk);
         const nextLength = capturedErr.length + chunk.length;
         failureDiagnosticTruncated ||= nextLength > streamMaxChars;
         capturedErr = appendBoundedTail(capturedErr, chunk, streamMaxChars);

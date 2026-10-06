@@ -41,13 +41,13 @@ type ConnectedServiceTokenKind =
 const BUILT_IN_SETUP_PRESENTATION = {
   'claude-subscription': { order: 0, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogClaude', manualMethodTitleKey: 'connectedServicesSettings.methodToken' },
   'openai-codex': { order: 1, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogChatGpt' },
-  gemini: { order: 2, firstRun: true, connectPrimary: true, catalogDescriptionKey: 'connectedServicesSettings.catalogGemini' },
+  gemini: { order: 2, firstRun: true, catalogDescriptionKey: 'connectedServicesSettings.catalogGemini' },
   anthropic: {
     order: 3, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogAnthropic',
     manual: { consoleUrl: 'https://console.anthropic.com/settings/keys',
       createKeyTitleKey: 'connectedServicesSettings.keyCreateAnthropic',
       billingNoteKey: 'connectedServicesSettings.keyBillingAnthropic',
-      shapePattern: '^sk-ant-', shapeHintKey: 'connectedServicesSettings.keyShapeAnthropic' },
+      shapeHintKey: 'connectedServicesSettings.keyShapeAnthropic' },
   },
   openai: { order: 4, firstRun: false, catalogDescriptionKey: 'connectedServicesSettings.catalogOpenAi' },
 } as const;

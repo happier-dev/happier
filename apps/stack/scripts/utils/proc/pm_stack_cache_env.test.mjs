@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ensureCliBuilt, ensureDepsInstalled, isCliDistFreshForInputs, pmExecBin, readUsableCliDistFreshness } from './pm.mjs';
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
+import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from './dependency_refresh.mjs';
+import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { readHappyCliRuntimeInputFreshness } from './cli_runtime_inputs.mjs';
 import { resolveValidRuntimeSnapshot } from '../../../../cli/bin/_resolveRuntimeEntrypoint.mjs';
 import {
@@ -278,6 +280,9 @@ async function writeYarnUiPostinstallStub({
   requiredOutputPath,
   patchMarkerPath = null,
   forcedRepairMarkerPath = null,
+  postinstallSourcePath = null,
+  assetSourcePath = null,
+  assetOutputPath = null,
 }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -295,11 +300,19 @@ async function writeYarnUiPostinstallStub({
         'fi',
       ] : []),
       'if [[ "$*" == "-s workspace @happier-dev/app postinstall:real" ]]; then',
+      '  [[ "${HAPPIER_TEST_UI_POSTINSTALL_FAIL:-0}" != "1" ]] || exit 43',
       ...(forcedRepairMarkerPath ? [
         `  [[ -f ${JSON.stringify(forcedRepairMarkerPath)} ]] || exit 42`,
       ] : []),
       `  mkdir -p ${JSON.stringify(dirname(requiredOutputPath))}`,
       `  printf '%s\n' 'export const patched = true;' > ${JSON.stringify(requiredOutputPath)}`,
+      ...(postinstallSourcePath ? [
+        `  cp ${shellSingleQuote(postinstallSourcePath)} ${shellSingleQuote(requiredOutputPath)}`,
+      ] : []),
+      ...(assetSourcePath && assetOutputPath ? [
+        `  mkdir -p ${shellSingleQuote(dirname(assetOutputPath))}`,
+        `  cp ${shellSingleQuote(assetSourcePath)} ${shellSingleQuote(assetOutputPath)}`,
+      ] : []),
       ...(patchMarkerPath ? [
         `  mkdir -p ${JSON.stringify(dirname(patchMarkerPath))}`,
         `  printf '%s\n' 'patched' > ${JSON.stringify(patchMarkerPath)}`,
@@ -1191,6 +1204,66 @@ test('ensureDepsInstalled delegates Prisma output freshness to the server genera
   assert.match(out, /\bworkspace @happier-dev\/server generate:providers\b/, `expected provider generation, got:\n${out}`);
 });
 
+test('remote runtime bootstrap completes UI postinstall under install freshness for every worker role', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-remote-ui-postinstall-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  for (const component of ['cli', 'server', 'stack']) {
+    await mkdir(join(root, 'apps', component), { recursive: true });
+    await writeFile(join(root, 'apps', component, 'package.json'), JSON.stringify({ name: `@happier-dev/${component}` }));
+  }
+  for (const domain of ['workspaces', 'process']) {
+    await mkdir(join(root, 'packages/cli-common/dist', domain), { recursive: true });
+    await writeFile(join(root, 'packages/cli-common/dist', domain, 'index.js'), 'export {};\n');
+  }
+  const uiDir = join(root, 'apps/ui');
+  await mkdir(join(uiDir, 'patches'), { recursive: true });
+  await mkdir(join(uiDir, 'tools/postinstall'), { recursive: true });
+  await writeFile(join(uiDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/app', scripts: { 'postinstall:real': 'node tools/postinstall.mjs' },
+    happier: { installFreshnessInputs: ['patches', 'tools/postinstall'] },
+  }));
+  await writeFile(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+  await writeFile(join(root, 'yarn.lock'), '# fixture\n');
+  const patchPath = join(uiDir, 'patches/markdown.patch');
+  const assetSourcePath = join(uiDir, 'tools/postinstall/worker.js');
+  const requiredOutputPath = join(uiDir, 'node_modules/react-native-enriched-markdown/lib/module/web/streamingReveal.js');
+  const assetOutputPath = join(uiDir, 'public/worker.js');
+  await writeFile(patchPath, 'export const patched = "first";\n');
+  await writeFile(assetSourcePath, 'first worker\n');
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  // Yarn is the OS boundary: installation succeeds but skips workspace scripts,
+  // as an unchanged tree previously installed with --ignore-scripts can do.
+  await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath,
+    postinstallSourcePath: patchPath, assetSourcePath, assetOutputPath });
+  const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'home'), HAPPIER_STACK_ENV_FILE: '' };
+  await withDependencyRefresh({ installDir: root, env, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE },
+    async () => mkdir(join(root, 'node_modules'), { recursive: true }));
+  const prepare = (componentRelativeDir, extraEnv = {}) => bootstrapRemoteDependencies({
+    repoDir: root, componentRelativeDir, env: { ...env, ...extraEnv },
+  });
+  await prepare('apps/ui');
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'));
+  assert.equal(await readFile(assetOutputPath, 'utf8'), 'first worker\n');
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
+  await prepare('apps/cli');
+
+  await writeFile(patchPath, 'export const patched = "changed";\n');
+  await prepare('apps/cli');
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), await readFile(patchPath, 'utf8'));
+  await writeFile(assetSourcePath, 'changed worker\n');
+  await prepare('apps/stack');
+  assert.equal(await readFile(assetOutputPath, 'utf8'), 'changed worker\n');
+
+  await writeFile(assetSourcePath, 'recovered worker\n');
+  await assert.rejects(prepare('apps/ui', { HAPPIER_TEST_UI_POSTINSTALL_FAIL: '1' }));
+  assert.equal((await inspectDependencyRefresh({ installDir: root })).required, true,
+    'postinstall failure must not publish runtime-ready dependency admission');
+  await prepare('apps/ui');
+  assert.equal(await readFile(assetOutputPath, 'utf8'), 'recovered worker\n');
+});
+
 test('ensureDepsInstalled repairs missing UI postinstall outputs on a warm dependency tree', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-ui-postinstall-readiness-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -1255,7 +1328,7 @@ test('ensureDepsInstalled repairs missing UI postinstall outputs on a warm depen
   assert.equal(commands.filter((line) => line.startsWith('install ')).length, 1);
   assert.equal(
     commands.filter((line) => line === '-s workspace @happier-dev/app postinstall:real').length,
-    1,
+    2,
   );
 });
 

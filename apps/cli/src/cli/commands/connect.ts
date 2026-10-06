@@ -1,13 +1,7 @@
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  PluginConnectedAccountDescriptorContributionV2Schema,
-  PluginJsonValueV2Schema,
-  type PluginConnectedAccountAuthenticationModeV2,
-  type PluginConnectedAccountDescriptorContributionV2,
-  type PluginContributionIdentityV1,
-  type PluginJsonValueV2,
-  type QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountDescriptorContributionV2, PluginContributionIdentityV1, PluginJsonValueV2, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import {
   banner,
   bullets,

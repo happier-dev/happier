@@ -1,10 +1,6 @@
-import {
-  DaemonPetValidatePackageRequestV1Schema,
-  PET_PACKAGE_LIMITS_V1,
-  type DaemonPetValidatePackageResponseV1,
-  type PetPackageValidationIssueV1,
-  type PetPackageValidationResultV1,
-} from '@happier-dev/protocol';
+import { DaemonPetValidatePackageRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
+import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { DaemonPetValidatePackageResponseV1, PetPackageValidationIssueV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
 
 import { validatePetPackage } from '../validation/validatePetPackage';
 import type { PetRpcRateLimiter } from './petRpcRateLimiter';

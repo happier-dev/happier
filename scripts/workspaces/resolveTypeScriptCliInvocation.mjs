@@ -8,6 +8,7 @@ export function shouldRouteTypeScriptCliThroughHstack(params) {
   if (!params.args.includes('--noEmit')) return false;
   if (params.env.HAPPIER_DEV_TARGET_EXECUTION === '1') return false;
   if (params.env.HAPPIER_HSTACK_EXECUTION === '1') return false;
+  if (params.env.HAPPIER_TYPECHECK_DISPATCHED === '1') return false;
   return true;
 }
 

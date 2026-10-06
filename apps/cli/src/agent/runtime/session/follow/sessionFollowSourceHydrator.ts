@@ -8,31 +8,23 @@ import type {
   VoiceSessionUpdatePolicyV1,
   VoiceSourceDisclosureV1,
 } from '@happier-dev/protocol';
-import {
-  composeWorkflowRunWorkerUpdateV1,
-  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
-  openWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  openWorkflowFinalResultStoredEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1,
-  resolveWorkflowRunDataKeyV1,
-  WorkflowLoopOutcomeV1Schema,
-  WorkflowRunRecipientCensusResponseV1Schema,
-  WorkflowRunSummaryV1Schema,
-  isAuthoritativeHumanSessionFollowMessageV1,
-  isSessionAwarenessContentReadableV1,
-  isSessionFollowTurnEqualV1,
-  resolveVoiceSessionUpdatePolicyV1,
-  resolveVoiceSourceDisclosureV1,
-  parseSessionMessageAccountActorV1,
-  readSessionMessageProvenanceV1,
-  SessionStoredMessageContentSchema,
-  SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1,
-  TranscriptRawAgentEventV1Schema,
-  WorkerUpdateV1Schema,
-  workerDeliverablesBelongToSessionV1,
-  SessionInputAdmissionResultV1Schema,
-  getActionSpec,
-} from '@happier-dev/protocol';
+import { composeWorkflowRunWorkerUpdateV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { WorkflowLoopOutcomeV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isAuthoritativeHumanSessionFollowMessageV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1';
+import { isSessionFollowTurnEqualV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
+import { SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
+import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
+import { resolveVoiceSessionUpdatePolicyV1, resolveVoiceSourceDisclosureV1 } from '@happier-dev/protocol/voice/sourceDisclosureV1';
+import { parseSessionMessageAccountActorV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import { readSessionMessageProvenanceV1, SessionInputAdmissionResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import { WorkerUpdateV1Schema, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { StoredCredentials } from '@/persistence';

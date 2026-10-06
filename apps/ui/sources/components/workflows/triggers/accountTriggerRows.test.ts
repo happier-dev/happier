@@ -26,6 +26,16 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 }
 
 describe('projectAccountTriggerRows', () => {
+    it('names an inline document with declared inputs without flattening it to a form preset', () => {
+        const base = inline([{ kind: 'step', id: 'digest',
+            document: { text: 'Morning digest\nInclude open issues', references: [], attachments: [] },
+            input: [], result: { kind: 'text' } }]);
+        const target = { ...base, definition: { ...base.definition,
+            inputs: [{ name: 'topic', valueType: 'string' as const, required: false }] } };
+        const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null,
+            sets: [set('digest', { target, triggers: [] })] });
+        expect(rows[0]?.subtitle).toBe('Morning digest');
+    });
     it('shows the legacy prompt and retained placements in the column, including an unreadable legacy row', () => {
         const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null, sets: [
             set('legacy', { legacy: { editable: false, reason: 'created_in_0_2', placements: [] },
@@ -52,6 +62,7 @@ describe('projectAccountTriggerRows', () => {
                 automationId: 'digest',
                 triggerId: 't1',
                 title: 'workflows.triggers.summary.everyDayAt(time=07:00)',
+                glyph: 'clock',
                 subtitle: 'Morning digest',
                 off: false,
             },

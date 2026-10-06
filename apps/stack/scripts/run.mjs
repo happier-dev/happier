@@ -2,7 +2,7 @@ import './utils/env/env.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
-import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
+import { getComponentDir, getDefaultAutostartPaths, getRepoDir, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports.mjs';
 import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
@@ -68,7 +68,7 @@ import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart
 import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_server_light_sqlite_env.mjs';
 import { spawnSourceServerScript } from './utils/server/source_server_workspace_deps.mjs';
 import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
-import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
+import { resolveNativeDaemonRuntimeSnapshot, resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
   resolveCliRuntimeLaunchProvenance,
   resolveCliRuntimeLaunchSpec,
@@ -80,6 +80,11 @@ import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs'
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
 import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
 import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
+import { persistControlledServerPlacement, resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
+import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { startStackDevTargets } from './utils/dev_targets/supervisor.mjs';
+import { resolveRemoteServerRuntimeConfig } from './utils/dev_targets/remote_commands.mjs';
+import { recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -185,10 +190,33 @@ async function main() {
       json,
     });
   }
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env });
-  const runtimeSnapshot = runtimeLaunchContext.snapshot;
+  let controlledPlacement = resolveStackRuntimeMode({ argv, env: process.env }).mode !== 'source'
+    && !flags.has('--no-dev-targets')
+    ? await resolveControlledRuntimePlacement({ stackName: autostart.stackName, stackBaseDir: autostart.baseDir, sourceDir: process.env.HAPPIER_STACK_REPO_DIR, env: process.env })
+    : null;
+  const requiredComponents = process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined;
+  let runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env, target: controlledPlacement?.runtimeTarget, requiredComponents });
+  let runtimeSnapshot = runtimeLaunchContext.snapshot;
+  const unavailableTargets = [];
+  while (runtimeSnapshot && controlledPlacement?.target) {
+    try {
+      await runControlledRemoteStack({ rootDir, argv, flags, json, autostart, runtimeSnapshot, placement: controlledPlacement, serverComponentName });
+      return;
+    } catch (error) {
+      if (!error.remotePreDispatchUnavailable || controlledPlacement.config.runtimePlacement.server.mode === 'prefer-target') throw error;
+      unavailableTargets.push(controlledPlacement.target.name);
+      console.warn(`[dev-targets] QA target ${controlledPlacement.target.name} became unavailable before dispatch; selecting another runtime host`);
+      controlledPlacement = await resolveControlledRuntimePlacement({ stackName: autostart.stackName,
+        stackBaseDir: autostart.baseDir, sourceDir: getRepoDir(rootDir), env: process.env, excludeTargetNames: unavailableTargets });
+      runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env, target: controlledPlacement.runtimeTarget, requiredComponents });
+      runtimeSnapshot = runtimeLaunchContext.snapshot;
+    }
+  }
+  if (runtimeSnapshot && flags.has('--no-dev-targets') && process.env.HAPPIER_DEV_TARGET_EXECUTION === '1') {
+    process.chdir(join(autostart.baseDir, 'workspace'));
+  }
   const runtimeBackedStart = Boolean(runtimeSnapshot);
-  const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+  const cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon') ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
   const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
   const serverLaunchSpec = runtimeSnapshot
@@ -820,22 +848,7 @@ async function main() {
           const retryBaseMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_RETRY_BASE_MS ?? '';
           const retryMaxMs = daemonScopeEnv.HAPPIER_STACK_SERVICE_DAEMON_AUTOSTART_RETRY_MAX_MS ?? '';
 
-          const getCredentialFingerprint = async () => {
-            const path = findExistingStackCredentialPath({
-              cliHomeDir,
-              serverUrl: effectiveInternalServerUrl,
-              env: daemonScopeEnv,
-            });
-            if (!path) return null;
-            try {
-              const st = statSync(path);
-              const mtime = Number(st?.mtimeMs) || 0;
-              const size = Number(st?.size) || 0;
-              return `${path}:${mtime}:${size}`;
-            } catch {
-              return String(path);
-            }
-          };
+          const getCredentialFingerprint = () => resolveStackCredentialFingerprint({ cliHomeDir, serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv });
 
           daemonAutostarter = createServiceDaemonAutostarter({
             enabled: true,
@@ -1049,6 +1062,107 @@ async function main() {
 
   // Keep running
   await new Promise(() => {});
+}
+
+async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, placement, serverComponentName }) {
+  const env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
+  const context = resolveStackContext({ env, autostart });
+  const serverPort = await selectLocalServerPortCandidateForStack({ env, stackMode: true,
+    stackName: context.stackName, runtimeStatePath: context.runtimeStatePath, defaultPort: 3005 });
+  const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
+  const cliHomeDir = env.HAPPIER_STACK_CLI_HOME_DIR?.trim() || join(autostart.baseDir, 'cli');
+  const credentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: `http://127.0.0.1:${serverPort}`, env });
+  const localDaemonRequested = Boolean(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK)
+    && resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
+  const daemonSnapshot = localDaemonRequested ? await resolveNativeDaemonRuntimeSnapshot({ stackName: context.stackName, env }) : null;
+  const localCli = daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
+  const targetPlans = placement.targetPlans.map(plan => ({ ...plan,
+    services: { ...plan.services, daemon: plan.services.daemon && resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') }) } }));
+  if (json) {
+    printResult({ json, data: { mode: 'start', launchMode: 'runtime', runtimeSnapshotId: runtimeSnapshot.snapshotId,
+      target: placement.target.name, runtimeTarget: placement.runtimeTarget, serverPort,
+      publicServerUrl: urls.publicServerUrl, cliHomeDir, daemonPlacement: localDaemonRequested ? 'local' : targetPlans.some(plan => plan.services.daemon) ? placement.target.name : 'disabled',
+      daemonSnapshotId: daemonSnapshot?.snapshotId ?? null } });
+    return;
+  }
+  const started = await recordStackRuntimeStart(context.runtimeStatePath, { stackName: context.stackName,
+    script: 'run.mjs', ephemeral: context.ephemeral, ownerPid: process.pid, ports: { server: serverPort },
+    runtimeSnapshotId: null, serveUi: !flags.has('--no-ui'),
+    placement: { server: placement.target.name, daemon: localDaemonRequested ? 'local' : targetPlans.some(plan => plan.services.daemon) ? placement.target.name : 'disabled', expo: env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
+  spawnStackOwnerDeathWatchdog({ rootDir, stackName: context.stackName, baseDir: autostart.baseDir,
+    envPath: context.envPath, runtimeStatePath: context.runtimeStatePath, ownerPid: process.pid, ownerStartedAt: started.startedAt, env });
+  let controller;
+  let daemonAutostarter;
+  let daemonReconciler;
+  let shuttingDown = false;
+  const internalServerUrl = `http://127.0.0.1:${serverPort}`;
+  let resolveStop;
+  const stopRequested = new Promise(resolve => { resolveStop = resolve; });
+  const onSignal = () => { shuttingDown = true; resolveStop(); };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  try {
+    controller = await startStackDevTargets({ stackName: context.stackName, stackBaseDir: autostart.baseDir,
+      syncStackBaseDir: placement.authority.producerStackBaseDir,
+      sourceDir: getRepoDir(rootDir, env), localServerPort: serverPort,
+      publicServerUrl: urls.publicServerUrl, canonicalServerUrl: urls.canonicalServerUrl,
+      runtimeSnapshot, runtimeTarget: placement.runtimeTarget,
+      borrowedExpoProducerStackName: String(env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim(),
+      activeServerId: resolveStackActiveServerId({ env, stackName: context.stackName }), credentialPath, cliHomeDir,
+      remoteServerRuntimeConfig: resolveRemoteServerRuntimeConfig({ serverComponentName, env }),
+      targetPlans, syncTargets: placement.config.targets,
+      onServerDataAuthority: async ({ targetName }) => persistControlledServerPlacement({ stackName: context.stackName,
+        sourceDir: getRepoDir(rootDir, env), targetName, env }),
+      onTargetStateChange: async ({ name, ...state }) => {
+        await recordStackRuntimeUpdate(context.runtimeStatePath, {
+          remoteTargets: { [name]: state },
+          ...(state.runtimeSnapshotId ? { runtimeSnapshotId: state.runtimeSnapshotId } : {}),
+        });
+      }, env,
+    });
+    if (localCli) {
+      const daemonOptions = { cliBin: join(localCli.cliDir, 'bin/happier.mjs'), cliEntrypoint: localCli.entrypoint,
+        cliNodeEntrypoint: localCli.nodeEntrypoint, cliCommand: localCli.command, cliCommandArgs: localCli.args,
+        cliHomeDir, internalServerUrl, publicServerUrl: urls.publicServerUrl, runtimeStatePath: context.runtimeStatePath,
+        env, stackName: context.stackName, cliIdentity: 'default' };
+      daemonAutostarter = createServiceDaemonAutostarter({ enabled: true, isShuttingDown: () => shuttingDown,
+        isServerReady: () => isHappierServerRunning(internalServerUrl),
+        getCredentialFingerprint: () => resolveStackCredentialFingerprint({ cliHomeDir, serverUrl: internalServerUrl, env }),
+        isDaemonRunning: () => isDaemonRunning(cliHomeDir, { serverUrl: internalServerUrl, env }),
+        startDaemon: () => startLocalDaemonWithAuth({ ...daemonOptions,
+          isShuttingDown: () => shuttingDown, ...resolveCliRuntimeLaunchProvenance(localCli) }), logger: console });
+      daemonAutostarter.start();
+      daemonReconciler = startStackRuntimeDaemonPidReconciler({ runtimeStatePath: context.runtimeStatePath,
+        cliHomeDir, internalServerUrl, env: getDaemonEnv({ baseEnv: env, cliHomeDir, internalServerUrl,
+          publicServerUrl: urls.publicServerUrl, stackName: context.stackName, cliIdentity: 'default' }),
+        isShuttingDown: () => shuttingDown }, { checkDaemonStateImpl: checkDaemonStatePingAware });
+    }
+    console.log(`[runtime] ${context.stackName}: ${runtimeSnapshot.snapshotId} on ${placement.target.name}; server ${urls.publicServerUrl}`);
+    await stopRequested;
+  } finally {
+    shuttingDown = true;
+    daemonAutostarter?.stop();
+    daemonReconciler?.close();
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    try {
+      if (localCli) await stopLocalDaemon({ cliBin: join(localCli.cliDir, 'bin/happier.mjs'),
+        cliNodeEntrypoint: localCli.nodeEntrypoint, cliCommand: localCli.command, cliCommandArgs: localCli.args,
+        cliHomeDir, internalServerUrl, runtimeStatePath: context.runtimeStatePath, env,
+        stackName: context.stackName, cliIdentity: 'default' });
+    } finally { await controller?.close(); }
+    const expected = await captureStackRuntimeStopSnapshot(context.runtimeStatePath);
+    if (expected) await finalizeStackRuntimeStop(context.runtimeStatePath, { expected, cleanupResults: [] });
+  }
+}
+
+function resolveStackCredentialFingerprint({ cliHomeDir, serverUrl, env }) {
+  const path = findExistingStackCredentialPath({ cliHomeDir, serverUrl, env });
+  if (!path) return null;
+  try {
+    const stat = statSync(path);
+    return `${path}:${Number(stat.mtimeMs) || 0}:${Number(stat.size) || 0}`;
+  } catch { return path; }
 }
 
 main().catch((err) => {

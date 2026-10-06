@@ -14,7 +14,7 @@ import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 
-export { ExternalSessionAgentIdSchema } from '@happier-dev/protocol';
+export { ExternalSessionAgentIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 export type ExternalSessionAgentId = ProtocolExternalSessionAgentId;
 export type ExternalSessionSourceId = ProtocolExternalSessionSourceId;

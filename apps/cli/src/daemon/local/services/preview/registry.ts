@@ -1,13 +1,7 @@
-import {
-    LocalServicePreviewResourceV1Schema,
-    type LocalServicePreviewResourceV1,
-    type LocalServicePreviewSnapshotRowV1,
-} from "@happier-dev/protocol/local/services/preview/v1";
+import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import type { LocalServicePreviewResourceV1, LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { BrowserLocalServicePreviewTargetV1 } from '@happier-dev/protocol';
-import {
-    isLiteralLoopbackHostname,
-    normalizeHostnameForLoopbackCheck,
-} from "@happier-dev/protocol/server/urls";
+import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export type LocalServicePreviewRegistry = Readonly<{
     previewsById: Map<string, LocalServicePreviewSnapshotRowV1>;

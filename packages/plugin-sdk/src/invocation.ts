@@ -1,8 +1,6 @@
 /** @moduleRealm daemon */
-import {
-    PluginMachineMaterializationRefV1Schema as canonicalPluginMachineMaterializationRefV1Schema,
-    type PluginSourceCustodyV1 as ProtocolPluginSourceCustodyV1,
-} from '@happier-dev/protocol';
+import { PluginMachineMaterializationRefV1Schema as canonicalPluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import type { PluginSourceCustodyV1 as ProtocolPluginSourceCustodyV1 } from '@happier-dev/protocol';
 import type { PluginAutomationRunCause } from './automations.js';
 import type { PluginServices } from './services/index.js';
 import type { PresentationService } from './interactions.js';

@@ -5,7 +5,7 @@ import type {
     HappierServiceTargetMode,
 } from './types.js';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 
 export type DaemonServiceInstallStrategy = 'require-explicit' | 'add' | 'replace-ring' | 'replace-all';
 

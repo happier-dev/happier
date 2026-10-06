@@ -44,6 +44,8 @@ export type SessionTriggersSectionViewProps = Readonly<{
     onRetry: () => void;
     /** The header "+", which also anchors a popover the host opens itself (a bound turn). */
     addAnchorRef?: React.RefObject<View | null>;
+    /** A retired Automation link reveals this set's first row, as in the Account column. */
+    deepLinkAutomationId?: string;
 }>;
 
 /**
@@ -59,6 +61,9 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
     const addAnchorRef = props.addAnchorRef ?? ownAddAnchorRef;
     const onCount = props.groups.reduce((count, group) => count + group.rows.filter((row) => row.enabled).length, 0);
     const empty = props.groups.length === 0;
+    const deepLinkedRow = props.deepLinkAutomationId
+        ? props.groups.flatMap((group) => group.rows).find((row) => row.automationId === props.deepLinkAutomationId)
+        : undefined;
     return (
         <WorkSection
             testID="session-work-triggers"
@@ -121,6 +126,7 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                             key={row.key}
                             row={row}
                             pending={props.pendingKeys.has(row.key)}
+                            deepLink={row === deepLinkedRow}
                             onToggle={props.onToggle}
                             onOpen={props.onOpen}
                         />
@@ -135,11 +141,15 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
 const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonly<{
     row: SessionTriggerRowModel;
     pending: boolean;
+    deepLink: boolean;
     onToggle: SessionTriggersSectionViewProps['onToggle'];
     onOpen: SessionTriggersSectionViewProps['onOpen'];
 }>) {
     const anchorRef = React.useRef<View>(null);
     const { row } = props;
+    const openRef = React.useRef(props.onOpen);
+    openRef.current = props.onOpen;
+    React.useEffect(() => { if (props.deepLink) openRef.current(row, anchorRef); }, [props.deepLink]);
     return (
         <View ref={anchorRef} collapsable={false}>
             <TriggerRow
@@ -256,6 +266,7 @@ export const SessionTriggersSection = React.memo(function SessionTriggersSection
                 onAdd={(anchor) => { setBoundWhen(undefined); setPopover({ anchor, row: null }); }}
                 onRetry={read.retry}
                 addAnchorRef={addAnchorRef}
+                {...(typeof params.trigger === 'string' ? { deepLinkAutomationId: params.trigger } : {})}
             />
             {popover !== null && (row === null || initial !== null) ? (
                 <TriggerPopover

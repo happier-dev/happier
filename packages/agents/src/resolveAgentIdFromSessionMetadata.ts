@@ -1,8 +1,6 @@
-import {
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  readRuntimeDescriptorV1FromMetadata,
-  type ExternalSessionAgentId,
-} from '@happier-dev/protocol';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { ExternalSessionAgentId } from '@happier-dev/protocol';
 import type { BundledAgentId } from './types.js';
 import { AGENT_IDS } from './types.js';
 import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';

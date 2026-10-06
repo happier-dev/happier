@@ -2,6 +2,9 @@ import { storage } from '@/sync/domains/state/storage';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { resolveVoiceExecutionMachineSelectionFromState } from '@/voice/settings/executionMachine';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 export type VoiceExecutionMachinePresentation = Readonly<{
   selectedMachineId: string | null;
@@ -32,6 +35,10 @@ export function resolveVoiceExecutionMachinePresentationFromState(state: ReturnT
  * Credential settings use this for both display and request invalidation.
  */
 export function useVoiceExecutionMachinePresentation(): VoiceExecutionMachinePresentation {
+  const scope = useAccountSettingsScope();
+  useVoiceTargetStore((state) => scope
+    ? state.autoTargetMachineByScope[accountSettingsScopeKeySuffix(scope)]
+    : undefined);
   const selectionKind = storage((state) => resolveVoiceExecutionMachineSelectionFromState(state).kind);
   const selectedMachineId = storage((state) => {
     const selection = resolveVoiceExecutionMachineSelectionFromState(state);

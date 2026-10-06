@@ -101,6 +101,7 @@ export type { PluginUiToneV1 } from '../ui.js';
 export type { PluginUiAttachmentToneV1 } from '../ui.js';
 export type { PluginUiHostApi } from './hostApi.js';
 export type { StoredImageRefV1, PluginUiReadStoredImageResultV1, PluginLiveStreamReferenceV1 } from './hostApi.js';
+export type { WorkBoardPreviewLayoutV1 } from './publicContract.js';
 export type {
     ComposerAttachmentAuthorPresentationV1,
     ComposerAttachmentAuthorValueV1,

@@ -1,11 +1,5 @@
-import {
-  combineClientEncryptionRequirements,
-  isAccountEncryptionModeAllowedByClientRequirement,
-  isSessionEncryptionModeAllowedByClientRequirement,
-  type AccountSettings,
-  type ClientEncryptionRequirement,
-  type SessionEncryptionMode,
-} from '@happier-dev/protocol';
+import { combineClientEncryptionRequirements, isAccountEncryptionModeAllowedByClientRequirement, isSessionEncryptionModeAllowedByClientRequirement } from '@happier-dev/protocol/encryption/clientEncryptionRequirement';
+import type { AccountSettings, ClientEncryptionRequirement, SessionEncryptionMode } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { getActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';

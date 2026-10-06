@@ -1,10 +1,6 @@
-import {
-    createPluginContributionIdentity,
-    type ConnectedAccountPurposeDeclarationV1,
-    type PluginContributionIdentityV1,
-    type PluginHostAccessRequestV2,
-    PluginHostAccessRequestV2Schema,
-} from '@happier-dev/protocol';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedAccountPurposeDeclarationV1, PluginContributionIdentityV1, PluginHostAccessRequestV2 } from '@happier-dev/protocol';
+import { PluginHostAccessRequestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginError, type PluginServiceId } from '@happier-dev/plugin-sdk';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 

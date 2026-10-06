@@ -96,6 +96,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     if (!artifact) return { artifact: null };
                     if (!artifact.isDecrypted || !artifact.rawHeader || artifact.bodyVersion === undefined) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
                     return { artifact: ArtifactDocumentV1Schema.parse({ artifactId: artifact.id, header: artifact.rawHeader, body: artifact.body,
+                        provenance: artifact.provenance,
                         ownerAccountId: artifact.ownerAccountId, access: artifact.access, seq: artifact.seq,
                         createdAt: artifact.createdAt, updatedAt: artifact.updatedAt,
                         revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }), ...await account.readArtifactHtmlPreview(artifact, signal) };
@@ -122,7 +123,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
                     const source = await readWorkspaceFile(context, args.path, signal);
                     const content = prepareArtifactWorkspaceFileV1({ ...source, input: args });
-                    return await createDocument({ header: content.header, body: content.binary ?? content.body, savedBy, signal });
+                    return await createDocument({ header: content.header, body: content.binary ?? content.body, source: content.source, savedBy, signal });
                 }
                 case 'artifact.public_link.create':
                 case 'artifact.public_link.list':

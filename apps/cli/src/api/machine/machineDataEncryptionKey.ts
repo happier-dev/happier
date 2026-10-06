@@ -1,13 +1,9 @@
 import type { StoredCredentials } from '@/persistence';
 
-import {
-  deriveAccountMachineKeyFromRecoverySecret,
-  isPlainMachineDataKeyMarker,
-  openEncryptedDataKeyEnvelopeV1,
-  resolvePublishedMachineDataEncryptionKeyV1,
-  type AccountScopedCryptoMaterial,
-  type ExpectedRunnerMachineContentKeyBindingV1,
-} from '@happier-dev/protocol';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { isPlainMachineDataKeyMarker, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import type { AccountScopedCryptoMaterial, ExpectedRunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { decodeBase64, encodeBase64 } from '../encryption';
 import {

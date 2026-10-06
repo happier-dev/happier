@@ -6,7 +6,7 @@ import {
     type ManagedConnectionState,
     type ManagedConnectionSupervisor,
 } from '@happier-dev/connection-supervisor';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { SessionClientTransport } from './sessionClientTransport';

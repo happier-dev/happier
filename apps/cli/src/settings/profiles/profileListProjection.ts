@@ -1,11 +1,6 @@
 import { AGENT_IDS } from '@happier-dev/agents';
-import {
-  mapAiLaunchProfileToListItemV1,
-  projectLaunchProfileListV1,
-  type AiLaunchProfile,
-  type LaunchProfileListItemV1,
-  type LaunchProfileListProjectionV1,
-} from '@happier-dev/protocol';
+import { mapAiLaunchProfileToListItemV1, projectLaunchProfileListV1 } from '@happier-dev/protocol/profiles/listProjection';
+import type { AiLaunchProfile, LaunchProfileListItemV1, LaunchProfileListProjectionV1 } from '@happier-dev/protocol';
 
 /**
  * The CLI's binding of the one Protocol-owned profile inventory projection.

@@ -1,9 +1,5 @@
-import {
-    browserViewKey,
-    type BrowserAdapterCapabilitiesV1,
-    type BrowserDiagnosticFamilyV1,
-    type BrowserDiagnosticUnavailableReasonV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import type { BrowserAdapterCapabilitiesV1, BrowserDiagnosticFamilyV1, BrowserDiagnosticUnavailableReasonV1 } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 import type { SidecarCdpDiagnosticEventInput } from './mapEvents';

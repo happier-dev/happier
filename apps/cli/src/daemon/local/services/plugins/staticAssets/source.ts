@@ -1,9 +1,7 @@
 import { join, posix } from 'node:path';
 
-import {
-    PluginHostedWebSecurityPolicyV1Schema,
-    type PluginUiHostedStaticArtifactV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginHostedWebSecurityPolicyV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/hostedWebSecurity';
+import type { PluginUiHostedStaticArtifactV2 } from '@happier-dev/protocol/plugins/ui';
 
 import { GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH } from '@/plugins/install/ui/generatedArtifacts';
 import type {

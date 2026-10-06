@@ -14,6 +14,7 @@ import { useSessionListSelectionState } from '@/hooks/session/useSessionListSele
 import { buildSessionListFilterQueryHomes } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { useWorkflowLibrarySummaries } from '@/components/workflows/library/useWorkflowLibrarySummaries';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { useSessionListQueryHomeStates } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
@@ -278,8 +279,13 @@ export function useBoardCards(membership: BoardMembership, homes: BoardHomes): r
                 if (!definition) return null;
                 const summary = summaries?.get(ref.qualifiedId.id) ?? null;
                 return {
-                    title: definition.metadata.title,
+                    title: formatWorkflowDefinitionLibraryTitle(definition),
+                    unavailableReason: definition.contentStatus === 'unavailable'
+                        ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) : undefined,
                     triggers: definition.triggers,
+                    nextRun: definition.nextRunAt === null
+                        ? { kind: 'unscheduled' }
+                        : { kind: 'scheduled', at: definition.nextRunAt },
                     summary: summary ? { needsYouCount: summary.needsYouCount, lastRun: summary.lastRun } : null,
                 };
             },

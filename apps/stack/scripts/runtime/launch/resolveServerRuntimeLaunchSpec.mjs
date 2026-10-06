@@ -51,9 +51,14 @@ export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, sn
   resolveAdmittedServerComponent({ serverComponent, snapshot });
   const runtimeRoot = snapshot.launchPath ?? snapshot.snapshotPath;
   const serverDir = join(runtimeRoot, 'server');
-  const entrypoint =
-    resolveRuntimeManifestEntrypoint({ snapshotPath: runtimeRoot, manifest: snapshot?.manifest, component: 'server' }) ||
-    join(serverDir, 'happier-server');
+  const entrypoint = resolveRuntimeManifestEntrypoint({ snapshotPath: runtimeRoot, manifest: snapshot?.manifest, component: 'server' });
+  if (!entrypoint) {
+    throw new RuntimeServerComponentError('[runtime] admitted snapshot server entrypoint is missing', {
+      code: 'ERUNTIMESERVERCOMPONENTUNAVAILABLE', reason: 'missing_admitted_server_entrypoint',
+      requestedServerComponent: serverComponent,
+      admittedServerComponent: snapshot.manifest.source.serverComponent,
+    });
+  }
   const migration = !migrationsEnabled
     ? { mode: 'disabled' }
     : dbProvider === 'postgres' || dbProvider === 'mysql' || dbProvider === 'pglite'

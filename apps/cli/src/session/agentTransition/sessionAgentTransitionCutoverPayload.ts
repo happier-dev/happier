@@ -1,13 +1,7 @@
-import {
-  SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
-  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
-  SessionAgentTransitionDividerV1Schema,
-  SessionStoredMessageContentSchema,
-  buildSessionAgentTransitionDividerLocalId,
-  projectSessionMetadataForWire,
-  type AccountEncryptionCurrentnessResponse,
-  type SessionStoredMessageContent,
-} from '@happier-dev/protocol';
+import { SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE, SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY, SessionAgentTransitionDividerV1Schema, buildSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import type { AccountEncryptionCurrentnessResponse, SessionStoredMessageContent } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import {

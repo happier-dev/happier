@@ -382,4 +382,78 @@ describe('daemon control client plugin changes', () => {
     }
   });
 
+  it('refuses MCP startup with a typed dependency failure when the daemon catalog is unavailable', async () => {
+    const server = http.createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ kind: 'unavailable', code: 'daemon_unavailable' }));
+      });
+    });
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-mcp-catalog-failure-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid, httpPort: port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'control-token',
+      });
+      const { startHappyServer } = await import('@/mcp/startHappyServer');
+      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+      const { classifyPrimarySessionRuntimeIssue } = await import('@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue');
+      const outcome = await startHappyServer({
+        sessionId: 'catalog-failure-session',
+        getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example' }),
+        rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'catalog-failure-session', encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' }),
+        updateMetadata: () => {},
+      }).then((mcp) => { mcp.stop(); return null; }, (error: unknown) => error);
+      expect(outcome).toMatchObject({ code: 'daemon_plugin_catalog_unavailable' });
+      expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: outcome })).toMatchObject({
+        code: 'daemon_plugin_catalog_unavailable', source: 'dependency_failure',
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('returns a typed HTTP failure after the running MCP server loses its daemon catalog', async () => {
+    let available = true;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify(available
+          ? { kind: 'available', plugins: [], tools: [] }
+          : { kind: 'unavailable', code: 'daemon_unavailable' }));
+      });
+    });
+    let mcp: Awaited<ReturnType<typeof import('@/mcp/startHappyServer').startHappyServer>> | null = null;
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-mcp-catalog-lost-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid, httpPort: port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'control-token',
+      });
+      const { startHappyServer } = await import('@/mcp/startHappyServer');
+      const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+      mcp = await startHappyServer({
+        sessionId: 'catalog-lost-session',
+        getServerBinding: () => ({ serverId: 'test-home', serverUrl: 'https://test-home.example' }),
+        rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'catalog-lost-session', encryptionMode: 'plain' }),
+        updateMetadata: () => {},
+      });
+      available = false;
+      const response = await fetch(mcp.url, { method: 'POST', body: '{}' });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ errorCode: 'daemon_plugin_catalog_unavailable' });
+    } finally {
+      mcp?.stop();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
 });

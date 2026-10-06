@@ -1,10 +1,6 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedAccountServiceKeySchema,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedAccountServiceKeySchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceBindingsV2, ConnectedServiceCredentialRevisionV1, ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

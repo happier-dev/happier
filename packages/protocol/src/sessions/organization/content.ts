@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { SESSION_ORGANIZATION_MAX_DISPLAY_ENVELOPE_BYTES } from './constants.js';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
@@ -50,6 +51,7 @@ export const SessionOrganizationContentEnvelopeSchema = z.discriminatedUnion('t'
   }
 });
 export type SessionOrganizationContentEnvelope = z.infer<typeof SessionOrganizationContentEnvelopeSchema>;
+export const SessionOrganizationContentEnvelopeStoredSchema = createStoredReadSchema(SessionOrganizationContentEnvelopeSchema);
 
 export const SessionOrganizationDisplayStateSchema = z
   .object({

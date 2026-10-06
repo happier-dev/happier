@@ -604,6 +604,14 @@ describe('Automation versioned API schemas', () => {
     expect(Api.AutomationRunExecutionInputV1Schema.safeParse({ ...input, cause }).success)
       .toBe(false);
     expect(Api.AutomationV3WorkerClaimResponseSchema.parse(claim)).toEqual(claim);
+    const resumedWorkflow = { ...claim, run: { ...claim.run, recipeKind: 'workflow-v2',
+      automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: '{"t":"encrypted","c":"accepted"}' } };
+    expect(Api.AutomationV3WorkerClaimResponseSchema.parse(resumedWorkflow)).toEqual(resumedWorkflow);
+    const { workflowAcceptedSnapshotEnvelope: _acceptedEnvelope, ...receiptCorrespondence } = resumedWorkflow.run;
+    const resumedReceipt = { ...receiptCorrespondence, executionInputEnvelope: null };
+    expect(Api.AutomationV3WorkerClaimReceiptRunSchema.parse(resumedReceipt)).toEqual(resumedReceipt);
+    expect(Api.AutomationV3WorkerClaimReceiptRunSchema.safeParse({ ...resumedReceipt,
+      workflowAcceptedSnapshotEnvelope: resumedWorkflow.run.workflowAcceptedSnapshotEnvelope }).success).toBe(false);
     const previousRun = { runId: 'previous-run', checkpointEnvelope: '{"t":"plain","v":{}}' };
     expect(Api.AutomationV3WorkerClaimResponseSchema.parse({
       ...claim, run: { ...claim.run, lastSucceededRun: previousRun },

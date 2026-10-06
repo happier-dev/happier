@@ -1,26 +1,14 @@
 import { createHash } from 'node:crypto';
 
-import {
-    AgentExternalSessionTranscriptRawRecordSchema,
-    ExternalSessionCandidateThreadV1Schema,
-    ExternalSessionCandidateMatchV1Schema,
-    ExternalSessionsContentCoverageSchema,
-    ExternalSessionTranscriptItemIdV1Schema,
-    ExternalSessionTerminalSourceObservationV1Schema,
-    ExternalSessionTranscriptSourceTimestampV1Schema,
-    ExternalSessionUserProjectionSchema,
-    ExternalSessionsSourceSchema,
-    MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
-    MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
-    PluginAgentExternalSessionLinkDataSchema,
-    resolveTranscriptBodySemanticEvent,
-    SessionMessageRoleSchema,
-    SidechainIdSchema,
-    type AgentExternalSessionTranscriptRawRecord,
-    type PluginAgentExternalSessionLinkData,
-    type PluginSourceCustodyV1,
-    type SessionMessageRole,
-} from '@happier-dev/protocol';
+import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
+import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1Schema, ExternalSessionsContentCoverageSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
+import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES, PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
+import { resolveTranscriptBodySemanticEvent, SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { AgentExternalSessionTranscriptRawRecord, PluginAgentExternalSessionLinkData, PluginSourceCustodyV1, SessionMessageRole } from '@happier-dev/protocol';
 import type {
     AgentExternalSessionTranscriptItem,
     AgentExternalSessionTerminalObservation,

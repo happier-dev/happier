@@ -1,16 +1,5 @@
-import {
-  DaemonVoiceInferenceTtsStreamAckRequestSchema,
-  DaemonVoiceInferenceTtsStreamAckResponseSchema,
-  DaemonVoiceInferenceTtsStreamCancelRequestSchema,
-  DaemonVoiceInferenceTtsStreamCancelResponseSchema,
-  DaemonVoiceInferenceTtsStreamNextRequestSchema,
-  DaemonVoiceInferenceTtsStreamNextResponseSchema,
-  DaemonVoiceInferenceTtsStreamStartRequestSchema,
-  DaemonVoiceInferenceTtsStreamStartResponseSchema,
-  DaemonVoiceInferenceTtsStreamStatusRequestSchema,
-  DaemonVoiceInferenceTtsStreamStatusResponseSchema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonVoiceInferenceTtsStreamAckRequestSchema, DaemonVoiceInferenceTtsStreamAckResponseSchema, DaemonVoiceInferenceTtsStreamCancelRequestSchema, DaemonVoiceInferenceTtsStreamCancelResponseSchema, DaemonVoiceInferenceTtsStreamNextRequestSchema, DaemonVoiceInferenceTtsStreamNextResponseSchema, DaemonVoiceInferenceTtsStreamStartRequestSchema, DaemonVoiceInferenceTtsStreamStartResponseSchema, DaemonVoiceInferenceTtsStreamStatusRequestSchema, DaemonVoiceInferenceTtsStreamStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';

@@ -88,6 +88,7 @@ const machineWorkspaceFileListMock = vi.hoisted(() => vi.fn<(machineId: string, 
     paths?: string[];
     truncated?: boolean;
     exitCode?: number;
+    errorCode?: string;
 }>>(async () => ({
     ok: true,
     paths: [],
@@ -200,17 +201,20 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiItemDensity') return 'comfortable';
-        if (key === 'uiFontScale') return 1;
-        return null;
-    },
-    // The browsed machine's store record: only its home directory is read, to show paths relative to it.
-    useServerScopedMachine: (_serverId: string | null | undefined, machineId: string) => (
-        machineId === 'machine-1' ? { id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } } : null
-    ),
-}));
+vi.mock('@/sync/store/hooks', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useLocalSetting: (key: string) => {
+            if (key === 'uiItemDensity') return 'comfortable';
+            if (key === 'uiFontScale') return 1;
+            return null;
+        },
+        // The browsed machine's store record: only its home directory is read, to show paths relative to it.
+        useServerScopedMachine: (_serverId: string | null | undefined, machineId: string) => (
+            machineId === 'machine-1' ? { id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } } : null
+        ),
+    });
+});
 
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => {
@@ -254,6 +258,10 @@ vi.mock('@/sync/domains/input/machineFileBrowser', () => ({
 const defaultDirectoryEntries = listMachineFileBrowserDirectoryEntriesMock.getMockImplementation()!;
 const defaultRoots = listMachineFileBrowserRootsMock.getMockImplementation()!;
 
+// Load the real component after the boundary factories are initialized, during
+// collection rather than inside a fake-timer test's execution budget.
+const { MachinePathBrowserModal, MachinePathBrowserView } = await import('./MachinePathBrowserModal');
+
 describe('MachinePathBrowserModal', () => {
     afterEach(() => { vi.useRealTimers(); });
     beforeEach(async () => {
@@ -273,7 +281,6 @@ describe('MachinePathBrowserModal', () => {
     it('expands the machine root and confirms the selected folder', async () => {
         const onResolve = vi.fn();
         const onClose = vi.fn();
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -321,7 +328,6 @@ describe('MachinePathBrowserModal', () => {
                 ok: false,
                 error: 'RPC method not available',
             } as never);
-            const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
             const screen = await renderInModalChrome(<MachinePathBrowserModal
                         machineId="machine-1"
@@ -344,7 +350,6 @@ describe('MachinePathBrowserModal', () => {
     it('supports a scoped popover view rooted at a specific directory without listing machine roots', async () => {
         const onPickPath = vi.fn();
         const onRequestClose = vi.fn();
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
         listMachineFileBrowserRootsMock.mockClear();
         listMachineFileBrowserDirectoryEntriesMock.mockReset();
@@ -387,7 +392,6 @@ describe('MachinePathBrowserModal', () => {
     it('can search deep paths on the machine when scoped, not just already-loaded nodes', async () => {
         vi.useFakeTimers();
         const onPickPath = vi.fn();
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
         listMachineFileBrowserRootsMock.mockClear();
         listMachineFileBrowserDirectoryEntriesMock.mockReset();
@@ -442,7 +446,6 @@ describe('MachinePathBrowserModal', () => {
         const targetHome = await upsertServerProfile({ serverUrl: 'https://path-browser-target.example.test', name: 'Target Home' });
         vi.useFakeTimers();
         machineWorkspaceFileListMock.mockResolvedValueOnce({ ok: true, paths: ['src/needle.ts'], truncated: true });
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
         const screen = await renderScreen(<MachinePathBrowserView machineId="machine-1" serverId={targetHome.id}
             rootDirectoryPath="/repo" includeFiles selectionMode="file" variant="popover" onPickPath={vi.fn()} />);
         await flushHookEffects({ cycles: 1, turns: 2 });
@@ -459,7 +462,6 @@ describe('MachinePathBrowserModal', () => {
     it('can search deep paths on the machine within the selected directory when not scoped', async () => {
         vi.useFakeTimers();
         const onPickPath = vi.fn();
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
         listMachineFileBrowserRootsMock.mockClear();
         listMachineFileBrowserDirectoryEntriesMock.mockReset();
@@ -517,7 +519,6 @@ describe('MachinePathBrowserModal', () => {
     it('disables confirm while a deep search error is surfaced', async () => {
         vi.useFakeTimers();
         const onPickPath = vi.fn();
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
         listMachineFileBrowserRootsMock.mockClear();
         listMachineFileBrowserDirectoryEntriesMock.mockReset();
@@ -529,7 +530,8 @@ describe('MachinePathBrowserModal', () => {
 
         machineWorkspaceFileListMock.mockResolvedValueOnce({
             ok: false,
-            exitCode: 1,
+            errorCode: 'ripgrep_failed',
+            exitCode: 2,
         });
 
         const screen = await renderInModalChrome(
@@ -561,12 +563,13 @@ describe('MachinePathBrowserModal', () => {
 
         const confirmAfter = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
         expect(confirmAfter?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('errors.searchFailed');
+        expect(screen.getTextContent()).not.toContain('errors.unknownError');
 
         vi.useRealTimers();
     });
 
     it('renders nested directories when expanding a child folder', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -594,7 +597,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('does not rerender unchanged ancestor rows when expanding a descendant directory', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -616,7 +618,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('stops web toggle events from bubbling to the row while expanding the directory', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -653,7 +654,6 @@ describe('MachinePathBrowserModal', () => {
 
     it('pre-expands and preselects the current directory path so the user can navigate up or elsewhere', async () => {
         const onResolve = vi.fn();
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -683,7 +683,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('shows the selected path once, relative to the machine home', async () => {
-        const { MachinePathBrowserModal, MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -718,7 +717,6 @@ describe('MachinePathBrowserModal', () => {
     it('shows the initial path chain while the root listing is still pending', async () => {
         listMachineFileBrowserRootsMock.mockImplementationOnce(async () => await new Promise(() => {}));
 
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -732,7 +730,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('scrolls the preselected directory into view once its ancestor chain has loaded', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -758,7 +755,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('starts with no selection when the initial path cannot be resolved inside the loaded tree', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -792,7 +788,6 @@ describe('MachinePathBrowserModal', () => {
             };
         });
 
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -812,7 +807,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('lets the browser body shrink inside the shared card and keeps the footer buttons at normal size', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
                     machineId="machine-1"
@@ -839,7 +833,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('requests body-owned scrolling when rendered through shared modal chrome', async () => {
-        const { MachinePathBrowserView } = await import('./MachinePathBrowserModal');
         let chrome: unknown = null;
         const setChrome = vi.fn((next: unknown) => {
             chrome = next;
@@ -869,7 +862,6 @@ describe('MachinePathBrowserModal', () => {
 
     it('creates a folder under the selected directory via the header action', async () => {
         modalPromptMock.mockResolvedValueOnce('new-folder');
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
             machineId="machine-1"
@@ -895,7 +887,6 @@ describe('MachinePathBrowserModal', () => {
 
     it('opens a context menu on right click and creates a folder in the clicked directory', async () => {
         modalPromptMock.mockResolvedValueOnce('child');
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
             machineId="machine-1"
@@ -938,7 +929,6 @@ describe('MachinePathBrowserModal', () => {
     });
 
     it('uses context-menu semantics instead of row long-press on web to avoid delayed tap selection', async () => {
-        const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderInModalChrome(<MachinePathBrowserModal
             machineId="machine-1"

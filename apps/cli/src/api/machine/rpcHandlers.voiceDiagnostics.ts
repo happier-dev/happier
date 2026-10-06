@@ -1,17 +1,5 @@
-import {
-  VoiceSpeechDiagnosticArtifactDownloadChunkRequestV1Schema,
-  VoiceSpeechDiagnosticArtifactDownloadChunkResponseV1Schema,
-  VoiceSpeechDiagnosticArtifactDownloadCloseRequestV1Schema,
-  VoiceSpeechDiagnosticArtifactDownloadCloseResponseV1Schema,
-  VoiceSpeechDiagnosticArtifactDownloadInitRequestV1Schema,
-  VoiceSpeechDiagnosticArtifactDownloadInitResponseV1Schema,
-  VoiceSpeechDiagnosticsConfigureRequestV1Schema,
-  VoiceSpeechDiagnosticsDeleteAllResponseV1Schema,
-  VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema,
-  VoiceSpeechDiagnosticsRevokeCaptureResponseV1Schema,
-  VoiceSpeechDiagnosticsStatusResponseV1Schema,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { VoiceSpeechDiagnosticArtifactDownloadChunkRequestV1Schema, VoiceSpeechDiagnosticArtifactDownloadChunkResponseV1Schema, VoiceSpeechDiagnosticArtifactDownloadCloseRequestV1Schema, VoiceSpeechDiagnosticArtifactDownloadCloseResponseV1Schema, VoiceSpeechDiagnosticArtifactDownloadInitRequestV1Schema, VoiceSpeechDiagnosticArtifactDownloadInitResponseV1Schema, VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsDeleteAllResponseV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureResponseV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema } from '@happier-dev/protocol/voice/diagnostics';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
 import { parseTransferRecipientPublicKeyBase64 } from '@happier-dev/transfers/node';

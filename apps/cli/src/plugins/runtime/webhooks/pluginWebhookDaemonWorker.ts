@@ -1,20 +1,9 @@
 import axios from 'axios';
 
-import {
-  arePluginMachineMaterializationRefsEqual,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  PluginWebhookClaimRequestV1Schema,
-  PluginWebhookClaimResultV1Schema,
-  PluginWebhookCompleteRequestV1Schema,
-  PluginWebhookFailRequestV1Schema,
-  PluginWebhookRenewRequestV1Schema,
-  PluginWebhookRenewResultV1Schema,
-  PluginWebhookSettleResultV1Schema,
-  type PluginWebhookActionInputV1,
-  type PluginWebhookActionResultV1,
-  type PluginWebhookClaimRequestV1,
-  type PluginWebhookClaimResultV1,
-} from '@happier-dev/protocol';
+import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { PluginWebhookClaimRequestV1Schema, PluginWebhookClaimResultV1Schema, PluginWebhookCompleteRequestV1Schema, PluginWebhookFailRequestV1Schema, PluginWebhookRenewRequestV1Schema, PluginWebhookRenewResultV1Schema, PluginWebhookSettleResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
+import type { PluginWebhookActionInputV1, PluginWebhookActionResultV1, PluginWebhookClaimRequestV1, PluginWebhookClaimResultV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';

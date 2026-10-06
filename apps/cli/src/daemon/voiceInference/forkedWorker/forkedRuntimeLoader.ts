@@ -10,7 +10,7 @@
  * no inference child process is leaked when the daemon shuts down.
  */
 
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 
 import { ensureOptionalRuntime } from '@/packagedRuntime/installables/optionalRuntimes';
 

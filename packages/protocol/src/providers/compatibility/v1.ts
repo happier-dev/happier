@@ -10,7 +10,7 @@ import {
 import {
   normalizeProviderCredentialHeaderName,
   normalizeProviderQueryParameterName,
-} from '../safety/index.js';
+} from '../safety/headers.js';
 
 export const ModelSelectionApplyPolicySchema = z.enum(['live', 'next_prompt', 'restart_session', 'unsupported']);
 export type ModelSelectionApplyPolicy = z.infer<typeof ModelSelectionApplyPolicySchema>;

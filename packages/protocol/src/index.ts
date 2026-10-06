@@ -1,4 +1,5 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export { resolveConnectedServiceQuotaMeterLabel } from './connect/connectedServiceQuotaMeterLabel.js';
 export * from './plugins/actions/clientInvocationV1.js';
 export * from './home/index.js';
 export { sessionBoardPlacedDestinationRetainsPlacementV1 } from './sessions/board/layoutOperations.js';
@@ -305,6 +306,7 @@ export {
   AccountDirectoryRouteErrorResponseV1Schema,
   HomeConnectionEndpointV1Schema,
   HomeConnectionDescriptorV1Schema,
+  StoredHomeConnectionDescriptorV1Schema,
   HomeCredentialDestinationV1Schema,
   HomeLoginCredentialPayloadV1Schema,
   HomeApplicationOriginV1Schema,
@@ -599,6 +601,7 @@ export {
   type QualifiedConnectedAccountPurposeBindingV1,
   type QualifiedConnectedAccountPurposeBindingsV1,
 } from './connect/connectedAccountPurposeBindings.js';
+export { resolveConnectedAccountPurposeSelectedAccountV1 } from './connect/connectedAccountPurposeSelectionV1.js';
 export {
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
@@ -2242,6 +2245,7 @@ export {
   assertAccountWorkspaceSettingsTransition,
   isExpoPushNotificationChannelEnabled,
   NEW_SESSION_DRAFT_ENTRY_MODES,
+  SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES,
   resolveNotificationChannelsV1FromAccountSettings,
   SessionPendingQueueDeliveryTimingSchema,
   SessionPendingQueueDrainModeSchema,
@@ -2272,6 +2276,7 @@ export {
   resolveConnectedServicesProviderStateSharingPolicyV1,
   resolveAgentConnectedAccountPurposeDefaults,
   writeAgentConnectedAccountPurposeDefault,
+  writeConnectedAccountPurposeDefault,
   removeAgentConnectedAccountDefaultsForDeletedTarget,
   writeAgentConnectedServiceDefault,
   projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
@@ -9488,7 +9493,7 @@ export { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from 
 export * from './sessions/access/index.js';
 
 export * from './workflows/index.js';
-export { WorkspaceTabsV1Schema, type WorkspaceTabsV1 } from './workspace/workspaceTabsV1.js';
+export { WorkspaceTabsV1Schema, WorkspaceTabsV1StoredSchema, type WorkspaceTabsV1 } from './workspace/workspaceTabsV1.js';
 export { SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from './sessions/messages/sessionTranscriptPageLimits.js';
 export * from './sessions/listFilter/index.js';
 export * from './boards/index.js';

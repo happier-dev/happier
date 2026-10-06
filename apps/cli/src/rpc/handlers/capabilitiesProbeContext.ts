@@ -4,7 +4,10 @@ import { readStoredCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
 import { getAgentModelConfig } from '@happier-dev/agents';
-import { BackendTargetRefSchema, normalizeBackendTargetRefV2InputToV1, type BackendTargetRefV1, RuntimeDescriptorV1Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { BackendTargetRefSchema } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { normalizeBackendTargetRefV2InputToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 
 export async function resolveProbeBackendContext(
   params?: Record<string, unknown>,

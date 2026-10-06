@@ -1,7 +1,5 @@
-import {
-  PluginManifestV2Schema,
-  type ParsedPluginManifestV2,
-} from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
 import type { CanonicalPluginManifest } from './types';
 

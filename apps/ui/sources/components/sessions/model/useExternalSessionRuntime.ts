@@ -470,11 +470,11 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         requestLeaseEnsureRef.current?.();
     }, [acceptedTailCursor]);
 
-    return {
+    return React.useMemo(() => ({
         externalSessionLink,
         externalAgent,
         sessionServerId,
         status,
         refreshNow,
-    };
+    }), [externalSessionLink, externalAgent, sessionServerId, status, refreshNow]);
 }

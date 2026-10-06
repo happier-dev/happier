@@ -22,6 +22,7 @@ export function resolveHappyCliRuntimeInputGroups({
   cliDir,
   existsSyncImpl = existsSync,
   includeShippedFiles = false,
+  excludeGeneratedPluginArtifacts = false,
 } = {}) {
   const lexicalCliDir = resolve(cliDir);
   let resolvedCliDir = lexicalCliDir;
@@ -64,7 +65,7 @@ export function resolveHappyCliRuntimeInputGroups({
       // descriptors are merged; a CLI-only package remains daemon-only.
       id: `shared:${id}`,
       target: 'daemon',
-      paths: resolveWorkspaceBuildInputWatchPaths(dir, { existsSyncImpl, includeShippedFiles }),
+      paths: resolveWorkspaceBuildInputWatchPaths(dir, { existsSyncImpl, includeShippedFiles, excludeGeneratedPluginArtifacts }),
     })),
   ];
 
@@ -80,6 +81,8 @@ export function resolveHappyCliRuntimeInputPaths(options) {
 export async function readHappyCliRuntimeInputFreshness(cliDir, {
   identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
   includeShippedFiles = false,
+  excludeGeneratedPluginArtifacts = false,
+  inputEntries,
 } = {}) {
   const repoRoot = resolve(cliDir, '..', '..');
   let newestMtimeNs = null;
@@ -103,7 +106,17 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
     fingerprint.update('\0');
     fingerprint.update(nodeType);
     fingerprint.update('\0');
+    const entry = [];
+    const append = value => {
+      fingerprint.update(value);
+      fingerprint.update('\0');
+      entry.push(value);
+    };
+    const record = () => {
+      if (inputEntries) inputEntries[relative(repoRoot, path).replaceAll('\\', '/')] = JSON.stringify([nodeType, ...entry]);
+    };
     if (fileStat.isDirectory()) {
+      record();
       let names;
       try {
         names = (await readdir(path)).sort((left, right) => left.localeCompare(right));
@@ -113,24 +126,22 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
       for (const name of names) await visit(join(path, name));
       return;
     }
-    fingerprint.update(String(fileStat.size));
-    fingerprint.update('\0');
+    append(String(fileStat.size));
     if (fileStat.isFile()) {
-      fingerprint.update(await readCachedFileDigest(path, fileStat));
-      fingerprint.update('\0');
+      append(await readCachedFileDigest(path, fileStat));
+      record();
       return;
     }
     // Source transfer preserves link contents, not filesystem timestamps.
     // Ordinary development freshness retains its existing metadata behavior.
     if (includeShippedFiles && fileStat.isSymbolicLink()) {
-      fingerprint.update(await readlink(path));
-      fingerprint.update('\0');
+      append(await readlink(path));
+      record();
       return;
     }
-    fingerprint.update(String(fileStat.mtimeNs));
-    fingerprint.update('\0');
-    fingerprint.update(String(fileStat.ctimeNs));
-    fingerprint.update('\0');
+    append(String(fileStat.mtimeNs));
+    append(String(fileStat.ctimeNs));
+    record();
   };
 
   // Resolving the runtime inputs is a build-configuration decision: it fails
@@ -139,7 +150,7 @@ export async function readHappyCliRuntimeInputFreshness(cliDir, {
   // null result as "must be a non-empty fingerprint", so that error has to reach
   // them. Only the traversal below tolerates failure, because a file removed
   // mid-walk genuinely means the inputs are not currently fingerprintable.
-  const inputPaths = resolveHappyCliRuntimeInputPaths({ cliDir, includeShippedFiles });
+  const inputPaths = resolveHappyCliRuntimeInputPaths({ cliDir, includeShippedFiles, excludeGeneratedPluginArtifacts });
   try {
     for (const path of inputPaths) await visit(path);
   } catch {

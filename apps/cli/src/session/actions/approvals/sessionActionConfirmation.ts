@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import {
-    SessionActionConfirmationResponseTargetV1Schema,
-    SessionInputSourceSessionV1Schema,
-    getActionSpec,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { SessionActionConfirmationResponseTargetV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
+import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
@@ -100,7 +98,7 @@ export function createSessionActionConfirmationAdapter(params: Readonly<{
                 || request.context.defaultSessionId !== params.sessionId
                 || request.context.surface !== 'agent'
                 || request.context.authority !== 'account_automation'
-                || getActionSpec(request.actionId).executionPlacement !== 'session'
+                || resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), request.input) !== 'session'
             ) return unavailable;
             const runtimeAccountId = await params.getAuthenticatedAccountId();
             if (!runtimeAccountId) return unavailable;

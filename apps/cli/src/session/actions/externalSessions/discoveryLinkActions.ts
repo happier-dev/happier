@@ -1,13 +1,7 @@
-import {
-    buildLinkedExternalSessionQualifiedIdentityV1,
-    deriveExternalSessionsAutoLinkSourcePolicyIdV1,
-    ExternalSessionCandidateDeleteRequestSchema,
-    ExternalSessionLinkEnsureRequestSchema,
-    ExternalSessionsCandidatesListRequestSchema,
-    type ExternalSessionCandidateDeleteResponse,
-    type ExternalSessionLinkEnsureResponse,
-    type ExternalSessionsCandidatesListResponse,
-} from '@happier-dev/protocol';
+import { buildLinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { deriveExternalSessionsAutoLinkSourcePolicyIdV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import { ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import type { ExternalSessionCandidateDeleteResponse, ExternalSessionLinkEnsureResponse, ExternalSessionsCandidatesListResponse } from '@happier-dev/protocol';
 
 import {
     ensureExternalSessionLink,

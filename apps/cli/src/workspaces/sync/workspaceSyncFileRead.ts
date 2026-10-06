@@ -5,12 +5,8 @@ import { resolve } from 'node:path';
 import {
   MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import {
-  WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES,
-  WorkspaceSyncEntryExpectationV1Schema,
-  type ReadWorkspaceSyncFileResultV1,
-  type WorkspaceSyncEntryExpectationV1,
-} from '@happier-dev/protocol';
+import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ReadWorkspaceSyncFileResultV1, WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { withConfinedWorkspaceSyncParent } from './workspaceSyncConfinedFileSystem';
 import {
   runNativeConfinedWorkspaceSyncRead,

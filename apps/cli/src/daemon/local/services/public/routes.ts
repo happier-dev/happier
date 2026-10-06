@@ -10,13 +10,7 @@ import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
-import {
-    DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
-    DaemonLocalServicePublicPreviewCreateResponseV1Schema,
-    DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
-    DaemonLocalServicePublicPreviewStatusResponseV1Schema,
-    LocalServicePublicExposureV1Schema,
-} from '@happier-dev/protocol';
+import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import axios from 'axios';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

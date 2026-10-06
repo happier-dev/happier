@@ -72,7 +72,6 @@ function Card(props: Readonly<{
     density?: SessionWidgetDensity;
     section?: boolean;
     fresh?: boolean;
-    inCompanion?: boolean;
 }>) {
     return (
         <SessionWidgetHost
@@ -88,7 +87,6 @@ function Card(props: Readonly<{
             {...(props.section ? { frame: 'section' as const } : {})}
             {...(props.frameStyle ? { frameStyle: props.frameStyle } : {})}
             {...(props.fresh ? { fresh: true } : {})}
-            {...(props.inCompanion ? { inCompanion: true } : {})}
             onRemove={NOOP}
             onRename={NOOP}
             testID={`specimen-${props.id}`}
@@ -113,7 +111,7 @@ function BoardGrid(props: Readonly<{ frameStyle: WidgetFrameStyle; phone: boolea
         <View style={[styles.grid, plain ? styles.plainGrid : null]}>
             <Card id="relay" frameStyle={props.frameStyle} fresh={props.fresh} />
             <View style={[styles.pair, plain ? styles.plainPair : null]}>
-                <View style={styles.half}><Card id="checklist" frameStyle={props.frameStyle} inCompanion /></View>
+                <View style={styles.half}><Card id="checklist" frameStyle={props.frameStyle} /></View>
                 <View style={styles.half}><Card id="conv" frameStyle={props.frameStyle} /></View>
             </View>
             <Card id="question" frameStyle={props.frameStyle} />

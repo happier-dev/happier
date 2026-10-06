@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet as NativeStyleSheet } from 'react-native';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
@@ -9,6 +10,11 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+// Native Markdown SDK boundary, imported by the host but unused by these
+// document/insertion cases (the composer itself is supplied by its harness).
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => [],
+}));
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
@@ -157,6 +163,75 @@ async function renderList(harness: Harness, options: Readonly<{
     return renderScreen(element);
 }
 
+it('renders a read-only document note through Text, never as a raw View child', async () => {
+    const harness = await loadHarness();
+    const note = 'Part of Happier';
+    const screen = await renderList(harness, {
+        draft: buildDraft(harness, []),
+        presentation: { editable: false, note },
+    });
+    expect(screen.getTextContent()).toContain(note);
+    const rawNotes = screen.root.findAll((node) => (node.type as unknown) === 'View'
+        && node.children.some((child) => child === note));
+    expect(rawNotes, 'React Native Views cannot render raw text').toHaveLength(0);
+});
+
+it('reads a step role by its display name and keeps a read-only step input on its footer line', async () => {
+    const harness = await loadHarness();
+    const screen = await renderList(harness, {
+        draft: buildDraft(harness, [
+            { kind: 'step', id: 'gather', document: { text: 'Gather', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+            { kind: 'step', id: 'check', document: { text: 'Check', references: [], attachments: [] },
+                input: [{ kind: 'result', producer: { blockId: 'gather', scope: { kind: 'current' } }, path: [] }],
+                execution: { engine: { role: 'second_opinion' } }, result: { kind: 'text' } },
+        ]),
+        presentation: { editable: false },
+    });
+    const composer = screen.root.findAll((node) => (node.type as unknown) === 'AgentInput')
+        .find((node) => node.props.value === 'Check');
+    // The built-in role's own name, never its id.
+    expect(composer?.props.agentLabel).toBe('Second opinion');
+    expect(composer?.props.engineLabel).toBe('Second opinion');
+    // The input token shares the footer line with "Returns", not a band of its own.
+    let footer = screen.findByTestId('workflow-editor-step-check-returns')?.parent ?? null;
+    while (footer !== null && (footer.type as unknown) !== 'View') footer = footer.parent;
+    expect(footer?.findAll((node) => node.props?.testID === 'workflow-editor-step-check-input-0').length).toBeGreaterThan(0);
+});
+
+it('reads a compound condition as a lead and one line per arm, and leaves an empty Otherwise out of a reading document', async () => {
+    const harness = await loadHarness();
+    const screen = await renderList(harness, {
+        draft: buildDraft(harness, [{ kind: 'if', id: 'gate',
+            when: { kind: 'any', conditions: [
+                { kind: 'exists', value: { kind: 'input', name: 'goal' } },
+                { kind: 'exists', value: { kind: 'input', name: 'budget' } },
+            ] },
+            then: [{ kind: 'step', id: 'go', document: { text: 'Go', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+            otherwise: [] }]),
+        presentation: { editable: false },
+    });
+    const summary = screen.findByTestId('workflow-editor-if-gate-summary');
+    // The heading line carries the compound's own words, not its arms run together.
+    const textOf = (node: typeof summary): string => node === null || node === undefined ? ''
+        : node.children.map((child) => typeof child === 'string' ? child : textOf(child)).join('');
+    expect(textOf(summary)).toContain('workflows.page.inspector.conditionAny');
+    expect(textOf(summary)).not.toContain('workflows.condition.exists');
+    const arms = screen.findByTestId('workflow-editor-if-gate-summary-arms');
+    expect(textOf(arms).split('workflows.condition.exists').length - 1).toBe(2);
+    expect(screen.getTextContent()).not.toContain('workflows.editor.otherwise');
+});
+
+it('names a conditional container separately from its ordinal', async () => {
+    const harness = await loadHarness();
+    const screen = await renderList(harness, {
+        draft: buildDraft(harness, [{ kind: 'if', id: 'condition',
+            when: { kind: 'exists', value: { kind: 'literal', value: true } }, then: [], otherwise: [] }]),
+        presentation: { editable: false },
+    });
+    expect(screen.findByTestId('workflow-editor-if-condition-label')?.props.accessibilityLabel)
+        .toBe('workflows.editor.addIf');
+});
+
 it('duplicates a nested block with fresh identities and keeps its internal references inside the copy', async () => {
     const harness = await loadHarness();
     const draft = buildDraft(harness, [{ kind: 'parallel', id: 'group', failurePolicy: 'fail_stop', branches: [
@@ -300,7 +375,7 @@ describe('workflow block list editor', () => {
             [2, 2],
         ]);
 
-        const implementContext = `workflows.a11y.stepContext:${JSON.stringify({ block: 'Implement', position: 2, total: 2 })}`;
+        const implementContext = `workflows.a11y.stepContext:${JSON.stringify({ block: 'workflows.editor.addStep', position: 2, total: 2 })}`;
         expect(screen.findByProps({ testID: 'composer:implement' }).props.inputAccessibilityLabel)
             .toBe(implementContext);
 
@@ -510,6 +585,14 @@ describe('workflow block list editor', () => {
         // One inserter per gap, none after the last block (the end row adds there).
         expect(screen.findHostByTestId('workflow-editor-insert-after-a')).not.toBeNull();
         expect(screen.findHostByTestId('workflow-editor-insert-after-b')).toBeNull();
+        const inserter = () => screen.findHostByTestId('workflow-editor-insert-after-a')!;
+        const insetStyle = () => NativeStyleSheet.flatten(inserter().props.style({ pressed: false }));
+        expect(insetStyle()?.opacity).toBe(0);
+        const restingBorder = insetStyle()?.borderColor;
+        await act(async () => { inserter().props.onFocus({ target: { matches: () => true } }); });
+        expect(insetStyle()?.opacity ?? 1).toBeGreaterThan(0);
+        expect(insetStyle()?.borderWidth).toBeGreaterThan(0);
+        expect(insetStyle()?.borderColor).not.toBe(restingBorder);
 
         await chooseAdd(screen, 'workflow-editor-insert-after-a', ['workflow-editor-insert-after-a-wait']);
         const ids = changes.at(-1)!.blocks.map((block) => block.kind);
@@ -797,7 +880,7 @@ describe('workflow block list editor', () => {
         // Announcing "Add a block to this workflow" on the overflow menu told
         // every screen-reader user the wrong thing about what pressing it does.
         expect(trigger?.props.accessibilityLabel).toBe('common.moreActions');
-        expect(trigger?.props.accessibilityHint).toContain('Analyze');
+        expect(trigger?.props.accessibilityHint).toBe('workflows.editor.addStep');
     });
 
     it('reports a removal so the editor can offer an in-place Undo', async () => {

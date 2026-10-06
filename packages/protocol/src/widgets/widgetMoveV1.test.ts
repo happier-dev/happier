@@ -10,6 +10,9 @@ import { encodeBase64 } from '../crypto/base64.js';
 import { createWidgetActionInputResolverV1 } from './widgetActionInputResolverV1.js';
 import type { WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
+import { AccountProfileSchema } from '../account/profile.js';
+import { resolveWidgetViewerPurposeValuesV1 } from './widgetViewerPurposeV1.js';
+import type { WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 
 const home = { serverId: 'home', accountId: 'account', owner: { kind: 'home' } } as const;
 const board = { ...home, owner: { kind: 'sessionBoard', sessionId: 'shared' } } as const;
@@ -21,7 +24,7 @@ const revision = (version: number) => {
   return `ssr1.${encodeBase64(bytes, 'base64url')}`;
 };
 
-async function fixture(candidate: WidgetInstanceV1 = instance) {
+async function fixture(candidate: WidgetInstanceV1 = instance, widgetInputs?: ActionExecutorDeps['widgetInputs']) {
   const instance = candidate;
   const artifact = createWorkBoardArtifactBoundary();
   const faults: { addRefusal?: boolean; readRefusal?: boolean; lostAddAck?: boolean; lostSourceAck?: boolean; sharedReadOnly?: boolean; beforeAddAck?: () => Promise<void>; beforeRemove?: () => void | Promise<void> } = {};
@@ -75,7 +78,7 @@ async function fixture(candidate: WidgetInstanceV1 = instance) {
   const executor = createActionExecutor({ homeHubArtifacts, sessionBoardAction,
     widgetAccountScope: () => ({ serverId: home.serverId, accountId: home.accountId }),
     // Fixed host descriptor facts; the real neutral schema/binding/options admission remains intact.
-    widgetInputs: createWidgetActionInputResolverV1({
+    widgetInputs: widgetInputs ?? createWidgetActionInputResolverV1({
       readDescriptor: async () => ({ inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
         inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
       readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
@@ -91,6 +94,36 @@ async function fixture(candidate: WidgetInstanceV1 = instance) {
 }
 
 describe('destination-aware widget move through canonical owners', () => {
+  it('adds, edits and transfers declared viewer intent without connecting, then refuses execution', async () => {
+    const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
+    const descriptor: WidgetInputDescriptorV1 & { resources: typeof consumer[] } = {
+      resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }],
+      inputs: { fields: [{ path: 'connection', title: 'Connection', widget: 'select', required: true, connectedAccountOptions: true },
+        { path: 'count', title: 'Count', widget: 'integer', required: true }] },
+      inputSchema: { type: 'object', properties: { count: { type: 'integer' }, connection: { type: 'object', properties: {
+        service: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } }, required: ['pluginId', 'localId'], additionalProperties: false },
+        accountId: { type: 'string' } }, required: ['service', 'accountId'], additionalProperties: false } }, required: ['connection', 'count'], additionalProperties: false },
+    };
+    const widgetInputs = createWidgetActionInputResolverV1({ readDescriptor: async () => descriptor, readContext: async () => ({}),
+      readViewerValues: async request => resolveWidgetViewerPurposeValuesV1({ instance: request.instance, descriptor,
+        profile: AccountProfileSchema.parse({ id: home.accountId }), purposeBindings: { v: 1, bindings: [] }, now: 1,
+        resources: [{ id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config', scope: 'global',
+          connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [{ pluginId: consumer.pluginId, localId: 'cloud' }] }] }] }),
+      validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+    });
+    const copy: WidgetInstanceV1 = { ...instance, bindings: { ...instance.bindings, connection: { kind: 'viewer', purpose: 'read' } } };
+    const f = await fixture(copy, widgetInputs);
+    await f.homeHubArtifacts.apply({ kind: 'widget_remove', instanceId: copy.id });
+    const context = { surface: 'mcp' as const, bypassApprovals: true };
+    expect(await f.executor.execute('widgets.instance.add', { surface: home, instance: copy }, context)).toMatchObject({ ok: true });
+    const updated = { ...copy, bindings: { ...copy.bindings, count: { kind: 'value' as const, value: 4 } } };
+    expect(await f.executor.execute('widgets.instance.inputs.set', { ref: { surface: home, instanceId: copy.id }, bindings: updated.bindings }, context)).toMatchObject({ ok: true });
+    expect(await f.move()).toMatchObject({ ok: true, result: { status: 'moved', instance: updated } });
+    expect((await f.homeHubArtifacts.read()).instances).toEqual([]);
+    expect(f.boardItem()?.source).toEqual({ kind: 'widget', instance: updated });
+    expect(await widgetInputs.resolve({ ref: { surface: board, instanceId: copy.id }, instance: updated, context: {} }))
+      .toMatchObject({ status: 'selection_required', fields: [{ path: 'connection', reasonCode: 'widget_viewer_connection_missing' }] });
+  });
   it('moves unchanged identity, bindings and title without dropping unrelated Board content', async () => {
     const f = await fixture();
     expect(await f.move()).toMatchObject({ ok: true, result: { ref: { surface: board, instanceId: instance.id }, fromRef: { surface: home, instanceId: instance.id }, status: 'moved', instance } });

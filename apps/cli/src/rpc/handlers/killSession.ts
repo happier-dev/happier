@@ -1,6 +1,6 @@
 import type { RpcHandlerRegistrar } from "@/api/rpc/types";
 import { logger } from "@/ui/logger";
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 interface KillSessionRequest {
     // No parameters needed

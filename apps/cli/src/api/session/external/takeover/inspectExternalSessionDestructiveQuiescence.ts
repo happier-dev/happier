@@ -1,13 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  doesExternalSessionDestructiveQuiescencePermitAdmissionV1,
-  ExternalSessionDestructiveQuiescenceResultV1Schema,
-  readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-  type ExternalSessionDestructiveQuiescenceResultV1,
-  type ExternalSessionDestructiveQuiescenceStatusV1,
-  type ExternalSessionTakeoverResultV1,
-} from '@happier-dev/protocol';
+import { doesExternalSessionDestructiveQuiescencePermitAdmissionV1, ExternalSessionDestructiveQuiescenceResultV1Schema } from '@happier-dev/protocol/sessions/external/takeoverV1';
+import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionDestructiveQuiescenceResultV1, ExternalSessionDestructiveQuiescenceStatusV1, ExternalSessionTakeoverResultV1 } from '@happier-dev/protocol';
 
 import {
   verifySessionMarkerProcessLiveness,

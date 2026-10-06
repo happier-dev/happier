@@ -1,15 +1,15 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import {
     Platform,
-    Pressable,
     View,
-    type GestureResponderEvent,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol';
 
@@ -64,6 +64,8 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.margins.sm,
         paddingVertical: theme.margins.sm,
         minHeight: MINIMUM_TARGET_SIZE,
+        borderWidth: 1,
+        borderColor: 'transparent',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
@@ -100,6 +102,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     footerTarget: {
         minHeight: MINIMUM_TARGET_SIZE,
+        borderWidth: 1,
+        borderColor: 'transparent',
         justifyContent: 'center',
     },
     footerError: {
@@ -125,7 +129,7 @@ export type WorkflowInvocationListProps = Readonly<{
     invocations: readonly WorkflowRunInvocationIndexV1[];
     selectedInvocationId: string | null;
     /** The press event travels so the caller can return focus to this row later. */
-    onSelectInvocation: (invocationId: string, event?: GestureResponderEvent) => void;
+    onSelectInvocation: (invocationId: string, event?: Parameters<React.ComponentProps<typeof HappierPressable>['onPress']>[0]) => void;
     /** Present only while the canonical reader reports another page. */
     onLoadMore?: () => void;
     loadingMore?: boolean;
@@ -148,6 +152,7 @@ export type WorkflowInvocationListProps = Readonly<{
 }>;
 
 export function WorkflowInvocationList(props: WorkflowInvocationListProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'workflow-invocations';
     const keyExtractor = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => invocation.id, []);
     const renderInvocation = React.useCallback(({ item: invocation }: { item: WorkflowRunInvocationIndexV1 }) => {
@@ -157,16 +162,16 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         const attempt = describeWorkflowInvocationAttempt(invocation.attempt);
         const displayLabel = props.resolveInvocationLabel?.(invocation) ?? t('workflows.contentUnavailable');
         return (
-            <Pressable
+            <HappierPressable
                 testID={`${testIDPrefix}-row-${invocation.id}`}
                 accessibilityRole="button"
-                accessibilityState={{ selected }}
+                current={selected ? 'page' : undefined}
                 accessibilityLabel={t('workflows.a11y.flowNode', {
                     node: attempt.retried ? `${displayLabel} · ${attempt.label}` : displayLabel,
                     state: stateLabel,
                 })}
                 onPress={(event) => props.onSelectInvocation(invocation.id, event)}
-                style={[styles.row, selected ? styles.rowSelected : null]}
+                style={(state) => [styles.row, selected ? styles.rowSelected : null, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
             >
                 <View
                     accessibilityElementsHidden
@@ -189,9 +194,9 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                         blockKind={blockKind}
                     />
                 </View>
-            </Pressable>
+            </HappierPressable>
         );
-    }, [props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationLabel, props.selectedInvocationId, testIDPrefix]);
+    }, [props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationLabel, props.selectedInvocationId, testIDPrefix, theme.colors.border.focus]);
 
     const pagingFooter = props.onLoadMore === undefined ? null : (
         <View style={styles.footer}>
@@ -203,31 +208,30 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                     style={styles.footerError}
                 >
                     <Text style={styles.footerNote}>{t('workflows.loadFailedBody')}</Text>
-                    <Pressable
+                    <HappierPressable
                         testID={`${testIDPrefix}-load-more-retry`}
                         accessibilityRole="button"
                         accessibilityLabel={t('workflows.retry')}
-                        accessibilityState={{ disabled: props.loadingMore === true }}
                         disabled={props.loadingMore === true}
                         onPress={props.onLoadMore}
-                        style={styles.footerTarget}
+                        style={(state) => [styles.footerTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={styles.footerAction}>{t('workflows.retry')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 </View>
             ) : props.loadingMore === true ? (
                 <Text testID={`${testIDPrefix}-loading-more`} style={styles.footerNote}>
                     {t('common.loading')}
                 </Text>
             ) : (
-                <Pressable
+                <HappierPressable
                     testID={`${testIDPrefix}-load-more`}
                     accessibilityRole="button"
                     onPress={props.onLoadMore}
-                    style={styles.footerTarget}
+                    style={(state) => [styles.footerTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={styles.footerAction}>{t('workflows.run.loadMore')}</Text>
-                </Pressable>
+                </HappierPressable>
             )}
         </View>
     );

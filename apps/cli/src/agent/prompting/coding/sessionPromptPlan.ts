@@ -1,4 +1,5 @@
-import { AgentSessionStartupInstructionsV1Schema, type AgentSessionStartupInstructionsV1, type SessionRolePromptContextV1 } from '@happier-dev/protocol';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import type { AgentSessionStartupInstructionsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { HostSessionRuntimeRunOptions } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { DaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonTurnContributionsBridge';

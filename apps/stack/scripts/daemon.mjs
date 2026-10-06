@@ -635,8 +635,8 @@ export function resolveStackDaemonStartVerifyTimeoutMs(env = process.env) {
   );
 }
 
-export function shouldContinueAttendedDaemonStartVerification({ isTui, state } = {}) {
-  return isTui === true && ['running', 'starting', 'unreachable'].includes(state?.status);
+export function shouldContinueDaemonStartVerification({ state, startWrapperAlive = false } = {}) {
+  return startWrapperAlive || ['running', 'starting', 'unreachable'].includes(state?.status);
 }
 
 export function resolveAttendedStartupTimeoutMs({ isTui, timeoutMs } = {}) {
@@ -2230,9 +2230,9 @@ export async function startLocalDaemonWithAuth({
   const startVerifyTimeoutMs = resolveStackDaemonStartVerifyTimeoutMs(baseEnv);
   const startVerifyPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS, 125);
   const startVerifyStableMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS, 750);
-  // The Stack lifecycle owns this start attempt's readiness deadline. The nested `happier daemon
-  // start` command also waits for its detached child, so do not let an inherited CLI timeout
-  // classify a still-starting daemon as failed before this owner finishes verification.
+  // Share Stack's readiness checkpoint with the nested foreground wait. The CLI can return
+  // "starting" while its detached daemon continues; a checkpoint alone is not terminal evidence
+  // while that daemon or its owned start wrapper remains live.
   daemonEnv.HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS = String(Math.max(1, startVerifyTimeoutMs));
   const daemonLifecycleLockTimeoutMs = resolveAttendedStartupTimeoutMs({
     isTui,
@@ -2326,10 +2326,20 @@ export async function startLocalDaemonWithAuth({
     }
   }
 
-  const waitForRunningStable = async ({ shouldStop = null, shouldFail = null } = {}) => {
+  const waitForRunningStable = async ({
+    shouldStop = () => isShuttingDown?.() === true,
+    shouldFail = null,
+    isStartWrapperAlive = null,
+    onFailure = null,
+  } = {}) => {
+    const stopIfCancelled = () => {
+      if (typeof shouldStop !== 'function' || !shouldStop()) return false;
+      onFailure?.('Failed to start daemon: startup was cancelled before readiness.');
+      return true;
+    };
     let checkpointDeadline = Date.now() + startVerifyTimeoutMs;
     while (true) {
-      if (typeof shouldStop === 'function' && shouldStop()) return false;
+      if (stopIfCancelled()) return false;
       const stateNow = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
       if (stateNow.status === 'running') {
         if (startVerifyStableMs <= 0) return true;
@@ -2339,13 +2349,19 @@ export async function startLocalDaemonWithAuth({
       }
       if (typeof shouldFail === 'function' && shouldFail(stateNow)) return false;
       if (Date.now() >= checkpointDeadline) {
-        if (!shouldContinueAttendedDaemonStartVerification({ isTui, state: stateNow })) return false;
+        if (!shouldContinueDaemonStartVerification({
+          state: stateNow,
+          startWrapperAlive: isStartWrapperAlive?.() === true,
+        })) {
+          onFailure?.(`Failed to start daemon: readiness deadline reached after ${startVerifyTimeoutMs}ms without a live startup (state=${stateNow.status}).`);
+          return false;
+        }
         console.warn(
-          `[local] daemon is still starting (pid=${stateNow.pid ?? 'unknown'}); continuing to wait because the TUI is attended...`,
+          `[local] daemon is still starting (pid=${stateNow.pid ?? 'unknown'}); continuing to wait for the live startup...`,
         );
         checkpointDeadline = Date.now() + startVerifyTimeoutMs;
       }
-      if (typeof shouldStop === 'function' && shouldStop()) return false;
+      if (stopIfCancelled()) return false;
       await delay(startVerifyPollMs);
     }
   };
@@ -2613,6 +2629,7 @@ export async function startLocalDaemonWithAuth({
 
   const runStartOnce = async () => {
     let resolvedExitCode = null;
+    let failureReason = null;
     let startOutput = '';
     const startOutputTeePath = join(cliHomeDir, 'logs', `${Date.now()}-pid-${process.pid}-daemon-start-attempt.log`);
     await mkdir(dirname(startOutputTeePath), { recursive: true }).catch(() => {});
@@ -2682,13 +2699,19 @@ export async function startLocalDaemonWithAuth({
     const runningStable = await waitForRunningStable({
       shouldStop: () => isShuttingDown?.() === true || excerptIndicatesInstalledServiceConflict(startOutput),
       shouldFail: (state) => startWrapperFailed() && state.status === 'stopped',
+      isStartWrapperAlive: () => resolvedExitCode === null && proc.exitCode === null && proc.signalCode === null,
+      onFailure: (reason) => {
+        // Service conflicts already carry actionable ownership guidance in the
+        // start output; cancellation must not replace that originating reason.
+        if (!excerptIndicatesInstalledServiceConflict(startOutput)) failureReason = reason;
+      },
     });
     if (runningStable) {
       return { ok: true, exitCode: resolvedExitCode, excerpt: null, logPath: null };
     }
 
-    // The health deadline classifies this attempt as failed, but the owned start wrapper is still
-    // the attempt's lifecycle boundary. Cancel and join it before releasing the Stack lifecycle
+    // A readiness checkpoint alone cannot terminate a live startup. On terminal failure or
+    // cancellation, cancel and join the owned start wrapper before releasing the Stack lifecycle
     // lock; otherwise a later reconciliation can launch a second wrapper while this one is still
     // retrying its internal daemon lifecycle path.
     if (resolvedExitCode === null && proc.exitCode === null && proc.signalCode === null) {
@@ -2701,6 +2724,7 @@ export async function startLocalDaemonWithAuth({
     const teeExcerpt = existsSync(startOutputTeePath) ? await readLastLines(startOutputTeePath, 120).catch(() => null) : null;
     return {
       ok: false,
+      reason: failureReason,
       exitCode: resolvedExitCode,
       excerpt,
       logPath,
@@ -2712,6 +2736,7 @@ export async function startLocalDaemonWithAuth({
 
   const first = await startOnce();
   if (!first.ok) {
+    if (first.reason) console.error(`[local] ${first.reason}`);
     if (first.excerpt) {
       console.error(`[local] daemon failed to start; last daemon log (${first.logPath}):\n${first.excerpt}`);
     } else {
@@ -2730,7 +2755,7 @@ export async function startLocalDaemonWithAuth({
         }
         console.log('[daemon] daemon start failed before the relay came up; keeping TUI running.');
       }
-      return;
+      return first;
     }
 
     if (excerptIndicatesMissingAuth(first.excerpt)) {
@@ -2853,7 +2878,7 @@ export async function startLocalDaemonWithAuth({
         );
       }
 
-      throw new Error('Failed to start daemon');
+      throw new Error(first.reason ?? 'Failed to start daemon');
     } else {
       const copyHint = authCopyFromSeedHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity, env: baseEnv });
       console.error(
@@ -2863,7 +2888,7 @@ export async function startLocalDaemonWithAuth({
           (copyHint ? `- ${copyHint}\n` : '') +
           `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
       );
-      throw new Error('Failed to start daemon');
+      throw new Error(first.reason ?? 'Failed to start daemon');
     }
   }
 

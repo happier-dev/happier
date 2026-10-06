@@ -1,25 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonBrowserRecordingCancelRequestV1Schema,
-    DaemonBrowserRecordingCancelResponseV1Schema,
-    DaemonBrowserRecordingCleanupRequestV1Schema,
-    DaemonBrowserRecordingCleanupResponseV1Schema,
-    DaemonBrowserRecordingListRequestV1Schema,
-    DaemonBrowserRecordingListResponseV1Schema,
-    DaemonBrowserRecordingStartRequestV1Schema,
-    DaemonBrowserRecordingStartResponseV1Schema,
-    DaemonBrowserRecordingStatusRequestV1Schema,
-    DaemonBrowserRecordingStatusResponseV1Schema,
-    DaemonBrowserRecordingStopRequestV1Schema,
-    DaemonBrowserRecordingStopResponseV1Schema,
-    type DaemonBrowserRecordingCancelResponseV1,
-    type DaemonBrowserRecordingCleanupResponseV1,
-    type DaemonBrowserRecordingListResponseV1,
-    type DaemonBrowserRecordingStartResponseV1,
-    type DaemonBrowserRecordingStatusResponseV1,
-    type DaemonBrowserRecordingStopResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonBrowserRecordingCancelRequestV1Schema, DaemonBrowserRecordingCancelResponseV1Schema, DaemonBrowserRecordingCleanupRequestV1Schema, DaemonBrowserRecordingCleanupResponseV1Schema, DaemonBrowserRecordingListRequestV1Schema, DaemonBrowserRecordingListResponseV1Schema, DaemonBrowserRecordingStartRequestV1Schema, DaemonBrowserRecordingStartResponseV1Schema, DaemonBrowserRecordingStatusRequestV1Schema, DaemonBrowserRecordingStatusResponseV1Schema, DaemonBrowserRecordingStopRequestV1Schema, DaemonBrowserRecordingStopResponseV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import type { DaemonBrowserRecordingCancelResponseV1, DaemonBrowserRecordingCleanupResponseV1, DaemonBrowserRecordingListResponseV1, DaemonBrowserRecordingStartResponseV1, DaemonBrowserRecordingStatusResponseV1, DaemonBrowserRecordingStopResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 

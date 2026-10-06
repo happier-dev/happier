@@ -3,6 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { classifyCodexConnectedServiceAuthFailure } from './failure.js';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
+  it.each([
+    "model 'gpt-6.1-sol' is not enabled in rustponsesapi",
+    'The gpt-6.1-sol model is not available for your account.',
+  ])('classifies account model eligibility errors only on provider error paths: %s', (message) => {
+    const input = {
+      error: new Error(message),
+      serviceId: 'openai-codex',
+      profileId: 'account',
+      groupId: 'happier',
+    };
+    expect(classifyCodexConnectedServiceAuthFailure({ ...input, providerErrorPath: true })).toMatchObject({
+      kind: 'plan',
+      limitCategory: 'plan_invalid',
+      quotaScope: 'model',
+      providerLimitId: 'gpt-6.1-sol',
+    });
+    expect(classifyCodexConnectedServiceAuthFailure({ ...input, providerErrorPath: false })).toBeNull();
+  });
+
   it('classifies ChatGPT account model incompatibility as plan-invalid recovery evidence', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,

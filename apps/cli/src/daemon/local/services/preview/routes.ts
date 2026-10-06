@@ -21,7 +21,8 @@ import {
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { buildLocalServiceEndpointUrl } from '../inventory/endpoint';
-import { localServicePreviewDirectBindingV1, type LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
 
 export type LocalServicePreviewLifecycleResult<TResponse> =

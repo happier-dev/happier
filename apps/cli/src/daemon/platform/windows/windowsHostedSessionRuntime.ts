@@ -1,9 +1,6 @@
 import type { Metadata } from '@/api/types';
 import { randomBytes } from 'node:crypto';
-import {
-  DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
-  normalizeWindowsTerminalWindowName as normalizeProtocolWindowsTerminalWindowName,
-} from '@happier-dev/protocol';
+import { DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME, normalizeWindowsTerminalWindowName as normalizeProtocolWindowsTerminalWindowName } from '@happier-dev/protocol/sessions/metadata/windowsTerminalWindowName';
 
 type WindowsHostedActualMode = 'windows_terminal' | 'windows_console';
 type WindowsHostedRequestedMode = 'windows_terminal' | 'console';

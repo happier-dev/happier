@@ -1,4 +1,4 @@
-import { VOICE_MODEL_PACK_CONTRIBUTION_MAX_FILES_V1 } from '@happier-dev/protocol';
+import { VOICE_MODEL_PACK_CONTRIBUTION_MAX_FILES_V1 } from '@happier-dev/protocol/voice/modelPacks/contributionV1';
 
 export type VoiceModelPackResourcePolicyV1 = Readonly<{
   maxFiles: number;

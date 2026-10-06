@@ -2,6 +2,7 @@ import { forwardRef, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierStyleProp } from '../portableTypes.js';
+import { HappierPressable, type HappierPressableProps } from './Pressable.js';
 
 /**
  * The ONE drag grip: the intentional handle a list shows when dragging must not compete with scroll,
@@ -26,11 +27,19 @@ export type HappierDragGripProps = Readonly<{
   active?: boolean;
   /** Pointer chrome may stay quiet until its host is hovered or focused. Touch and active grips stay visible. */
   revealed?: boolean;
-  /** Spoken name ("Move Review #2481"). */
-  accessibilityLabel: string;
+  /**
+   * Interaction state of the pressable that owns this grip (the shared grip trigger). Keyboard focus
+   * draws the focus ring (focus-visible only, never after a pointer press); hover and press tint it.
+   */
+  interaction?: Readonly<{ focused?: boolean; hovered?: boolean; pressed?: boolean }>;
+  /**
+   * Spoken name ("Move Review #2481") when the grip itself is the control. Omit it inside a pressable
+   * that already owns the name, so the grip is not announced twice.
+   */
+  accessibilityLabel?: string;
   /** Minimum interactive size of the platform; the hit area grows to it around the glyph. */
   minimumTargetSize?: number;
-  colors: Readonly<{ glyph: string; activeGlyph: string; activeFill: string }>;
+  colors: Readonly<{ glyph: string; activeGlyph: string; activeFill: string; hoverFill?: string; focusRing?: string }>;
   renderGlyph: (color: string, size: number) => ReactNode;
   testID?: string;
   style?: HappierStyleProp;
@@ -40,12 +49,14 @@ export const HappierDragGrip = forwardRef<View, HappierDragGripProps>(function H
   const metrics = GRIP_METRICS[props.density ?? 'pointer'];
   const slop = Math.max(0, Math.ceil(((props.minimumTargetSize ?? metrics.box) - metrics.box) / 2));
   const active = props.active === true;
-  const visible = props.revealed !== false || active || props.density === 'touch';
+  const focused = props.interaction?.focused === true;
+  const lit = props.interaction?.hovered === true || props.interaction?.pressed === true;
+  const visible = props.revealed !== false || active || focused || props.density === 'touch';
   return (
     <View
       ref={ref}
       testID={props.testID}
-      accessible
+      accessible={props.accessibilityLabel !== undefined}
       accessibilityLabel={props.accessibilityLabel}
       hitSlop={slop > 0 ? { top: slop, bottom: slop, left: slop, right: slop } : undefined}
       style={[
@@ -58,7 +69,10 @@ export const HappierDragGrip = forwardRef<View, HappierDragGripProps>(function H
           flexShrink: 0,
           // Only the chrome fades: the host's focus/gesture target and this grip's geometry remain mounted.
           opacity: visible ? 1 : 0,
-          backgroundColor: active ? props.colors.activeFill : 'transparent',
+          backgroundColor: active ? props.colors.activeFill : lit ? props.colors.hoverFill ?? 'transparent' : 'transparent',
+          // The ring sits on the grip's own corner, so it is concentric with the glyph's box.
+          borderWidth: 1,
+          borderColor: focused && props.colors.focusRing ? props.colors.focusRing : 'transparent',
         },
         props.style,
       ] as HappierStyleProp}
@@ -67,3 +81,23 @@ export const HappierDragGrip = forwardRef<View, HappierDragGripProps>(function H
     </View>
   );
 });
+
+/** The interactive grip, shared by core, native plugins and hosted sources. */
+export type HappierDragGripTriggerProps = Omit<HappierDragGripProps, 'interaction'> & Pick<HappierPressableProps,
+  'onPress' | 'onKeyDown' | 'onFocusChange' | 'accessibilityHint' | 'accessibilityActions' | 'onAccessibilityAction'
+  | 'controlRef' | 'expanded' | 'disabled'>;
+
+export function HappierDragGripTrigger(props: HappierDragGripTriggerProps) {
+  return <HappierPressable
+    testID={props.testID} accessibilityLabel={props.accessibilityLabel} accessibilityHint={props.accessibilityHint}
+    accessibilityActions={props.accessibilityActions} onAccessibilityAction={props.onAccessibilityAction}
+    controlRef={props.controlRef} expanded={props.expanded} disabled={props.disabled} hasPopup="menu"
+    onPress={props.onPress} onKeyDown={props.onKeyDown} onFocusChange={props.onFocusChange}
+    style={({ pressed }) => [props.style, {
+      borderRadius: GRIP_METRICS[props.density ?? 'pointer'].radius,
+      backgroundColor: pressed && !props.active ? props.colors.hoverFill ?? 'transparent' : 'transparent',
+    }]}
+  >{state => <HappierDragGrip active={props.active} revealed={props.revealed} density={props.density}
+    interaction={{ focused: state.focused, hovered: state.hovered }} colors={props.colors}
+    minimumTargetSize={props.minimumTargetSize} renderGlyph={props.renderGlyph} />}</HappierPressable>;
+}

@@ -27,7 +27,7 @@ export type SubagentRegistryActionResultById = {
         id: string;
         parentSessionId: string;
         origin: 'happier' | 'agent' | 'plugin';
-        kind: 'execution-run' | 'native' | 'custom';
+        kind: 'custom' | 'execution-run' | 'native';
         status: 'pending' | 'running' | 'completed' | 'failed' | 'aborted';
         createdAt: number;
         agentRef?: {
@@ -85,7 +85,7 @@ export type SubagentRegistryActionResultById = {
         id: string;
         parentSessionId: string;
         origin: 'happier' | 'agent' | 'plugin';
-        kind: 'execution-run' | 'native' | 'custom';
+        kind: 'custom' | 'execution-run' | 'native';
         status: 'pending' | 'running' | 'completed' | 'failed' | 'aborted';
         createdAt: number;
         agentRef?: {
@@ -146,7 +146,7 @@ export type SubagentRegistryActionResultById = {
             id: string;
             parentSessionId: string;
             origin: 'happier' | 'agent' | 'plugin';
-            kind: 'execution-run' | 'native' | 'custom';
+            kind: 'custom' | 'execution-run' | 'native';
             status: 'pending' | 'running' | 'completed' | 'failed' | 'aborted';
             createdAt: number;
             agentRef?: {

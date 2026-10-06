@@ -1,6 +1,6 @@
+import { ProviderUsageGaugeSettingsGroup } from '@/components/settings/connectedServices/ProviderUsageGaugeSettingsGroup';
 import * as React from 'react';
 
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -19,10 +19,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
     const usageLimitRecoveryEnabled = useFeatureEnabled('sessions.usageLimitRecovery');
     const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const [usageLimitRecoverySettings, setUsageLimitRecoverySettings] = useSettingMutable('usageLimitRecoverySettingsV1');
-    const [sessionProviderUsageGaugeMode, setSessionProviderUsageGaugeMode] = useSettingMutable('sessionProviderUsageGaugeMode');
-    const [sessionProviderUsageGaugeWindowMode, setSessionProviderUsageGaugeWindowMode] = useSettingMutable('sessionProviderUsageGaugeWindowMode');
-    const [sessionUsageGaugeLabels, setSessionUsageGaugeLabels] = useSettingMutable('sessionUsageGaugeLabels');
-    const [openProviderUsageGaugeWindowMenu, setOpenProviderUsageGaugeWindowMenu] = React.useState(false);
     const usageLimitRecoveryMode = usageLimitRecoverySettings?.mode === 'auto_wait' ? 'auto_wait' : 'ask';
     const usageLimitRecoveryAutoWait = usageLimitRecoveryMode === 'auto_wait';
     const usageLimitRecoveryResumePromptMode =
@@ -61,23 +57,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
             customResumePrompt: draft,
         });
     }, [writeUsageLimitRecoverySettings, usageLimitRecoveryMode, usageLimitRecoveryResumePromptMode]);
-    const providerUsageGaugeVisible = sessionProviderUsageGaugeMode !== 'hidden';
-    const providerUsageGaugeWindowMode =
-        sessionProviderUsageGaugeWindowMode === 'daily'
-        || sessionProviderUsageGaugeWindowMode === 'weekly'
-        || sessionProviderUsageGaugeWindowMode === 'session'
-        || sessionProviderUsageGaugeWindowMode === 'primary'
-        || sessionProviderUsageGaugeWindowMode === 'secondary'
-            ? sessionProviderUsageGaugeWindowMode
-            : 'most_constrained';
-    const providerUsageGaugeWindowOptions = [
-        { id: 'most_constrained', title: t('settingsSession.providerUsageGauge.windowMostConstrainedTitle'), subtitle: t('settingsSession.providerUsageGauge.windowMostConstrainedSubtitle') },
-        { id: 'daily', title: t('settingsSession.providerUsageGauge.windowDailyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowDailySubtitle') },
-        { id: 'weekly', title: t('settingsSession.providerUsageGauge.windowWeeklyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowWeeklySubtitle') },
-        { id: 'session', title: t('settingsSession.providerUsageGauge.windowSessionTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSessionSubtitle') },
-        { id: 'primary', title: t('settingsSession.providerUsageGauge.windowPrimaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowPrimarySubtitle') },
-        { id: 'secondary', title: t('settingsSession.providerUsageGauge.windowSecondaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSecondarySubtitle') },
-    ] as const;
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
@@ -137,52 +116,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                     ) : null}
                 </ItemGroup>
             ) : null}
-            {connectedServiceQuotasEnabled ? (
-                <ItemGroup title={t('settingsSession.providerUsageGauge.title')} description={t('settingsSession.providerUsageGauge.footer')}>
-                    <SettingRow
-                        setting={SESSION_PROVIDER_LIMITS_SETTINGS.settings.gaugeVisible}
-                        testID="settings-session-providerUsageGauge-visibility"
-                        subtitle={providerUsageGaugeVisible ? t('settingsSession.providerUsageGauge.visibilityEnabledSubtitle') : t('settingsSession.providerUsageGauge.visibilityHiddenSubtitle')}
-                        rightElement={<Switch testID="settings-session-providerUsageGauge-visibility-toggle" value={providerUsageGaugeVisible} onValueChange={(next) => setSessionProviderUsageGaugeMode(next ? 'auto' : 'hidden')} />}
-                        showChevron={false}
-                        onPress={() => setSessionProviderUsageGaugeMode(providerUsageGaugeVisible ? 'hidden' : 'auto')}
-                    />
-                    <SettingAnchor setting={SESSION_PROVIDER_LIMITS_SETTINGS.settings.gaugeWindow}>
-                        <DropdownMenu
-                            open={openProviderUsageGaugeWindowMenu}
-                            onOpenChange={setOpenProviderUsageGaugeWindowMenu}
-                            variant="selectable"
-                            search={false}
-                            selectedId={providerUsageGaugeWindowMode}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            popoverBoundaryRef={popoverBoundaryRef}
-                            itemTrigger={{
-                                title: t(SESSION_PROVIDER_LIMITS_SETTINGS.settings.gaugeWindow.titleKey),
-                                subtitle: providerUsageGaugeWindowOptions.find((option) => option.id === providerUsageGaugeWindowMode)?.subtitle,
-                                showSelectedSubtitle: false,
-                                itemProps: { testID: 'settings-session-providerUsageGauge-window-trigger' },
-                            }}
-                            items={providerUsageGaugeWindowOptions}
-                            onSelect={(id) => {
-                                if (!providerUsageGaugeWindowOptions.some((option) => option.id === id)) return;
-                                setSessionProviderUsageGaugeWindowMode(id as typeof providerUsageGaugeWindowOptions[number]['id']);
-                                setOpenProviderUsageGaugeWindowMenu(false);
-                            }}
-                        />
-                    </SettingAnchor>
-                    <SettingRow
-                        setting={SESSION_PROVIDER_LIMITS_SETTINGS.settings.gaugeLabels}
-                        testID="settings-session-providerUsageGauge-labels"
-                        subtitle={t('settingsSession.providerUsageGauge.labelsSubtitle')}
-                        rightElement={<Switch testID="settings-session-providerUsageGauge-labels-toggle" value={sessionUsageGaugeLabels === true} onValueChange={setSessionUsageGaugeLabels} />}
-                        showChevron={false}
-                        onPress={() => setSessionUsageGaugeLabels(sessionUsageGaugeLabels !== true)}
-                    />
-                </ItemGroup>
-            ) : null}
+            <ProviderUsageGaugeSettingsGroup />
             {!usageLimitRecoveryEnabled && !connectedServiceQuotasEnabled ? (
                 <ItemGroup>
                     <Item

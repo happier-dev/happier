@@ -1,11 +1,5 @@
-import {
-    ALWAYS_STRIP_FIELD_NAMES,
-    classifyBrowserDiagnosticFieldForDestination,
-    resolveRedactionLevel,
-    type BrowserDiagnosticEgressDestination,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticsSnapshotV1,
-} from '@happier-dev/protocol';
+import type { BrowserDiagnosticEgressDestination, BrowserDiagnosticEventV1, BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol';
+import { ALWAYS_STRIP_FIELD_NAMES, classifyBrowserDiagnosticFieldForDestination, resolveRedactionLevel } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 
 /**
  * Viewer-identity-gated egress fidelity for the cross-device browser-diagnostics snapshot RPC (X1).

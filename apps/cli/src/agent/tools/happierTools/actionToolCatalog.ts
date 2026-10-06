@@ -1,16 +1,11 @@
-import {
-  isActionDirectToolExposedOn,
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-  listActionSpecs,
-  parseQualifiedPluginContributionKey,
-  resolveActionSurfaceAvailability,
-  type ActionId,
-  type ActionSurfaceAvailability,
-  type ActionSurfaces,
-  type ActionsSettingsV1,
-} from '@happier-dev/protocol';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/actions';
+import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionId, ActionSurfaceAvailability, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type {

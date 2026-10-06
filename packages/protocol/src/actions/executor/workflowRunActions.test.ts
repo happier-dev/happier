@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '../../account/encryptionKeyFingerprintV1.js';
+import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
+import { resolveWorkflowRunDataKeyV1 } from '../../workflows/workflowRunDataKeyV1.js';
 
 import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1.js';
 import { materializeWorkflowAcceptedSnapshotV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -8,7 +13,7 @@ import { WorkflowRunSummaryV1Schema } from '../../workflows/workflowProgressV1.j
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './workflowRunActions.js';
-import { WorkflowRunRecipientCensusResponseV1Schema } from '../../workflows/workflowRunKeyV1.js';
+import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopesV1Schema } from '../../workflows/workflowRunKeyV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinitionV1.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
@@ -66,6 +71,113 @@ function ownerDeps(storage: WorkflowAccountRunActionDeps['storage']): WorkflowAc
 }
 
 describe('shared Account workflow run owner', () => {
+  it('admits the reviewed inline draft with authorized Artifact lineage and rejoins its frozen Team choice', async () => {
+    const reviewed = validateWorkflowDefinition({ ...definition, blocks: ['Reviewed unsaved work'] }).normalizedDefinition!;
+    const metadata = { title: 'Reviewed title' };
+    let committed: ReturnType<typeof runSnapshot> | undefined;
+    let admitted: Readonly<Record<string, unknown>> | undefined;
+    let sourceAvailable = true;
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') {
+        if (committed) return committed;
+        throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      }
+      if (operation.operation === 'admit') {
+        admitted = operation;
+        committed = { ...runSnapshot(), acceptedEnvelope: String(operation.acceptedEnvelope),
+          run: { ...runSnapshot().run, sourceArtifactId: 'def-1', visibleTeamId: 'team-a' },
+          keyCensus: { ...runSnapshot().keyCensus, visibleTeamId: 'team-a' } };
+        return { kind: 'created', run: committed.run };
+      }
+      if (operation.operation === 'invocations.list') return { invocations: [] };
+      throw new Error('unexpected_storage_operation');
+    } }), definitions: { get: async ({ definitionId }) => {
+      expect(definitionId).toBe('def-1');
+      if (!sourceAvailable) throw new Error('must_not_read_mutable_source_on_rejoin');
+      return { definitionId, revision: { headerVersion: 2, bodyVersion: 2 }, definition, metadata: { title: 'Old saved content' } };
+    } }, prepareWorkspace: async () => ({ ok: true, workspaceTarget: {
+      project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+    resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, metadata,
+      source: { kind: 'inline', definition: reviewed, sourceArtifactId: 'def-1', visibleTeamId: 'team-a' } });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
+    expect(admitted).toMatchObject({ sourceArtifactId: 'def-1', visibleTeamId: 'team-a', recipientKeyEnvelopes: [] });
+    const opened = await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context });
+    expect(opened).toMatchObject({ definition: reviewed, authoredDefinition: reviewed,
+      acceptedContext: { metadata, source: { kind: 'inline', sourceArtifactId: 'def-1' } } });
+    sourceAvailable = false;
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'existing' });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: { ...input,
+      source: { kind: 'inline', definition: reviewed, sourceArtifactId: 'different-source', visibleTeamId: 'team-a' } }, context }))
+      .rejects.toMatchObject({ code: 'currentness_conflict' });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: { ...input,
+      source: { kind: 'inline', definition: reviewed, sourceArtifactId: 'def-1', visibleTeamId: 'team-b' } }, context }))
+      .rejects.toMatchObject({ code: 'currentness_conflict' });
+  });
+
+  it('refuses an inaccessible inline Artifact binding before preparing a workspace or admitting a Run', async () => {
+    const operations: unknown[] = [];
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      operations.push(operation.operation);
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      throw new Error('must_not_admit_inaccessible_binding');
+    } }), definitions: { get: async () => { throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' }); } },
+      prepareWorkspace: async () => { throw new Error('must_not_prepare_inaccessible_binding'); },
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: { kind: 'inline', definition, sourceArtifactId: 'def-1', visibleTeamId: 'team-a' } });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context: { callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } }))
+      .rejects.toMatchObject({ code: 'source_unavailable' });
+    expect(operations).not.toContain('admit');
+  });
+
+  it('uses the same bound inline grant audience for E2EE census, keys and accepted content', async () => {
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: randomBytes(32) } });
+    const encryption: AvailableAutomationAccountEncryptionV1 = { kind: 'available', material,
+      witness: { mode: 'e2ee', version: 1,
+        contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) } };
+    const census = { ...runSnapshot().keyCensus, encryptionMode: 'e2ee' as const,
+      ownerAccountCurrentness: encryption.witness, visibleTeamId: 'team-a' };
+    const reviewed = validateWorkflowDefinition({ ...definition, blocks: ['Encrypted reviewed draft'] }).normalizedDefinition!;
+    let admitted: Readonly<Record<string, unknown>> | undefined;
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      if (operation.operation === 'run-key.census') {
+        expect(operation).toMatchObject({ sourceArtifactId: 'def-1', visibleTeamId: 'team-a' });
+        return census;
+      }
+      if (operation.operation === 'admit') {
+        admitted = operation;
+        return { kind: 'created', run: { ...runSnapshot().run, sourceArtifactId: 'def-1', visibleTeamId: 'team-a' } };
+      }
+      throw new Error('unexpected_storage_operation');
+    } }), resolveEncryption: async () => encryption, randomBytes,
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: {
+        project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    await owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: { kind: 'inline', definition: reviewed, sourceArtifactId: 'def-1', visibleTeamId: 'team-a' } }),
+      context: { callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+        project: { machineId: 'machine-a', directory: '/repo' } } } });
+    expect(admitted).toMatchObject({ sourceArtifactId: 'def-1', visibleTeamId: 'team-a' });
+    const envelopes = WorkflowRunRecipientKeyEnvelopesV1Schema.parse(admitted?.recipientKeyEnvelopes);
+    const ownerEnvelope = envelopes.find(row => row.recipientAccountId === 'account-1')!.encryptedDataKey;
+    const key = resolveWorkflowRunDataKeyV1({ encryption,
+      census: { ...census, dataEncryptionKey: ownerEnvelope, callerDataEncryptionKey: ownerEnvelope } });
+    if (key.kind !== 'available' || key.encryption.runCrypto.mode !== 'e2ee') throw new Error('run_key_fixture_failed');
+    expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'e2ee', runDataKey: key.encryption.runCrypto.runDataKey,
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(String(admitted?.acceptedEnvelope)) })).toMatchObject({ kind: 'available', content: {
+        source: { kind: 'inline', sourceArtifactId: 'def-1' }, authoredDefinition: reviewed,
+      } });
+  });
   it('refuses invalid typed Workflow input before workspace preparation or Run admission', async () => {
     const inputType = { pluginId: 'com.acme.inputs', localId: 'repository' };
     const prepareWorkspace = vi.fn(async () => ({ ok: true as const, workspaceTarget: {
@@ -331,10 +443,10 @@ describe('shared Account workflow run owner', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it.each(['saved', 'catalog', 'plugin', 'automation'] as const)('repeats through inline start from the authenticated snapshot and retains %s lineage', async kind => {
+  it.each(['inline', 'saved', 'catalog', 'plugin', 'automation'] as const)('repeats through inline start from the authenticated snapshot and retains %s lineage', async kind => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const savedBy = { kind: 'person' as const, accountId: 'editor' };
-    const source: WorkflowAcceptedSnapshotV1['source'] = kind === 'catalog' || kind === 'plugin'
+    const source = kind === 'inline' ? { kind, sourceArtifactId: 'def-1' } : kind === 'catalog' || kind === 'plugin'
       ? { kind: 'catalog', ref: kind === 'plugin' ? 'plugin:com.acme.workflows/review' : 'builtin:child', version: kind === 'plugin' ? '1.2.3' : 7 }
       : { kind, ...(kind === 'automation' ? { automationId: 'automation-1' } : {}),
         definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy };
@@ -345,9 +457,11 @@ describe('shared Account workflow run owner', () => {
       sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: originalAccepted }),
     ) };
+    if (kind === 'inline') original.keyCensus.visibleTeamId = 'team-a';
     const newRunId = '22222222-2222-4222-8222-222222222222';
     let committed: ReturnType<typeof runSnapshot> | undefined;
     let admittedSourceArtifactId: unknown;
+    let admittedVisibleTeamId: unknown;
     const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
       if (operation.operation === 'get') {
         if (operation.runId === runId) return original;
@@ -356,6 +470,7 @@ describe('shared Account workflow run owner', () => {
       }
       if (operation.operation === 'admit') {
         admittedSourceArtifactId = operation.sourceArtifactId;
+        admittedVisibleTeamId = operation.visibleTeamId;
         committed = { ...runSnapshot(), run: { ...runSnapshot().run, id: newRunId },
           keyCensus: { ...runSnapshot().keyCensus, runId: newRunId }, acceptedEnvelope: String(operation.acceptedEnvelope) };
         return { kind: 'created', run: committed.run };
@@ -378,6 +493,7 @@ describe('shared Account workflow run owner', () => {
     expect(opened).toMatchObject({ definition: originalAccepted.definition,
       acceptedContext: { source: originalAccepted.source, materializedLeaves: originalAccepted.materializedLeaves } });
     expect(admittedSourceArtifactId).toBe(kind === 'catalog' || kind === 'plugin' ? null : 'def-1');
+    if (kind === 'inline') expect(admittedVisibleTeamId).toBe('team-a');
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context: actionContext }))
       .resolves.toMatchObject({ admission: 'existing' });
   });
@@ -741,6 +857,8 @@ describe('shared Account workflow run owner', () => {
     if (sourceKind === 'saved') expect(opened).toMatchObject({ content: { source: {
       savedBy: { kind: 'agent', accountId: 'editor-account', sessionId: 'editor-session' },
     } } });
+    if (opened.kind === 'available') expect(opened.content.authoredDefinition)
+      .toEqual(validateWorkflowDefinition(authored).normalizedDefinition);
     await expect(owner.execute(args)).resolves.toMatchObject({ admission: 'existing' });
     expect(writes).toBe(1);
     expect(resolutions).toBe(1);

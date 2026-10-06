@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import * as fileSystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +12,14 @@ import { pageClaudeExternalSessionTranscript } from './transcript.js';
 import { createClaudeExternalSessionsContribution } from './contribution.js';
 import { RawJSONLinesSchema } from '../../../transcripts/rawJsonLines.js';
 
+// Filesystem is a genuine system boundary; retain its actual reads and handles.
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, open: vi.fn(actual.open) };
+});
+
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { vi.restoreAllMocks(); vi.mocked(fileSystem.open).mockReset(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 async function corpus() {
     const configDir = await mkdtemp(join(tmpdir(), 'claude-content-'));
@@ -45,6 +52,83 @@ async function corpus() {
 }
 
 describe('Claude candidate conversation search', () => {
+    it('scans a long single-file conversation within the host budget without rereading a chunk for every row', async () => {
+        const params = await corpus();
+        const text = Array.from({ length: 1000 }, (_, index) => JSON.stringify({
+            type: 'user', uuid: `row-${index}`, parentUuid: index === 0 ? null : `row-${index - 1}`,
+            message: { role: 'user', content: index === 999 ? 'Last budget needle' : 'Ordinary body' },
+        })).join('\n') + '\n';
+        await writeFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'), text);
+        let nowMs = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        const actualFileSystem = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        vi.mocked(fileSystem.open).mockImplementation(async (...args) => {
+            const handle = await actualFileSystem.open(...args);
+            // Actual OS reads are retained. Charge file-open latency to the host
+            // clock, making repeated overlapping reads visible without sleeps.
+            nowMs += 100;
+            return handle;
+        });
+        const deadlineAtMs = nowMs + 15_000;
+        const result = await createClaudeExternalSessionsContribution({ env: {} }).listCandidates({
+            source: params.source, maxItems: 50, searchTarget: 'content', searchTerm: 'Last budget needle',
+            signal: new AbortController().signal, deadlineAtMs, maxSerializedBytes: 1024 * 1024,
+            ripgrep: params.ripgrep, exec: {} as ExecService,
+        });
+        expect(result).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+        expect(result.value.candidates[0]?.match).toMatchObject({ snippet: 'Last budget needle', messageIndex: 999 });
+        expect(result.value.contentCoverage).toBe('complete');
+        expect(nowMs).toBeLessThan(deadlineAtMs);
+    });
+    it('returns completed file hits and resumes before the host deadline on a large corpus', async () => {
+        const params = await corpus();
+        const directory = join(params.source.configDir, 'projects', 'project');
+        // Four real file scans already exceed the injected 15s host budget.
+        // Keep several continuation pages without making process startup the
+        // test's deciding boundary on a loaded shared executor.
+        const corpusSize = 4;
+        const text = Array.from({ length: 400 }, (_, index) => JSON.stringify({
+            type: 'user', uuid: `row-${index}`, parentUuid: index === 0 ? null : `row-${index - 1}`,
+            message: { role: 'user', content: `Budget needle ${index}` },
+        })).join('\n') + '\n';
+        await writeFile(join(directory, 'session.jsonl'), text);
+        await Promise.all(Array.from({ length: corpusSize - 1 }, (_, index) => writeFile(join(directory, `session-${index}.jsonl`), text)));
+        let nowMs = Date.now();
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        const run = params.ripgrep.run.getMockImplementation()!;
+        params.ripgrep.run.mockImplementation(async (request) => {
+            const result = await run(request);
+            // Clock is a genuine boundary: charge completed real-rg file work
+            // against the existing host budget, without wall-clock sleeps.
+            nowMs += request.paths.length * 8_000;
+            return result;
+        });
+        const contribution = createClaudeExternalSessionsContribution({ env: {} });
+        const ids = new Set<string>();
+        let cursor: string | undefined;
+        for (let pageIndex = 0; pageIndex < corpusSize; pageIndex += 1) {
+            const deadlineAtMs = nowMs + 15_000;
+            const result = await contribution.listCandidates({
+                source: params.source, maxItems: 50, searchTarget: 'content', searchTerm: 'Budget needle', cursor,
+                signal: new AbortController().signal, deadlineAtMs, maxSerializedBytes: 1024 * 1024,
+                ripgrep: params.ripgrep, exec: {} as ExecService,
+            });
+            expect(result).toMatchObject({ ok: true });
+            if (!result.ok) throw new Error(`${result.code}: ${result.message}`);
+            expect(nowMs).toBeLessThan(deadlineAtMs);
+            expect(result.value.candidates).toHaveLength(1);
+            for (const candidate of result.value.candidates) {
+                expect(candidate.match?.snippet).toContain('Budget needle');
+                expect(ids.has(candidate.remoteSessionId)).toBe(false);
+                ids.add(candidate.remoteSessionId);
+            }
+            expect(result.value.contentCoverage).toBe(pageIndex < corpusSize - 1 ? 'partial' : 'complete');
+            expect(Boolean(result.value.nextCursor)).toBe(pageIndex < corpusSize - 1);
+            cursor = result.value.nextCursor ?? undefined;
+        }
+        expect(ids.size).toBe(corpusSize);
+    });
     it('finds an unescaped Unicode query whose decoded lowercase differs from ripgrep folding', async () => {
         const params = await corpus();
         await writeFile(join(params.source.configDir, 'projects', 'project', 'session.jsonl'), JSON.stringify({

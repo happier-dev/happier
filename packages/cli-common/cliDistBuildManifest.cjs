@@ -409,6 +409,7 @@ function buildCliDistManifest(entrypoint, options = {}) {
     ...(inputFingerprint ? { inputFingerprint } : {}),
     ...(workspaceRuntimeIdentity ? { workspaceRuntimeIdentity } : {}),
     ...(workspaceRuntimePackages ? { workspaceRuntimePackages } : {}),
+    ...(options.stalePackages?.length ? { stalePackages: options.stalePackages } : {}),
   };
 }
 

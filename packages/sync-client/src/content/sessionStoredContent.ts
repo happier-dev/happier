@@ -1,8 +1,6 @@
-import {
-  StrictSessionStoredMessageContentEnvelopeSchema,
-  resolveStoredContentKindForSessionEncryptionMode,
-  type StrictJsonValue, type StrictSessionStoredMessageContentEnvelope,
-} from '@happier-dev/protocol';
+import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { resolveStoredContentKindForSessionEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
+import type { StrictJsonValue, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 
 export type SessionContentEncryption = Readonly<{
   encryptRaw(payload: unknown): Promise<string>;

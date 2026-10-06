@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowBlockKind, WorkflowLeafBlockSeed } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowStarterExampleV1 } from '@happier-dev/protocol';
@@ -9,6 +10,7 @@ import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import type { SelectionListOption, SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -21,7 +23,7 @@ import {
     useWorkflowReferenceLibrary,
     type WorkflowReferenceOption,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /** What the Add menu asks its list to insert: a structure or Agent step by kind, or a step-kind seed. */
 export type WorkflowAddBlockRequest =
@@ -74,7 +76,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                         open || props.revealed === true || state.hovered || state.focused
                             ? null
                             : workflowEditorStyles.inserterHidden,
-                        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                     ]}
                 >
                     <View style={workflowEditorStyles.inserterLine} />
@@ -109,7 +111,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                     style={(state) => [
                         workflowEditorStyles.actionTarget,
                         workflowEditorStyles.addTrigger,
-                        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                     ]}
                 >
                     <Icon name="plus" size={16} color={theme.colors.text.primary} />
@@ -123,7 +125,6 @@ export function WorkflowAddBlockMenu(props: Readonly<{
                     composerScope={props.composerScope}
                     anchorRef={anchorRef}
                     onAdd={props.onAdd}
-                    {...(props.onUseExample === undefined ? {} : { onExamples: () => { setOpen(false); setExamplesOpen(true); } })}
                     onClose={close}
                     {...(props.currentWorkflowRef === undefined ? {} : { currentWorkflowRef: props.currentWorkflowRef })}
                     {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -139,11 +140,11 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
     composerScope?: AuthoringComposerScope;
     anchorRef: React.RefObject<View | null>;
     onAdd: (request: WorkflowAddBlockRequest) => void;
-    onExamples?: () => void;
     onClose: () => void;
     currentWorkflowRef?: string | null;
     testID?: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const library = useWorkflowReferenceLibrary();
     const libraryOptions = library.options;
     const catalog = useWorkflowActionCatalog(props.composerScope);
@@ -159,10 +160,13 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             return {
                 id: optionId(`workflow:${option.ref}`),
                 label: option.title,
-                ...(self
+                ...(option.unavailableReason !== undefined ? { subtitle: option.unavailableReason, disabled: true } : self
                     ? { subtitle: t('workflows.page.blocks.selfRef', { workflow: option.title }), disabled: true }
                     : {}),
-                onSelect: add({ kind: 'workflow', workflowRef: option.ref }),
+                onSelect: () => {
+                    if (self || option.unavailableReason !== undefined) return;
+                    add({ kind: 'workflow', workflowRef: option.ref })();
+                },
             };
         };
         const workflowsStep: SelectionListStep = {
@@ -191,51 +195,58 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                 }] }] : []),
             ],
         };
+        const actionOption = (spec: (typeof catalog.specs)[number]): SelectionListOption => ({
+            id: optionId(`action:${spec.id}`),
+            label: spec.title,
+            searchText: spec.id,
+            subtitle: spec.description?.trim() || spec.plugin?.title,
+            icon: () => <Icon name={spec.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : 'lightning'}
+                size={16} color={theme.colors.text.secondary} />,
+            onSelect: add({ kind: 'action', actionId: spec.id }),
+        });
         const actionsStep: SelectionListStep = {
             id: 'add-action',
             title: t('workflows.page.blocks.menuAction'),
             inputPlaceholder: t('workflows.page.blocks.actionSearch'),
-            sections: [{
-                kind: 'static',
-                id: 'actions',
-                options: catalog.specs.map((spec) => ({
-                    id: optionId(`action:${spec.id}`),
-                    label: spec.title,
-                    subtitle: spec.description ?? t('workflows.page.blocks.noAgentTurn'),
-                    onSelect: add({ kind: 'action', actionId: spec.id }),
-                })),
-            }],
+            sections: [
+                { kind: 'static', id: 'host-actions', title: t('workflows.actionTitles.host'),
+                    options: catalog.specs.filter((spec) => !spec.plugin).map(actionOption) },
+                ...(catalog.specs.some((spec) => spec.plugin) ? [{
+                    kind: 'static' as const, id: 'plugin-actions', title: t('workflows.plugins.fromPlugins'),
+                    options: catalog.specs.filter((spec) => spec.plugin).map(actionOption),
+                }] : []),
+            ],
         };
         return {
             id: 'add-root',
             title: t('workflows.editor.add'),
+            inputPlaceholder: t('common.search'),
             sections: [
                 {
                     kind: 'static',
                     id: 'kinds',
+                    title: t('workflows.tabs.steps'),
                     options: [
-                        { id: optionId('step'), label: t('workflows.editor.addStep'), onSelect: add({ kind: 'step' }) },
-                        { id: optionId('workflow'), label: t('workflows.page.blocks.menuRun'), openStep: workflowsStep },
-                        { id: optionId('action'), label: t('workflows.page.blocks.menuAction'), openStep: actionsStep },
-                        { id: optionId('wait'), label: t('workflows.page.blocks.menuWait'), onSelect: add({ kind: 'wait' }) },
+                        { id: optionId('step'), label: t('workflows.editor.addStep'), icon: () => <Icon name="robot" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'step' }) },
+                        { id: optionId('workflow'), label: t('workflows.page.blocks.menuRun'), subtitle: t('workflows.page.blocks.workflowSub'), icon: () => <Icon name="play" size={16} color={theme.colors.text.secondary} />, openStep: workflowsStep },
+                        { id: optionId('action'), label: t('workflows.page.blocks.menuAction'), subtitle: t('workflows.page.blocks.noAgentTurn'), icon: () => <Icon name="lightning" size={16} color={theme.colors.text.secondary} />, openStep: actionsStep },
+                        { id: optionId('wait'), label: t('workflows.page.blocks.menuWait'), subtitle: t('workflows.page.blocks.waitSub'), icon: () => <Icon name="hand" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'wait' }) },
                     ],
                 },
                 {
                     kind: 'static',
                     id: 'structure',
+                    title: t('workflows.actionTitles.structure'),
                     options: [
-                        { id: optionId('parallel'), label: t('workflows.editor.addParallel'), onSelect: add({ kind: 'parallel' }) },
-                        { id: optionId('loop'), label: t('workflows.editor.addLoop'), onSelect: add({ kind: 'loop' }) },
-                        { id: optionId('if'), label: t('workflows.editor.addIf'), onSelect: add({ kind: 'if' }) },
+                        { id: optionId('parallel'), label: t('workflows.editor.addParallel'), icon: () => <Icon name="git-branch" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'parallel' }) },
+                        { id: optionId('loop'), label: t('workflows.editor.addLoop'), icon: () => <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'loop' }) },
+                        { id: optionId('if'), label: t('workflows.editor.addIf'), icon: () => <Icon name="question" size={16} color={theme.colors.text.secondary} />, onSelect: add({ kind: 'if' }) },
                     ],
                 },
-                ...(props.onExamples === undefined ? [] : [{ kind: 'static' as const, id: 'examples', options: [
-                    { id: optionId('example'), label: t('workflows.examples.title'), onSelect: props.onExamples },
-                ] }]),
             ],
         };
     }, [libraryOptions, library.hasMore, library.loadingMore, library.loadMore, library.retry, library.status,
-        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, props.onExamples]);
+        catalog.specs, onAdd, onClose, props.currentWorkflowRef, props.testID, theme.colors.text.secondary]);
 
     return (
         <AgentInputSelectionListPopover

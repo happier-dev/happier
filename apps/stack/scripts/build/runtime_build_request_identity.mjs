@@ -29,6 +29,7 @@ export async function resolveRuntimeBuildRequestIdentity({
   rootDir,
   producerStackBaseDir,
   selection,
+  target = { platform: process.platform, arch: process.arch },
   env = process.env,
   sourceMetadata: providedSourceMetadata = null,
   collectBuildSourceMetadataImpl = collectBuildSourceMetadata,
@@ -44,6 +45,11 @@ export async function resolveRuntimeBuildRequestIdentity({
     providedSourceMetadata ?? collectBuildSourceMetadataImpl({ rootDir, env }),
     collectRuntimeBuildToolchainInputsImpl({ selection, env }),
   ]);
+  // Server support admission can build cold workspace outputs or record QA
+  // fallback. Read staleness and the remaining identities after that admission.
+  const serverSupportArtifactFingerprint = selection.components.server
+    ? await resolveServerSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env, target })
+    : null;
   const stalePackagesByComponent = {};
   if (resolveWorkspaceBuildMode({ env }) === 'qa-runtime') {
     for (const component of ['web', 'server', 'daemon']) {
@@ -57,14 +63,11 @@ export async function resolveRuntimeBuildRequestIdentity({
   const daemonWorkspaceSourceFingerprint = selection.components.daemon
     ? await resolveDaemonWorkspaceSourceFingerprintImpl({ repoDir: sourceMetadata.repoDir, stalePackages: stalePackagesByComponent.daemon })
     : null;
-  const [componentSourceFingerprints, serverSupportArtifactFingerprint, daemonSupportArtifactFingerprint] = await Promise.all([
+  const [componentSourceFingerprints, daemonSupportArtifactFingerprint] = await Promise.all([
     collectRuntimeComponentSourceFingerprintsImpl({ selection, sourceMetadata }),
-    selection.components.server
-      ? resolveServerSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env })
-      : null,
     selection.components.daemon
       ? resolveDaemonSupportArtifactFingerprintImpl({
-          rootDir, sourceMetadata, env, workspaceSourceFingerprint: daemonWorkspaceSourceFingerprint,
+          rootDir, sourceMetadata, env, target, workspaceSourceFingerprint: daemonWorkspaceSourceFingerprint,
         })
       : null,
   ]);
@@ -73,6 +76,8 @@ export async function resolveRuntimeBuildRequestIdentity({
   if (selection.components.web) {
     artifactFingerprints.web = createRuntimeArtifactFingerprint({
       component: 'web',
+      platform: target.platform,
+      arch: target.arch,
       sourceMetadata,
       componentSourceFingerprint: componentSourceFingerprints.web,
       toolchainInputs: toolchainInputsByComponent.web,
@@ -84,6 +89,8 @@ export async function resolveRuntimeBuildRequestIdentity({
   if (selection.components.server) {
     artifactFingerprints.server = createRuntimeArtifactFingerprint({
       component: 'server',
+      platform: target.platform,
+      arch: target.arch,
       sourceMetadata,
       componentSourceFingerprint: componentSourceFingerprints.server,
       supportArtifactFingerprint: serverSupportArtifactFingerprint,
@@ -96,6 +103,8 @@ export async function resolveRuntimeBuildRequestIdentity({
   if (selection.components.daemon) {
     artifactFingerprints.daemon = createRuntimeArtifactFingerprint({
       component: 'daemon',
+      platform: target.platform,
+      arch: target.arch,
       sourceMetadata,
       componentSourceFingerprint: componentSourceFingerprints.daemon,
       supportArtifactFingerprint: daemonSupportArtifactFingerprint,
@@ -116,7 +125,7 @@ export async function resolveRuntimeBuildRequestIdentity({
     },
     artifactFingerprints,
     snapshotId: selection.activateRuntime
-      ? createRuntimeSnapshotId({ sourceMetadata, componentFingerprints: artifactFingerprints })
+      ? createRuntimeSnapshotId({ sourceMetadata, componentFingerprints: artifactFingerprints, ...target })
       : null,
   };
 }

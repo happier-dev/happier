@@ -7,16 +7,12 @@ import {
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
-  createProviderErrorV1,
-  pluginSourceCustodyV1Equal,
-  qualifiedPurposeKey,
-  registerSensitiveDiagnosticValues,
-  sameQualifiedConnectedAccountRef,
-  type ProviderErrorV1,
-  type QualifiedConnectedAccountRef,
-  type ArtifactSharingResourceV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ProviderErrorV1, QualifiedConnectedAccountRef, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
 
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { configuration } from '@/configuration';

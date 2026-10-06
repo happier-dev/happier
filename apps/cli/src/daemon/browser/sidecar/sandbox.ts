@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { getActionSpec, type RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 
 import { readSettings } from '@/persistence';
 import { getBrowserChromiumArchiveDownloadInstallableAdapter } from '@/packagedRuntime/installables/sourceAdapters/browserChromium';

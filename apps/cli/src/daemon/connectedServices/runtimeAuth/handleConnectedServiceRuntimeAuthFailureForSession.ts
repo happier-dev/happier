@@ -1,9 +1,6 @@
 import type { TrackedSession } from '@/daemon/types';
-import {
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceBindingsV2,
-} from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 
 import {
   SESSION_SWITCH_LIMIT_WINDOW_MS,

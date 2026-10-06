@@ -2,7 +2,8 @@ import axios from 'axios';
 import { Readable } from 'node:stream';
 import { LocalServicePreviewNativeRegistrationAdmittedV1Schema, LocalServicePreviewNativeRegistrationRequestV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
-import { LocalServicePreviewSnapshotRowV1Schema, type LocalServicePreviewResourceV1, type LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { LocalServicePreviewSnapshotRowV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import type { LocalServicePreviewResourceV1, LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 

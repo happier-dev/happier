@@ -1,9 +1,5 @@
-import {
-  AccountApiTokenEncryptionAccessResponseV1Schema,
-  parseAccountApiTokenBearerV1,
-  parseAccountApiTokenCredentialV1,
-} from '@happier-dev/protocol/auth/accountApiTokens';
-import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol';
+import { AccountApiTokenEncryptionAccessResponseV1Schema, parseAccountApiTokenBearerV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { openApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { HappierClientClosedError, HappierTransportError } from './errors.js';

@@ -1,9 +1,6 @@
-import {
-  HomeConnectionDescriptorV1Schema,
-  IrohEndpointDescriptorV1Schema,
-  type HomeConnectionDescriptorV1,
-  type IrohEndpointDescriptorV1,
-} from '@happier-dev/protocol';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import type { HomeConnectionDescriptorV1, IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 import {
   loadIrohNodeNative,
 } from '@happier-dev/iroh-native/node';

@@ -3,11 +3,12 @@ import { mkdir, open, rename, rm, stat } from 'fs/promises';
 import { basename, dirname, resolve as resolvePath } from 'path';
 import { createHash } from 'node:crypto';
 
-import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol';
+import { HARD_OPENABLE_CONTENT_MAX_BYTES_V1 } from '@happier-dev/protocol/plugins/openableContent';
+import type { WorkspaceStatFileRequestV1 } from '@happier-dev/protocol';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { validatePath } from '../pathSecurity';
 import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';

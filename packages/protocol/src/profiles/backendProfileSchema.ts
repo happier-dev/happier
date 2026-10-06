@@ -131,10 +131,8 @@ export type SavedSecret = z.infer<typeof SavedSecretSchema>;
 /**
  * How many SavedSecret records the Account-Settings collection can carry.
  *
- * The canonical Account-Settings reader parses at most this many entries, so a
- * write that stores more persists records no reader can ever resolve. The
- * SavedSecret mutation owner refuses such a write rather than accepting it and
- * letting the read truncate; both must therefore read the ceiling from here.
+ * New writes share this ceiling with the SavedSecret mutation owner. Stored
+ * predecessor collections remain readable above it and are never truncated.
  */
 export const SAVED_SECRET_COLLECTION_MAX_ENTRIES = 256;
 

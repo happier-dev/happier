@@ -1,6 +1,4 @@
-import {
-  PluginMachineExecutionOriginV1Schema as canonicalPluginMachineExecutionOriginV1Schema,
-} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineExecutionOriginV1Schema as canonicalPluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import type { PluginMachineExecutionOriginV1 } from './actionTypeMap.generated.js';
 import { projectProtocolValue } from '../protocol/projectProtocolValue.js';

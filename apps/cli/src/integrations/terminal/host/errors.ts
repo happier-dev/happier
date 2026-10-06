@@ -1,5 +1,6 @@
 import type { TerminalHostKind } from './_types';
-import { TerminalHostUnavailableSpawnErrorDetailSchema, type TerminalHostUnavailableSpawnErrorDetail } from '@happier-dev/protocol';
+import { TerminalHostUnavailableSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
+import type { TerminalHostUnavailableSpawnErrorDetail } from '@happier-dev/protocol';
 
 export const TERMINAL_HOST_STARTUP_ERROR_CODE = 'terminal_host_startup_failed';
 

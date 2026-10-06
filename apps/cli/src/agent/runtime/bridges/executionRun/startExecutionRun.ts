@@ -10,25 +10,17 @@ import {
 import {
   type ExecutionRunStructuredMeta,
 } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import {
-  REVIEW_SCM_SCOPE_INPUT_KEY,
-  ReviewScmScopeV1Schema,
-  ExecutionRunVoiceAgentIntentInputV1Schema,
-  resolveScmPullRequestReviewScope,
-  type AcpConfigOptionOverridesV1,
-  type BackendTargetRefV1,
-  type ConnectedServiceBindingsV2,
-  type ProviderBoundModelRef,
-  type ExecutionRunResultContractV1,
-  type SessionInputAdmissionResultV1,
-  type SessionInputCausalPermissionAuthorityV1,
-  withExecutionRunStartFailureDetails,
-  projectExecutionRunRequestedConfiguration,
-  resolveExecutionRunNotifyParentDefaultV1,
-  SECOND_OPINION_RESULT_SCHEMA_V1,
-  buildBackendTargetKeyV2,
-  readSessionRolesV1,
-} from '@happier-dev/protocol';
+import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/reviewStart';
+import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
+import { ExecutionRunVoiceAgentIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ProviderBoundModelRef, ExecutionRunResultContractV1, SessionInputAdmissionResultV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { projectExecutionRunRequestedConfiguration } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
+import { SECOND_OPINION_RESULT_SCHEMA_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveExecutionRunRoleV1 } from '@/agent/executionRuns/profiles/review/reviewRole';
 import { resolveEffectiveCodingPromptPlan } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
@@ -62,7 +54,8 @@ import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunRuntimeBackendId,
 } from './backendTargets';
-import { readBackendTargetRefV2, resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 import { resolveExecutionRunRuntimeSettings } from './runtimeSettings';
 import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';

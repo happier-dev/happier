@@ -8,10 +8,17 @@ import type { SettingsPageId } from './types';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Settings, WritableSettingsKey } from '@/sync/domains/settings/settings';
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
-import type { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol';
+import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol';
 import type { z } from 'zod';
 
-export type SettingScalarValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
+export type SettingValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
+export type SettingScalarValue = Extract<SettingValue, string | number | boolean | null>;
+/** Scalar controls retain their admission contract within the wider JSON Action value. */
+export function parseSettingScalarValue(value: unknown) {
+    const parsed = SettingsDeclarationValueV1Schema.safeParse(value);
+    return parsed.success && (parsed.data === null || typeof parsed.data !== 'object')
+        ? { success: true as const, value: parsed.data } : { success: false as const };
+}
 /** An unavailable owner value is not an unset preference; never serialize this sentinel. */
 export const SETTING_VALUE_UNAVAILABLE = Symbol('setting_value_unavailable');
 export type SettingOwnerMutation = (settings: Settings) => SettingsWriteDelta | null;
@@ -40,7 +47,7 @@ export type SettingsMutationServices = Readonly<{
 
 type ScalarSettingKeys<T> = { [K in keyof T]: T[K] extends string | number | boolean | null | undefined ? K : never }[keyof T] & string;
 
-/** Explicitly admitted scalar preference; declarations never infer a writer from a row id. */
+/** Explicitly admitted preference; declarations never infer a writer from a row id. */
 export type SettingStorageBinding = Readonly<{
     access: 'read_write' | 'read_only' | 'sensitive';
     /** Choices supplied by the owning control when its write contract is narrower than storage. */
@@ -60,22 +67,22 @@ export type SettingStorageBinding = Readonly<{
         scope: 'account';
         kind: 'owner';
         read: (settings: Settings) => unknown;
-        parse: (value: unknown) => Readonly<{ success: true; value: SettingScalarValue }> | Readonly<{ success: false }>;
+        parse: (value: unknown) => Readonly<{ success: true; value: SettingValue }> | Readonly<{ success: false }>;
         /** Applied inside the Account CAS owner, including every conflict rebase. */
-        mutate: (settings: Settings, value: SettingScalarValue) => SettingsWriteDelta | null;
+        mutate: (settings: Settings, value: SettingValue) => SettingsWriteDelta | null;
         /** Resolve a catalog choice before CAS; the returned intent rechecks its captured authority. */
-        prepare?: (settings: Settings, value: SettingScalarValue, services: SettingsMutationServices, context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean }>) => Promise<SettingOwnerMutation | null>;
+        prepare?: (settings: Settings, value: SettingValue, services: SettingsMutationServices, context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean }>) => Promise<SettingOwnerMutation | null>;
     }>
     | Readonly<{
         scope: 'local';
         kind: 'localOwner';
         read: (local: LocalSettings) => unknown;
-        parse: (value: unknown) => Readonly<{ success: true; value: SettingScalarValue }> | Readonly<{ success: false }>;
+        parse: (value: unknown) => Readonly<{ success: true; value: SettingValue }> | Readonly<{ success: false }>;
         /**
          * Writes through the device setting's owner, which may apply more than storage (the running
          * theme and status bar) or keep sibling fields of a nested record.
          */
-        commit: (local: LocalSettings, value: SettingScalarValue, writeLocal: (delta: Partial<LocalSettings>) => void) => void | Promise<void>;
+        commit: (local: LocalSettings, value: SettingValue, writeLocal: (delta: Partial<LocalSettings>) => void) => void | Promise<void>;
     }>
 );
 
@@ -137,11 +144,11 @@ export type SettingDeclaration = Readonly<{
     keywordKeys?: readonly TranslationKeyNoParams[];
     /** The row exists only on these hosts. */
     host?: SettingsHostPredicate;
-    /** Omit on navigation, actions, projections and compound editors without a scalar write contract. */
+    /** Omit when the row has no canonical value reader and write admission owner. */
     storage?: SettingStorageBinding;
     /** Secret-bearing rows remain discoverable without exposing or changing their value. */
     sensitive?: boolean;
-    /** Operations have no scalar value; human controls keep their incumbent selection/trust owner. */
+    /** Operations keep their incumbent selection/trust owner instead of becoming a value write. */
     operation?: Readonly<{ requiresHumanInteraction: true; kind: 'interaction' }> | Readonly<{
         requiresHumanInteraction: boolean;
         /** Consumed by the incumbent Actions approval policy, never by an operation-local gate. */

@@ -13,7 +13,7 @@ import {
     readTerminalComposerDraftBlockedStateAtMs,
 } from '@/components/sessions/terminalComposer/terminalComposerDraftBlockedEvent';
 import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
-import { useSettings } from '@/sync/store/hooks';
+import { useSettingsSelector } from '@/sync/store/hooks';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
@@ -292,7 +292,9 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     createdAt?: number;
 }) {
     const { theme } = useUnistyles();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+    }));
     const deemphasized = props.emphasis === 'deemphasized';
     const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
     let iconName: IconName = 'info';

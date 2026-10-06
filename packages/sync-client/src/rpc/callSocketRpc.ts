@@ -1,5 +1,7 @@
-import { resolveSocketRpcSessionAuthorization, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
-import { SOCKET_RPC_EVENTS, SessionTransferRoutingV1Schema, SocketRpcSessionActionAuthorizationContextSchema, isSessionActionRpcMethodV1, type SessionTransferRoutingV1, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { resolveSocketRpcSessionAuthorization, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS, SessionTransferRoutingV1Schema, SocketRpcSessionActionAuthorizationContextSchema, isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
+import type { SessionTransferRoutingV1, SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from './socketRpcCodec.js';
 import { markRpcRequestDisposition, readRpcRequestDisposition } from './rpcDisposition.js';
 import { createSocketRpcAbortError, createSocketRpcRequestId, issueSocketRpcCallWithCancellation, raceSocketIoAckTimeout } from './socketRpcCancellation.js';

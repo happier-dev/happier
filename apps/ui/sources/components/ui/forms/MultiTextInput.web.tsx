@@ -318,6 +318,22 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
 
     React.useLayoutEffect(() => {
         const node = textareaRef.current;
+        if (!node || typeof ResizeObserver === 'undefined') return;
+        let width = node.clientWidth;
+        const observer = new ResizeObserver(() => {
+            const nextWidth = node.clientWidth;
+            if (nextWidth === width) return;
+            width = nextWidth;
+            // Hidden, still-mounted composers retain their state; measure when
+            // they regain a width. Height-only notifications cannot recurse.
+            if (nextWidth > 0) applyTextareaHeight(node);
+        });
+        observer.observe(node);
+        return () => observer.disconnect();
+    }, [applyTextareaHeight]);
+
+    React.useLayoutEffect(() => {
+        const node = textareaRef.current;
         if (!node) return;
         if (value === liveValueRef.current || value === lastEmittedValueRef.current) {
             if (value === lastEmittedValueRef.current) {

@@ -1,3 +1,10 @@
+export const PLUGIN_AUTHOR_TRANSIENT_PNPM_WORKSPACE_MARKER = '# Happier transient public author workspace';
+
+/** The installer owns empty/interrupted files and its exact first-line marker. */
+export function isPluginAuthorTransientWorkspaceConfig(contents: string): boolean {
+  return contents === '' || contents.startsWith(`${PLUGIN_AUTHOR_TRANSIENT_PNPM_WORKSPACE_MARKER}\n`);
+}
+
 export const PLUGIN_DEVELOPMENT_DEPENDENCY_INPUT_PATHS = Object.freeze([
   '.npmrc',
   '.pnpmfile.cjs',

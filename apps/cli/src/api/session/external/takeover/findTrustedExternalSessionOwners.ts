@@ -1,5 +1,6 @@
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
-import { readNonBlankOpaqueIdentifier, type ExternalSessionsAgentId } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import type { ExternalSessionsAgentId } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
 

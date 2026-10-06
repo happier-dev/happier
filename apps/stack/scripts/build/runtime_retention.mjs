@@ -1,5 +1,6 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 
 import {
   readArtifactManifest,
@@ -74,7 +75,7 @@ async function collectValidRuntimeSnapshots({ stackBaseDir, removeInvalid = fals
   for (const snapshotId of snapshotIds) {
     const snapshotDir = join(runtimePaths.buildsDir, snapshotId);
     const manifest = await readRuntimeManifest({ manifestPath: join(snapshotDir, 'manifest.json') });
-    const validation = validateRuntimeManifest(manifest);
+    const validation = validateRuntimeManifest(manifest, { requiredComponents: [] });
     if (!validation.ok) {
       if (removeInvalid) {
         await rm(snapshotDir, { recursive: true, force: true });
@@ -168,6 +169,24 @@ async function collectRetainedRuntimeSnapshots({
   }
 
   validSnapshots.sort(sortNewestFirst);
+  // Preserve each target's available component sets. A newer server-only
+  // publication cannot evict its complete snapshot used by default consumers.
+  const newestByTarget = new Map();
+  for (const snapshot of validSnapshots) {
+    const target = snapshot.manifest.target;
+    if (!target) continue;
+    const requiredComponents = Object.keys(snapshot.manifest.components).sort();
+    const key = `${target.platform}/${target.arch}/${requiredComponents.join(',')}`;
+    if (newestByTarget.has(key)) continue;
+    const { validatePublishedRuntimeSnapshot } = await import('./activate_runtime_snapshot.mjs');
+    try {
+      await validatePublishedRuntimeSnapshot({ producerStackBaseDir: stackBaseDir, snapshotId: snapshot.id, target, requiredComponents });
+      newestByTarget.set(key, snapshot.id);
+    } catch {
+      // A damaged newer publication cannot displace a complete target snapshot.
+    }
+  }
+  for (const snapshotId of newestByTarget.values()) preserveSnapshotWithReferences(snapshotId, snapshotById, keep);
   const desiredKeepCount = Math.max(1, keepCount);
   for (const snapshot of validSnapshots) {
     if (keep.size >= desiredKeepCount) break;
@@ -227,6 +246,13 @@ export async function pruneRuntimeSnapshots({
   preserveSnapshotIds = [],
   externalReferenceStorageRoot = '',
 }) {
+  return await withWorkspaceBundleLock(() => pruneRuntimeSnapshotsUnderLock({
+    stackBaseDir, keepCount, preserveSnapshotIds, externalReferenceStorageRoot,
+  }), { lockPath: resolveStackRuntimePaths({ stackBaseDir }).lockPath,
+    errorLabel: 'runtime snapshot retention lock' });
+}
+
+async function pruneRuntimeSnapshotsUnderLock({ stackBaseDir, keepCount, preserveSnapshotIds, externalReferenceStorageRoot }) {
   const { validSnapshots, keep, removedEntries } = await collectRetainedRuntimeSnapshots({
     stackBaseDir,
     keepCount,
@@ -254,6 +280,13 @@ export async function pruneComponentArtifacts({
   runtimeSnapshotKeepCount = DEFAULT_RETENTION_COUNT,
   externalReferenceStorageRoot = '',
 }) {
+  return await withWorkspaceBundleLock(() => pruneComponentArtifactsUnderLock({
+    stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot,
+  }), { lockPath: resolveStackRuntimePaths({ stackBaseDir }).lockPath,
+    errorLabel: 'runtime artifact retention lock' });
+}
+
+async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepCount, runtimeSnapshotKeepCount, externalReferenceStorageRoot }) {
   const componentDir = join(resolveStackArtifactsDir({ stackBaseDir }), String(component ?? '').trim());
   const artifactIds = await listChildDirectories(componentDir);
   const retainedFingerprintsByComponent = await collectRetainedComponentArtifactFingerprints({

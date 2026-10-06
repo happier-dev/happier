@@ -1,7 +1,5 @@
-import {
-    createScmCapabilitiesFromBackendCapabilities,
-    SCM_OPERATION_ERROR_CODES,
-} from '@happier-dev/protocol/scm';
+import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type {
     ScmBackendCapabilities,
     ScmCapabilities,
@@ -19,7 +17,7 @@ import { runWithHostingProviderRuntimeServices as runWithHostSuppliedScmHostingP
 import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import type { ScmBackend } from '../types';
-import { resolveScmBackendCapabilities } from '@happier-dev/protocol/scm';
+import { resolveScmBackendCapabilities } from '@happier-dev/protocol/scm/resolveScmBackendCapabilities';
 import type { ScmWorkspaceIntegrationPortableWorkspacePathClassification as HostPortableWorkspacePathClassification } from '../workspace/portableWorkspacePath';
 import { runScmCommand as runHostScmCommand } from '../runtime';
 import {

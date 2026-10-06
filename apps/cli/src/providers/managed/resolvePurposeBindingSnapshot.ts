@@ -1,13 +1,5 @@
-import {
-  QualifiedConnectedAccountPurposeBindingsV1Schema,
-  qualifiedPurposeKey,
-  type PluginContributionIdentityV1,
-  type QualifiedConnectedAccountPurposeBindingTargetV1,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type QualifiedConnectedAccountPurposeBindingsV1,
-  type QualifiedConnectedAccountPurposeV1,
-  type ResolvedProviderManagedRuntimeDeclarationV1,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeBindingsV1, QualifiedConnectedAccountPurposeV1, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
 
 export type ResolveManagedProviderPurposeBindingIntent = (
   input: Readonly<{

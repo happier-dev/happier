@@ -1,13 +1,9 @@
-import {
-  DEFAULT_PROVIDER_SETTINGS_V1,
-  compareProviderCanonicalStringsV1,
-  classifyLegacyProfileMigrationConflictsV1,
-  createLegacyProfileMigrationPendingConflictV1,
-  migrateProviderAccountSettingsV1,
-  readProviderSettingsFromAccountSettingsV1,
-  type ProviderAccountSettingsMigrationCandidateV1,
-  type ProviderAccountSettingsMigrationContextV1,
-} from '@happier-dev/protocol';
+import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
+import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
+import { classifyLegacyProfileMigrationConflictsV1, createLegacyProfileMigrationPendingConflictV1 } from '@happier-dev/protocol/providers/migrations/conflictsV1';
+import { migrateProviderAccountSettingsV1 } from '@happier-dev/protocol/providers/migrations/accountSettingsV1';
+import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1 } from '@happier-dev/protocol';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderOperationLifetime } from '@/providers/operationLifetime';
 

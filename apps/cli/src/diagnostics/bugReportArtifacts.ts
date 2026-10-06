@@ -2,22 +2,12 @@ import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
-import {
-  hasAcceptedBugReportArtifactKind,
-  inferBugReportDeploymentTypeFromServerUrl,
-  pushBugReportArtifact,
-  redactBugReportSensitiveText,
-  resolveBugReportServerDiagnosticsLines,
-  sanitizeBugReportDaemonDiagnosticsPayload,
-  sanitizeBugReportArtifactFileSegment,
-  sanitizeBugReportArtifactPath,
-  sanitizeBugReportStackContextPayload,
-  sanitizeBugReportUrl,
-  trimBugReportTextToMaxBytes,
-  type BugReportArtifactPayload,
-  type BugReportEnvironmentPayload,
-  type DoctorSnapshot,
-} from '@happier-dev/protocol';
+import { hasAcceptedBugReportArtifactKind, pushBugReportArtifact } from '@happier-dev/protocol/bugs/reports/artifacts';
+import { inferBugReportDeploymentTypeFromServerUrl, sanitizeBugReportArtifactFileSegment, sanitizeBugReportArtifactPath, sanitizeBugReportUrl } from '@happier-dev/protocol/bugs/reports/sanitize';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { resolveBugReportServerDiagnosticsLines } from '@happier-dev/protocol/bugs/reports/serverDiagnostics';
+import { sanitizeBugReportDaemonDiagnosticsPayload, sanitizeBugReportStackContextPayload } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+import type { BugReportArtifactPayload, BugReportEnvironmentPayload, DoctorSnapshot } from '@happier-dev/protocol';
 
 import packageJson from '../../package.json';
 import { configuration } from '@/configuration';

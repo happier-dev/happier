@@ -1,12 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  encodeProviderBrokerAuthorityV1,
-  IrohProviderBrokerHandshakeV1Schema,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderBrokerOpenResponseV1Schema,
-  type ProviderBrokerOpenResponseV1,
-} from '@happier-dev/protocol';
+import { encodeProviderBrokerAuthorityV1, IrohProviderBrokerHandshakeV1Schema, ProviderBrokerOpenResponseV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import type { ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
 
 import {
   MACHINE_ALPN,

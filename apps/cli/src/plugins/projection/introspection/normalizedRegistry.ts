@@ -4,9 +4,7 @@ import type {
   PluginDiagnosticHostV1,
   PluginDiagnosticRecordV1,
 } from '@happier-dev/protocol';
-import {
-  PLUGIN_CONTRIBUTION_CATALOG_V2,
-} from '@happier-dev/protocol';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { PluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';

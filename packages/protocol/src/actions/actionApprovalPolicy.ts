@@ -72,6 +72,7 @@ export const EGRESS_SENSITIVE_AGENT_FLOOR = [
 
 /** Safe authority transitions still require a human decision by default on the agent surface. */
 export const SURFACE_AUTHORITY_AGENT_FLOOR = [
+  'session.permission.respond',
   'computer.permissions.openSettings',
   'browser.control.takeControl',
   'browser.control.handBack',
@@ -267,6 +268,9 @@ function requiresDefaultApprovalFloor(
 ): boolean {
   const surface = resolveApprovalSurface(ctx);
   if (actionId === 'capture.view') return true;
+  // Permission answers share the Agent default on MCP too; persisted surface
+  // waivers remain resolved by the same ActionsSettings owner above this floor.
+  if (actionId === 'session.permission.respond' && surface.kind === 'non_agent' && surface.surface === 'mcp') return true;
   // Scoped removal is dangerous metadata, but its own/led Session policy owns
   // admission (FIN 03 §5.4/§5.7); it does not acquire the Account trigger approval floor.
   if (actionId === SCOPED_SESSION_TRIGGER_APPROVAL_EXEMPT_ACTION_ID && surface.kind !== 'ambiguous') return false;
@@ -386,17 +390,21 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // it cannot retain an HTTP or server-relay request as the blocking waiter.
   // The present-user UI ordinarily has the same lifecycle shape: its mounted
   // continuation follows the Artifact and consumes the replayed typed result,
-  // while the original invocation returns immediately. Live-only custody is
+  // while the original invocation returns immediately. CLI commands likewise
+  // need the Artifact id before exiting, rather than a silent daemon HTTP
+  // waiter whose response expires before a human can discover the approval.
+  // Live-only custody is
   // the deliberate exception, on either side of the call: the exact invocation
   // stays as the blocking waiter because its raw result — or its raw
   // credential-bearing input — must never become durable Artifact custody.
-  // Keep required-result metadata for replay/settlement, and leave Agent/CLI/
-  // MCP blocking callers unchanged.
+  // Keep required-result metadata for replay/settlement, and leave Agent/MCP
+  // blocking callers unchanged.
   const custodyStaysOnLiveInvocation = args.spec.approvalResultCustody === 'live_only'
     || args.spec.approvalInputCustody === 'live_only';
   const mustReturnApprovalCustody = !custodyStaysOnLiveInvocation
     && (
       args.context?.surface === 'api'
+      || args.context?.surface === 'cli'
       || (
         args.context?.surface === 'ui'
         && args.context?.authority === 'present_user'

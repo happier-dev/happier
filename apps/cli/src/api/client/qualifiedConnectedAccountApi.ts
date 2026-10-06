@@ -1,47 +1,11 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from "axios";
-import {
-    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    QualifiedConnectedAccountConfigurationPatchV4Schema,
-    QualifiedConnectedAccountConfigurationSnapshotV4Schema,
-    QualifiedConnectedAccountConfigurationTargetV4Schema,
-    QualifiedConnectedAccountCredentialSnapshotV4Schema,
-    QualifiedConnectedAccountCredentialDeleteV4Schema,
-    QualifiedConnectedAccountCredentialHealthPatchV4Schema,
-    QualifiedConnectedAccountCredentialErrorV4Schema,
-    QualifiedConnectedAccountCredentialMutationSuccessV4Schema,
-    QualifiedConnectedAccountCredentialMutationV4Schema,
-    QualifiedConnectedAccountGroupActiveAccountV4Schema,
-    QualifiedConnectedAccountGroupRefSchema,
-    QualifiedConnectedAccountGroupListResponseV4Schema,
-    QualifiedConnectedAccountGroupMemberMutationV4Schema,
-    QualifiedConnectedAccountGroupResponseV4Schema,
-    QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema,
-    QualifiedConnectedAccountListResponseV4Schema,
-    QualifiedConnectedAccountQuotaResponseV4Schema,
-    QualifiedConnectedAccountRefSchema,
-    QualifiedConnectedAccountRefreshLeaseResponseV4Schema,
-    QualifiedConnectedAccountRefreshLeaseV4Schema,
-    QualifiedConnectedAccountServiceRefSchema,
-    QualifiedConnectedAccountSuccessV4Schema,
-    QualifiedConnectedServiceUsageSourceResolveV4Schema,
-    QualifiedConnectedServiceUsageSourceResolutionV4Schema,
-    QualifiedProviderAccountUsageRecordQueryV4Schema,
-    QualifiedProviderAccountUsageReadErrorV4Schema,
-    QualifiedProviderAccountUsageRecordResponseV4Schema,
-    QualifiedProviderAccountUsageWriteSuccessV4Schema,
-    QualifiedProviderAccountUsageWriteV4Schema,
-    encodeQualifiedConnectedAccountV4StructuredQueryValue,
-    sameQualifiedConnectedAccountGroupRef,
-    type BuiltInLegacyConnectedAccountOperation,
-    type BuiltInLegacyConnectedServiceId,
-    type QualifiedConnectedAccountConfigurationTargetV4,
-    type QualifiedConnectedAccountGroupRef,
-    type QualifiedConnectedAccountRef,
-    type QualifiedConnectedAccountServiceRef,
-    type QualifiedConnectedServiceUsageSourceV4,
-    type ProviderAccountUsageRecordId,
-} from "@happier-dev/protocol";
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import type { BuiltInLegacyConnectedAccountOperation, BuiltInLegacyConnectedServiceId, QualifiedConnectedAccountConfigurationTargetV4, QualifiedConnectedAccountGroupRef, QualifiedConnectedAccountRef, QualifiedConnectedAccountServiceRef, QualifiedConnectedServiceUsageSourceV4, ProviderAccountUsageRecordId } from '@happier-dev/protocol';
 
 import { HttpStatusError } from "@/api/client/httpStatusError";
 import type {

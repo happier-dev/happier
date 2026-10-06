@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { resolveWidgetBindingsV1, WidgetInstanceV1Schema, type WidgetInstanceV1 } from './widgetInstanceV1.js';
+import { projectWidgetBindingInputV1, resolveWidgetBindingsV1, WidgetInstanceV1Schema, type WidgetInstanceV1 } from './widgetInstanceV1.js';
 import { InputHintsSchema } from '../inputs/inputFields.js';
 import { countWidgetInstancesV1, isSameWidgetDefinitionV1 } from './builtinWidgetDescriptorV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { WidgetSurfaceRefV1Schema } from './widgetInstanceV1.js';
 
 const instance = (bindings: WidgetInstanceV1['bindings']): WidgetInstanceV1 => ({
   v: 1, id: 'copy-1', definition: { kind: 'installed', surface: { pluginId: 'happier.widget.checks', localId: 'summary' } }, bindings,
@@ -13,6 +15,36 @@ const fields = InputHintsSchema.parse({ fields: [
 const valid = () => ({ status: 'valid' as const });
 
 describe('configured widget bindings', () => {
+  it('reads stored extras canonically while inputs and required identities remain strict', () => {
+    const stored = createStoredReadSchema(WidgetInstanceV1Schema);
+    const canonical = instance({ target: { kind: 'context', slot: 'session' }, viewer: { kind: 'viewer', purpose: 'checks' },
+      literal: { kind: 'value', value: { arbitrary: true } } });
+    const raw = { ...canonical, savedBy: 'stray', definition: { ...canonical.definition, extra: true,
+      surface: { pluginId: 'happier.widget.checks', localId: 'summary', extra: true } },
+      bindings: Object.fromEntries(Object.entries(canonical.bindings).map(([key, value]) => [key, { ...value, extra: true }])) };
+    expect(stored.parse(raw)).toEqual(canonical);
+    expect(projectWidgetBindingInputV1({ instance: raw, fields: [
+      { path: 'literal', title: 'Literal', widget: 'json' },
+    ], context: {}, viewerValues: {} })).toEqual({ literal: { arbitrary: true } });
+    expect(WidgetInstanceV1Schema.safeParse(raw).success).toBe(false);
+    expect(stored.safeParse({ ...raw, id: undefined }).success).toBe(false);
+    const surface = { serverId: 'home', accountId: 'owner', owner: { kind: 'home' } };
+    const extraSurface = { ...surface, extra: true, owner: { ...surface.owner, extra: true } };
+    expect(createStoredReadSchema(WidgetSurfaceRefV1Schema).parse(extraSurface)).toEqual(surface);
+    expect(WidgetSurfaceRefV1Schema.safeParse(extraSurface).success).toBe(false);
+    expect(createStoredReadSchema(WidgetSurfaceRefV1Schema).safeParse({ ...extraSurface, accountId: undefined }).success).toBe(false);
+  });
+  it('projects readable declared draft values while unresolved fields remain unadmitted', () => {
+    const copy = instance({ 'target.session': { kind: 'context', slot: 'session' }, connection: { kind: 'viewer', purpose: 'checks' },
+      filter: { kind: 'value', value: 'open' }, ambiguous: { kind: 'context', slot: 'machines' },
+      token: { kind: 'value', value: 'private' }, unknown: { kind: 'value', value: 'undeclared' } });
+    const draftFields = InputHintsSchema.parse({ fields: [...fields, { path: 'filter', title: 'Filter', widget: 'text' },
+      { path: 'ambiguous', title: 'Machine', widget: 'json' }, { path: 'token', title: 'Token', widget: 'secret' }] }).fields;
+    const options = { instance: copy, fields: draftFields, context: { session: [{ serverId: 'home', sessionId: 'B' }], machines: ['one', 'two'] }, viewerValues: {} };
+    expect(projectWidgetBindingInputV1(options)).toEqual({ target: { session: { serverId: 'home', sessionId: 'B' } }, filter: 'open' });
+    expect(resolveWidgetBindingsV1({ ...options, validateValue: valid })).toMatchObject({ status: 'invalid' });
+    expect(projectWidgetBindingInputV1({ ...options, viewerValues: { connection: 'viewer-own' } })).toMatchObject({ connection: 'viewer-own' });
+  });
   it('counts an explicit shared copy by its saved identity without weakening exact inline equality', () => {
     const copy = WidgetInstanceV1Schema.parse({ v: 1, id: 'copy', bindings: {}, definition: { kind: 'inline', definition: {
       v: 1, id: 'saved', name: 'Checks', inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },

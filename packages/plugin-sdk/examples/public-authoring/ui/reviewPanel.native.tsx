@@ -16,6 +16,7 @@ import {
     Stack,
     Status,
     Text,
+    TextField,
     useLivePluginResource,
     WidgetSurface,
 } from '@happier-dev/plugin-ui';
@@ -90,6 +91,7 @@ function ReviewFrame({
 }
 
 function ReviewOverview({ pinnedArea }: Readonly<{ pinnedArea: boolean }>) {
+    const [draft, setDraft] = React.useState('Example review transcript');
     return (
         <ReviewFrame>
             {/* The page's declared `pinned` area: the host draws the widgets, gallery and layout. */}
@@ -102,9 +104,14 @@ function ReviewOverview({ pinnedArea }: Readonly<{ pinnedArea: boolean }>) {
                         value="Run the declared review action through the current host API."
                         tone="secondary"
                     />
+                    <TextField label="Review transcript" value={draft} onChange={setDraft} multiline
+                        dictation={{
+                            onTranscription: (words) => setDraft((current) => current ? `${current}\n${words}` : words),
+                            fallback: <Text value="Type your transcript when Dictation is unavailable." tone="secondary" />,
+                        }} />
                     <Action.Execute
                         action="review-summary"
-                        input={{ transcript: 'Example review transcript' }}
+                        input={{ transcript: draft }}
                         title="Summarize review"
                     />
                 </Stack>

@@ -1,14 +1,7 @@
-import {
-    ExternalSessionTranscriptPageRequestSchema,
-    ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
-    ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
-    ExternalSessionTranscriptReadAfterRequestSchema,
-    externalSessionTranscriptRefreshBindingsEqualV1,
-    pluginSourceCustodyV1Equal,
-    type ExternalSessionTranscriptPageResponse,
-    type ExternalSessionTranscriptReadAfterResponse,
-    type ExternalSessionTranscriptRefreshReadAfterResponseV1,
-} from '@happier-dev/protocol';
+import { ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptReadAfterRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionTranscriptRefreshReadAfterRequestV1Schema, ExternalSessionTranscriptRefreshReadAfterResponseV1Schema, externalSessionTranscriptRefreshBindingsEqualV1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { ExternalSessionTranscriptPageResponse, ExternalSessionTranscriptReadAfterResponse, ExternalSessionTranscriptRefreshReadAfterResponseV1 } from '@happier-dev/protocol';
 
 import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
 import { collectTransientSessionMediaReadFiles } from '@/session/media/referencedPaths';

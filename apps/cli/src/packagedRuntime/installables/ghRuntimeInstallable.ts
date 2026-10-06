@@ -1,5 +1,6 @@
 import { compareVersions } from '@happier-dev/cli-common/update';
-import { GH_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
+import { GH_DEP_ID } from '@happier-dev/protocol/installables/definitions/gh';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 
 import { getGhDepStatus } from '@/capabilities/deps/gh';
 import { logger } from '@/ui/logger';

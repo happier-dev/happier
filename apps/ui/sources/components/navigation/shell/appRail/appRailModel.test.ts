@@ -7,7 +7,6 @@ import {
     buildAppRailEntries,
     resolveAppRailEntryColumn,
     resolveAppShellLocation,
-    splitAppRailOverflow,
 } from './appRailModel';
 
 vi.mock('@/text', async () => {
@@ -53,23 +52,13 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
         // Browse external sessions and the notes page belong to the Sessions column, not the rail.
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('browseExistingSessions');
         expect(ids([...rail.app, ...rail.plugins, ...rail.account])).not.toContain('plugin:acme.notes:notes');
-    });
-
-    it('moves the plugin entries that do not fit into More, which takes the last slot', () => {
-        const rail = buildAppRailEntries(catalog([page('a', undefined, 1), page('b', undefined, 2), page('c', undefined, 3)]));
-        expect(splitAppRailOverflow(rail.plugins, null).overflow).toEqual([]);
-        expect(splitAppRailOverflow(rail.plugins, 4).overflow).toEqual([]);
-        const tight = splitAppRailOverflow(rail.plugins, 3);
-        expect(ids(tight.shown)).toEqual(['plugins', 'plugin:acme.a:a']);
-        expect(ids(tight.overflow)).toEqual(['plugin:acme.b:b', 'plugin:acme.c:c']);
-        expect(ids(splitAppRailOverflow(rail.plugins, 1).overflow)).toHaveLength(4);
     });
 
     it('derives the open rail entry and the column beside the page from the one current destination', () => {

@@ -20,6 +20,8 @@ import { beginOnboardingJourneySession, endOnboardingJourneySession } from '@/co
 import { discardMachineAddFlowDraft, updateMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
 import { createAwaitedMachineArrivalBaseline } from '@/components/onboarding/detection/useAwaitedMachineArrival';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import type {
@@ -301,6 +303,7 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
 const originalStorageState = storage.getState();
 const initialGlobalFetch = globalThis.fetch;
 let routeBaseFetchSpy: ReturnType<typeof vi.fn>;
+let restoreWebLocks: (() => void) | undefined;
 
 // Seed a single non-revoked (offline) machine into the real store so the canonical
 // `useAllMachines()` selector reports the account already has a machine. Uses the global
@@ -332,6 +335,7 @@ function seedActiveServerMachine(machineId = 'm-existing'): void {
 
 describe('/ (welcome) journey hinge', () => {
     beforeEach(() => {
+        restoreWebLocks = installWebLockManagerMock().restore;
         isAuthenticated = true;
         journeyRouteState.enabled = false;
         journeyRouteState.initialBeatId = 'S2';
@@ -370,7 +374,11 @@ describe('/ (welcome) journey hinge', () => {
         expoRouterSpies.push.mockReset();
         discardMachineAddFlowDraft();
         syncSingletonState.applySettings.mockReset();
-        routeBaseFetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+        routeBaseFetchSpy = vi.fn(async (url: RequestInfo | URL) => (
+            String(url).endsWith('/v1/features')
+                ? Response.json(createRootLayoutFeaturesResponse())
+                : new Response('{}', { status: 200 })
+        ));
         globalThis.fetch = routeBaseFetchSpy as unknown as typeof fetch;
         resetDemoModeDepthForTests();
         resetDemoFirewallForTests();
@@ -394,6 +402,8 @@ describe('/ (welcome) journey hinge', () => {
         endOnboardingJourneySession();
         storage.setState(originalStorageState, true);
         globalThis.fetch = initialGlobalFetch;
+        restoreWebLocks?.();
+        restoreWebLocks = undefined;
         if (clearError) throw clearError;
     });
 
@@ -436,7 +446,7 @@ describe('/ (welcome) journey hinge', () => {
             },
             history: { replaceState: vi.fn() },
         };
-        upsertAndActivateServer({
+        await upsertAndActivateServer({
             serverUrl: pinnedServerUrl,
             source: 'url',
             scope: 'device',
@@ -459,7 +469,7 @@ describe('/ (welcome) journey hinge', () => {
             expect(journeyRouteState.unmountIds).toEqual([1]);
             expect(getActiveServerSnapshot().serverUrl).toBe(pinnedServerUrl);
         } finally {
-            setActiveServer({ serverId: originalServerId, scope: 'device' });
+            await setActiveServer({ serverId: originalServerId, scope: 'device' });
         }
     });
 
@@ -480,7 +490,7 @@ describe('/ (welcome) journey hinge', () => {
             },
             history: { replaceState: vi.fn() },
         };
-        upsertAndActivateServer({
+        await upsertAndActivateServer({
             serverUrl: 'http://localhost:53288',
             source: 'url',
             scope: 'device',
@@ -497,7 +507,7 @@ describe('/ (welcome) journey hinge', () => {
 
             await screen.unmount();
         } finally {
-            setActiveServer({ serverId: originalServerId, scope: 'device' });
+            await setActiveServer({ serverId: originalServerId, scope: 'device' });
         }
     });
 

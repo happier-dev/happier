@@ -1,4 +1,5 @@
 import React from 'react';
+import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -245,6 +246,16 @@ function findRowContentStyle(screen: Awaited<ReturnType<typeof renderScreen>>, s
 
 function findSessionTitleText(screen: Awaited<ReturnType<typeof renderScreen>>, title: string) {
     return screen.findAllByType('Text').find((node) => node.props.children === title);
+}
+
+function findRowContainerStyle(screen: Awaited<ReturnType<typeof renderScreen>>, sessionId: string) {
+    let node = screen.findByTestId(`session-list-item-${sessionId}`)?.parent;
+    while (node) {
+        const style = flattenStyle(node.props.style);
+        if (node.type === View && typeof style.height === 'number') return style;
+        node = node.parent;
+    }
+    throw new Error(`Missing row container for ${sessionId}`);
 }
 
 function createTreeDropOverlaySharedValues(): TreeDropOverlaySharedValues {
@@ -691,7 +702,7 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_title')?.props.style);
+        const rowStyle = findRowContainerStyle(screen, 'sess_compact_title');
         expect(rowStyle.height).toBe(34);
 
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
@@ -746,7 +757,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByType('Avatar' as any)?.props.size).toBe(20);
-        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_avatar_phone')?.props.style);
+        const rowStyle = findRowContainerStyle(screen, 'sess_compact_avatar_phone');
         expect(rowStyle.height).toBe(42);
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
         const titleStyle = flattenStyle(title?.props.style);
@@ -852,7 +863,9 @@ describe('SessionItem activity time', () => {
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
         const titleStyleEntries = styleEntries(findSessionTitleText(screen, 'Session')?.props.style);
-        const explicitTitleColorStyle = titleStyleEntries[titleStyleEntries.length - 1] as { color?: unknown } | undefined;
+        const explicitTitleColorStyle = [...titleStyleEntries].reverse().find((entry) => (
+            typeof flattenStyle(entry).color === 'string'
+        )) as { color?: unknown } | undefined;
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
         expect(explicitTitleColorStyle).toMatchObject({ color: titleStyle.color });
         expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(explicitTitleColorStyle?.color);
@@ -1001,7 +1014,7 @@ describe('SessionItem activity time', () => {
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_compact_active-trailing');
         expect(spinner).toBeTruthy();
         const spinnerStyle = flattenStyle(spinner?.props.style);
-        expect(spinnerStyle).toMatchObject({ width: 12, height: 12 });
+        expect(spinnerStyle).toMatchObject({ width: 16, height: 16 });
         expect(spinnerStyle.animationName).toBeUndefined();
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('Working on it');
@@ -1038,7 +1051,7 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-secondary');
         expect(spinner).toBeTruthy();
-        expect(flattenStyle(spinner?.props.style)).toMatchObject({ width: 12, height: 12 });
+        expect(flattenStyle(spinner?.props.style)).toMatchObject({ width: 16, height: 16 });
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
         const flat = flattenStyle(statusText?.props.style);

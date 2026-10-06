@@ -39,25 +39,6 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-}));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -89,6 +70,10 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 }));
 
 installSessionShellCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({ Platform: { get OS() { return platformState.os; } } });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -281,6 +266,7 @@ describe('SessionItem context menu press suppression', () => {
         const SessionItem = await importSessionItem();
         const fullSession = createSessionFixture({
             id: 'sess_debug_full',
+            serverId: 'server_a',
             active: false,
             metadata: {
                 path: '/workspace/repo',

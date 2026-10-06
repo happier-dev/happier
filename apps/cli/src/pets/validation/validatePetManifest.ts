@@ -1,11 +1,8 @@
 import { posix, win32 } from 'node:path';
 
-import {
-  PET_PACKAGE_LIMITS_V1,
-  PetPackageManifestV1Schema,
-  type PetPackageManifestV1,
-  type PetPackageValidationIssueV1,
-} from '@happier-dev/protocol';
+import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
+import type { PetPackageManifestV1, PetPackageValidationIssueV1 } from '@happier-dev/protocol';
 
 export type PetManifestValidationResult =
   | Readonly<{ ok: true; manifest: PetPackageManifestV1 }>

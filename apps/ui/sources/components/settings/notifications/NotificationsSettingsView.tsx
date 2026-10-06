@@ -13,7 +13,7 @@ import {
     hasLegacyAttentionDeviceOverrideFields,
 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
-import { useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { useLocalSettings, useSettingsSelector } from '@/sync/domains/state/storage';
 import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
@@ -60,7 +60,12 @@ import { SettingSection } from '@/components/settings/shell/SettingRow';
 
 export const NotificationsSettingsView = React.memo(function NotificationsSettingsView() {
     const router = useRouter();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        attentionDeliveryPolicyV1: settings.attentionDeliveryPolicyV1,
+        notificationsSettingsV1: settings.notificationsSettingsV1,
+        notificationChannelsV1: settings.notificationChannelsV1,
+        sessionRemoteAlertsEnabled: settings.sessionRemoteAlertsEnabled,
+    }));
     const localSettings = useLocalSettings();
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();

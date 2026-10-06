@@ -1,16 +1,7 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import {
-    DaemonLocalServicePreviewOpenOrCreateRequestV1Schema,
-    DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
-    DaemonLocalServicePreviewRevokeRequestV1Schema,
-    DaemonLocalServicePreviewRevokeResponseV1Schema,
-    DaemonLocalServicePreviewSnapshotRequestV1Schema,
-    DaemonLocalServicePreviewSnapshotResponseV1Schema,
-    type DaemonLocalServicePreviewOpenOrCreateResponseV1,
-    type DaemonLocalServicePreviewRevokeResponseV1,
-    type DaemonLocalServicePreviewSnapshotResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema, DaemonLocalServicePreviewRevokeResponseV1Schema, DaemonLocalServicePreviewSnapshotRequestV1Schema, DaemonLocalServicePreviewSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import type { DaemonLocalServicePreviewOpenOrCreateResponseV1, DaemonLocalServicePreviewRevokeResponseV1, DaemonLocalServicePreviewSnapshotResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 

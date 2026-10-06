@@ -12,6 +12,8 @@ import type {
 /** Consumes an authorized audience; binding verification never grants access. */
 export function prepareArtifactRecipientKeyEnvelopesV1(params: Readonly<{
   dataKey: Uint8Array;
+  /** Independent owner/grant key; never included in public-share key custody. */
+  provenanceDataKey?: Uint8Array | null;
   recipients: ArtifactAccessRecipientCensusResponseV1['recipients'];
   randomBytes: (length: number) => Uint8Array;
   /** Account transitions replace the resource key, invalidating even current wraps. */
@@ -29,10 +31,14 @@ export function prepareArtifactRecipientKeyEnvelopesV1(params: Readonly<{
       });
     } catch { continue; }
     if (!verified || verified.contentPublicKeyFingerprint !== recipient.contentPublicKeyFingerprint) continue;
-    if (!params.replaceExisting && recipient.encryptedDataKey && recipient.recipientContentPublicKeyFingerprint === verified.contentPublicKeyFingerprint) continue;
+    const current = !params.replaceExisting && recipient.recipientContentPublicKeyFingerprint === verified.contentPublicKeyFingerprint;
+    if (current && recipient.encryptedDataKey && (!params.provenanceDataKey || recipient.encryptedProvenanceDataKey)) continue;
     prepared.push({ recipientAccountId: recipient.recipientAccountId,
-      encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.dataKey,
+      encryptedDataKey: current && recipient.encryptedDataKey ? recipient.encryptedDataKey : encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.dataKey,
         recipientPublicKey: verified.contentPublicKey, randomBytes: params.randomBytes })),
+      ...(params.provenanceDataKey ? { encryptedProvenanceDataKey: current && recipient.encryptedProvenanceDataKey
+        ? recipient.encryptedProvenanceDataKey : encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: params.provenanceDataKey,
+          recipientPublicKey: verified.contentPublicKey, randomBytes: params.randomBytes })) } : {}),
       recipientContentPublicKeyFingerprint: verified.contentPublicKeyFingerprint });
   }
   return prepared;
@@ -43,6 +49,8 @@ export async function runArtifactRecipientKeyPreparationV1(params: Readonly<{
   artifactId: string;
   dataKey: Uint8Array | null;
   openedDataEncryptionKey: string | null;
+  provenanceDataKey?: Uint8Array | null;
+  openedProvenanceDataEncryptionKey?: string | null;
   randomBytes: (length: number) => Uint8Array;
   readCensus: () => Promise<ArtifactAccessRecipientCensusResponseV1>;
   commit: (input: ArtifactRecipientKeyEnvelopeCommitInputV1) => Promise<ArtifactRecipientKeyEnvelopeCommitResponseV1>;
@@ -58,10 +66,17 @@ export async function runArtifactRecipientKeyPreparationV1(params: Readonly<{
     || census.callerDataEncryptionKey !== params.openedDataEncryptionKey) {
     throw Object.assign(new Error('artifact_data_key_changed'), { code: 'artifact_data_key_changed' });
   }
+  if (params.provenanceDataKey && (!census.provenanceDataEncryptionKey || !census.callerProvenanceDataEncryptionKey
+    || census.callerProvenanceDataEncryptionKey !== params.openedProvenanceDataEncryptionKey)) {
+    throw Object.assign(new Error('artifact_data_key_changed'), { code: 'artifact_data_key_changed' });
+  }
   const recipientKeyEnvelopes = prepareArtifactRecipientKeyEnvelopesV1({ dataKey: params.dataKey,
+    provenanceDataKey: params.provenanceDataKey,
     recipients: census.recipients.filter((recipient) => recipient.recipientAccountId !== census.ownerAccountId),
     randomBytes: params.randomBytes });
   if (!recipientKeyEnvelopes.length) return empty;
   params.signal?.throwIfAborted();
-  return params.commit({ artifactId: params.artifactId, expectedDataEncryptionKey: census.dataEncryptionKey, recipientKeyEnvelopes });
+  return params.commit({ artifactId: params.artifactId, expectedDataEncryptionKey: census.dataEncryptionKey,
+    ...(census.provenanceDataEncryptionKey ? { expectedProvenanceDataEncryptionKey: census.provenanceDataEncryptionKey } : {}),
+    recipientKeyEnvelopes });
 }

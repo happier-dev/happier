@@ -1,4 +1,4 @@
-import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol';
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLatest } from '@/api/session/fetchEncryptedTranscriptWindow';

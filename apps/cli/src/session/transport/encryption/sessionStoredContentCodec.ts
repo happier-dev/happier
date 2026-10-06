@@ -1,9 +1,7 @@
 import { createHmac } from 'node:crypto';
 
-import {
-  stringifySerializedJsonValue,
-  type StrictSessionStoredMessageContentEnvelope,
-} from '@happier-dev/protocol';
+import { stringifySerializedJsonValue } from '@happier-dev/protocol/crypto/serializedJsonValue';
+import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 import { resolveSessionStoredContentEnvelope } from '@happier-dev/sync-client';
 
 import {

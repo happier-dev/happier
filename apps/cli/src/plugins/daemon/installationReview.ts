@@ -1,10 +1,8 @@
-import {
-  PLUGIN_CONTRIBUTION_CATALOG_V2,
-  PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2,
-  type PluginHostAccessRequestV2,
-  type PluginUpdatePolicyV1,
-} from '@happier-dev/protocol';
-import { MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH, type PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';
+import { PLUGIN_CONTRIBUTION_CATALOG_V2 } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PLUGIN_HOST_ACCESS_CAPABILITY_CATALOG_V2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginHostAccessRequestV2, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
+import { MAX_PLUGIN_INSTALLATION_REVIEW_STRING_LENGTH } from '@happier-dev/protocol/marketplace/internal';
+import type { PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';
 
 import type { NpmArtifactCompatibilitySelection } from '@/plugins/distribution/npm/types';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';

@@ -184,7 +184,7 @@ describe('WorkflowRunContent', () => {
             ...(screen.findByType(WorkflowRunContent as never)?.props as ContentProps),
             run: createWorkflowRunSummaryFixture({ state: 'succeeded' }),
         }));
-        expect(screen.findByTestId('workflow-run-show-current-work')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('workflow-run-show-current-work') === null).toBe(true);
     });
 
     it.each([1200, 390])('retains accepted nested attempt context in the shared header across views at width %s', async (width) => {
@@ -225,7 +225,7 @@ describe('WorkflowRunContent', () => {
             const header = screen.findAllByTestId(width === 390 ? 'workflow-run-selected-header' : 'details-pane.header')
                 .find((node) => typeof node.props.title === 'string');
             expect(header).toBeDefined();
-            expect(header?.props.title).toBe('Analyze the repository');
+            expect(header?.props.title).toBe('workflows.editor.addStep');
             expect(header?.props.subtitle).toEqual(expect.stringContaining('Frozen reviewer'));
             expect(header?.props.subtitle).not.toContain('Root reviewer');
             expect(header?.props.subtitle).toContain('workflows.input.iteration 3');
@@ -525,6 +525,24 @@ describe('WorkflowRunContent', () => {
         expect(onSelectInvocation).toHaveBeenCalledWith('second-child');
         const binding = screen.findByTestId('workflow-run-steps-workflow-first-input-topic');
         expect(binding?.findAll((node) => typeof node.type === 'string' && typeof node.props.onChangeText === 'function')).toHaveLength(0);
+        // Accepted child content is already present: reading this run must not
+        // ask for a fresh child catalog or offer an execution-looking Retry.
+        expect(screen.findByTestId('workflow-run-steps-workflow-first-retry')).toBeNull();
+        expect(screen.findByTestId('workflow-run-steps-workflow-second-retry')).toBeNull();
+    });
+
+    it('states a single occurrence lifecycle once in the Steps document and keeps it selectable', async () => {
+        const onSelectInvocation = vi.fn();
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'finished', lifecycle: 'completed' });
+        const screen = await renderContent({ view: 'steps', invocations: [invocation], onSelectInvocation,
+            selectedInvocationId: invocation.id,
+            invocationStructure: new Map([[invocation.id, { invocationId: invocation.id, blockId: 'analyze', nodeId: 'analyze',
+                occurrence: [], isFrame: false, coverageKind: 'executable' as const }]]) });
+        const document = screen.findByTestId('workflow-run-steps-list-root');
+        const status = document?.findAll(node => typeof node.type === 'string' && node.props.children === 'workflows.invocationState.completed');
+        expect(status).toHaveLength(1);
+        await screen.pressByTestIdAsync('workflow-run-steps-occurrence-finished');
+        expect(onSelectInvocation).toHaveBeenCalledWith('finished');
     });
 
     it.each(['owner', 'view'] as const)('offers Discuss only from the exact Session input grant (%s)', async (level) => {
@@ -729,7 +747,8 @@ describe('WorkflowRunContent', () => {
 
         expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
         expect(screen.findByTestId('workflow-run-needs-you-inv-2')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('Analyze changes');
+        expect(screen.getTextContent()).toContain('workflows.editor.addStep');
+        expect(screen.getTextContent()).not.toContain('Analyze changes');
         expect(screen.getTextContent()).not.toContain('inv-2');
         expect(screen.findAllByTestId('workflow-run-needs-you-inv-1')).toHaveLength(0);
     });
@@ -753,7 +772,8 @@ describe('WorkflowRunContent', () => {
             invocationProgressById: new Map([[invocation.id, progress]]),
         });
 
-        expect(screen.getTextContent()).toContain('Analyze changes');
+        expect(screen.getTextContent()).toContain('workflows.editor.addStep');
+        expect(screen.getTextContent()).not.toContain('Analyze changes');
         expect(screen.getTextContent()).not.toContain('invocation-private-id');
         await screen.pressByTestIdAsync('workflow-run-technical-toggle');
         expect(screen.getTextContent()).toContain('invocation-private-id');
@@ -975,7 +995,8 @@ describe('WorkflowRunContent', () => {
         const screen = await renderContent({ invocations });
 
         const row = screen.findByTestId('workflow-run-invocations-row-analyze-row');
-        expect(row?.props.accessibilityLabel).toContain('Analyze the repository');
+        expect(row?.props.accessibilityLabel).toContain('workflows.editor.addStep');
+        expect(row?.props.accessibilityLabel).not.toContain('Analyze the repository');
         expect(row?.props.accessibilityLabel).not.toContain('workflows.contentUnavailable');
     });
 
@@ -1183,7 +1204,7 @@ describe('WorkflowRunContent', () => {
         expect(screen.findByTestId('workflow-run-workspace-checkout-root')?.props.children)
             .toEqual(['workflows.workspace.projectCheckout', ': ', '~/project']);
         expect(screen.findByTestId('workflow-run-workspace-source')?.props.children)
-            .toEqual('workflows.workspace.fromStep:{"block":"Analyze the repository · inv-analyze-iteration-7"}');
+            .toEqual('workflows.workspace.fromStep:{"block":"workflows.editor.addStep · inv-analyze-iteration-7"}');
     });
 
     it('keeps an accepted stop request visible after the request itself has settled', async () => {
@@ -1247,6 +1268,21 @@ describe('WorkflowRunContent', () => {
         expect(seeFailures.borderWidth).toBe(0);
         expect(runAgain.borderWidth).not.toBe(0);
         expect(runAgain.backgroundColor).not.toBe(seeFailures.backgroundColor);
+    });
+
+    it('keeps Run again secondary after success without a selected final output', async () => {
+        const screen = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'succeeded',
+            availability: { cancel: false, pause: false } }), onRunAgain: vi.fn() });
+        expect(flattenTestStyle(screen.findByTestId('workflow-run-run-again')?.props.style).borderWidth).not.toBe(0);
+    });
+
+    it('offers the canonical Steps view when a successful Run has no final output', async () => {
+        const onChangeView = vi.fn();
+        const screen = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'succeeded',
+            availability: { cancel: false, pause: false } }), onChangeView });
+        expect(screen.findByTestId('workflow-run-inspect-steps') !== null).toBe(true);
+        await screen.pressByTestIdAsync('workflow-run-inspect-steps');
+        expect(onChangeView).toHaveBeenCalledWith('steps');
     });
 
     it('states how many interventions the Needs-you section holds', async () => {
@@ -1930,8 +1966,8 @@ describe('WorkflowRunContent', () => {
         expect(screen.findByTestId('workflow-run-replacement-input')?.props.value).toBe('Try the safer path');
         // Same conversation is the default, and fresh agent is genuinely
         // reachable rather than being decided by which capability came first.
-        expect(screen.findByTestId('workflow-run-replacement-conversation-same_conversation')
-            ?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.tree.findHostByTestId('workflow-run-replacement-conversation-same_conversation')
+            ?.props.accessibilityState?.checked).toBe(true);
         await screen.pressByTestIdAsync('workflow-run-replacement-conversation-fresh_agent');
         await screen.pressByTestIdAsync('workflow-run-submit-replacement');
 
@@ -2062,5 +2098,64 @@ describe('WorkflowRunContent', () => {
         const action = screen.findByTestId('workflow-run-needs-you-load-more');
         expect(action?.props.accessibilityState?.disabled).toBe(true);
         expect(action?.props.disabled).toBe(true);
+    });
+});
+
+describe('WorkflowRunContent lab fidelity (run-A)', () => {
+    const terminal = { cancel: false, pause: false } as const;
+
+    it('states a finished Run as its start–finish range, from the server finish fact', async () => {
+        const screen = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: terminal,
+            createdAt: '2026-09-08T10:00:00.000Z', finishedAt: '2026-09-08T10:31:00.000Z' }) });
+        const meta = screen.findByTestId('workflow-run-header-meta');
+        const text = JSON.stringify(meta?.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children));
+        expect(text).toContain('workflows.run.timeRange');
+        expect(text).not.toContain('workflows.run.startedAt');
+    });
+
+    it('keeps the start alone while the Run has no finish fact', async () => {
+        const screen = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'running', finishedAt: null }) });
+        const meta = screen.findByTestId('workflow-run-header-meta');
+        const text = JSON.stringify(meta?.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children));
+        expect(text).toContain('workflows.run.startedAt');
+        expect(text).not.toContain('workflows.run.timeRange');
+    });
+
+    it('leads the outcome sentence with the Run state mark', async () => {
+        const screen = await renderContent({ run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: terminal }) });
+        expect(screen.findByTestId('workflow-run-outcome-mark')).toBeTruthy();
+    });
+
+    it('lists steps in Activity without the Run root row or raw member ordinals', async () => {
+        const definition = createWorkflowDefinitionFixture({ blocks: [
+            { kind: 'wait', id: 'first', document: { text: 'First', references: [], attachments: [] } },
+            { kind: 'wait', id: 'second', document: { text: 'Second', references: [], attachments: [] } },
+        ] });
+        const screen = await renderContent({ view: 'activity', definition, invocations: [
+            createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+            createWorkflowInvocationIndexFixture({ id: 'second-row', parentRecordId: 'root', memberOrdinal: '1', sequence: '1', lifecycle: 'completed' }),
+        ] });
+        expect(screen.findByTestId('workflow-run-invocations-row-root')).toBeNull();
+        const row = screen.findByTestId('workflow-run-invocations-row-second-row');
+        expect(row).toBeTruthy();
+        expect(row?.findAll((node) => node.props.children === '1')).toHaveLength(0);
+    });
+
+    it('reads a single Steps occurrence as its open-work link, never a bare attempt', async () => {
+        const onSelectInvocation = vi.fn();
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'finished', lifecycle: 'completed' });
+        const screen = await renderContent({ view: 'steps', invocations: [invocation], onSelectInvocation,
+            invocationStructure: new Map([[invocation.id, { invocationId: invocation.id, blockId: 'analyze', nodeId: 'analyze',
+                occurrence: [], isFrame: false, coverageKind: 'executable' as const }]]) });
+        expect(screen.getTextContent()).not.toContain('workflows.run.attempt');
+        const link = screen.findByTestId('workflow-run-steps-occurrence-finished');
+        expect(link?.findAll((node) => node.props.children === 'workflows.run.openConversation').length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('workflow-run-steps-occurrence-finished');
+        expect(onSelectInvocation).toHaveBeenCalledWith('finished');
+    });
+
+    it('withdraws Inspect steps once Steps is the open view', async () => {
+        const screen = await renderContent({ view: 'steps', run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: terminal }) });
+        expect(screen.findByTestId('workflow-run-inspect-steps')).toBeNull();
     });
 });

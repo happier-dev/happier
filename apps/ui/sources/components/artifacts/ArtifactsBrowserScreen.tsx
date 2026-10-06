@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import { Collection, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import type { ArtifactStorageUsageV1 } from '@happier-dev/protocol';
 
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
@@ -46,6 +46,7 @@ import { ARTIFACT_KIND_ICONS, artifactKindFilterLabel, artifactKindLabel } from 
 import { ArtifactProvenanceLabel } from './ArtifactProvenance';
 import { ArtifactView } from './ArtifactView';
 import { ArtifactsEmptyMark } from './ArtifactsEmptyMark';
+import { useArtifactOperations } from './useArtifactOperations';
 
 const SORTS: readonly ArtifactBrowserSort[] = ['updated_desc', 'created_desc', 'title_asc'];
 /** The narrowest card that still shows a readable preview; one column on a 390 pt phone. */
@@ -187,25 +188,29 @@ export function ArtifactsBrowser(props: Readonly<{
         <EmptyState testID="artifacts:noMatch" layout="line" title={t('artifacts.browser.noMatch', { query: query.trim() || artifactKindFilterLabel(kind) })} />
     );
 
+    const rowCommands = React.useMemo(() => ({ open: openArtifact, deleted: (id: string) => setOpenId(current => current === id ? null : current) }), [openArtifact]);
     const main = (
-        <CoreCollectionScope renderPageScroller={renderBrowserPageScroller}>
-            <Collection<ArtifactBrowserRow>
-                testID="artifacts:collection"
-                model={model}
-                anatomy={anatomy}
-                accessibilityLabel={t('artifacts.title')}
-                presentation={presentation}
-                detail="none"
-                scroll="page"
-                minListWidth={LIST_MIN_WIDTH_PX}
-                minDetailWidth={LIST_MIN_WIDTH_PX}
-                preferredListRatio={1}
-                minCardWidth={CARD_MIN_WIDTH_PX}
-                header={header}
-                loading={!loaded && total === 0 && !loadFailed}
-                empty={empty}
-            />
-        </CoreCollectionScope>
+        <ArtifactRowCommandsContext.Provider value={rowCommands}>
+            <CoreCollectionScope renderPageScroller={renderBrowserPageScroller}>
+                <Collection<ArtifactBrowserRow>
+                    testID="artifacts:collection"
+                    model={model}
+                    anatomy={anatomy}
+                    useRowActions={useArtifactRowActions}
+                    accessibilityLabel={t('artifacts.title')}
+                    presentation={presentation}
+                    detail="none"
+                    scroll="page"
+                    minListWidth={LIST_MIN_WIDTH_PX}
+                    minDetailWidth={LIST_MIN_WIDTH_PX}
+                    preferredListRatio={1}
+                    minCardWidth={CARD_MIN_WIDTH_PX}
+                    header={header}
+                    loading={!loaded && total === 0 && !loadFailed}
+                    empty={empty}
+                />
+            </CoreCollectionScope>
+        </ArtifactRowCommandsContext.Provider>
     );
 
     return (
@@ -232,6 +237,29 @@ export function ArtifactsBrowser(props: Readonly<{
             } : null}
         />
     );
+}
+
+const ArtifactRowCommandsContext = React.createContext<Readonly<{ open: (key: string) => void; deleted: (key: string) => void }> | null>(null);
+
+function useArtifactRowActions(row: ArtifactBrowserRow): CollectionRowActions {
+    const commands = React.useContext(ArtifactRowCommandsContext);
+    const operations = useArtifactOperations(row.artifact, () => commands?.deleted(row.key));
+    if (!operations.canRead) return {};
+    return {
+        busy: operations.deleting,
+        secondaryActions: [
+            { id: 'open', label: t('common.open') },
+            ...(operations.canShare ? [{ id: 'share', label: t('artifacts.browser.actions.share') }] : []),
+            { id: 'history', label: t('artifacts.browser.actions.history') },
+            ...(operations.canManage ? [{ id: 'delete', label: t('artifacts.delete'), disabled: operations.deleting }] : []),
+        ],
+        onSecondaryAction: id => {
+            if (id === 'open') commands?.open(row.key);
+            else if (id === 'share') operations.share();
+            else if (id === 'history') operations.history();
+            else if (id === 'delete') return operations.remove();
+        },
+    };
 }
 
 function readRowKey(row: ArtifactBrowserRow): string {

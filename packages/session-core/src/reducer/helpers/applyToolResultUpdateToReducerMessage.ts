@@ -1,4 +1,4 @@
-import { isAsyncSubAgentLaunchToolResult } from '@happier-dev/protocol/tools/v2';
+import { isAsyncSubAgentLaunchToolResult } from '@happier-dev/protocol/tools/v2/subAgentFamilies';
 
 import type { MessageMeta } from "../../messages/messageMetaTypes.js";
 import type { ReducerMessage } from "../reducer.js";

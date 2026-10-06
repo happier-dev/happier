@@ -1,4 +1,3 @@
-import type { HappierReleaseGlyph, HappierReleaseOutcome } from '@happier-dev/plugin-ui/presentation';
 import type { EntityDropAdmissionV1, EntityDropEffectV1, EntityDropPreviewV1, EntityDropReasonV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { EntityDragDropSnapshot } from '@/components/ui/treeDragDrop/entityDragDropTypes';
@@ -35,8 +34,11 @@ const PANE_EFFECT_KINDS: Readonly<Record<string, PaneEffectKind>> = {
     'session.canvas.tabs.reorder': 'move',
 };
 
-/** A tab carried over its own pane: releasing leaves it where it is (lab C2s "Same pane, same place"). */
-const ALREADY_HERE_CODES: ReadonlySet<string> = new Set([
+/**
+ * A tab carried over its own pane: releasing leaves it where it is (lab C2s "Same pane, same place").
+ * The shared outcome vocabulary reads these as quiet "Already here", never as a refusal.
+ */
+export const PANE_DROP_UNCHANGED_CODES: ReadonlySet<string> = new Set([
     'already_here', 'workspace_tab_already_here',
     'workspace_tab_cannot_split_own_pane', 'canvas_tab_cannot_split_own_pane',
 ]);
@@ -112,6 +114,7 @@ function describeAllowed(effect: Omit<AllowedEffect, 'preview'>, kind: PaneEffec
         const located = tabId ? scene.locateTab(tabId) : null;
         const title = located?.title ?? scene.paneTitle ?? t('workspaceBar.tabsLabel');
         return {
+            glyph: 'goTo',
             verb: t('entityDragDrop.pane.goTo', { target: title }),
             target: title,
             consequence: located?.paneId === scene.paneId
@@ -123,6 +126,7 @@ function describeAllowed(effect: Omit<AllowedEffect, 'preview'>, kind: PaneEffec
     if (placement !== 'center') {
         const verb = splitVerb(placement);
         return {
+            glyph: placement === 'left' || placement === 'right' ? 'split' : 'splitVertical',
             verb,
             target: paneTitle ?? verb,
             ...(paneTitle ? { consequence: kind === 'open'
@@ -133,13 +137,14 @@ function describeAllowed(effect: Omit<AllowedEffect, 'preview'>, kind: PaneEffec
     const anchorTitle = scene.beforeTabId ? scene.locateTab(scene.beforeTabId)?.title ?? null : null;
     if (anchorTitle) {
         return kind === 'open'
-            ? { verb: t('entityDragDrop.pane.openBefore', { target: anchorTitle }), target: anchorTitle,
+            ? { glyph: 'tab', verb: t('entityDragDrop.pane.openBefore', { target: anchorTitle }), target: anchorTitle,
                 consequence: t('entityDragDrop.pane.nothingCloses') }
-            : { verb: t('entityDragDrop.pane.moveBefore', { target: anchorTitle }), target: anchorTitle,
+            : { glyph: 'tab', verb: t('entityDragDrop.pane.moveBefore', { target: anchorTitle }), target: anchorTitle,
                 consequence: t('entityDragDrop.pane.placeOnly') };
     }
     const verb = kind === 'open' ? t('entityDragDrop.pane.openHere') : t('entityDragDrop.pane.moveHere');
     return {
+        glyph: 'tab',
         verb,
         target: paneTitle ?? verb,
         consequence: scene.declinedSplit
@@ -169,7 +174,7 @@ function isPresentedAdmission(admission: PaneDropAdmission | EntityDropAdmission
 export function presentPaneDropAdmission(admission: PaneDropAdmission | EntityDropAdmissionV1, scene: PaneDropScene): EntityDropAdmissionV1 {
     if (admission.status === 'refused') {
         const code = admission.reason.code;
-        if (ALREADY_HERE_CODES.has(code)) {
+        if (PANE_DROP_UNCHANGED_CODES.has(code)) {
             const verb = t('entityDragDrop.pane.alreadyHere');
             return { status: 'refused', reason: { code, message: t('entityDragDrop.pane.leaveIt') },
                 preview: { verb, target: scene.paneTitle ?? verb } };
@@ -193,41 +198,6 @@ export function describePaneDropDestination(placement: Placement, paneTitle: str
     return paneTitle ? `${action} · ${paneTitle}` : action;
 }
 
-function glyphFor(effect: EntityDropEffectV1, kind: PaneEffectKind): HappierReleaseGlyph {
-    if (kind === 'goTo') return 'goTo';
-    switch (effectPlacement(effect)) {
-        case 'left':
-        case 'right': return 'split';
-        case 'up':
-        case 'down': return 'splitVertical';
-        case 'center': return 'tab';
-    }
-}
-
-/**
- * The carried card's outcome for a pane verdict, or `null` when the verdict is not a pane's (another
- * owner words it). "Already here" is quiet, not a refusal: nothing is wrong, nothing will change.
- */
-export function describePaneDropOutcome(input: Readonly<{
-    phase: EntityDragDropSnapshot['phase'];
-    admission: EntityDropAdmissionV1 | null;
-}>): HappierReleaseOutcome | null {
-    const admission = input.admission;
-    if (!admission) return null;
-    if (admission.status === 'refused') {
-        if (!ALREADY_HERE_CODES.has(admission.reason.code)) return null;
-        return { tone: 'quiet', glyph: 'here', title: admission.preview?.verb ?? t('entityDragDrop.pane.alreadyHere'),
-            detail: admission.reason.message };
-    }
-    const kind = paneEffectKind(admission.effect);
-    if (!kind) return null;
-    return {
-        tone: input.phase === 'pending' ? 'pending' : 'allowed',
-        glyph: glyphFor(admission.effect, kind),
-        title: admission.effect.preview.verb,
-        ...(admission.effect.preview.consequence ? { detail: admission.effect.preview.consequence } : {}),
-    };
-}
 
 export type PaneDropStripCue = Readonly<{ slot: boolean; pulseTabKey: string | null }>;
 const NO_CUE: PaneDropStripCue = Object.freeze({ slot: false, pulseTabKey: null });

@@ -11,10 +11,8 @@ import type {
   RuntimeOutboundTranscriptPostSendEffectV1,
   RuntimeOutboundTranscriptToolTraceEventV1,
 } from '@happier-dev/agents';
-import {
-  SessionStateFieldIdSchema,
-  type SessionStateFieldId,
-} from '@happier-dev/protocol';
+import { SessionStateFieldIdSchema } from '@happier-dev/protocol/sessions/state/fieldRegistrySchema';
+import type { SessionStateFieldId } from '@happier-dev/protocol';
 
 import { normalizeUsageObservation } from '../../../usage/usageObservation';
 import { buildLegacyUsageReportFromUsageObservation } from '../../../usage/legacy/legacyUsageTransport';

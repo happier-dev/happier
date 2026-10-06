@@ -718,7 +718,6 @@ import {
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
-import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
 import {
@@ -1196,7 +1195,10 @@ function useSessionTranscriptRenderState({
 }: SessionTranscriptRenderStateInput) {
     const { ids: committedMessageIds, isLoaded } = useSessionTranscriptIds(sessionId);
     const shouldForceRenderTranscriptFooter =
-        isForkedSessionV1 || ((session.seq ?? 0) > 0 && committedMessageIds.length === 0);
+        isForkedSessionV1
+        || readExternalSessionLink(readSessionOwnerMetadataView(session)) !== null
+        || readExternalSessionOperationPresentationFromMetadata(session.metadata) !== null
+        || ((session.seq ?? 0) > 0 && committedMessageIds.length === 0);
     const shouldRenderChatTimeline = !isEncryptedSessionLocked
         && shouldRenderChatTimelineForSession({
             committedMessagesCount: committedMessageIds.length,
@@ -3570,7 +3572,6 @@ function SessionViewLoadedContent({
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads');
     const usageLimitRecoveryFeatureEnabled = useFeatureEnabled('sessions.usageLimitRecovery', { scopeKind: 'spawn', serverId: sessionRouteServerId });
     const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
-    const poolQuotaLimitSelectionEnabled = useFeatureEnabled('connectedServices.poolQuotaLimitSelection');
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId, sessionRouteServerId, 'attachment');
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled
         && attachmentsUploadsTransferAvailable
@@ -4080,6 +4081,7 @@ function SessionViewLoadedContent({
     const accountProfile = useProfile();
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
+    const sessionProviderUsageGaugeWindowModes = useSetting('sessionProviderUsageGaugeWindowModes');
     const connectedServicesQuotaPinnedMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const sessionProviderUsageGaugeWindowMode: ConnectedServiceQuotaGaugeWindowMode =
         sessionProviderUsageGaugeWindowModeSetting === 'daily'
@@ -4133,27 +4135,21 @@ function SessionViewLoadedContent({
         ? connectedServiceQuotaSnapshotOverride.snapshot
         : connectedServiceQuotaPolledSnapshot;
     const connectedServiceQuotaLimitSelection = React.useMemo(() => {
-        if (!poolQuotaLimitSelectionEnabled || !connectedServiceQuotaProfileRef?.groupId) return undefined;
+        if (!connectedServiceQuotaProfileRef?.groupId) return undefined;
         const service = parseQualifiedPluginContributionKey(connectedServiceQuotaProfileRef.serviceKey);
-        if (!service) return undefined;
-        return accountProfile?.connectedAccountGroupsV4.find((group) => (
+        if (!service) return null;
+        const group = accountProfile?.connectedAccountGroupsV4?.find((group) => (
             group.ref.groupId === connectedServiceQuotaProfileRef.groupId
             && group.ref.service.pluginId === service.pluginId
             && group.ref.service.localId === service.localId
-        ))?.policy.quotaLimitSelection;
+        ));
+        return group ? group.policy.quotaLimitSelection : null;
     }, [
         accountProfile?.connectedAccountGroupsV4,
         connectedServiceQuotaProfileRef?.groupId,
         connectedServiceQuotaProfileRef?.serviceKey,
-        poolQuotaLimitSelectionEnabled,
     ]);
-    const connectedServiceQuotaDisplaySnapshot = React.useMemo(
-        () => projectConnectedServiceQuotaSnapshotForLimitSelection(
-            connectedServiceQuotaSnapshot,
-            connectedServiceQuotaLimitSelection,
-        ),
-        [connectedServiceQuotaLimitSelection, connectedServiceQuotaSnapshot],
-    );
+    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
     React.useEffect(() => {
         if (!connectedServiceQuotaSnapshotOverride) return;
         if (connectedServiceQuotaSnapshotOverride.profileKey !== connectedServiceQuotaProfileKey) {
@@ -4426,29 +4422,33 @@ function SessionViewLoadedContent({
             if (providerUsageDisplaySource?.kind !== 'connected_service_quota_view') {
                 return null;
             }
-            // The account's pinned meters become extra rings, only on that account's own snapshot.
-            const pinnedService = providerUsageConnectedServiceQuotaProfileRef
+            const sourceAccount = providerUsageConnectedServiceQuotaSnapshot;
+            const pinnedService = sourceAccount?.serviceId === connectedServiceQuotaProfileRef.legacyServiceId
                 ? parseQualifiedPluginContributionKey(connectedServiceQuotaProfileRef.serviceKey)
                 : null;
-            const additionalMeterIds = pinnedService
+            const additionalMeterIds = pinnedService && sourceAccount
                 ? resolveQualifiedConnectedAccountProfilePreference({
                     valuesByKey: connectedServicesQuotaPinnedMeterIdsByKey,
                     service: pinnedService,
                     legacyServiceId: connectedServiceQuotaProfileRef.legacyServiceId,
-                    accountId: connectedServiceQuotaProfileRef.profileId,
+                    accountId: sourceAccount.profileId,
                 })
                 : undefined;
             return computeConnectedServiceQuotaGaugeViewModel({
                 snapshot: providerUsageConnectedServiceQuotaSnapshot,
                 additionalMeterIds,
+                quotaLimitSelection: connectedServiceQuotaLimitSelection,
                 windowMode: sessionProviderUsageGaugeWindowMode,
+                windowModes: sessionProviderUsageGaugeWindowModes,
                 nowMs: Date.now(),
                 formatter: connectedServiceQuotaGaugeFormatter,
             });
         }
         const connectedServiceGauge = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: providerUsageConnectedServiceQuotaSnapshot,
+            quotaLimitSelection: connectedServiceQuotaLimitSelection,
             windowMode: sessionProviderUsageGaugeWindowMode,
+            windowModes: sessionProviderUsageGaugeWindowModes,
             nowMs: Date.now(),
             formatter: connectedServiceQuotaGaugeFormatter,
         });
@@ -4462,6 +4462,7 @@ function SessionViewLoadedContent({
                     ?? 'not_loaded'
                 : 'not_loaded',
             windowMode: sessionProviderUsageGaugeWindowMode,
+            windowModes: sessionProviderUsageGaugeWindowModes,
             nowMs: Date.now(),
             formatter: connectedServiceQuotaGaugeFormatter,
         });
@@ -4469,7 +4470,9 @@ function SessionViewLoadedContent({
         connectedServiceQuotaProfileIdentity,
         connectedServiceQuotaProfileRef,
         connectedServiceQuotasEnabled,
+        connectedServiceQuotaLimitSelection,
         connectedServicesQuotaPinnedMeterIdsByKey,
+        sessionProviderUsageGaugeWindowModes,
         providerUsageConnectedServiceQuotaProfileRef,
         providerUsageDisplaySource?.kind,
         providerUsageConnectedServiceQuotaSnapshot,
@@ -8283,7 +8286,7 @@ function SessionViewLoadedContent({
             <SessionComposerAgentInput
                 composerRef={activeComposerRef}
                 composerReferenceHost={composerDropReferenceHost}
-                composerFileScope={resolveWorkspaceTargetForSession(companionAddress ?? sessionId)}
+                composerFileScope={companionAddress ? resolveWorkspaceTargetForSession(companionAddress) : null}
                 textStore={composerTextStore}
                 pendingText={pendingComposerDocument?.text ?? null}
                 placeholder={isReadOnly

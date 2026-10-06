@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -213,6 +216,27 @@ test('root typecheck packages expose cacheable finite implementations without re
     assert.doesNotMatch(manifest.scripts['typecheck:finite'], /hstack-exec/u, manifest.name);
   }
 
+});
+
+test('finite typecheck cache and strict child environments preserve the public dispatch permission', async () => {
+  const turbo = await readJson('turbo.json');
+  for (const task of ['typecheck:finite', 'typecheck:source:finite']) {
+    assert.ok(turbo.tasks[task].env?.includes('HAPPIER_TYPECHECK_DISPATCHED'), task);
+  }
+});
+
+test('direct Turbo finite source task refuses without public dispatch', () => {
+  const yarn = resolveYarnCommandInvocation([
+    '-s', 'turbo', 'run', 'typecheck:source:finite', '--filter=@happier-dev/terminal-native', '--force',
+  ]);
+  const result = spawnSync(yarn.command, yarn.args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, HAPPIER_TYPECHECK_DISPATCHED: '' },
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(`${result.stdout}\n${result.stderr}`, /run `yarn typecheck` \(routed\) instead of `typecheck:source:finite`/);
 });
 
 test('source-only typecheck projects persist compiler state outside authored and packaged files', async () => {

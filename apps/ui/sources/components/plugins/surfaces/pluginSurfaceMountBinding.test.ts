@@ -69,14 +69,14 @@ type EventSetupRenderer = DaemonContributionRegistryProjectionAutomationEligible
 function declarativeModel(
     pluginId: string,
     localId: string,
-    generation: string,
+    occurrenceId: string,
 ): NonNullable<Extract<EventSetupRenderer, { kind: 'declarative' }>['model']> {
     return PluginDeclarativeProjectedModelV1Schema.parse({
         identity: Object.freeze({
             pluginId,
             localId,
             qualifiedId: `${pluginId}/${localId}`,
-            generation,
+            occurrenceId,
         }),
         visible: true,
         requiredHostMethods: Object.freeze([]),

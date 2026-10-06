@@ -1,16 +1,10 @@
 import axios from 'axios';
 
-import {
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  getActionSpec,
-  PluginWebhookActionInputSchemasV1,
-  PluginWebhookActionOutputSchemasV1,
-  PluginMachineMaterializationRefV1Schema,
-  isPluginWebhookPluginSurfaceActionIdV1,
-  type ActionExecutorDeps,
-  type PluginWebhookActionIdV1,
-  type PluginMachineMaterializationRefV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PluginWebhookActionInputSchemasV1, PluginWebhookActionOutputSchemasV1, isPluginWebhookPluginSurfaceActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import type { ActionExecutorDeps, PluginWebhookActionIdV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';

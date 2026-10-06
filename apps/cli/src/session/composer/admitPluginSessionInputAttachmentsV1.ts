@@ -1,10 +1,6 @@
-import {
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  ComposerAttachmentInputV1Schema,
-  type ComposerAttachmentInputV1,
-  type ComposerAttachmentDraftV1,
-  type PluginSessionInputAttachmentV1,
-} from '@happier-dev/protocol';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { ComposerAttachmentInputV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerAttachmentInputV1, ComposerAttachmentDraftV1, PluginSessionInputAttachmentV1 } from '@happier-dev/protocol';
 
 import { admitSessionStructuredInputV1 } from '@/session/services/admitSessionStructuredInputV1';
 import {

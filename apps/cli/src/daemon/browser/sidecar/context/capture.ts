@@ -1,14 +1,5 @@
-import {
-    BrowserContextAttachmentV1Schema,
-    BrowserContextItemV1Schema,
-    type BrowserContextAttachmentV1,
-    type BrowserContextItemV1,
-    type BrowserContextKindV1,
-    type BrowserContextLifecycleStateV1,
-    type BrowserScreenshotMediaReferenceV1,
-    type BrowserTargetDisplayV1,
-    type BrowserViewTargetKindV1,
-} from '@happier-dev/protocol';
+import { BrowserContextAttachmentV1Schema, BrowserContextItemV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import type { BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextKindV1, BrowserContextLifecycleStateV1, BrowserScreenshotMediaReferenceV1, BrowserTargetDisplayV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
 
 import {
     redactSidecarContextUrl,

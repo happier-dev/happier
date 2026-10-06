@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 import * as protocol from '../../index.js';
 import {
@@ -9,6 +11,29 @@ import {
 } from './contract.js';
 
 describe('sessionControl contract exports', () => {
+  it('preserves both JSON Schema dialects and fluent resource-access projection', () => {
+    const reference = z.object({
+      accountId: z.string().trim().min(1).max(256),
+      throughCursor: z.number().int().nonnegative(),
+      status: z.enum(['available', 'unavailable']),
+    }).strict();
+    for (const target of ['draft-2020-12', 'draft-7'] as const) {
+      expect(zodSchemaToJsonSchemaObject(V2SessionResourceAccessResponseSchema, { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(reference, { target }));
+      expect(zodSchemaToJsonSchemaObject(V2SessionResourceAccessResponseSchema.pick({ status: true }), { target }))
+        .toEqual(zodSchemaToJsonSchemaObject(reference.pick({ status: true }), { target }));
+    }
+  });
+
+  it('preserves classic resource-access errors and issue paths', () => {
+    const result = V2SessionResourceAccessResponseSchema.safeParse({ accountId: 'a', throughCursor: -1, status: 'available' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBeInstanceOf(z.ZodError);
+      expect(result.error.issues).toMatchObject([{ code: 'too_small', path: ['throughCursor'], minimum: 0 }]);
+    }
+    expect(() => V2SessionResourceAccessResponseSchema.parse({})).toThrow(z.ZodError);
+  });
   it('accepts only the exact v2 session-by-id not-found body', () => {
     expect(protocol.V2SessionByIdNotFoundSchema).toBe(V2SessionByIdNotFoundSchema);
 

@@ -1,7 +1,64 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
 
 import { watchDebounced } from './watch.mjs';
+
+test('watchDebounced skips inaccessible or vanished descendants and still observes healthy changes', async () => {
+  for (const code of ['EACCES', 'ENOENT', 'EPERM']) {
+    const nativeWatcher = new EventEmitter();
+    nativeWatcher.close = () => {};
+    const warnings = [];
+    const changes = [];
+    let notify;
+    const watcher = watchDebounced({
+      paths: ['/repo/src'], debounceMs: 0,
+      logger: { warn: (message) => warnings.push(message) },
+      watchImpl: (_path, _options, handler) => { notify = handler; return nativeWatcher; },
+      onChange: (event) => changes.push(event.filename),
+    });
+    try {
+      assert.doesNotThrow(() => nativeWatcher.emit('error', Object.assign(new Error('watch failed'), {
+        code, path: '/repo/src/private/file.ts',
+      })));
+      notify('change', 'runtime.ts');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.deepEqual(changes, ['runtime.ts']);
+      assert.match(warnings.join('\n'), new RegExp(code));
+      assert.match(warnings.join('\n'), /private\/file.ts/);
+      for (const error of [
+        Object.assign(new Error('resource exhaustion'), { code: 'EMFILE', path: '/repo/src/file.ts' }),
+        Object.assign(new Error('root unavailable'), { code, path: '/repo/src' }),
+        Object.assign(new Error('sibling unavailable'), { code, path: '/repo/src-other/file.ts' }),
+      ]) assert.throws(() => nativeWatcher.emit('error', error), (actual) => actual === error);
+    } finally { watcher.close(); }
+  }
+});
+
+test('watchDebounced preserves fatal construction errors instead of silently disabling watching', () => {
+  const error = Object.assign(new Error('watch resource exhaustion'), { code: 'EMFILE' });
+  assert.throws(() => watchDebounced({ paths: ['/repo/src'], onChange() {}, watchImpl() { throw error; } }),
+    (actual) => actual === error);
+});
+
+test('watchDebounced gives the native watcher the same ignore policy used by observation', () => {
+  const ignorePath = (path) => path.includes('.scratch-');
+  const changes = [];
+  let options;
+  let notify;
+  const watcher = watchDebounced({
+    paths: ['/repo/src'], ignorePath,
+    onChange: (event) => changes.push(event),
+    watchImpl: (_path, opts, handler) => { options = opts; notify = handler; return { close() {} }; },
+    setTimeoutImpl: (callback) => { callback(); return null; },
+  });
+  try {
+    assert.equal(options.ignore, ignorePath);
+    notify('rename', '.scratch-work/generated.ts');
+    notify('change', 'runtime.ts');
+    assert.deepEqual(changes.map((event) => event.filename), ['runtime.ts']);
+  } finally { watcher.close(); }
+});
 
 test('watchDebounced polls an explicit signature so missed fs.watch events still trigger onChange', async () => {
   const calls = [];

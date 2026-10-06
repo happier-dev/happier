@@ -1,8 +1,5 @@
-import {
-    EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1,
-    type ExternalSessionTranscriptInvalidationV1,
-    type ExternalSessionTranscriptRefreshBindingV1,
-} from '@happier-dev/protocol';
+import { EXTERNAL_SESSION_TRANSCRIPT_INVALIDATION_EVENT_V1 } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import type { ExternalSessionTranscriptInvalidationV1, ExternalSessionTranscriptRefreshBindingV1 } from '@happier-dev/protocol';
 
 import {
     resolveExternalSessionTranscriptRefreshBinding as resolveCurrentTranscriptRefreshBinding,

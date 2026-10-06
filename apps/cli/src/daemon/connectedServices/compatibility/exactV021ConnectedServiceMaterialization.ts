@@ -1,16 +1,10 @@
 import { join } from 'node:path';
 
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
-  qualifiedPurposeKey,
-  sameQualifiedConnectedAccountRef,
-  type BuiltInLegacyConnectedServiceId,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
-  type QualifiedConnectedAccountPurposeBindingV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { BuiltInLegacyConnectedServiceId, ConnectedServiceCredentialRecordV1, ConnectedServiceId, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type {
   ConnectedAccountMaterialization,
   ConnectedAccountMaterializationRequest,

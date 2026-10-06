@@ -229,9 +229,11 @@ export function PluginAppPageLaunchInputScope(props: Readonly<{
             // `onRetire` runs synchronously from the incumbent reset owner.
             // Clear the bounded handoff before the successor Account mounts,
             // then refresh the context so already-delivered input also loses
-            // its stale authority on the next render.
+            // its stale authority on the next render. Capture can retire the
+            // Account while a sibling renders; publish the React update only
+            // after that render, without delaying the authority withdrawal.
             store.retire();
-            refreshAfterAccountRetirement();
+            queueMicrotask(refreshAfterAccountRetirement);
         });
         return () => retirement?.dispose();
     }, [accountLifetime, refreshAfterAccountRetirement, store]);

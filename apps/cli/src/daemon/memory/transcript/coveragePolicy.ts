@@ -1,10 +1,5 @@
-import {
-  MemoryContentPolicyV1Schema,
-  MemoryCoveragePolicyV1Schema,
-  type MemoryContentPolicyV1,
-  type MemoryCoveragePolicyV1,
-  type MemoryIndexPolicyV1,
-} from '@happier-dev/protocol';
+import { MemoryContentPolicyV1Schema, MemoryCoveragePolicyV1Schema } from '@happier-dev/protocol/memory/memorySettings';
+import type { MemoryContentPolicyV1, MemoryCoveragePolicyV1, MemoryIndexPolicyV1 } from '@happier-dev/protocol';
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 

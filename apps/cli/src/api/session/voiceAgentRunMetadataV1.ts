@@ -1,10 +1,6 @@
-import {
-  VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
-  buildVoiceAgentRunMetadataV1,
-  parseVoiceAgentRunMetadataV1,
-  type ExecutionRunPublicState,
-  type VoiceAgentRunMetadataV1,
-} from '@happier-dev/protocol';
+import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from '@happier-dev/protocol/voice/voiceAgentRunMetadataContract';
+import { buildVoiceAgentRunMetadataV1, parseVoiceAgentRunMetadataV1 } from '@happier-dev/protocol/voice/voiceAgentRunMetadataV1';
+import type { ExecutionRunPublicState, VoiceAgentRunMetadataV1 } from '@happier-dev/protocol';
 
 export { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION };
 export type { VoiceAgentRunMetadataV1 };

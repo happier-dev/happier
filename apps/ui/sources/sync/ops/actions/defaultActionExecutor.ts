@@ -454,7 +454,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   /** An explicitly admitted API-token transport; Home owns grants and approvals. */
   apiTokenAction?: ApiTokenActionTransport;
   /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
-  admittedClientAction?: true;
+  admittedClientActionId?: ActionId;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
@@ -642,8 +642,13 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         readSettings: accountContext.readRawSettings,
         mutateSettings: accountContext.mutateRawSettings,
         artifactStore: { read: (artifactId, signal) => accountContext.workflowArtifacts.read(artifactId, { signal }),
-          create: async ({ header, body }) => ({ artifactId: await accountContext.createArtifact(header, body) }) },
-      }).publish(input, context);
+          create: async ({ header, body, signal, savedBy }) => {
+            const created = await accountContext.createArtifactDocument({ header, body, signal,
+              savedBy });
+            return { artifactId: created.artifactId };
+          } },
+      }).publish(input, { ...context, ...(context?.context ? { context: { ...context.context,
+        runtimeAccountId: accountContext.accountId } } : {}) });
     } } : {}),
     ...(accountContext ? createUiNotificationActionDeps({ account: accountContext }) : {}),
     ...(accountContext ? { artifactAction: createUiArtifactAction(accountContext, { onPublicLinkIssued: opts?.onPublicLinkIssued }) } : {}),
@@ -2158,10 +2163,10 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   // app client's entrypoint, so an unattributed caller is a `ui` caller — a `voice` or `plugin`
   // caller stamps its own surface and still wins. Without this the surface reaches the catalog
   // gate nullish, which now fails closed (INV-1 / DEC-2).
-  const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown): ActionExecutorContext => {
+  const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown, actionId?: ActionId): ActionExecutorContext => {
     const surface = context?.surface ?? 'ui';
     const credential = accountContext?.credentialAuthorityKind ?? getCurrentAuth()?.credentialAuthorityKind ?? 'none';
-    const authority = opts?.admittedClientAction
+    const authority = opts?.admittedClientActionId
       ? context?.authority ?? 'account_automation'
       : resolveInvocationAuthority({ credential, surface });
     // Ordinary UI callers do not author approval provenance. Retain stronger
@@ -2173,7 +2178,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       ...(context ?? {}),
       surface,
       authority,
-      ...(opts?.admittedClientAction ? { bypassApprovals: true } : {}),
+      ...(opts?.admittedClientActionId ? { bypassApprovals: actionId === opts.admittedClientActionId } : {}),
       ...(surface === 'ui' && (credential === 'account' || credential === 'terminal')
         ? { actionRequestId: context?.actionRequestId ?? (creationKey || randomUUID()) }
         : {}),
@@ -2183,8 +2188,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   return {
     readWidgetMovementAdmission: (ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext) =>
       readWidgetEntityMovementAdmission(widgetInputDeps, ref, surface, resolveContext(context, { ref })),
-    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context, input)),
-    execute: async (actionId, input, context) => await executor.execute(actionId, input, resolveContext(context, input)),
+    prepare: async (actionId, input, context) => await executor.prepare(actionId, input, resolveContext(context, input, actionId)),
+    execute: async (actionId, input, context) => await executor.execute(actionId, input, resolveContext(context, input, actionId)),
     replayApprovedApprovalRequest: async (args) => await executor.replayApprovedApprovalRequest(args),
   };
 }
@@ -2338,9 +2343,9 @@ export async function withDefaultActionExecuteContext<TResult>(
 }
 
 /** Read-only drag admission borrows the complete Action dependency composition and exact Account lifetime. */
-export async function readDefaultWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, signal?: AbortSignal) {
+export async function readDefaultWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, signal?: AbortSignal, widgetAreaContext?: ActionExecutorContext['widgetAreaContext']) {
   return withDefaultActionExecuteContext(undefined, { serverId: surface.serverId, expectedAccountId: surface.accountId, signal },
-    executor => executor.readWidgetMovementAdmission(ref, surface, { surface: 'ui', serverId: surface.serverId, signal }));
+    executor => executor.readWidgetMovementAdmission(ref, surface, { surface: 'ui', serverId: surface.serverId, signal, ...(widgetAreaContext ? { widgetAreaContext } : {}) }));
 }
 
 export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions): DefaultActionExecutor {

@@ -1,11 +1,9 @@
 import { z } from 'zod';
 
-import {
-  ReviewAssumptionSchema,
-  ReviewFindingSchema,
-  ReviewQuestionSchema,
-  ExecutionRunStructuredRunRefSchema,
-} from '@happier-dev/protocol';
+import { ReviewAssumptionSchema } from '@happier-dev/protocol/reviews/ReviewAssumption';
+import { ReviewFindingSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
+import { ReviewQuestionSchema } from '@happier-dev/protocol/reviews/ReviewQuestion';
+import { ExecutionRunStructuredRunRefSchema } from '@happier-dev/protocol/messages/structured/executionRunStructuredRunRef';
 
 export const ReviewFollowUpIntentInputSchema = z.object({
   kind: z.literal('review_follow_up.v1'),

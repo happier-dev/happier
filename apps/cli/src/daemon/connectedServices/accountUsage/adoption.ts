@@ -1,9 +1,6 @@
 import { z } from 'zod';
 
-import {
-    ProviderAccountUsageRecordIdSchema,
-    ProviderAccountUsageRecordKeyV1Schema,
-} from '@happier-dev/protocol';
+import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 
 const ProviderAccountUsageAdoptionProofV1Schema = z.discriminatedUnion('kind', [
     z.object({

@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
-import { projectSessionModesV1Compatibility, type SessionOwnerModeCatalogV2 } from '@happier-dev/protocol';
+import { projectSessionModesV1Compatibility } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { SessionOwnerModeCatalogV2 } from '@happier-dev/protocol';
 
 type SessionControlMetadataSession = Readonly<{
   ensureMetadataSnapshot?: (opts: Readonly<{ timeoutMs: number }>) => Promise<unknown> | unknown;

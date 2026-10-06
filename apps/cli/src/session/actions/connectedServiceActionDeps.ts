@@ -1,17 +1,12 @@
 import axios from 'axios';
-import {
-  executeConnectedServiceConfigurationActionV1,
-  buildRecoveryCreditConsumeIdempotencyKey,
-  ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
-  ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
-  AccountSettingMutationV1Schema,
-  CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
-  ConnectedAccountControlCommandRequestSchema,
-  type ActionExecutorDeps,
-  type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { executeConnectedServiceConfigurationActionV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
+import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { AccountSettingMutationV1Schema } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
+import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { StoredCredentials } from '@/persistence';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

@@ -1,10 +1,8 @@
 import type { AgentCatalogEntry, CatalogAgentId } from '@/agent/catalog/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    qualifyPluginEventIdV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1';
 
 import { buildPluginContributionIntrospectionQualifiedId } from '@/plugins/projection/introspection/project';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';

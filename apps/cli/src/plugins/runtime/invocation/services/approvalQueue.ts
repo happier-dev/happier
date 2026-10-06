@@ -15,7 +15,7 @@ import type {
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionPluginCaller } from '@happier-dev/protocol/actions';
-import { normalizeStrictJsonValue } from '@happier-dev/protocol';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import {
     getSharedBlockingApprovalCoordinator,

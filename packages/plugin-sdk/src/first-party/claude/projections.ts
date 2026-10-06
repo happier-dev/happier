@@ -1,28 +1,7 @@
 import type { AgentModelOption } from '../../agents.js';
-import {
-    RawJSONLinesSchema as canonicalRawJSONLinesSchema,
-} from '@happier-dev/protocol/agents/claude/transcripts';
-import {
-    ANTHROPIC_EFFORT_LEVELS as canonicalAnthropicEffortLevels,
-    buildAnthropicModelOptions as buildCanonicalAnthropicModelOptions,
-    normalizeAnthropicModelDisplayName as normalizeCanonicalAnthropicModelDisplayName,
-    formatAnthropicEffortLevelLabel as formatCanonicalAnthropicEffortLevelLabel,
-} from '@happier-dev/protocol/providers/anthropic-models';
-import {
-    CLAUDE_SETTING_SOURCES_V2 as canonicalClaudeSettingSourcesV2,
-    CLAUDE_REMOTE_DEBUG_CATEGORIES as canonicalClaudeRemoteDebugCategories,
-    CLAUDE_UNIFIED_TERMINAL_HOSTS as canonicalClaudeUnifiedTerminalHosts,
-    CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES as canonicalClaudeUnifiedTerminalResumeChoices,
-    CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES as canonicalClaudeUnifiedTerminalWorkspaceTrustPolicies,
-    DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE as canonicalDefaultClaudeUnifiedTerminalResumeChoice,
-    DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY as canonicalDefaultClaudeUnifiedTerminalWorkspaceTrustPolicy,
-    MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS as canonicalMaxClaudeRemoteAdvancedOptionsJsonChars,
-    normalizeClaudeRemoteAdvancedOptionsJson as normalizeCanonicalClaudeRemoteAdvancedOptionsJson,
-    normalizeClaudeUnifiedTerminalHost as normalizeCanonicalClaudeUnifiedTerminalHost,
-    normalizeClaudeUnifiedTerminalResumeChoice as normalizeCanonicalClaudeUnifiedTerminalResumeChoice,
-    normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy as normalizeCanonicalClaudeUnifiedTerminalWorkspaceTrustPolicy,
-    isValidClaudeRemoteAdvancedOptionsJson as isValidCanonicalClaudeRemoteAdvancedOptionsJson,
-} from '@happier-dev/protocol/agents/claude/settings-policy';
+import { RawJSONLinesSchema as canonicalRawJSONLinesSchema } from '@happier-dev/protocol/agents/claude/transcripts';
+import { ANTHROPIC_EFFORT_LEVELS as canonicalAnthropicEffortLevels, buildAnthropicModelOptions as buildCanonicalAnthropicModelOptions, normalizeAnthropicModelDisplayName as normalizeCanonicalAnthropicModelDisplayName, formatAnthropicEffortLevelLabel as formatCanonicalAnthropicEffortLevelLabel } from '@happier-dev/protocol/providers/anthropic-models';
+import { CLAUDE_SETTING_SOURCES_V2 as canonicalClaudeSettingSourcesV2, CLAUDE_REMOTE_DEBUG_CATEGORIES as canonicalClaudeRemoteDebugCategories, CLAUDE_UNIFIED_TERMINAL_HOSTS as canonicalClaudeUnifiedTerminalHosts, CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES as canonicalClaudeUnifiedTerminalResumeChoices, CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES as canonicalClaudeUnifiedTerminalWorkspaceTrustPolicies, DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE as canonicalDefaultClaudeUnifiedTerminalResumeChoice, DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY as canonicalDefaultClaudeUnifiedTerminalWorkspaceTrustPolicy, MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS as canonicalMaxClaudeRemoteAdvancedOptionsJsonChars, normalizeClaudeRemoteAdvancedOptionsJson as normalizeCanonicalClaudeRemoteAdvancedOptionsJson, normalizeClaudeUnifiedTerminalHost as normalizeCanonicalClaudeUnifiedTerminalHost, normalizeClaudeUnifiedTerminalResumeChoice as normalizeCanonicalClaudeUnifiedTerminalResumeChoice, normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy as normalizeCanonicalClaudeUnifiedTerminalWorkspaceTrustPolicy, isValidClaudeRemoteAdvancedOptionsJson as isValidCanonicalClaudeRemoteAdvancedOptionsJson } from '@happier-dev/protocol/agents/claude/settings-policy';
 
 // These public DTOs are SDK-owned; their values and decisions stay Protocol-owned.
 export type ClaudeSettingSourceV2 = 'user' | 'project' | 'local';

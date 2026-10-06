@@ -900,7 +900,6 @@ describe('realtime_codex normal web composed gate', () => {
       executionMachine: {
         mode: 'fixed',
         machineId: globalMachine.id,
-        autoMachineId: null,
       },
       providers: {
         'happier.agent.codex/realtime-codex': {
@@ -1227,7 +1226,6 @@ describe('realtime_codex normal web composed gate', () => {
       executionMachine: {
         mode: 'fixed',
         machineId: globalMachine.id,
-        autoMachineId: null,
       },
       providers: {
         'happier.agent.codex/realtime-codex': {

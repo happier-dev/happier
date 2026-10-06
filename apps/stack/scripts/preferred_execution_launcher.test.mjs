@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { renderNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
+import { installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 const launcher = join(repoRoot, 'apps', 'stack', 'bin', 'hstack-exec');
@@ -23,6 +24,7 @@ const executionNeutralEnv = Object.fromEntries(
     'HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE',
     'HAPPIER_HSTACK_DISPATCH_CONTROL',
     'HAPPIER_HSTACK_EXECUTION',
+    'HAPPIER_TYPECHECK_DISPATCHED',
     'HAPPIER_STACK_CLI_HOME_DIR',
     'HAPPIER_HOME_DIR',
   ].includes(key)),
@@ -32,6 +34,23 @@ async function executable(path, contents) {
   await writeFile(path, contents, 'utf8');
   await chmod(path, 0o755);
 }
+
+test('runtime build memory observation reads the admission owner without dispatch or queuing', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-build-memory-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  // OS telemetry is the boundary. No target selection, synchronization or
+  // heavyweight owner should be needed by an already-admitted build.
+  await executable(join(bin, 'awk'), '#!/bin/sh\nprintf "16000000 28733552\\n"\n');
+  await executable(join(bin, 'ssh'), '#!/bin/sh\nexit 99\n');
+  const result = spawnSync('/bin/sh', [launcher, '--runtime-build-memory'], {
+    cwd: repoRoot, encoding: 'utf8', env: { ...executionNeutralEnv, PATH: `${bin}:/usr/bin:/bin` },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trim().split('\n'), ['16000000 28733552', '18874368']);
+  assert.equal(result.stderr, '');
+});
 
 test('native launcher hands Mac workspace execution to the configured execution-host bridge', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-native-host-bridge-'));
@@ -85,7 +104,7 @@ async function memoryRoutingFixture(t, { availableKiB = 5242880, totalKiB = 2831
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot }));
   const samplePath = join(root, 'starved-sample');
   await writeFile(samplePath, `8 0.1 ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 linux\n`);
-  await executable(join(binDir, 'node'), '#!/bin/sh\nprintf "node:%s\\n" "$*" >> "$FIXTURE_TRACE"\nexit 0\n');
+  await executable(join(binDir, 'node'), '#!/bin/sh\ncase "$*" in *service_memory.mjs*) printf "service 0\\n"; exit 0 ;; esac\nprintf "node:%s\\n" "$*" >> "$FIXTURE_TRACE"\nexit 0\n');
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
   await executable(join(binDir, 'systemctl'), '#!/bin/sh\nexit 1\n');
   await executable(join(binDir, 'mutagen'), '#!/bin/sh\nprintf "mutagen:%s\\n" "$*" >> "$FIXTURE_TRACE"\nif [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"; fi\nexit 0\n');
@@ -182,6 +201,24 @@ test('hosted CI public compiler scripts execute locally on a small host and pres
   }
 });
 
+test('finite typecheck dispatch is granted by public script owners on remote and explicit local paths', async (t) => {
+  const { invocation } = await memoryRoutingFixture(t);
+  const binDir = invocation.env.PATH.split(':')[0];
+  await executable(join(binDir, 'corepack'), '#!/bin/sh\nprintf "dispatch=%s\\n" "${HAPPIER_TYPECHECK_DISPATCHED-}"\n');
+  for (const script of ['typecheck:local', 'typecheck:compiler:local', 'check:public-sdk:finite:local']) {
+    const local = spawnSync('/bin/sh', [launcher, '--local', `--script=${script}`], invocation);
+    assert.equal(local.status, 0, local.stderr);
+    assert.equal(local.stdout, 'dispatch=1\n');
+    await writeFile(invocation.env.FIXTURE_TRACE, '');
+    const remote = spawnSync('/bin/sh', [launcher, `--script=${script}`], invocation);
+    assert.equal(remote.status, 0, remote.stderr);
+    assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), /export HAPPIER_TYPECHECK_DISPATCHED=1;/);
+  }
+  const direct = spawnSync('/bin/sh', [launcher, '--local', '--script=typecheck:source:finite'], invocation);
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.equal(direct.stdout, 'dispatch=\n', 'host selection alone must not grant finite task permission');
+});
+
 test('native dispatch consumes the shared source-test, generator, compiler and admission decisions', async (t) => {
   const { invocation } = await memoryRoutingFixture(t);
   for (const { args, kind, component } of [
@@ -250,6 +287,26 @@ for (const dispatcher of ['native', 'javascript']) {
     assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
     assert.doesNotMatch(result.stderr, /running locally/);
     await assert.rejects(readFile(invocation.env.DISPATCHES), { code: 'ENOENT' });
+  });
+
+  test(`workload admission ${dispatcher}: package builds use a 15 GiB worker while full daemon builds and UI typechecks do not`, async (t) => {
+    const { invocation } = await memoryRoutingFixture(t, { availableKiB: 15728640, totalKiB: 16777216, roomyLoad: 80 });
+    for (const args of [
+      ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build'],
+      ['node', 'packages/cli-common/scripts/build.mjs'],
+      ['corepack', 'yarn', '--cwd', 'packages/protocol', '-s', 'build:finite'],
+      ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'],
+      ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'],
+      ['corepack', 'yarn', '--cwd', 'packages/unmeasured', '-s', 'build'],
+    ]) {
+      await writeFile(invocation.env.FIXTURE_TRACE, '');
+      const result = dispatch(invocation, args);
+      assert.equal(result.status, 0, result.stderr);
+      const runtime = args.some(arg => arg.startsWith('--worker-request='));
+      const small = args.join(' ').includes('packages/cli-common') || args.join(' ').includes('packages/protocol');
+      assert.equal(result.stdout, small ? 'remote:starved\n' : 'remote:roomy\n', args.join(' '));
+      assert.match(await readFile(invocation.env.FIXTURE_TRACE, 'utf8'), runtime ? /--class=runtime-build/ : small ? /--class=package-dist/ : /--class=compilation/);
+    }
   });
 
   test(`compilation capacity ${dispatcher}: capable workers remain eligible while memory is busy`, async (t) => {
@@ -409,11 +466,13 @@ test('memory-aware cache preserves optional fields in a short probe sample', asy
 
 for (const { admissionClass, belowFloorKiB, floorKiB, nested = false } of [
   { admissionClass: 'validation', belowFloorKiB: 5242880, floorKiB: 6291456 },
-  { admissionClass: 'compilation', belowFloorKiB: 20971520, floorKiB: 22020096 },
+  { admissionClass: 'runtime-build', belowFloorKiB: 15728640, floorKiB: 18874368 },
+  { admissionClass: 'compilation', belowFloorKiB: 18874368, floorKiB: 22020096 },
   { admissionClass: 'compilation', belowFloorKiB: 20971520, floorKiB: 22020096, nested: true },
 ]) {
 test(`memory-aware ${admissionClass} target admission${nested ? ' beneath focused admission' : ''} waits below its measured floor`, { timeout: 30_000 }, async (t) => {
   const { invocation, samplePath } = await memoryRoutingFixture(t, { availableKiB: belowFloorKiB });
+  const { launcher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
   const binDir = invocation.env.PATH.split(':')[0];
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -426,8 +485,8 @@ test(`memory-aware ${admissionClass} target admission${nested ? ' beneath focuse
     'esac', '',
   ].join('\n'));
   await executable(join(binDir, 'probe-command'), '#!/bin/sh\ncount=0; for owner in "$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT"/owners/*; do [ ! -d "$owner" ] || count=$((count + 1)); done\n[ "$count" = 1 ] || exit 99\nprintf "admitted\\n"\n');
-  const directArgs = [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, `--class=${admissionClass}`, '--machine=fixture', '--', 'probe-command'];
-  const args = nested ? [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs] : directArgs;
+  const directArgs = [launcher, '--heavyweight-admission', `--class=${admissionClass}`, '--machine=fixture', '--', 'probe-command'];
+  const args = nested ? [launcher, '--heavyweight-admission', '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs] : directArgs;
   const child = spawn('/bin/sh', args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
   let stderr = '';
@@ -438,34 +497,81 @@ test(`memory-aware ${admissionClass} target admission${nested ? ' beneath focuse
     stderr += chunk;
     if (!recovery && stderr.includes(`memory-available=${belowFloorKiB}/28311552`)) {
       assert.equal(stdout, '');
-      recovery = writeFile(samplePath, `8 0.1 0.5 22000000 20 0 ${floorKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
+      const availableKiB = stderr.includes(`requires=${floorKiB} `) ? floorKiB : 22020096;
+      recovery = writeFile(samplePath, `8 0.1 0.5 22000000 20 0 ${availableKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
     }
   });
   const code = await new Promise((resolveExit, reject) => { child.once('error', reject); child.once('exit', resolveExit); });
   await recovery;
   assert.equal(code, 0, stderr);
   assert.match(stderr, new RegExp(`waiting.*memory-available=${belowFloorKiB}/28311552`));
+  assert.match(stderr, new RegExp(`requires=${floorKiB} KiB`));
   assert.equal(stdout, 'admitted\n');
 });
 }
 
 test('compilation capacity target admission rejects a physically undersized machine directly and beneath focused admission', { timeout: 30_000 }, async (t) => {
   const { invocation } = await memoryRoutingFixture(t, { availableKiB: 14680064, totalKiB: 15728640 });
+  const { launcher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
   const binDir = invocation.env.PATH.split(':')[0];
   await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
   await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
   await executable(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7, $8}\' "$STARVED_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
   await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "unexpected-admission\\n"\n');
-  const directArgs = [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=compilation', '--machine=fixture', '--', 'probe-command'];
+  await executable(join(binDir, 'tsc'), '#!/bin/sh\nprintf "unexpected-admission\\n"\n');
+  const directArgs = [launcher, '--heavyweight-admission', '--class=compilation', '--machine=fixture', '--', 'probe-command'];
   for (const ci of ['', 'true']) {
-    for (const args of [directArgs, [launcher, '--heavyweight-admission', `--admission-root=${join(binDir, 'admission')}`, '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs]]) {
+    for (const args of [directArgs, [launcher, '--heavyweight-admission', '--class=validation', '--machine=fixture', '--', '/bin/sh', ...directArgs], ...(ci === '' ? [[launcher, '--local', '--', 'tsc', '--noEmit']] : [])]) {
       const result = spawnSync('/bin/sh', args, { ...invocation, env: { ...invocation.env, CI: ci }, timeout: 10_000 });
       assert.equal(result.status, 1, result.stderr);
       assert.equal(result.stdout, '');
       assert.match(result.stderr, /memory capacity.*compilation.*22020096/);
+      assert.match(result.stderr, /route remotely/);
     }
   }
 });
+
+for (const { commandArgs, admissionClass, belowFloorKiB, floorKiB } of [
+  { commandArgs: ['corepack', 'yarn', '--cwd', 'packages/cli-common', '-s', 'build'], admissionClass: 'package-dist', belowFloorKiB: 4194304, floorKiB: 6291456 },
+  { commandArgs: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], admissionClass: 'compilation', belowFloorKiB: 18874368, floorKiB: 22020096 },
+  { commandArgs: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], admissionClass: 'runtime-build', belowFloorKiB: 15728640, floorKiB: 18874368 },
+]) {
+test(`workload admission explicit local ${admissionClass} waits for memory, keeps light commands runnable and recovers at its floor`, { timeout: 30_000 }, async (t) => {
+  const { invocation, samplePath } = await memoryRoutingFixture(t, { availableKiB: belowFloorKiB });
+  const { launcher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
+  invocation.cwd = resolve(launcher, '../../../..');
+  const binDir = invocation.env.PATH.split(':')[0];
+  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
+  await executable(join(binDir, 'awk'), '#!/bin/sh\ncase "$*" in */proc/meminfo*) /usr/bin/awk \'{print $7, $8}\' "$STARVED_SAMPLE" ;; */proc/loadavg*|*/proc/pressure/*) printf "0\\n" ;; *) exec /usr/bin/awk "$@" ;; esac\n');
+  await executable(join(binDir, 'corepack'), '#!/bin/sh\nprintf "package-built\\n"\n');
+  await executable(join(binDir, 'node'), '#!/bin/sh\ncase "$*" in *service_memory.mjs*) printf "service 0\\n" ;; *) printf "package-built\\n" ;; esac\n');
+  await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "light-ran\\n"\n');
+  const child = spawn('/bin/sh', [launcher, '--local', '--', ...commandArgs], { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
+  let stderr = '', stdout = '', recovery;
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => {
+    stderr += chunk;
+    if (!recovery && stderr.includes('waiting for heavyweight admission')) {
+      assert.equal(stdout, '');
+      const light = spawnSync('/bin/sh', [launcher, '--local', '--', 'probe-command'], invocation);
+      assert.equal(light.status, 0, light.stderr);
+      assert.equal(light.stdout, 'light-ran\n');
+      // Release the old class too, so RED reports the wrong admission class
+      // rather than leaving a live waiter until the harness times out.
+      const availableKiB = stderr.includes('class=' + admissionClass) && stderr.includes(`requires=${floorKiB} `) ? floorKiB : 22020096;
+      recovery = writeFile(samplePath, `8 0.1 0.5 22000000 20 0 ${availableKiB} 28311552 0 0 0 0 0 0 0 linux\n`);
+    }
+  });
+  const code = await new Promise((resolveExit, reject) => { child.once('error', reject); child.once('exit', resolveExit); });
+  await recovery;
+  assert.equal(code, 0, stderr);
+  assert.match(stderr, new RegExp(`waiting for heavyweight admission.*class=${admissionClass}.*memory-available=${belowFloorKiB}`));
+  assert.match(stderr, new RegExp(`requires=${floorKiB} KiB`));
+  assert.equal(stdout, 'package-built\n');
+});
+}
 
 test('queue policy cwd: outside-repository routing refuses with paths and a recovery action', async (t) => {
   const { invocation } = await memoryRoutingFixture(t);
@@ -524,6 +630,13 @@ test('queue policy native: an unavailable SSH master uses the reachable direct c
 for (const dispatcher of ['native', 'javascript']) {
   test(`queue policy ${dispatcher}: routed work waits at real target admission and runs after memory recovery`, { timeout: 30_000 }, async (t) => {
     const { invocation, samplePath } = await memoryRoutingFixture(t, { roomyAvailableKiB: 5242880, fallback: 'local' });
+    const { launcher: fixtureLauncher } = await installNativeAdmissionFixture({ root: invocation.env.HOME });
+    const checkout = resolve(fixtureLauncher, '../../../..');
+    const config = JSON.parse(await readFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, 'utf8'));
+    for (const target of config.targets) target.repoDir = checkout;
+    await writeFile(invocation.env.HAPPIER_EXEC_CONFIG_PATH, JSON.stringify(config));
+    await writeFile(join(invocation.env.HAPPIER_STACK_STORAGE_DIR, 'repo-memory', 'dev-target-exec-v1.sh'), renderNativeExecutionProjection(config, { repoRoot: dispatcher === 'native' ? checkout : repoRoot }));
+    if (dispatcher === 'native') invocation.cwd = checkout;
     const binDir = invocation.env.PATH.split(':')[0];
     await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
     await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "8\\n"\n');
@@ -549,7 +662,7 @@ for (const dispatcher of ['native', 'javascript']) {
     ].join('\n'));
     await executable(join(binDir, 'vitest'), '#!/bin/sh\nprintf "queued-remote-result\\n"\n');
     const args = dispatcher === 'native'
-      ? [launcher, '--', 'vitest', 'run', 'fixture.test.ts']
+      ? [fixtureLauncher, '--', 'vitest', 'run', 'fixture.test.ts']
       : [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--stack=repo-memory', '--', 'vitest', 'run', 'fixture.test.ts'];
     const child = spawn(dispatcher === 'native' ? '/bin/sh' : process.execPath, args, { ...invocation, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => { if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM'); });
@@ -1217,7 +1330,7 @@ test('remote heavyweight admission starts from the configured repository when SS
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) printf "4 0.1 0.9 22000000 20 0 0 0 0 0 0 0 0 0 0 darwin\\n" ;;',
+    '  *getconf*) printf "4 0.1 0.9 22000000 20 0 25480397 28311552 0 0 0 0 0 0 0 darwin\\n" ;;',
     '  *"&& command -v "*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *)',
@@ -3965,7 +4078,7 @@ test('queue policy native launcher delegates dependency refresh waiting to the r
   assert.match(recovered.stdout, /remote-node:/);
 });
 
-for (const [entry, signal] of [['native', 'SIGTERM'], ['native', 'SIGHUP'], ['JavaScript entry', 'SIGHUP']]) {
+for (const [entry, signal] of [['native', 'SIGTERM'], ['native', 'SIGHUP'], ['native', 'SIGKILL'], ['JavaScript entry', 'SIGHUP'], ['JavaScript entry', 'SIGKILL']]) {
 test(`${entry} launcher ${signal} cancellation terminates a remote descendant that ignores SIGTERM`, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-remote-cancel-'));
   const binDir = join(root, 'bin');
@@ -4085,10 +4198,15 @@ test(`${entry} launcher ${signal} cancellation terminates a remote descendant th
 
     child.kill(signal);
     const exitCode = child.exitCode ?? await new Promise((resolveExit) => child.once('exit', resolveExit));
-    assert.equal(exitCode, signal === 'SIGHUP' ? 129 : 130, stderr);
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    assert.equal(exitCode, signal === 'SIGKILL' ? null : signal === 'SIGHUP' ? 129 : 130, stderr);
+    for (let attempt = 0; attempt < 250; attempt += 1) {
       try {
         process.kill(remoteChildPid, 0);
+        const state = spawnSync('ps', ['-o', 'stat=', '-p', String(remoteChildPid)], { encoding: 'utf8' });
+        if (state.status === 0 && state.stdout.trim().startsWith('Z')) {
+          remoteChildPid = null;
+          break;
+        }
         await new Promise((resolveWait) => setTimeout(resolveWait, 20));
       } catch (error) {
         if (error?.code === 'ESRCH') {
@@ -4178,7 +4296,8 @@ test('native launcher cancels only its remote execution after an authoritative S
     '  *-O\\ check*) [ -f "$control_path" ] ;;',
     '  *-MNf*) mkdir -p "${control_path%/*}"; : > "$control_path" ;;',
     '  *remote-ignore-term*)',
-    '    /bin/sh -c "$remote_command" >/dev/null 2>&1 </dev/null &',
+    '    exec 3<&0',
+    '    /bin/sh -c "$remote_command" >/dev/null 2>&1 <&3 &',
     '    attempt=0',
     '    while [ ! -f "$REMOTE_STARTED_MARKER" ] && [ "$attempt" -lt 250 ]; do sleep 0.02; attempt=$((attempt + 1)); done',
     '    [ -f "$REMOTE_STARTED_MARKER" ] || exit 97',
@@ -4703,11 +4822,12 @@ test('native launcher exact target flushes the selected Mutagen session before r
 
 test('native launcher admits heavyweight local and remote jobs, reclaims stale owners, and cancels waiters', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-admission-'));
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
+  const repoRoot = resolve(launcher, '../../../..');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
-  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  const stackDir = join(storageDir, 'repo-native-owner-native');
   const machineHome = join(root, 'machine-home');
-  const admissionRoot = join(machineHome, 'heavyweight-admission-v1');
   const holdMarker = join(root, 'first-started');
   const releaseMarker = join(root, 'release-first');
   const cancelledMarker = join(root, 'cancelled-command-ran');
@@ -4748,6 +4868,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
   await executable(join(binDir, 'node'), [
     '#!/bin/sh',
     'case "$*" in',
+    '  *service_memory.mjs*) printf "service 0\\n"; exit 0 ;;',
     '  *remote_dependency_bootstrap.mjs*) exec vitest remote-bootstrap ;;',
     '  *node_modules/vitest/vitest.mjs*) exec vitest "$@" ;;',
     '  *generateBundledPluginEntries.ts*) exec vitest remote-bundled-plugin-generator ;;',
@@ -4847,6 +4968,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     HOME: root,
     HAPPIER_STACK_CLI_HOME_DIR: machineHome,
     HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_EXEC_CONFIG_PATH: join(stackDir, 'dev-targets.json'),
     npm_node_execpath: '',
     npm_execpath: '',
     PATH: `${binDir}:/usr/bin:/bin`,
@@ -5031,8 +5153,8 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
 
 test('Linux heavyweight admission waits for corroborated severe CPU pressure while memory is healthy', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-cpu-saturation-'));
+  const { launcher } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
-  const admissionRoot = join(root, 'admission');
   const admittedMarker = join(root, 'admitted');
   const pressureReleasedMarker = join(root, 'pressure-released');
   t.after(async () => await rm(root, { recursive: true, force: true }));
@@ -5056,7 +5178,6 @@ test('Linux heavyweight admission waits for corroborated severe CPU pressure whi
   const child = spawn('/bin/sh', [
     launcher,
     '--heavyweight-admission',
-    `--admission-root=${admissionRoot}`,
     '--class=targeted-validation',
     '--machine=dedicated-worker',
     '--',
@@ -5090,69 +5211,9 @@ test('Linux heavyweight admission waits for corroborated severe CPU pressure whi
   }
 });
 
-test('native launcher uses the explicit CLI home for heavyweight admission before HOME and otherwise defaults to HOME', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-cli-home-'));
-  const binDir = join(root, 'bin');
-  const cliHome = join(root, 'stack-cli-home');
-  const expectedAdmissionRoot = join(cliHome, 'heavyweight-admission-v1');
-  const accidentalHomeAdmissionRoot = join(root, '.happier', 'heavyweight-admission-v1');
-  const readonlyCliHome = join(root, 'readonly-cli-home');
-  t.after(async () => await rm(root, { recursive: true, force: true }));
-
-  await mkdir(binDir, { recursive: true });
-  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
-  await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "4\\n"\n');
-  await executable(join(binDir, 'awk'), [
-    '#!/bin/sh',
-    'case "$*" in',
-    '  */proc/loadavg*) printf "0\\n" ;;',
-    '  */proc/meminfo*) case "$1" in *MemAvailable*) printf "48000000 72000000\\n" ;; *) printf "72000000\\n" ;; esac ;;',
-    '  */proc/pressure/memory*) printf "0\\n" ;;',
-    '  *) exec /usr/bin/awk "$@" ;;',
-    'esac',
-    '',
-  ].join('\n'));
-  const runAdmission = (extraEnv, machine) => spawnSync('/bin/sh', [
-    launcher,
-    '--heavyweight-admission',
-    '--class=validation',
-    `--machine=${machine}`,
-    '--',
-    '/usr/bin/true',
-  ], {
-    cwd: repoRoot,
-    env: {
-      ...executionNeutralEnv,
-      HOME: root,
-      PATH: `${binDir}:/usr/bin:/bin`,
-      TMPDIR: root,
-      ...extraEnv,
-    },
-    encoding: 'utf8',
-  });
-
-  const result = runAdmission({ HAPPIER_STACK_CLI_HOME_DIR: cliHome }, 'cli-home-precedence');
-
-  assert.equal(result.status, 0, result.stderr);
-  await access(expectedAdmissionRoot);
-  await assert.rejects(access(accidentalHomeAdmissionRoot), { code: 'ENOENT' });
-
-  const defaultResult = runAdmission({}, 'home-default');
-  assert.equal(defaultResult.status, 0, defaultResult.stderr);
-  await access(accidentalHomeAdmissionRoot);
-
-  await mkdir(readonlyCliHome);
-  await chmod(readonlyCliHome, 0o555);
-  const sandboxedResult = runAdmission({
-    HAPPIER_STACK_CLI_HOME_DIR: readonlyCliHome,
-    CODEX_SESSION_ID: 'sandboxed-heavyweight-test',
-  }, 'sandboxed-cli-home');
-  assert.equal(sandboxedResult.status, 0, sandboxedResult.stderr);
-  await assert.rejects(access(join(readonlyCliHome, 'heavyweight-admission-v1')), { code: 'ENOENT' });
-});
-
 test('native launcher does not derive a fixed heavyweight job count from the worker profile', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-profile-'));
+  const { launcher } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
   const firstMarker = join(root, 'first-admitted');
   const secondMarker = join(root, 'second-admitted');
@@ -5168,7 +5229,7 @@ test('native launcher does not derive a fixed heavyweight job count from the wor
     'case "$*" in',
     '  */proc/loadavg*) case "$1" in *split*) printf "0\\n" ;; *) printf "0.1\\n" ;; esac ;;',
     // A VM configured with 24 GiB exposes less than 24 GiB as MemTotal after kernel overhead.
-    '  */proc/meminfo*) case "$1" in *MemAvailable*) printf "16777216 24557560\\n" ;; *) printf "24557560\\n" ;; esac ;;',
+    '  */proc/meminfo*) case "$1" in *MemAvailable*) printf "23068672 24557560\\n" ;; *) printf "24557560\\n" ;; esac ;;',
     '  */proc/pressure/memory*) printf "1.4\\n" ;;',
     '  *) exec /usr/bin/awk "$@" ;;',
     'esac',
@@ -5249,12 +5310,12 @@ test('native launcher does not derive a fixed heavyweight job count from the wor
   }
 });
 
-test('native launcher does not admit a newer heavyweight waiter ahead of an older live waiter', {
+test('native launcher does not admit a newer heavyweight waiter ahead of an older fitting live waiter', {
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-fairness-'));
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
-  const admissionRoot = join(root, 'admission');
   const marker = join(root, 'admitted');
   t.after(async () => await rm(root, { recursive: true, force: true }));
 
@@ -5278,12 +5339,11 @@ test('native launcher does not admit a newer heavyweight waiter ahead of an olde
   const stat = await readFile(`/proc/${process.pid}/stat`, 'utf8');
   const processStartToken = stat.slice(stat.lastIndexOf(') ') + 2).trim().split(/\s+/)[19];
   const olderWaiter = join(admissionRoot, 'waiters', `${process.pid}-${processStartToken}`);
-  await writeFile(olderWaiter, `${process.pid} ${processStartToken} 1\n`, 'utf8');
+  await writeFile(olderWaiter, `${process.pid} ${processStartToken} 1 validation 0\n`, 'utf8');
 
   const child = spawn('/bin/sh', [
     launcher,
     '--heavyweight-admission',
-    `--admission-root=${admissionRoot}`,
     '--class=validation',
     '--machine=fair-worker',
     '--',
@@ -5315,13 +5375,14 @@ test('native launcher does not admit a newer heavyweight waiter ahead of an olde
   }
 });
 
-test('native launcher reuses a validated parent heavyweight reservation only for the exact root and machine', async (t) => {
+test('native launcher reuses a validated parent heavyweight reservation only for the canonical host authority', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-reentrant-'));
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
-  const admissionRoot = join(root, '.happier', 'heavyweight-admission-v1');
   const otherAdmissionRoot = join(root, 'other', '.happier', 'heavyweight-admission-v1');
   const outerScript = join(root, 'outer.sh');
   const inheritedMarker = join(root, 'inherited-token');
+  const aliasMarker = join(root, 'alias-token');
   const nestedSliceMarker = join(root, 'nested-slice');
   const outerReady = join(root, 'outer-ready');
   const releaseMarker = join(root, 'release');
@@ -5362,6 +5423,7 @@ test('native launcher reuses a validated parent heavyweight reservation only for
     '#!/bin/sh',
     'set -eu',
     'printf "%s|%s|%s\\n" "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" "$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT" "$HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE" > "$INHERITED_MARKER"',
+    `"${launcher}" --heavyweight-admission --admission-root="${otherAdmissionRoot}" --machine=another-label-for-this-worker -- /bin/sh -c 'printf "%s\\n" "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN"' > "$ALIAS_MARKER"`,
     `HSTACK_TEST_SLICE=happier-critical.slice HAPPIER_HSTACK_DISPATCH_CONTROL=1 HAPPIER_DEV_TARGET_EXECUTION=1 "${launcher}" -- vitest run nested-reentrant.test.ts`,
     ': > "$OUTER_READY"',
     'while [ ! -e "$RELEASE_MARKER" ]; do sleep 0.02; done',
@@ -5374,6 +5436,7 @@ test('native launcher reuses a validated parent heavyweight reservation only for
     PATH: `${binDir}:/usr/bin:/bin`,
     TMPDIR: root,
     INHERITED_MARKER: inheritedMarker,
+    ALIAS_MARKER: aliasMarker,
     NESTED_SLICE_MARKER: nestedSliceMarker,
     OUTER_READY: outerReady,
     RELEASE_MARKER: releaseMarker,
@@ -5432,15 +5495,18 @@ test('native launcher reuses a validated parent heavyweight reservation only for
     const inherited = (await readFile(inheritedMarker, 'utf8')).trim().split('|');
     assert.match(inherited[0], /^[0-9]+:[0-9]+$/);
     assert.equal(inherited[1], admissionRoot);
-    assert.equal(inherited[2], 'machine-a');
+    assert.ok(inherited[2]);
     const [ownerIdentity] = await readdir(join(admissionRoot, 'owners'));
     const [ownerPid, ownerToken] = (await readFile(join(admissionRoot, 'owners', ownerIdentity, 'process'), 'utf8')).trim().split(' ');
     assert.equal(inherited[0], `${ownerPid}:${ownerToken}`);
+
+    assert.equal((await readFile(aliasMarker, 'utf8')).trim(), inherited[0], 'caller labels and private root arguments cannot split a validated descendant owner');
 
     stale = runAdmission({
       rootPath: admissionRoot,
       machine: 'machine-a',
       token: `${ownerPid}:0`,
+      inheritedMachine: inherited[2],
     });
     let staleStdout = '';
     stale.stdout.on('data', (chunk) => { staleStdout += chunk; });
@@ -5461,6 +5527,7 @@ test('native launcher reuses a validated parent heavyweight reservation only for
       machine: 'machine-a',
       token: `${ownerPid}:${ownerToken}`,
       inheritedRoot: otherAdmissionRoot,
+      inheritedMachine: inherited[2],
     });
     let crossRootStdout = '';
     crossRoot.stdout.on('data', (chunk) => { crossRootStdout += chunk; });
@@ -5483,8 +5550,8 @@ test('native launcher reuses a validated parent heavyweight reservation only for
 
 test('native launcher never removes a successor heavyweight admission lock while reclaiming stale state', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-lock-successor-'));
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
-  const admissionRoot = join(root, '.happier', 'heavyweight-admission-v1');
   const lockPath = join(admissionRoot, 'lock');
   const disappearanceMarker = join(root, 'successor-lock-disappeared');
   t.after(async () => await rm(root, { recursive: true, force: true }));
@@ -5553,8 +5620,8 @@ test('native launcher never removes a successor heavyweight admission lock while
 
 test('native launcher backs off heavyweight lock acquisition under contention', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-lock-backoff-'));
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root });
   const binDir = join(root, 'bin');
-  const admissionRoot = join(root, '.happier', 'heavyweight-admission-v1');
   const lockPath = join(admissionRoot, 'lock');
   const lockAttempts = join(root, 'lock-attempts');
   const holderReady = join(root, 'holder-ready');

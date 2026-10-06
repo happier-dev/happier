@@ -1,7 +1,7 @@
 // Schema derivation owned exclusively by generateActionTypeMap.mjs.
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -282,10 +282,7 @@ export function readActionCatalog(repoRoot, recordInput = () => {}) {
     familyOwners, excluded: value(resolve(protocol, 'actions/pluginActionSurface.ts'), 'PLUGIN_SURFACE_EXCLUSION_REASONS') };
 }
 
-function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
-  const protocol = resolve(repoRoot, 'packages/protocol/src');
-  const actionSpecs = resolve(protocol, 'actions/actionSpecs.ts');
-  const inputs = new Map();
+function createDerivationHost() {
   const options = { strict: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
     // Match Protocol's ambient contract. Imported declarations still resolve;
@@ -293,7 +290,45 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
     types: ['node'] };
   const host = ts.createCompilerHost(options);
   const read = host.readFile.bind(host);
+  const parse = host.getSourceFile.bind(host);
+  const sources = new Map();
+  const session = { options, host, read, inputs: new Map(), overlays: new Map(), metrics: null };
+  host.readFile = path => {
+    if (session.overlays.has(path)) return session.overlays.get(path);
+    const text = session.inputs.get(path) ?? read(path);
+    if (text !== undefined) session.inputs.set(path, text);
+    return text;
+  };
+  host.getSourceFile = (path, languageVersion, onError, shouldCreateNewSourceFile) => {
+    const text = host.readFile(path);
+    const previous = sources.get(path);
+    const target = typeof languageVersion === 'object' ? languageVersion.languageVersion : languageVersion;
+    const format = typeof languageVersion === 'object' ? languageVersion.impliedNodeFormat : undefined;
+    if (!shouldCreateNewSourceFile && previous && previous.source.text === text && previous.target === target && previous.format === format) {
+      session.metrics.sourceFilesReused += 1;
+      return previous.source;
+    }
+    const start = performance.now();
+    const source = parse(path, languageVersion, onError, shouldCreateNewSourceFile);
+    session.metrics.parseMs += performance.now() - start;
+    if (source) {
+      session.metrics.sourceFilesParsed += 1;
+      sources.set(path, { source, target, format });
+    } else sources.delete(path);
+    return source;
+  };
+  return session;
+}
+
+function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNames = [] }, session = createDerivationHost()) {
+  const protocol = resolve(repoRoot, 'packages/protocol/src');
+  const actionSpecs = resolve(protocol, 'actions/actionSpecs.ts');
+  const inputs = new Map();
   const overlays = new Map();
+  const { options, host, read } = session;
+  session.inputs = inputs;
+  session.overlays = overlays;
+  session.metrics = { sourceFilesParsed: 0, sourceFilesReused: 0, parseMs: 0 };
   if (keys) {
     const { rows, sources } = selectSchemaRows(protocol, keys, path => {
       const text = inputs.get(path) ?? read(path);
@@ -353,42 +388,18 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
     overlays.set(rootPath, rootImports.join('\n') + '\n' + members.map((rows, i) => `export type PluginAction${i ? 'Result' : 'Input'}ById = { ${rows.join('\n')} };`).join('\n'));
     bindings = bindings.map(([, name, out, input]) => ['actions/actionDtoDerivation.ts', name, out, input]);
   }
-  // The recursive definition validator erases its input to unknown at its Zod
-  // annotation. Public author DTOs carry the canonical portable definition,
-  // including nested trigger inputs, rather than exposing that validator detail.
-  // Refine only this known schema's virtual input; ingress/preprocessed schemas
-  // retain their real input types and runtime validation stays unchanged.
-  const workflowPath = resolve(protocol, 'workflows/workflowV1.ts');
-  const workflowText = inputs.get(workflowPath) ?? read(workflowPath);
-  if (workflowText !== undefined) {
-    inputs.set(workflowPath, workflowText);
-    const workflowSource = ts.createSourceFile(workflowPath, overlays.get(workflowPath) ?? workflowText, ts.ScriptTarget.ES2022, true);
-    const workflowInput = ts.transform(workflowSource, [context => {
-      const visit = node => {
-        if (ts.isTypeReferenceNode(node) && node.typeName.getText(workflowSource) === 'z.ZodType'
-          && node.typeArguments?.length === 1 && node.typeArguments[0].getText(workflowSource) === 'WorkflowDefinitionV1') {
-          return ts.factory.updateTypeReferenceNode(node, node.typeName, [node.typeArguments[0], node.typeArguments[0]]);
-        }
-        return ts.visitEachChild(node, visit, context);
-      };
-      return root => ts.visitNode(root, visit);
-    }]);
-    try { overlays.set(workflowPath, printer.printFile(workflowInput.transformed[0])); }
-    finally { workflowInput.dispose(); }
-  }
-  host.readFile = path => {
-    // A virtual source must be fenced against the original bytes from which
-    // it was selected, not a later reread while the program is being built.
-    if (overlays.has(path)) return overlays.get(path);
-    const text = inputs.get(path) ?? read(path);
-    if (text !== undefined) inputs.set(path, text);
-    return text;
-  };
+  // Reuse only unchanged ASTs through the shared compiler host. Each
+  // family still gets its own checker and virtual schemas; source bytes are
+  // read/fenced afresh, so a changed overlay or imported file is never reused.
+  const programStart = performance.now();
   const program = ts.createProgram([...new Set(bindings.map(([path]) => resolve(protocol, path)))], options, host);
   const checker = program.getTypeChecker();
+  const programMs = performance.now() - programStart;
+  const projectionStart = performance.now();
   const renames = new Map([...supportBindings, ...uiBindings].filter(([, , out]) => out).map(([, name, out]) => [name, out]));
   const declarations = new Map();
   const references = new Set();
+  const inputReferences = new Set();
   const symbolIn = (path, name) => {
     const file = program.getSourceFile(resolve(protocol, path));
     if (!file) throw Error(`Missing schema source: ${path}`);
@@ -419,6 +430,18 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
         if (ts.isTypeReferenceNode(node)) {
           const name = node.typeName.getText(file);
           if (/^(?:z\.)?Zod|^z\.core\.\$Zod/u.test(name)) return ts.factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword);
+          if (input && name === 'PluginJsonValueV2' && ts.isUnionTypeNode(node.parent)) {
+            // An optional JSON union is projected member by member: its outer
+            // containers retain mutability while nested values use JsonValue.
+            // Expand the canonical union rather than inventing another JSON type.
+            const canonical = checker.getDeclaredTypeOfSymbol(findSymbol(name));
+            const projected = normalize(checker.typeToString(canonical, undefined, flags), true, parameters);
+            const expanded = ts.createSourceFile('json-input.ts', `type JsonInput = ${projected};`, ts.ScriptTarget.ES2022, true).statements[0].type;
+            // These nodes belong to a different source; detach their positions
+            // before the enclosing declaration is printed against its source.
+            const synthesize = child => ts.setTextRange(ts.visitEachChild(child, synthesize, context), { pos: -1, end: -1 });
+            return synthesize(expanded);
+          }
           if (name === 'ProtocolObjectProjection') {
             const [shape, projection] = node.typeArguments ?? [];
             if (!shape || !ts.isTypeLiteralNode(shape) || !projection || !ts.isLiteralTypeNode(projection)) throw Error('Unexpanded composable schema');
@@ -437,9 +460,18 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
             }));
           }
           if (!ts.isIdentifier(node.typeName)) throw Error(`Private schema reference: ${name}`);
-          const out = input && name === 'PluginJsonValueV2' ? 'JsonValue' : renames.get(name) ?? name;
-          if (!builtins.has(out) && !parameters.has(out)) references.add(name === 'PluginJsonValueV2' && input ? 'JsonValue' : name);
-          return ts.factory.updateTypeReferenceNode(node, ts.factory.createIdentifier(out), node.typeArguments?.map(n => ts.visitNode(n, visit)));
+          const base = input && name === 'PluginJsonValueV2' ? 'JsonValue' : renames.get(name) ?? name;
+          const isReference = !builtins.has(base) && !parameters.has(base);
+          // Recursive support aliases must retain the caller's projection.
+          // Output aliases can contain mutable JSON while author inputs use
+          // JsonValue; sharing that alias silently loses nested input typing.
+          const inputProjection = input && isReference && !Object.hasOwn(neutralImports, base)
+            && name !== 'PluginInvocableActionId';
+          const out = base;
+          if (isReference) (inputProjection ? inputReferences : references).add(name === 'PluginJsonValueV2' && input ? 'JsonValue' : name);
+          const arguments_ = node.typeArguments?.map(n => ts.visitNode(n, visit)) ?? [];
+          if (inputProjection) arguments_.push(ts.factory.createLiteralTypeNode(ts.factory.createTrue()));
+          return ts.factory.updateTypeReferenceNode(node, ts.factory.createIdentifier(out), arguments_.length ? arguments_ : undefined);
         }
         if (ts.isImportTypeNode(node) || ts.isTypeQueryNode(node)) throw Error(`Private schema projection: ${node.getText(file)}`);
         return ts.visitEachChild(node, visit, context);
@@ -493,6 +525,7 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
     render(symbol, outputName ?? renames.get(name) ?? name, input, projectedType);
   }
   if (!keys) for (const name of extraNames) references.add(name);
+  if (!keys) for (const name of extraInputNames) inputReferences.add(name);
   for (const name of references) {
     if (Object.hasOwn(neutralImports, name) || name === 'PluginInvocableActionId') continue;
     // Family dependencies live in the one generated support module; its own
@@ -500,8 +533,29 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [] }) {
     if (keys) continue;
     render(findSymbol(name), renames.get(name) ?? name);
   }
-  return { declarations: [...declarations], references: [...references],
-    inputDigests: [...inputs].map(([path, text]) => [path, createHash('sha256').update(text).digest('hex')]), maxRssKiB: process.resourceUsage().maxRSS };
+  for (const name of inputReferences) {
+    if (keys) continue;
+    render(findSymbol(name), renames.get(name) ?? name);
+    render(findSymbol(name), `${renames.get(name) ?? name}Input`, true);
+  }
+  if (!keys) for (const name of inputReferences) {
+    const base = renames.get(name) ?? name;
+    const output = ts.createSourceFile('output.ts', declarations.get(base), ts.ScriptTarget.ES2022, true).statements[0];
+    const inputName = `${base}Input`;
+    const projected = ts.createSourceFile('input.ts', declarations.get(inputName), ts.ScriptTarget.ES2022, true).statements[0];
+    if (!ts.isTypeAliasDeclaration(output) || !ts.isTypeAliasDeclaration(projected)) throw Error(`Input support projection needs a type alias: ${name}`);
+    const combined = ts.factory.updateTypeAliasDeclaration(output, output.modifiers, output.name,
+      [...(output.typeParameters ?? []), ts.factory.createTypeParameterDeclaration(undefined, 'Input',
+        ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword), ts.factory.createLiteralTypeNode(ts.factory.createFalse()))],
+      ts.factory.createConditionalTypeNode(ts.factory.createTypeReferenceNode('Input'),
+        ts.factory.createLiteralTypeNode(ts.factory.createTrue()), projected.type, output.type));
+    declarations.set(base, printer.printNode(ts.EmitHint.Unspecified, combined, undefined) + '\n');
+    declarations.delete(inputName);
+  }
+  return { declarations: [...declarations], references: [...references], inputReferences: [...inputReferences],
+    inputDigests: [...inputs].map(([path, text]) => [path, createHash('sha256').update(text).digest('hex')]),
+    ...session.metrics, programMs, projectionMs: performance.now() - projectionStart,
+    maxRssKiB: process.resourceUsage().maxRSS };
 }
 
 function collectIdentifiers(node) {
@@ -536,16 +590,42 @@ async function worker(request) {
 export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {}, recordDigest = () => {}, onlyFamilies } = {}) {
   const protocol = resolve(repoRoot, 'packages/protocol/src');
   const { families, familyOwners, excluded } = readActionCatalog(repoRoot, recordInput);
+  const selectedFamilies = Object.entries(families).flatMap(([family, ids]) => {
+    if (onlyFamilies && !onlyFamilies.includes(family)) return [];
+    const keys = ids.filter(id => !Object.hasOwn(excluded, id));
+    if (!keys.length) return [];
+    const stem = family === 'computer' ? 'computerControl' : family.replace(/_([a-z])/gu, (_, letter) => letter.toUpperCase());
+    const familyNames = ['Input', 'Result'].map(kind => stem[0].toUpperCase() + stem.slice(1) + `Action${kind}ById`);
+    return [{ family, keys, familyNames, path: resolve(dirname(familyOwners[family]), `${stem}ActionDtos.ts`) }];
+  });
+  const requests = selectedFamilies.map(({ keys, familyNames }) => ({
+    keys, bindings: familyNames.map((name, i) => ['actions/actionSpecs.ts', `PluginAction${i ? 'Result' : 'Input'}ById`, name, i === 0]),
+  }));
+  const results = [];
+  if (requests.length) {
+    // Amortize each host over a core-sized batch, with at most one host per
+    // available core. Sequential custody preserves the existing memory topology;
+    // exiting a batch releases its checkers instead of retaining all families.
+    const cores = availableParallelism();
+    const hosts = Math.min(cores, Math.ceil(requests.length / cores));
+    const perHost = Math.ceil(requests.length / hosts);
+    for (let index = 0; index < requests.length; index += perHost) {
+      const batch = await worker({ repoRoot, requests: requests.slice(index, index + perHost) });
+      for (const [path, digest] of batch.inputDigests) recordDigest(path, digest);
+      results.push(...batch.results);
+    }
+  }
   const outputs = new Map();
   const names = [[], []];
   const imports = [];
   const dependencies = new Set();
+  const inputDependencies = new Set();
   const metrics = [];
-  const consume = async (label, request) => {
-    const start = performance.now();
-    const result = await worker({ repoRoot, ...request });
+  const consume = (label, result, elapsedMs) => {
     for (const [path, digest] of result.inputDigests) recordDigest(path, digest);
-    metrics.push({ family: label, elapsedMs: Math.round(performance.now() - start), maxRssKiB: result.maxRssKiB });
+    metrics.push({ family: label, elapsedMs: Math.round(elapsedMs), maxRssKiB: result.maxRssKiB,
+      sourceFilesParsed: result.sourceFilesParsed, sourceFilesReused: result.sourceFilesReused,
+      parseMs: Math.round(result.parseMs), programMs: Math.round(result.programMs), projectionMs: Math.round(result.projectionMs) });
     process.stderr.write(`action-type-map: family=${label} elapsedMs=${metrics.at(-1).elapsedMs} maxRssKiB=${result.maxRssKiB}\n`);
     return result;
   };
@@ -554,33 +634,37 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
     const path = relative(dirname(from), to).replaceAll('\\', '/').replace(/\.ts$/u, '.js');
     return path.startsWith('.') ? path : './' + path;
   };
-  for (const [family, ids] of Object.entries(families)) {
-    if (onlyFamilies && !onlyFamilies.includes(family)) continue;
-    const keys = ids.filter(id => !Object.hasOwn(excluded, id));
-    if (!keys.length) continue;
-    const stem = family === 'computer' ? 'computerControl' : family.replace(/_([a-z])/gu, (_, letter) => letter.toUpperCase());
-    const familyNames = ['Input', 'Result'].map(kind => stem[0].toUpperCase() + stem.slice(1) + `Action${kind}ById`);
+  for (const [index, { family, familyNames, path }] of selectedFamilies.entries()) {
     // Virtual declarations follow the defining family export; only their SDK
     // projection is published. A newly declared family needs no placement list.
-    const path = resolve(dirname(familyOwners[family]), `${stem}ActionDtos.ts`);
-    const result = await consume(family, { keys, bindings: familyNames.map((name, i) => ['actions/actionSpecs.ts', `PluginAction${i ? 'Result' : 'Input'}ById`, name, i === 0]) });
+    const derived = results[index];
+    const result = consume(family, derived, derived.elapsedMs);
     const local = new Set(result.declarations.map(([name]) => name));
     const refs = result.references.filter(name => !local.has(name));
+    const inputRefs = result.inputReferences;
     refs.forEach(name => dependencies.add(name));
+    inputRefs.forEach(name => inputDependencies.add(name));
     const refNames = refs.map(name => [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name);
+    refNames.push(...inputRefs.map(name => [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name));
     outputs.set(path, GENERATED_HEADER
-      + (refs.length ? `import type { ${[...new Set(refNames)].sort().join(', ')} } from '${relativeImport(path, supportPath)}';\n` : '')
+      + (refNames.length ? `import type { ${[...new Set(refNames)].sort().join(', ')} } from '${relativeImport(path, supportPath)}';\n` : '')
       + result.declarations.map(([, text]) => text).join('\n'));
     imports.push(`import type { ${familyNames.join(', ')} } from '${relativeImport(resolve(protocol, 'actions/pluginActionDtos.ts'), path)}';`);
     familyNames.forEach((name, i) => names[i].push(name));
   }
   if (!onlyFamilies) {
-    const support = await consume('support', { bindings: [...supportBindings, ...uiBindings], extraNames: [...dependencies] });
+    const start = performance.now();
+    const support = consume('support', await worker({ repoRoot, bindings: [...supportBindings, ...uiBindings], extraNames: [...dependencies], extraInputNames: [...inputDependencies] }),
+      performance.now() - start);
     for (const name of dependencies) {
       const renamed = [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name;
       if (!support.declarations.some(([candidate]) => candidate === renamed) && !Object.hasOwn(neutralImports, name) && name !== 'PluginInvocableActionId') {
         throw Error(`Missing generated support dependency: ${name}`);
       }
+    }
+    for (const name of inputDependencies) {
+      const renamed = [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name;
+      if (!support.declarations.some(([candidate]) => candidate === renamed)) throw Error(`Missing generated input support dependency: ${name}`);
     }
     const neutralImportStatements = Object.entries(neutralImports).map(([name, path]) =>
       `import type { ${name === 'PluginJsonSchema' ? 'PluginJsonSchemaV2 as PluginJsonSchema' : name} } from '${relativeImport(supportPath, resolve(protocol, path))}';`);
@@ -606,6 +690,22 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
   return { outputs, metrics };
 }
 
+function deriveFamilyBatch({ repoRoot, requests }) {
+  const session = createDerivationHost();
+  const inputDigests = new Map();
+  const results = requests.map(request => {
+    const start = performance.now();
+    const { inputDigests: observed, ...result } = deriveProgram({ repoRoot, ...request }, session);
+    for (const [path, digest] of observed) {
+      if (inputDigests.has(path) && inputDigests.get(path) !== digest) throw Error(`Action schema inputs changed between families: ${path}`);
+      inputDigests.set(path, digest);
+    }
+    return { ...result, inputDigests: [], elapsedMs: performance.now() - start };
+  });
+  return { results, inputDigests: [...inputDigests] };
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT) {
-  writeFileSync(process.argv[3], JSON.stringify(deriveProgram(JSON.parse(readFileSync(process.argv[2], 'utf8')))));
+  const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+  writeFileSync(process.argv[3], JSON.stringify(request.requests ? deriveFamilyBatch(request) : deriveProgram(request)));
 }

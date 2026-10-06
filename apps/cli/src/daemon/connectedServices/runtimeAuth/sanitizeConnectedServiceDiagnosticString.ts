@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import {
   CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER,

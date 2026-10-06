@@ -28,6 +28,11 @@ vi.mock('expo-router', () => ({
     useNavigation: () => ({}),
     useLocalSearchParams: () => ({}),
 }));
+// This native Markdown SDK is not installed in the source harness. These
+// empty-document command cases never render Markdown or exercise its codec.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => [],
+}));
 
 beforeEach(() => {
     getStorage().setState({ settings: settingsDefaults, localSettings: localSettingsDefaults });
@@ -35,6 +40,20 @@ beforeEach(() => {
 afterEach(async () => { await standardCleanup(); });
 
 describe('Workflow editor reviewed-copy disclosure', () => {
+    it.each(['notSaved', 'unsaved', 'failed'] as const)('offers Add and Save in the phone command bar for a %s draft', async (kind) => {
+        nativeWindow.width = 390;
+        const onSave = vi.fn();
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorBody
+            draft={createWorkflowEditorDraft({ draftId: 'phone-commands', blocks: [] })}
+            onChange={vi.fn()} onSave={onSave}
+            saveStatus={kind === 'failed' ? { kind, reason: null } : { kind }}
+            machineName={null} selectedBlockId={null} onSelectBlock={vi.fn()} onCustomizeBlock={vi.fn()}
+            composerScope={{ kind: 'machine', machineId: null }} view="steps" onChangeView={vi.fn()}
+        /></AppPaneProvider>);
+        const bar = screen.findByTestId('workflow-editor-phone-bar');
+        expect(bar?.findAll((node) => typeof node.type === 'string' && node.props.testID === 'workflow-editor-phone-add')).not.toHaveLength(0);
+        expect(bar?.findAll((node) => typeof node.type === 'string' && node.props.testID === 'workflow-editor-phone-save')).not.toHaveLength(0);
+    });
     it.each([400, 1200])('keeps the review disclosure in the page scroll at width %s', async (width) => {
         nativeWindow.width = width;
         const props = {

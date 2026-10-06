@@ -1,6 +1,4 @@
-import {
-    PluginCollectionOpaqueCursorV1Schema as canonicalPluginCollectionOpaqueCursorV1Schema,
-} from '@happier-dev/protocol/plugins/data/collectionOpaqueCursorV1';
+import { PluginCollectionOpaqueCursorV1Schema as canonicalPluginCollectionOpaqueCursorV1Schema } from '@happier-dev/protocol/plugins/data/collectionOpaqueCursorV1';
 
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 

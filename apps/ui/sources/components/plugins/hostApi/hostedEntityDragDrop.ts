@@ -9,7 +9,7 @@ import { entityHostedPointerToWindow } from '@/components/ui/treeDragDrop/geomet
 import type { WindowBounds } from '@/components/ui/treeDragDrop/treeDragDropTypes';
 import type { EntityDragCarry } from '@/components/ui/treeDragDrop/entityDragDropTypes';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import type { PluginEntityDragDropBinding, PluginEntityDragSourceMount } from '../surfaces/entityDragDrop/pluginEntityDragDropBinding';
+import type { PluginEntityDragDropBinding, PluginEntityDragSourceMount, PluginEntityDropTargetMount } from '../surfaces/entityDragDrop/pluginEntityDragDropBinding';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiHandlers } from '../surfaces/createPluginSurfaceHostApi';
 
 /** Host-owned retirement handles and local coordinates; target selection belongs only to E01. */
@@ -18,7 +18,7 @@ export function createHostedEntityDragDropHandlers(input: Readonly<{
     isCurrent: () => boolean;
     readSessionItem: () => EntityDragItemV1 | null;
 }>): Readonly<{ handlers: PluginSurfaceHostApiHandlers; dispose: () => void }> {
-    const mounts = new Map<string, Readonly<{ id: string; dispose: () => void; source?: PluginEntityDragSourceMount; layout?: { bounds: WindowBounds; viewport: { width: number; height: number } } }>>();
+    const mounts = new Map<string, Readonly<{ id: string; dispose: () => void; source?: PluginEntityDragSourceMount; target?: PluginEntityDropTargetMount; layout?: { bounds: WindowBounds; viewport: { width: number; height: number } } }>>();
     let frameBounds: WindowBounds | null = null;
     let readFrameBounds: (() => Promise<WindowBounds | null>) | undefined;
     let carry: EntityDragCarry | null = null;
@@ -46,13 +46,14 @@ export function createHostedEntityDragDropHandlers(input: Readonly<{
                 Reflect.deleteProperty(payload, 'subscriptionId');
                 const parsed = PluginUiWatchEntityDragDropRequestV1Schema.safeParse(payload);
                 if (!parsed.success) return createPluginSurfaceHostApiError('invalid_payload');
-                const source = mounts.get(parsed.data.mountId)?.source;
-                if (!source?.isCurrent()) return createPluginSurfaceHostApiError('unavailable');
+                const mounted = mounts.get(parsed.data.mountId);
+                const owner = mounted?.source ?? mounted?.target;
+                if (!owner?.isCurrent()) return createPluginSurfaceHostApiError('unavailable');
                 const publish = () => {
-                    const valid = current() && source.isCurrent();
+                    const valid = current() && owner.isCurrent();
                     const snapshot = input.binding.runtime.getSnapshot();
-                    const own = valid && snapshot.sourceId === source.id;
-                    options.entityDragDropSubscription?.publish({ current: valid, phase: own ? snapshot.phase : 'idle', admission: own ? snapshot.admission : null, outcome: own ? snapshot.outcome : null, destinations: valid ? [...input.binding.runtime.getDestinations(source.id)] : [] });
+                    const own = valid && (mounted?.source ? snapshot.sourceId === owner.id : snapshot.targetId === owner.id);
+                    options.entityDragDropSubscription?.publish({ current: valid, phase: own ? snapshot.phase : 'idle', admission: own ? snapshot.admission : null, outcome: own ? snapshot.outcome : null, destinations: valid && mounted?.source ? [...input.binding.runtime.getDestinations(owner.id)] : [] });
                 };
                 const unsubscribe = input.binding.runtime.subscribe(publish);
                 options.entityDragDropSubscription.retain(unsubscribe);
@@ -161,7 +162,7 @@ export function createHostedEntityDragDropHandlers(input: Readonly<{
                             return start && end ? { ...start, width: end.x - start.x, height: end.y - start.y } : null;
                         } });
                     if (!target) return { accepted: false };
-                    mounts.set(command.mountId, { id: target.id, dispose: target.dispose, layout });
+                    mounts.set(command.mountId, { id: target.id, dispose: target.dispose, target, layout });
                     return { accepted: true };
                 }
                 if (command.kind === 'layout') {

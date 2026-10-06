@@ -1,17 +1,10 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import {
-  ExecutionRunTurnStreamStartV2RequestSchema,
-  ExecutionRunUserTranscriptCommitRequestSchema,
-  SessionExecutionRunBrokerAuthorityRequestV1Schema,
-  SessionExecutionRunBrokerAuthorityResponseV1Schema,
-  type ExecutionRunPublicState,
-  type SessionTranscriptObservationProvenanceV1,
-  type ActionExecutorDeps,
-  type ReviewCommentPrincipalHeaderV1,
-} from '@happier-dev/protocol';
-import { accountSettingsParse } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunUserTranscriptCommitRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
+import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import type { ExecutionRunPublicState, SessionTranscriptObservationProvenanceV1, ActionExecutorDeps, ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunTranscriptPublisher } from '@/agent/runtime/bridges/executionRun/executionRunTranscriptPublisher';

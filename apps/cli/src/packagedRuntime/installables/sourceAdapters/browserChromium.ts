@@ -1,4 +1,4 @@
-import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE } from '@happier-dev/protocol';
+import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE } from '@happier-dev/protocol/browser/sidecar/chromiumForTesting';
 
 import {
   installChromiumForTesting,

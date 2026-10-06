@@ -1,9 +1,10 @@
 import type { WorkBoardArtifactTransportV1, WorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { applyWidgetDefinitionPatchV1, readWidgetDefinitionResourcesV1, WidgetDefinitionBodyV1Schema, WidgetDefinitionDraftV1Schema, WidgetDefinitionV1Schema, type WidgetDefinitionPatchV1, type WidgetDefinitionV1 } from './widgetDefinitionV1.js';
+import { applyWidgetDefinitionPatchV1, readWidgetDefinitionResourcesV1, WidgetDefinitionBodyV1Schema, WidgetDefinitionDraftV1Schema, WidgetDefinitionV1Schema, WidgetDefinitionV1StoredSchema, type WidgetDefinitionPatchV1, type WidgetDefinitionV1 } from './widgetDefinitionV1.js';
 
 export const WIDGET_DEFINITION_ARTIFACT_KIND_V1 = 'widget-definition.v1';
 export type WidgetDefinitionArtifactV1 = WorkBoardArtifactV1 & Readonly<{ ownerAccountId: string }>;
@@ -21,6 +22,7 @@ export const WidgetDefinitionSummaryV1Schema = WidgetDefinitionDraftV1Schema.pic
     sourceDefinition: WidgetDefinitionBodyV1Schema.options[1].optional(),
 }).strict();
 export type WidgetDefinitionSummaryV1 = z.infer<typeof WidgetDefinitionSummaryV1Schema>;
+export const WidgetDefinitionSummaryV1StoredSchema = createStoredReadSchema(WidgetDefinitionSummaryV1Schema);
 export type WidgetDefinitionArtifactPortV1 = Readonly<{
     list(signal?: AbortSignal): Promise<readonly WidgetDefinitionSummaryV1[]>;
     get(artifactId: string, signal?: AbortSignal): Promise<WidgetDefinitionV1 | null>;
@@ -44,7 +46,7 @@ export function buildWidgetDefinitionArtifactHeaderV1(definition: WidgetDefiniti
 /** Readable header metadata is discovery, never permission to execute the body. */
 export function readWidgetDefinitionArtifactSummaryV1(artifactId: string, header: Readonly<Record<string, unknown>>): WidgetDefinitionSummaryV1 | null {
     if (header.kind !== WIDGET_DEFINITION_ARTIFACT_KIND_V1 || header.v !== 1) return null;
-    const summary = WidgetDefinitionSummaryV1Schema.safeParse(header.summary);
+    const summary = WidgetDefinitionSummaryV1StoredSchema.safeParse(header.summary);
     return summary.success && summary.data.artifactId === artifactId && summary.data.name === header.title ? summary.data : null;
 }
 export function readWidgetDefinitionArtifactV1(artifact: Pick<WidgetDefinitionArtifactV1, 'artifactId' | 'header' | 'body'>): WidgetDefinitionV1 {
@@ -53,7 +55,7 @@ export function readWidgetDefinitionArtifactV1(artifact: Pick<WidgetDefinitionAr
     }
     let body: unknown;
     try { body = JSON.parse(artifact.body); } catch { throw new WidgetDefinitionErrorV1('invalid_widget_definition_record'); }
-    const parsed = WidgetDefinitionV1Schema.safeParse(body);
+    const parsed = WidgetDefinitionV1StoredSchema.safeParse(body);
     if (!parsed.success || parsed.data.id !== artifact.artifactId) throw new WidgetDefinitionErrorV1('invalid_widget_definition_record');
     return parsed.data;
 }

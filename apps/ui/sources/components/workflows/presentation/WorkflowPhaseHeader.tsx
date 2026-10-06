@@ -1,3 +1,4 @@
+import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -53,19 +54,18 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 8,
+        gap: theme.margins.sm,
         minHeight: 28,
-        paddingTop: 8,
-        paddingBottom: 2,
+        paddingTop: theme.margins.sm,
+        paddingBottom: theme.margins.xs,
     },
     title: {
         flexShrink: 1,
-        fontSize: 12,
-        fontWeight: '600',
+        ...Typography.rowTitle(),
         color: theme.colors.text.secondary,
     },
     rollup: {
-        fontSize: 11,
+        ...Typography.timestamp(),
         color: theme.colors.text.secondary,
     },
 }));

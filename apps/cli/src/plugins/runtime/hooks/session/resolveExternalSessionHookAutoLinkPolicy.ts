@@ -1,11 +1,6 @@
-import {
-    deriveExternalSessionsAutoLinkSourcePolicyIdV1,
-    ExternalSessionsSourceSchema,
-    readExternalSessionsSettingsV1,
-    type AccountSettings,
-    type ExternalSessionsSource,
-    type LinkedExternalSessionQualifiedIdentityV1,
-} from '@happier-dev/protocol';
+import { deriveExternalSessionsAutoLinkSourcePolicyIdV1, readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { AccountSettings, ExternalSessionsSource, LinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol';
 
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { deepEqual } from '@/utils/deterministicJson';

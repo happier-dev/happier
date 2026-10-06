@@ -2,200 +2,173 @@ import * as React from 'react';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav';
 import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
-import { checkModelPackUpdateAvailable, ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
-import { formatModelPackBuildLabel } from '@/voice/modelPacks/formatBuildLabel';
+import { getModelPackInstallSummary } from '@/voice/modelPacks/installer.native';
+import { invokeVoiceDeviceModelPackOperation } from '@/voice/settings/voiceDeviceModelPackOperation.native';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 
 type ModelStatus = 'idle' | 'downloading' | 'ready' | 'error';
 
+/** Native STT and TTS share settings state; consent and installer admission live in the operation owner. */
 export function useLocalNeuralModelPackState(params: {
   packId: string;
   manifestUrl: string | null;
   networkTimeoutMs: number;
-}): Readonly<{
-  modelStatus: ModelStatus;
-  downloadProgress: unknown | null;
-  downloadDetail: string | null;
-  installed: boolean;
-  installSummary: Awaited<ReturnType<typeof getModelPackInstallSummary>> | null;
-  updateCheckedRemote: null | { build: string | null; updateAvailable: boolean };
-  refreshInstallState: () => Promise<void>;
-  prepareModel: () => Promise<void>;
-  cancelPrepare: () => void;
-  clearAssets: () => void;
-  checkForUpdates: () => void;
-}> {
+  role?: 'stt_sherpa' | 'tts_sherpa';
+  enabled?: boolean;
+}) {
+  const role = params.role ?? 'tts_sherpa';
+  const enabled = params.enabled ?? true;
+  const selectionRef = React.useRef({ packId: params.packId, role, enabled });
+  React.useLayoutEffect(() => {
+    // Suspended replacement renders must not retarget a committed operation.
+    selectionRef.current = { packId: params.packId, role, enabled };
+  }, [enabled, params.packId, role]);
+  const mountedRef = React.useRef(true);
   const [modelStatus, setModelStatus] = React.useState<ModelStatus>('idle');
   const [downloadProgress, setDownloadProgress] = React.useState<unknown | null>(null);
   const prepareAbortRef = React.useRef<AbortController | null>(null);
-  const [installed, setInstalled] = React.useState<boolean>(false);
-  const [installSummary, setInstallSummary] = React.useState<null | Awaited<ReturnType<typeof getModelPackInstallSummary>>>(null);
-  const [updateCheckedRemote, setUpdateCheckedRemote] = React.useState<null | { build: string | null; updateAvailable: boolean }>(null);
+  const [installed, setInstalled] = React.useState(false);
+  const [installSummary, setInstallSummary] = React.useState<Awaited<ReturnType<typeof getModelPackInstallSummary>> | null>(null);
+  const [updateCheckedRemote, setUpdateCheckedRemote] = React.useState<{ build: string | null; updateAvailable: boolean } | null>(null);
+
+  const isCurrent = React.useCallback(() => mountedRef.current && enabled
+    && selectionRef.current.enabled && selectionRef.current.packId === params.packId
+    && selectionRef.current.role === role, [enabled, params.packId, role]);
 
   const refreshInstallState = React.useCallback(async () => {
+    if (!isCurrent()) return;
+    const accountLifetime = captureActiveServerAccountScopeCurrentness();
     try {
       const summary = await getModelPackInstallSummary({ packId: params.packId });
+      if (!isCurrent() || !accountLifetime.isCurrent()) return;
       setInstallSummary(summary);
       setInstalled(summary.installed);
-      setModelStatus((cur) => (cur === 'downloading' ? cur : summary.installed ? 'ready' : 'idle'));
+      setModelStatus((cur) => cur === 'downloading' ? cur : summary.installed ? 'ready' : 'idle');
       setUpdateCheckedRemote(null);
     } catch {
+      if (!isCurrent() || !accountLifetime.isCurrent()) return;
       setInstallSummary(null);
       setInstalled(false);
-      setModelStatus((cur) => (cur === 'downloading' ? cur : 'idle'));
+      setModelStatus((cur) => cur === 'downloading' ? cur : 'idle');
       setUpdateCheckedRemote(null);
     }
-  }, [params.packId]);
+  }, [isCurrent, params.packId]);
 
   React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      prepareAbortRef.current?.abort();
+    };
+  }, []);
+
+  React.useEffect(() => {
+    prepareAbortRef.current?.abort();
+    prepareAbortRef.current = null;
+    setModelStatus('idle');
+    setDownloadProgress(null);
+    setInstalled(false);
+    setInstallSummary(null);
+    setUpdateCheckedRemote(null);
     void refreshInstallState();
   }, [refreshInstallState]);
 
-  const prepareModel = React.useCallback(async () => {
-    if (modelStatus === 'downloading') return;
-
+  const runOperation = React.useCallback(async (operation: 'prepare' | 'remove' | 'update') => {
+    if (!isCurrent() || prepareAbortRef.current) return;
+    const controller = new AbortController();
+    const accountLifetime = captureActiveServerAccountScopeCurrentness();
+    prepareAbortRef.current = controller;
+    const accountRetirement = accountLifetime.onRetire(() => {
+      controller.abort();
+      if (prepareAbortRef.current === controller) prepareAbortRef.current = null;
+      if (isCurrent()) {
+        setModelStatus(installed ? 'ready' : 'idle');
+        setDownloadProgress(null);
+      }
+    });
+    const current = () => isCurrent() && accountLifetime.isCurrent() && !controller.signal.aborted;
+    let checkedUpdateAvailable: boolean | null = null;
     try {
-      setModelStatus('downloading');
-      setDownloadProgress(null);
-      const abortController = new AbortController();
-      prepareAbortRef.current = abortController;
-
-      await prepareKokoroTts({
-        assetSetId: params.packId,
-        timeoutMs: Math.max(60000, params.networkTimeoutMs),
-        signal: abortController.signal,
-        onProgress: (progress) => {
-          setDownloadProgress(progress);
+      const result = await invokeVoiceDeviceModelPackOperation({
+        operation, packId: params.packId, role, manifestUrl: params.manifestUrl,
+        networkTimeoutMs: params.networkTimeoutMs, signal: controller.signal, isCurrent: current,
+        onDownloadStarted: () => {
+          if (!current()) return;
+          setModelStatus('downloading');
+          setDownloadProgress(null);
+        },
+        onProgress: (progress) => { if (current()) setDownloadProgress(progress); },
+        onUpdateChecked: (status) => {
+          if (!current()) return;
+          checkedUpdateAvailable = status.updateAvailable;
+          setUpdateCheckedRemote(status);
         },
       });
-
-      setModelStatus('ready');
+      if (!current()) return;
+      if (result.status === 'unavailable') {
+        if (result.reason === 'model_manifest_unavailable') {
+          await Modal.alert(t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
+            t('settingsVoice.local.kokoro.alerts.missingManifest.body'));
+        } else if (result.reason === 'model_not_installed') {
+          await Modal.alert(
+            t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.notInstalledTitle' : 'settingsVoice.local.kokoro.alerts.notInstalledTitle'),
+            t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.notInstalledBody' : 'settingsVoice.local.kokoro.alerts.notInstalledBody'));
+        }
+        return;
+      }
+      if (result.status !== 'completed') return;
+      if (operation === 'update' && checkedUpdateAvailable === false) {
+        await Modal.alert(
+          t(role === 'stt_sherpa' ? 'settingsVoice.local.kokoro.updates.upToDate' : 'settingsVoice.local.kokoro.alerts.upToDateTitle'),
+          t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.upToDateBody' : 'settingsVoice.local.kokoro.alerts.upToDateBody'));
+        return;
+      }
+      setModelStatus(operation === 'remove' ? 'idle' : 'ready');
       await refreshInstallState();
+      if (operation === 'update' && current()) {
+        await Modal.alert(
+          t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.updatedTitle' : 'settingsVoice.local.kokoro.alerts.updatedTitle'),
+          t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.updatedBody' : 'settingsVoice.local.kokoro.alerts.updatedBody'));
+      }
     } catch (error) {
-      if (prepareAbortRef.current?.signal?.aborted) {
+      if (!isCurrent() || !accountLifetime.isCurrent()) return;
+      if (controller.signal.aborted) {
         setModelStatus(installed ? 'ready' : 'idle');
         return;
       }
       setModelStatus('error');
-      await Modal.alert(t('common.error'), error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (operation === 'update') {
+        await Modal.alert(
+          t(role === 'stt_sherpa' ? 'settingsVoice.local.localNeuralStt.alerts.updateFailedTitle' : 'settingsVoice.local.kokoro.alerts.updateFailedTitle'),
+          role === 'stt_sherpa'
+            ? t('settingsVoice.local.localNeuralStt.alerts.updateFailedBody', { message })
+            : t('settingsVoice.local.kokoro.alerts.updateFailedBody', { message }));
+      } else if (role === 'stt_sherpa' && operation === 'prepare') {
+        await Modal.alert(t('settingsVoice.local.localNeuralStt.alerts.downloadFailedTitle'),
+          t('settingsVoice.local.localNeuralStt.alerts.downloadFailedBody', { message }));
+      } else {
+        await Modal.alert(t('common.error'), message);
+      }
     } finally {
-      prepareAbortRef.current = null;
-    }
-  }, [installed, modelStatus, params.networkTimeoutMs, params.packId, refreshInstallState]);
-
-  const cancelPrepare = React.useCallback(() => {
-    const controller = prepareAbortRef.current;
-    if (!controller) return;
-    try {
-      controller.abort();
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const clearAssets = React.useCallback(() => {
-    fireAndForget((async () => {
-      if (modelStatus === 'downloading') return;
-      const confirmed = await Modal.confirm(
-        t('settingsVoice.local.kokoro.removeAssets.confirmTitle'),
-        t('settingsVoice.local.kokoro.removeAssets.confirmBody'),
-        { confirmText: t('settingsVoice.local.kokoro.removeAssets.confirmButton') },
-      );
-      if (!confirmed) return;
-      await removeModelPack({ packId: params.packId });
-      setModelStatus('idle');
-      setDownloadProgress(null);
-      await refreshInstallState();
-    })(), { tag: 'useLocalNeuralModelPackState.confirm.clearAssets' });
-  }, [modelStatus, params.packId, refreshInstallState]);
-
-  const checkForUpdates = React.useCallback(() => {
-    fireAndForget((async () => {
-      if (modelStatus === 'downloading') return;
-      if (!params.manifestUrl) {
-        await Modal.alert(
-          t('settingsVoice.local.kokoro.alerts.missingManifest.title'),
-          t('settingsVoice.local.kokoro.alerts.missingManifest.body'),
-        );
-        return;
-      }
-
-      const abortController = new AbortController();
-      try {
-        const status = await checkModelPackUpdateAvailable({
-          packId: params.packId,
-          manifestUrl: params.manifestUrl,
-          timeoutMs: Math.max(30_000, params.networkTimeoutMs),
-          signal: abortController.signal,
-        });
-
-        if (!status.installed) {
-          await Modal.alert(
-            t('settingsVoice.local.kokoro.alerts.notInstalledTitle'),
-            t('settingsVoice.local.kokoro.alerts.notInstalledBody'),
-          );
-          return;
-        }
-        const remoteBuild = formatModelPackBuildLabel(status.remoteManifest);
-        setUpdateCheckedRemote({ build: remoteBuild, updateAvailable: status.updateAvailable });
-        if (!status.updateAvailable) {
-          await Modal.alert(
-            t('settingsVoice.local.kokoro.alerts.upToDateTitle'),
-            t('settingsVoice.local.kokoro.alerts.upToDateBody'),
-          );
-          return;
-        }
-
-        const ok = await Modal.confirm(
-          t('settingsVoice.local.kokoro.alerts.updateAvailableTitle'),
-          t('settingsVoice.local.kokoro.alerts.updateAvailableBody', { remoteBuild }),
-          {
-            confirmText: t('common.update'),
-          },
-        );
-        if (!ok) return;
-
-        setModelStatus('downloading');
-        setDownloadProgress(null);
-        prepareAbortRef.current = abortController;
-
-        await ensureModelPackInstalled({
-          packId: params.packId,
-          mode: 'download_if_missing',
-          updatePolicy: 'manual_update_if_available',
-          manifestUrl: params.manifestUrl,
-          timeoutMs: Math.max(120_000, params.networkTimeoutMs),
-          signal: abortController.signal,
-          onProgress: (p) => {
-            setDownloadProgress(p);
-          },
-        });
-
-        setModelStatus('ready');
-        await refreshInstallState();
-        await Modal.alert(
-          t('settingsVoice.local.kokoro.alerts.updatedTitle'),
-          t('settingsVoice.local.kokoro.alerts.updatedBody'),
-        );
-      } catch (error) {
-        if (abortController.signal.aborted) {
-          setModelStatus(installed ? 'ready' : 'idle');
-          return;
-        }
-        await Modal.alert(
-          t('settingsVoice.local.kokoro.alerts.updateFailedTitle'),
-          t('settingsVoice.local.kokoro.alerts.updateFailedBody', { message: String((error as any)?.message ?? error) }),
-        );
-        setModelStatus('error');
-      } finally {
+      accountRetirement.dispose();
+      if (prepareAbortRef.current === controller) {
         prepareAbortRef.current = null;
-        setDownloadProgress(null);
+        if (isCurrent()) setDownloadProgress(null);
       }
-    })(), { tag: 'useLocalNeuralModelPackState.checkForUpdates' });
-  }, [installed, modelStatus, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState]);
+    }
+  }, [installed, isCurrent, params.manifestUrl, params.networkTimeoutMs, params.packId, refreshInstallState, role]);
 
+  const prepareModel = React.useCallback(() => runOperation('prepare'), [runOperation]);
+  const cancelPrepare = React.useCallback(() => { prepareAbortRef.current?.abort(); }, []);
+  const clearAssets = React.useCallback(() => {
+    fireAndForget(runOperation('remove'), { tag: 'useLocalNeuralModelPackState.clearAssets' });
+  }, [runOperation]);
+  const checkForUpdates = React.useCallback(() => {
+    fireAndForget(runOperation('update'), { tag: 'useLocalNeuralModelPackState.checkForUpdates' });
+  }, [runOperation]);
   const downloadDetail = React.useMemo(() => {
     if (modelStatus !== 'downloading') return null;
     return downloadProgress
@@ -203,17 +176,6 @@ export function useLocalNeuralModelPackState(params: {
       : t('settingsVoice.local.kokoro.modelStatus.downloading');
   }, [downloadProgress, modelStatus]);
 
-  return {
-    modelStatus,
-    downloadProgress,
-    downloadDetail,
-    installed,
-    installSummary,
-    updateCheckedRemote,
-    refreshInstallState,
-    prepareModel,
-    cancelPrepare,
-    clearAssets,
-    checkForUpdates,
-  };
+  return { modelStatus, downloadProgress, downloadDetail, installed, installSummary, updateCheckedRemote,
+    refreshInstallState, prepareModel, cancelPrepare, clearAssets, checkForUpdates } as const;
 }

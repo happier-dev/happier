@@ -639,33 +639,7 @@ function StackTracePanel({
                     <SelectedEvidenceDisclosure input={input} controller={controller} />
                     {!codeVariables.available
                         ? null
-                        : codeVariables.state.kind === 'confirming'
-                            ? (
-                                <Stack gap="small">
-                                    <Banner
-                                        tone="warning"
-                                        title="Reveal sensitive captured variables?"
-                                        titleKey="plugins.posthog.ui.codeVariables.confirmTitle"
-                                        description="Captured local variables can contain credentials, tokens, personal data, and request bodies. They stay in this Stack trace panel and are discarded when you leave it."
-                                        descriptionKey="plugins.posthog.ui.codeVariables.confirmDescription"
-                                    />
-                                    <Row gap="small">
-                                        <Button
-                                            title="Reveal captured variables"
-                                            titleKey="plugins.posthog.ui.codeVariables.reveal"
-                                            variant="primary"
-                                            onPress={codeVariables.confirm}
-                                        />
-                                        <Button
-                                            title="Cancel"
-                                            titleKey="plugins.posthog.ui.settings.cancel"
-                                            variant="secondary"
-                                            onPress={codeVariables.cancel}
-                                        />
-                                    </Row>
-                                </Stack>
-                            )
-                            : codeVariables.state.kind === 'loading'
+                        : codeVariables.state.kind === 'loading'
                                 ? (
                                     <Button
                                         title="Revealing captured variables"

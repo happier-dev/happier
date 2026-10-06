@@ -3,22 +3,11 @@ import {
   createSessionLifecycleRpcActionExecutor,
 } from '@/rpc/handlers/sessionLifecycle';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
-import {
-  RPC_ERROR_CODES,
-  RPC_ERROR_MESSAGES,
-  CheckpointCodeRollbackActionRequestSchema,
-  SessionCheckpointRequestV1Schema,
-  SessionRestoreRequestV1Schema,
-  type CheckpointCodeRollbackRequest,
-  type CheckpointCodeRollbackResult,
-  type SessionCheckpointRequestV1,
-  type SessionCheckpointResultV1,
-  SessionRollbackRpcParamsSchema,
-  type SessionRollbackRpcParams,
-  type SessionRollbackRpcResult,
-  type SessionRestoreRequestV1,
-  type SessionRestoreResultV1,
-} from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { CheckpointCodeRollbackActionRequestSchema } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
+import { SessionCheckpointRequestV1Schema, SessionRestoreRequestV1Schema } from '@happier-dev/protocol/sessions/control/checkpoints/v1';
+import type { CheckpointCodeRollbackRequest, CheckpointCodeRollbackResult, SessionCheckpointRequestV1, SessionCheckpointResultV1, SessionRollbackRpcParams, SessionRollbackRpcResult, SessionRestoreRequestV1, SessionRestoreResultV1 } from '@happier-dev/protocol';
+import { SessionRollbackRpcParamsSchema } from '@happier-dev/protocol/sessions/rollback';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export type SessionRollbackRuntimeFacet = Readonly<{

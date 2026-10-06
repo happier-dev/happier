@@ -1,17 +1,11 @@
 import { z } from 'zod';
 
-import {
-  ExecutionRunClassSchema,
-  ExecutionRunDisplaySchema,
-  ExecutionRunIntentSchema,
-  ExecutionRunIoModeSchema,
-  ExecutionRunLaunchOriginSchema,
-  ExecutionRunRequestedConfigurationSchema,
-  normalizeLegacyExecutionRunBackendTargetInput,
-  ExecutionRunResumeHandleSchema,
-  ExecutionRunRetentionPolicySchema,
-  ExecutionRunStatusSchema,
-} from '../execution/runs/index.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+
+import { ExecutionRunClassSchema, ExecutionRunIntentSchema, ExecutionRunIoModeSchema, ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
+import { ExecutionRunDisplaySchema, ExecutionRunLaunchOriginSchema, normalizeLegacyExecutionRunBackendTargetInput, ExecutionRunResumeHandleSchema } from '../execution/runs/startRequest.js';
+import { ExecutionRunRequestedConfigurationSchema } from '../execution/runs/requestedConfiguration.js';
+import { ExecutionRunStatusSchema } from '../execution/runs/responseSchemas.js';
 import {
   BackendTargetRefV2Schema,
   BackendTargetSourceKindV2Schema,
@@ -43,15 +37,15 @@ import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js
  * the resource an open names (`teams-lane-10/PLAN.md` §2.3). Null when the Run
  * selected nothing and so inherits its parent Session's selection.
  */
-const ExecutionRunTeamCredentialProviderModelAttestationV1Schema = z.object({
+const ExecutionRunTeamCredentialProviderModelAttestationV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().trim().min(1).max(512),
   deliveryMode: TeamCredentialRouteV1Schema,
-}).strict().nullable();
+}).strict().nullable());
 
 const EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES =
   AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1.p0MeasuredCandidates.sendRequestMaxJsonBytes;
 
-export const DaemonExecutionRunBrokerAuthorityRequestV1Schema = z.object({
+export const DaemonExecutionRunBrokerAuthorityRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   requestNonce: z.string().uuid(),
   serverIdentityId: z.string().trim().min(1).max(256),
@@ -61,12 +55,12 @@ export const DaemonExecutionRunBrokerAuthorityRequestV1Schema = z.object({
   expectedIntent: ExecutionRunIntentSchema.optional(),
   expectedOccurrenceId: z.string().trim().min(1).max(512).nullable(),
   expectedDirectMaterialUse: TeamCredentialDirectMaterialUseV1Schema.optional(),
-}).strict();
+}).strict());
 export type DaemonExecutionRunBrokerAuthorityRequestV1 = z.infer<
   typeof DaemonExecutionRunBrokerAuthorityRequestV1Schema
 >;
 
-export const DaemonExecutionRunBrokerAuthorityResponseV1Schema = z.discriminatedUnion('status', [
+export const DaemonExecutionRunBrokerAuthorityResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('current'),
     requestNonce: z.string().uuid(),
@@ -86,7 +80,7 @@ export const DaemonExecutionRunBrokerAuthorityResponseV1Schema = z.discriminated
     requestNonce: z.string().uuid(),
     reason: z.enum(['identity_mismatch', 'not_found', 'terminal', 'detached', 'occurrence_mismatch', 'runtime_unavailable']),
   }).strict(),
-]);
+]));
 export type DaemonExecutionRunBrokerAuthorityResponseV1 = z.infer<
   typeof DaemonExecutionRunBrokerAuthorityResponseV1Schema
 >;
@@ -96,18 +90,18 @@ export type DaemonExecutionRunBrokerAuthorityResponseV1 = z.infer<
  * Persisted execution-run markers are intentionally absent: they locate the
  * Session process but never decide occurrence or turn authority.
  */
-export const SessionExecutionRunBrokerAuthorityRequestV1Schema = z.object({
+export const SessionExecutionRunBrokerAuthorityRequestV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   executionRunId: z.string().trim().min(1).max(512),
   expectedIntent: ExecutionRunIntentSchema.optional(),
   expectedOccurrenceId: z.string().trim().min(1).max(512).nullable(),
   expectedDirectMaterialUse: TeamCredentialDirectMaterialUseV1Schema.optional(),
-}).strict();
+}).strict());
 export type SessionExecutionRunBrokerAuthorityRequestV1 = z.infer<
   typeof SessionExecutionRunBrokerAuthorityRequestV1Schema
 >;
 
-export const SessionExecutionRunBrokerAuthorityResponseV1Schema = z.discriminatedUnion('status', [
+export const SessionExecutionRunBrokerAuthorityResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('current'),
     executionRunId: z.string().trim().min(1).max(512),
@@ -122,7 +116,7 @@ export const SessionExecutionRunBrokerAuthorityResponseV1Schema = z.discriminate
     status: z.literal('not_current'),
     reason: z.enum(['identity_mismatch', 'not_found', 'terminal', 'detached', 'occurrence_mismatch', 'runtime_unavailable']),
   }).strict(),
-]);
+]));
 export type SessionExecutionRunBrokerAuthorityResponseV1 = z.infer<
   typeof SessionExecutionRunBrokerAuthorityResponseV1Schema
 >;
@@ -145,16 +139,16 @@ export type SessionExecutionRunBrokerAuthorityResponseV1 = z.infer<
  * exact contribution identity plus its durable source custody lets adoption demand correspondence
  * instead of trusting run/PID liveness as source proof.
  */
-export const ExecutionRunAgentContributionIdentityV1Schema = z.object({
+export const ExecutionRunAgentContributionIdentityV1Schema = lazyZodSchema(() => z.object({
   pluginId: z.string().trim().min(1).max(256),
   localId: z.string().trim().min(1).max(256),
   sourceCustody: PluginSourceCustodyV1Schema,
-}).strict();
+}).strict());
 export type ExecutionRunAgentContributionIdentityV1 = z.infer<
   typeof ExecutionRunAgentContributionIdentityV1Schema
 >;
 
-export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
+export const ExecutionRunConnectedServicesLaunchV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   activationId: z.string().uuid().optional(),
   runKey: z.string().trim().min(1),
@@ -169,7 +163,7 @@ export const ExecutionRunConnectedServicesLaunchV1Schema = z.object({
   connectedServiceSelectionsEnv: z.record(z.string(), z.string()),
   sessionDirectory: z.string().trim().min(1).nullable(),
   materializedRoot: z.string().trim().min(1).nullable(),
-}).strict();
+}).strict());
 export type ExecutionRunConnectedServicesLaunchV1 = z.infer<typeof ExecutionRunConnectedServicesLaunchV1Schema>;
 
 /**
@@ -177,17 +171,17 @@ export type ExecutionRunConnectedServicesLaunchV1 = z.infer<typeof ExecutionRunC
  * run-target, or replay authority; the daemon can only derive the exact
  * materialized root already owned by this run key and Agent.
  */
-export const ExecutionRunConnectedServicesCleanupReceiptV1Schema = z.object({
+export const ExecutionRunConnectedServicesCleanupReceiptV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   activationId: z.string().uuid(),
   runKey: z.string().trim().min(1),
   agentId: z.string().trim().min(1),
-}).strict();
+}).strict());
 export type ExecutionRunConnectedServicesCleanupReceiptV1 = z.infer<
   typeof ExecutionRunConnectedServicesCleanupReceiptV1Schema
 >;
 
-const PersistedConnectedServiceChildSelectionV1Schema = z.discriminatedUnion('kind', [
+const PersistedConnectedServiceChildSelectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
     serviceId: ConnectedAccountServiceKeyIngressSchema,
@@ -204,9 +198,9 @@ const PersistedConnectedServiceChildSelectionV1Schema = z.discriminatedUnion('ki
     policy: ConnectedServiceAuthGroupPolicyV1Schema,
     credentialRevision: ConnectedServiceCredentialRevisionV1Schema.optional(),
   }).strict(),
-]);
+]));
 
-const PersistedConnectedServiceSelectionsJsonSchema = z.string().trim().min(1).transform((raw, ctx) => {
+const PersistedConnectedServiceSelectionsJsonSchema = lazyZodSchema(() => z.string().trim().min(1).transform((raw, ctx) => {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(raw) as unknown;
@@ -225,7 +219,7 @@ const PersistedConnectedServiceSelectionsJsonSchema = z.string().trim().min(1).t
     return z.NEVER;
   }
   return JSON.stringify(parsed.data);
-});
+}));
 
 const PERSISTED_CONNECTED_SERVICE_SELECTIONS_ENV_KEY =
   'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
@@ -236,7 +230,7 @@ const PERSISTED_SELECTION_IDENTITY_VALUE_PATTERN =
 const SECRET_BEARING_IDENTITY_VALUE_PATTERN =
   /^(?:bearer[ :]|sk-|gh[opusr]_|github_pat_|xox[baprs]-|ya29[.-])/i;
 
-const PersistedConnectedServiceSelectionsEnvSchema = z.record(
+const PersistedConnectedServiceSelectionsEnvSchema = lazyZodSchema(() => z.record(
   z.string(),
   z.string(),
 ).transform((env, ctx) => {
@@ -263,13 +257,13 @@ const PersistedConnectedServiceSelectionsEnvSchema = z.record(
     normalized[key] = value;
   }
   return normalized;
-});
+}));
 
 const PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema =
-  ExecutionRunConnectedServicesLaunchV1Schema.extend({
+  lazyZodSchema(() => ExecutionRunConnectedServicesLaunchV1Schema.extend({
     connectedServicesBindings: ConnectedServiceBindingsV2Schema,
     connectedServiceSelectionsEnv: PersistedConnectedServiceSelectionsEnvSchema,
-  }).strict();
+  }).strict());
 
 /**
  * Released/predecessor markers used bundled scalar Connected Account service
@@ -277,12 +271,12 @@ const PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema =
  * normalize it through the canonical Connected Account compatibility owner.
  */
 const PersistedLegacyExecutionRunConnectedServicesLaunchV1Schema =
-  ExecutionRunConnectedServicesLaunchV1Schema.extend({
+  lazyZodSchema(() => ExecutionRunConnectedServicesLaunchV1Schema.extend({
     connectedServicesBindings: BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
     connectedServiceSelectionsEnv: PersistedConnectedServiceSelectionsEnvSchema,
-  }).strict();
+  }).strict());
 
-const RemoteDevRuntimeAccountIdentitySelectionFactV1Schema = z.object({
+const RemoteDevRuntimeAccountIdentitySelectionFactV1Schema = lazyZodSchema(() => z.object({
   serviceId: ConnectedServiceIdSchema,
   profileId: z.string().trim().min(1),
   groupId: z.string().trim().min(1).nullable(),
@@ -290,7 +284,7 @@ const RemoteDevRuntimeAccountIdentitySelectionFactV1Schema = z.object({
   providerAccountId: z.string().trim().min(1),
   accountLabel: z.string().trim().min(1).nullable(),
   source: z.enum(['spawn_selection', 'group_switch_selection', 'codex_live_auth_apply']),
-}).strict();
+}).strict());
 
 /**
  * Exact non-secret launch fact written by the moving remote-dev predecessor.
@@ -298,7 +292,7 @@ const RemoteDevRuntimeAccountIdentitySelectionFactV1Schema = z.object({
  * This is a persisted-marker compatibility seam only. The current materialization
  * request/response contract remains ExecutionRunConnectedServicesLaunchV1Schema.
  */
-export const RemoteDevExecutionRunConnectedServicesLaunchV1Schema = z.object({
+export const RemoteDevExecutionRunConnectedServicesLaunchV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1),
   runKey: z.string().regex(
     /^execution_run:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -312,16 +306,16 @@ export const RemoteDevExecutionRunConnectedServicesLaunchV1Schema = z.object({
   connectedServiceSelectionsJson: PersistedConnectedServiceSelectionsJsonSchema.nullable().optional(),
   sessionDirectory: z.string().trim().min(1).nullable().optional(),
   materializedRoot: z.string().trim().min(1).nullable(),
-}).strict();
+}).strict());
 export type RemoteDevExecutionRunConnectedServicesLaunchV1 = z.infer<
   typeof RemoteDevExecutionRunConnectedServicesLaunchV1Schema
 >;
 
-export const PersistedExecutionRunConnectedServicesLaunchV1Schema = z.union([
+export const PersistedExecutionRunConnectedServicesLaunchV1Schema = lazyZodSchema(() => z.union([
   PersistedCurrentExecutionRunConnectedServicesLaunchV1Schema,
   RemoteDevExecutionRunConnectedServicesLaunchV1Schema,
   PersistedLegacyExecutionRunConnectedServicesLaunchV1Schema,
-]);
+]));
 export type PersistedExecutionRunConnectedServicesLaunchV1 = z.infer<
   typeof PersistedExecutionRunConnectedServicesLaunchV1Schema
 >;
@@ -383,7 +377,7 @@ export function isPersistedExecutionRunConnectedServicesLaunchIdentityExact(inpu
     && input.normalized.registration.runKey !== input.markerRunId;
 }
 
-const DaemonExecutionRunMarkerBackendIdentitySchema = z.preprocess(
+const DaemonExecutionRunMarkerBackendIdentitySchema = lazyZodSchema(() => z.preprocess(
   (value) => {
     const parsed = BackendTargetRefV2Schema.safeParse(
       normalizeBackendTargetRefV2InputToV2(value),
@@ -401,7 +395,7 @@ const DaemonExecutionRunMarkerBackendIdentitySchema = z.preprocess(
     // length used for `permissionMode`/`errorCode` below.
     backendId: z.string().trim().min(1).max(MAX_AGENT_ROUTING_ID_BYTES),
   }).strict(),
-);
+));
 
 /**
  * Bounded facts required to faithfully project a marker-backed public run.
@@ -421,7 +415,7 @@ const DaemonExecutionRunMarkerPublicStateFieldsSchema = {
  * not a shadow execution request or runtime snapshot: keep only bounded run
  * identity, public policy/class, status, timing, size, and error-code facts.
  */
-const DaemonExecutionRunMarkerFieldsSchema = z.object({
+const DaemonExecutionRunMarkerFieldsSchema = lazyZodSchema(() => z.object({
   pid: z.number().int().positive(),
   processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   // A run stays daemon-owned when detached; `null` makes the missing Session
@@ -446,14 +440,14 @@ const DaemonExecutionRunMarkerFieldsSchema = z.object({
 
   errorCode: z.string().max(200).optional(),
   resultSizeBytes: z.number().int().nonnegative().max(EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES).optional(),
-});
+}));
 
 /**
  * Supported historical marker fields. Legacy identity, display, resume, and
  * launch facts exist only at this read boundary; the shared bounded public
  * policy/class fields above are canonical for new markers as well.
  */
-const DaemonExecutionRunMarkerPersistenceReadFieldsSchema = z.object({
+const DaemonExecutionRunMarkerPersistenceReadFieldsSchema = lazyZodSchema(() => z.object({
   happyHomeDir: z.string().min(1).optional(),
   pid: z.number().int().positive(),
   processCommandHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -478,9 +472,9 @@ const DaemonExecutionRunMarkerPersistenceReadFieldsSchema = z.object({
   errorCode: z.string().max(200).optional(),
   resultSizeBytes: z.number().int().nonnegative().max(EXECUTION_RUN_MARKER_RESULT_SIZE_MAX_BYTES).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
-});
+}));
 
-const DaemonExecutionRunMarkerSchemaCore = DaemonExecutionRunMarkerFieldsSchema.strip().superRefine((value, ctx) => {
+const DaemonExecutionRunMarkerSchemaCore = lazyZodSchema(() => DaemonExecutionRunMarkerFieldsSchema.strip().superRefine((value, ctx) => {
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -488,10 +482,10 @@ const DaemonExecutionRunMarkerSchemaCore = DaemonExecutionRunMarkerFieldsSchema.
       path: ['backendTarget'],
     });
   }
-});
+}));
 
 export const DaemonExecutionRunMarkerOwnerWriteSchema =
-  DaemonExecutionRunMarkerFieldsSchema.extend({
+  lazyZodSchema(() => DaemonExecutionRunMarkerFieldsSchema.extend({
     // Device-sealed, owner-local delivery custody. Never part of the public marker.
     pendingWorkerUpdateCiphertext: z.string().min(1).optional(),
     executionRunConnectedServicesCleanupReceiptV1:
@@ -514,7 +508,7 @@ export const DaemonExecutionRunMarkerOwnerWriteSchema =
         path: ['executionRunConnectedServicesCleanupReceiptV1', 'runKey'],
       });
     }
-  });
+  }));
 export type DaemonExecutionRunMarkerOwnerWrite = z.infer<
   typeof DaemonExecutionRunMarkerOwnerWriteSchema
 >;
@@ -524,7 +518,7 @@ export type DaemonExecutionRunMarkerOwnerWrite = z.infer<
  * always use DaemonExecutionRunMarkerOwnerWriteSchema above, which strips this launch
  * configuration rather than making it a second persisted marker contract.
  */
-const DaemonExecutionRunMarkerPersistenceReadSchemaCore = DaemonExecutionRunMarkerPersistenceReadFieldsSchema.extend({
+const DaemonExecutionRunMarkerPersistenceReadSchemaCore = lazyZodSchema(() => DaemonExecutionRunMarkerPersistenceReadFieldsSchema.extend({
   pendingWorkerUpdateCiphertext: z.string().min(1).optional(),
   executionRunBrokerAuthorityV1: z.object({
     occurrenceId: z.string().trim().min(1).max(512),
@@ -569,47 +563,47 @@ const DaemonExecutionRunMarkerPersistenceReadSchemaCore = DaemonExecutionRunMark
       path: ['executionRunConnectedServicesCleanupReceiptV1', 'runKey'],
     });
   }
-});
-export const DaemonExecutionRunMarkerSchema = z.preprocess(
+}));
+export const DaemonExecutionRunMarkerSchema = lazyZodSchema(() => z.preprocess(
   (value) => {
     const normalized = normalizeLegacyExecutionRunBackendTargetInput(value);
     if (!normalized || typeof normalized !== 'object' || Array.isArray(normalized)) return normalized;
     return normalized;
   },
   DaemonExecutionRunMarkerSchemaCore,
-);
+));
 export type DaemonExecutionRunMarker = z.infer<typeof DaemonExecutionRunMarkerSchema>;
 
-export const DaemonExecutionRunMarkerPersistenceReadSchema = z.preprocess(
+export const DaemonExecutionRunMarkerPersistenceReadSchema = lazyZodSchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunMarkerPersistenceReadSchemaCore,
-);
+));
 export type DaemonExecutionRunMarkerPersistenceRead = z.infer<
   typeof DaemonExecutionRunMarkerPersistenceReadSchema
 >;
 
-export const DaemonExecutionRunProcessInfoSchema = z.object({
+export const DaemonExecutionRunProcessInfoSchema = lazyZodSchema(() => z.object({
   pid: z.number().int().positive(),
   name: z.string().optional(),
   cmd: z.string().optional(),
   cpu: z.number().optional(),
   memory: z.number().optional(),
-}).passthrough();
+}).passthrough());
 export type DaemonExecutionRunProcessInfo = z.infer<typeof DaemonExecutionRunProcessInfoSchema>;
 
-const DaemonExecutionRunEntrySchemaCore = DaemonExecutionRunMarkerSchemaCore.extend({
+const DaemonExecutionRunEntrySchemaCore = lazyZodSchema(() => DaemonExecutionRunMarkerSchemaCore.extend({
   process: DaemonExecutionRunProcessInfoSchema.optional(),
-}).passthrough();
-export const DaemonExecutionRunEntrySchema = z.preprocess(
+}).passthrough());
+export const DaemonExecutionRunEntrySchema = lazyZodSchema(() => z.preprocess(
   normalizeLegacyExecutionRunBackendTargetInput,
   DaemonExecutionRunEntrySchemaCore,
-);
+));
 export type DaemonExecutionRunEntry = z.infer<typeof DaemonExecutionRunEntrySchema>;
 
-export const DaemonExecutionRunListRequestSchema = z.object({}).passthrough();
+export const DaemonExecutionRunListRequestSchema = lazyZodSchema(() => z.object({}).passthrough());
 export type DaemonExecutionRunListRequest = z.infer<typeof DaemonExecutionRunListRequestSchema>;
 
-export const DaemonExecutionRunListResponseSchema = z.object({
+export const DaemonExecutionRunListResponseSchema = lazyZodSchema(() => z.object({
   runs: z.array(DaemonExecutionRunEntrySchema),
-}).passthrough();
+}).passthrough());
 export type DaemonExecutionRunListResponse = z.infer<typeof DaemonExecutionRunListResponseSchema>;

@@ -5,16 +5,12 @@ import type {
 import type {
     AgentExternalSessionSource,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import {
-    AGENT_OWNED_SESSION_METADATA_KEYS_V1,
-    PluginAgentExternalSessionLinkDataSchema,
-    readRuntimeDescriptorV1FromMetadata,
-    resolveLinkedExternalSessionMetadataV1,
-    type ExternalSessionsSource,
-    type PluginAgentExternalLinkedTakeoverWriterSafetyV1,
-    type PluginAgentExternalSessionLinkData,
-} from '@happier-dev/protocol';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import { AGENT_OWNED_SESSION_METADATA_KEYS_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import type { ExternalSessionsSource, PluginAgentExternalLinkedTakeoverWriterSafetyV1, PluginAgentExternalSessionLinkData } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { getLegacyProviderSessionIdMetadataKeys } from '@happier-dev/agents';
 
 import {

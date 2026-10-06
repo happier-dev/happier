@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 
 import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS, type ProviderBrokerApplicationBindingV1, type ProviderWireProtocol } from '@happier-dev/protocol';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol } from '@happier-dev/protocol';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { projectManagedProviderBrokerApplication } from './applicationProjection';
 

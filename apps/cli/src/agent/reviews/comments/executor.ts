@@ -3,29 +3,12 @@ import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:cry
 import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
 
-import {
-    createReviewCommentPrincipalSigningInputV1,
-    buildReviewCommentPlainMutationTransportInputV1,
-    executeReviewCommentTransportV1,
-    buildReviewCommentPublicationTransportRequestV1,
-    openReviewCommentPublicationTransportResponseV1,
-    type ReviewCommentPublicationCryptoContextV1,
-    type ReviewCommentClaimPublicationDispatchRequestV1,
-    decodeBase64,
-    REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
-    ReviewCommentActionIdV1Schema,
-    ReviewCommentActionInputSchemasV1,
-    ReviewCommentActionOutputSchemasV1,
-    ReviewCommentMutationActionIdV1Schema,
-    ReviewCommentPrincipalHeaderV1Schema,
-    type ReviewCommentPrincipalHeaderV1,
-    type ReviewCommentActionIdV1,
-    type ReviewCommentMutationActionIdV1,
-    type ReviewCommentPublicationPlanV1,
-    type ReviewCommentPrincipalProofV1,
-    type AccountScopedCryptoMaterial,
-    stringifyReviewCommentPrincipalCanonicalJsonV1,
-} from '@happier-dev/protocol';
+import { createReviewCommentPrincipalSigningInputV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentActionIdV1Schema, ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewCommentPlainMutationTransportInputV1, ReviewCommentMutationActionIdV1Schema } from '@happier-dev/protocol/reviews/comments/content';
+import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
+import type { ReviewCommentPublicationCryptoContextV1, ReviewCommentClaimPublicationDispatchRequestV1, ReviewCommentPrincipalHeaderV1, ReviewCommentActionIdV1, ReviewCommentMutationActionIdV1, ReviewCommentPublicationPlanV1, ReviewCommentPrincipalProofV1, AccountScopedCryptoMaterial } from '@happier-dev/protocol';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';

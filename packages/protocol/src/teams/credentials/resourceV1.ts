@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { MachinePoolNameV1Schema } from '../../machines/pools/v1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -38,58 +39,58 @@ export type {
   TeamCredentialSourceCredentialIncarnationV1,
 } from './sourceBindingV1.js';
 
-const QualifiedConnectedAccountServiceRefZodSchema = asProtocolZod(
+const QualifiedConnectedAccountServiceRefZodSchema = lazyZodSchema(() => asProtocolZod(
   QualifiedConnectedAccountServiceRefSchema,
-);
-const PluginContributionIdentityV1ZodSchema = asProtocolZod(
+));
+const PluginContributionIdentityV1ZodSchema = lazyZodSchema(() => asProtocolZod(
   PluginContributionIdentityV1Schema,
-);
+));
 
 /** Public identity of the Provider definition selected by the source owner. */
-export const TeamCredentialProviderPresentationV1Schema = z.object({
+export const TeamCredentialProviderPresentationV1Schema = lazyZodSchema(() => z.object({
   identity: PluginContributionIdentityV1ZodSchema,
   definitionRevision: z.literal(1),
-}).strict();
+}).strict());
 
-export const TeamCredentialDisclosureCeilingV1Schema = z.enum([
+export const TeamCredentialDisclosureCeilingV1Schema = lazyZodSchema(() => z.enum([
   'brokered_only',
   'direct_allowed',
-]);
+]));
 
-export const TeamCredentialSessionUsePolicyV1Schema = z.enum([
+export const TeamCredentialSessionUsePolicyV1Schema = lazyZodSchema(() => z.enum([
   'personal_allowed',
   'team_context_required',
   'team_visibility_required',
-]);
+]));
 
-export const TeamCredentialDeliveryModeV1Schema = z.enum([
+export const TeamCredentialDeliveryModeV1Schema = lazyZodSchema(() => z.enum([
   'brokered',
   'direct',
   'both',
-]);
+]));
 
 /** Closed broker-location authority. Selection resolves a Pool to one exact
  * Machine before the incumbent broker-open owner signs any route authority. */
-export const TeamCredentialBrokerPlacementV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialBrokerPlacementV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('machine'), machineId: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal('machine_pool'), poolId: z.string().min(1).max(256) }).strict(),
-]);
+]));
 export type TeamCredentialBrokerPlacementV1 = z.infer<typeof TeamCredentialBrokerPlacementV1Schema>;
 
 /** Recipient catalog entries expose the selected usable path, never the administration-only union. */
-export const TeamCredentialRouteV1Schema = z.enum([
+export const TeamCredentialRouteV1Schema = lazyZodSchema(() => z.enum([
   'brokered',
   'direct',
-]);
+]));
 export type TeamCredentialRouteV1 = z.infer<typeof TeamCredentialRouteV1Schema>;
 
-export const TeamCredentialRequestProtocolKindV1Schema = z.enum([
+export const TeamCredentialRequestProtocolKindV1Schema = lazyZodSchema(() => z.enum([
   'openai_responses',
   'openai_chat_completions',
   'anthropic_messages',
-]);
+]));
 
-export const TeamCredentialRequestPolicyV1Schema = z.object({
+export const TeamCredentialRequestPolicyV1Schema = lazyZodSchema(() => z.object({
   allowedProtocolKinds: z.array(TeamCredentialRequestProtocolKindV1Schema).min(1).nullable(),
   allowedModelIds: z.array(z.string().trim().min(1).max(256)).min(1).nullable(),
   reasoningEffort: z.object({
@@ -109,7 +110,7 @@ export const TeamCredentialRequestPolicyV1Schema = z.object({
   if (value.reasoningEffort && new Set(value.reasoningEffort.allowedValues).size !== value.reasoningEffort.allowedValues.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoningEffort', 'allowedValues'], message: 'values must be unique' });
   }
-});
+}));
 
 export type TeamCredentialDisclosureCeilingV1 = z.infer<
   typeof TeamCredentialDisclosureCeilingV1Schema
@@ -145,7 +146,7 @@ export type TeamCredentialRequestPolicyV1 = z.infer<typeof TeamCredentialRequest
  * material, and no numeric bound: a request policy constrains only facts a
  * Provider catalog publishes, never a caller-authored token ceiling.
  */
-export const TeamCredentialRequestPolicyModelSupportV1Schema = z.object({
+export const TeamCredentialRequestPolicyModelSupportV1Schema = lazyZodSchema(() => z.object({
   descriptor: ProviderModelDescriptorV1Schema,
   application: ProviderBrokerApplicationBindingV1Schema,
   sourceRevision: z.string().trim().min(1).max(512),
@@ -166,12 +167,12 @@ export const TeamCredentialRequestPolicyModelSupportV1Schema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoningEffort', 'defaultValue'], message: 'defaultValue must be allowed' });
     }
   }
-});
+}));
 export type TeamCredentialRequestPolicyModelSupportV1 = z.infer<
   typeof TeamCredentialRequestPolicyModelSupportV1Schema
 >;
 
-export const TeamCredentialRequestPolicySupportInputV1Schema = z.discriminatedUnion('scope', [
+export const TeamCredentialRequestPolicySupportInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('scope', [
   z.object({
     scope: z.literal('source_draft'),
     teamId: z.string().min(1),
@@ -182,12 +183,12 @@ export const TeamCredentialRequestPolicySupportInputV1Schema = z.discriminatedUn
     scope: z.literal('resource'),
     resourceId: z.string().min(1).max(256),
   }).strict(),
-]);
+]));
 export type TeamCredentialRequestPolicySupportInputV1 = z.infer<
   typeof TeamCredentialRequestPolicySupportInputV1Schema
 >;
 
-export const TeamCredentialRequestPolicySupportOutputV1Schema = z.discriminatedUnion('status', [
+export const TeamCredentialRequestPolicySupportOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.object({
     status: z.literal('available'),
     models: z.array(TeamCredentialRequestPolicyModelSupportV1Schema),
@@ -202,12 +203,12 @@ export const TeamCredentialRequestPolicySupportOutputV1Schema = z.discriminatedU
       'model_catalog_unavailable',
     ]),
   }).strict(),
-]);
+]));
 export type TeamCredentialRequestPolicySupportOutputV1 = z.infer<
   typeof TeamCredentialRequestPolicySupportOutputV1Schema
 >;
 
-export const TeamCredentialResourceCreateInputV1Schema = z.object({
+export const TeamCredentialResourceCreateInputV1Schema = lazyZodSchema(() => z.object({
   teamId: z.string().min(1), resourceId: z.string().min(1).max(256),
   displayName: z.string().trim().min(1).max(120),
   source: TeamCredentialSourceBindingV1Schema,
@@ -225,31 +226,31 @@ export const TeamCredentialResourceCreateInputV1Schema = z.object({
     deliveryMode: TeamCredentialDeliveryModeV1Schema,
   }).strict()),
   usageLimits: z.array(TeamCredentialUsageLimitDefinitionV1Schema),
-}).strict();
+}).strict());
 
 
-export const TeamCredentialResourceAudienceGrantV1Schema = z.object({
+export const TeamCredentialResourceAudienceGrantV1Schema = lazyZodSchema(() => z.object({
   teamGroupId: z.string().min(1),
   deliveryMode: TeamCredentialDeliveryModeV1Schema,
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceMemberGrantV1Schema = z.object({
+export const TeamCredentialResourceMemberGrantV1Schema = lazyZodSchema(() => z.object({
   teamMembershipId: z.string().min(1),
   deliveryMode: TeamCredentialDeliveryModeV1Schema,
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceAudienceInputV1Schema = z.object({
+export const TeamCredentialResourceAudienceInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1), expectedRevision: z.number().int().nonnegative(),
   allMembersDeliveryMode: TeamCredentialDeliveryModeV1Schema.nullable(),
   groupGrants: z.array(TeamCredentialResourceAudienceGrantV1Schema),
   memberGrants: z.array(TeamCredentialResourceMemberGrantV1Schema),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceDeleteInputV1Schema = z.object({
+export const TeamCredentialResourceDeleteInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1), expectedRevision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceReplacementV1Schema = z.object({
+export const TeamCredentialResourceReplacementV1Schema = lazyZodSchema(() => z.object({
   enabled: z.boolean(),
   displayName: z.string().trim().min(1).max(120),
   sessionUsePolicy: TeamCredentialSessionUsePolicyV1Schema,
@@ -274,9 +275,9 @@ export const TeamCredentialResourceReplacementV1Schema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['deleteIds'], message: 'values must be unique' });
     }
   }),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceUpdateInputV1Schema = z.object({
+export const TeamCredentialResourceUpdateInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1), expectedRevision: z.number().int().nonnegative(),
   enabled: z.boolean().optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
@@ -300,33 +301,33 @@ export const TeamCredentialResourceUpdateInputV1Schema = z.object({
       context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: 'legacy patch fields cannot be mixed with replacement' });
     }
   }
-});
+}));
 
-export const TeamCredentialResourceReadInputV1Schema = z.object({
+export const TeamCredentialResourceReadInputV1Schema = lazyZodSchema(() => z.object({
   teamId: z.string().min(1),
   /** Exact Agent/Provider application whose current models are requested. */
   application: ProviderBrokerApplicationBindingV1Schema.optional(),
   cursor: z.string().min(1).max(512).optional(),
   limit: z.number().int().min(1).max(100).default(50),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceListFilterV1Schema = z.enum([
+export const TeamCredentialResourceListFilterV1Schema = lazyZodSchema(() => z.enum([
   'all',
   'needs_attention',
   'brokered',
   'direct',
   'external_api',
-]);
+]));
 
 /** Administration-list query. Recipient catalog application selection remains
  * on the separate read input above. */
-export const TeamCredentialResourceListInputV1Schema = z.object({
+export const TeamCredentialResourceListInputV1Schema = lazyZodSchema(() => z.object({
   teamId: z.string().min(1),
   cursor: z.string().min(1).max(512).optional(),
   limit: z.number().int().min(1).max(100).default(50),
   search: z.string().trim().min(1).max(120).optional(),
   filter: TeamCredentialResourceListFilterV1Schema.default('all'),
-}).strict();
+}).strict());
 
 export type TeamCredentialResourceListInputV1 = z.infer<typeof TeamCredentialResourceListInputV1Schema>;
 
@@ -359,11 +360,11 @@ export function decodeTeamCredentialResourcesCursorV1(
     : { status: 'ok', cursor: { displayName, id } };
 }
 
-export const TeamCredentialResourceGetInputV1Schema = z.object({
+export const TeamCredentialResourceGetInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1).max(256),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceSourcePresentationV1Schema = z.discriminatedUnion('kind', [
+export const TeamCredentialResourceSourcePresentationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('connected_service'),
     service: QualifiedConnectedAccountServiceRefZodSchema,
@@ -372,9 +373,9 @@ export const TeamCredentialResourceSourcePresentationV1Schema = z.discriminatedU
     kind: z.literal('provider'),
     provider: TeamCredentialProviderPresentationV1Schema,
   }).strict(),
-]);
+]));
 
-export const TeamCredentialBrokerPresentationV1Schema = z.object({
+export const TeamCredentialBrokerPresentationV1Schema = lazyZodSchema(() => z.object({
   selectedTarget: z.object({ machineId: z.string().min(1), displayName: z.string().trim().min(1).max(120).nullable(), availability: z.enum(['available', 'offline', 'update_required']) }).strict().nullable(),
   eligibleTargets: z.array(z.object({ machineId: z.string().min(1), displayName: z.string().trim().min(1).max(120).nullable(), availability: z.enum(['available', 'offline', 'update_required']) }).strict()),
   // Pool names use the canonical MachinePoolNameV1 contract and may be longer
@@ -383,7 +384,7 @@ export const TeamCredentialBrokerPresentationV1Schema = z.object({
   // summary parse as resource_corrupt.
   selectedPool: z.object({ poolId: z.string().min(1).max(256), displayName: MachinePoolNameV1Schema.nullable(), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.number().int().nonnegative().nullable() }).strict().nullable(),
   eligiblePools: z.array(z.object({ poolId: z.string().min(1).max(256), displayName: MachinePoolNameV1Schema.nullable(), availability: z.enum(['available', 'unavailable', 'not_verified']), availableMachineCount: z.number().int().nonnegative().nullable() }).strict()),
-}).strict();
+}).strict());
 
 /**
  * Operation-specific administration authority for one resource row.
@@ -392,7 +393,7 @@ export const TeamCredentialBrokerPresentationV1Schema = z.object({
  * derive these facts from Team role, source identity, enabled state, or the
  * presence of private fields without becoming a second policy owner.
  */
-export const TeamCredentialResourceAdministrationCapabilitiesV1Schema = z.object({
+export const TeamCredentialResourceAdministrationCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   manageAudience: z.boolean(),
   managePolicy: z.boolean(),
   manageLimits: z.boolean(),
@@ -405,9 +406,9 @@ export const TeamCredentialResourceAdministrationCapabilitiesV1Schema = z.object
   disable: z.boolean(),
   enable: z.boolean(),
   delete: z.boolean(),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceSummaryV1Schema = z.object({
+export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.object({
   id: z.string(), teamId: z.string(), custodianAccountId: z.string(),
   /** Human label for the source owner; the stable Account id remains above. */
   sourceOwnerDisplayName: z.string().trim().min(1).max(120).nullable().default(null),
@@ -466,7 +467,7 @@ export const TeamCredentialResourceSummaryV1Schema = z.object({
   if (value.sourcePresentation === null && value.readiness.kind === 'available') {
     context.addIssue({ code: 'custom', path: ['sourcePresentation'], message: 'An available resource must have a current source presentation' });
   }
-});
+}));
 
 /** Closed manager/source-owner projection; never use it for recipient discovery. */
 export const TeamCredentialResourceAdministrationV1Schema = TeamCredentialResourceSummaryV1Schema;
@@ -482,15 +483,15 @@ export const TeamCredentialResourceAdministrationV1Schema = TeamCredentialResour
  * beside the rows is what lets a surface hide a management entry it would only
  * be refused, without becoming a second authority for the same question.
  */
-export const TeamCredentialViewerCapabilitiesV1Schema = z.object({
+export const TeamCredentialViewerCapabilitiesV1Schema = lazyZodSchema(() => z.object({
   /** May create, edit, re-audience and delete this Team's resources. */
   manageCredentials: z.boolean(),
   /** May offer one of their own owned sources to this Team. */
   offerOwnCredential: z.boolean(),
-}).strict();
+}).strict());
 
 /** Least-privilege selection catalog. Source and administration authority never cross this seam. */
-export const TeamCredentialProviderModelSelectionV1Schema = z.object({
+export const TeamCredentialProviderModelSelectionV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('team_credential_provider_model'),
   resourceId: z.string().min(1).max(256),
   teamId: z.string().min(1),
@@ -498,9 +499,9 @@ export const TeamCredentialProviderModelSelectionV1Schema = z.object({
   agentTargetKey: ProviderAgentTargetKeySchema,
   modelId: ProviderModelIdSchema,
   deliveryMode: TeamCredentialRouteV1Schema,
-}).strict();
+}).strict());
 
-export const TeamCredentialProviderModelCatalogEntryV1Schema = z.object({
+export const TeamCredentialProviderModelCatalogEntryV1Schema = lazyZodSchema(() => z.object({
   selection: TeamCredentialProviderModelSelectionV1Schema,
   descriptor: ProviderModelDescriptorV1Schema,
   /** Exact source-owned application capable of serving this model. */
@@ -520,25 +521,25 @@ export const TeamCredentialProviderModelCatalogEntryV1Schema = z.object({
   if (value.selection.agentTargetKey !== value.application.agentTargetKey) {
     context.addIssue({ code: 'custom', path: ['application', 'agentTargetKey'], message: 'Application must target the selected Agent' });
   }
-});
+}));
 
-export const TeamCredentialDirectMaterialStateV1Schema = z.enum([
+export const TeamCredentialDirectMaterialStateV1Schema = lazyZodSchema(() => z.enum([
   'never_delivered',
   'preparing',
   'current',
   'stale',
   'revoked',
-]);
+]));
 
-export const TeamCredentialResourceRecoveryActionV1Schema = z.enum([
+export const TeamCredentialResourceRecoveryActionV1Schema = lazyZodSchema(() => z.enum([
   'retry',
   'source_owner_action',
   'select_broker',
   'update_required',
   'choose_another_resource',
-]);
+]));
 
-export const TeamCredentialResourceCatalogEntryV1Schema = z.object({
+export const TeamCredentialResourceCatalogEntryV1Schema = lazyZodSchema(() => z.object({
   id: z.string(),
   teamId: z.string(),
   displayName: z.string(),
@@ -568,47 +569,47 @@ export const TeamCredentialResourceCatalogEntryV1Schema = z.object({
   if (value.sourcePresentation === null && value.readiness.kind === 'available' && value.providerModels.length === 0) {
     context.addIssue({ code: 'custom', path: ['sourcePresentation'], message: 'An available catalog row must have a current source presentation' });
   }
-});
+}));
 
-export const TeamCredentialResourcePageV1Schema = z.object({
+export const TeamCredentialResourcePageV1Schema = lazyZodSchema(() => z.object({
   /** Administration rows: Team managers plus the viewer's own source rows only. */
   resources: z.array(TeamCredentialResourceSummaryV1Schema),
   viewer: TeamCredentialViewerCapabilitiesV1Schema,
   nextCursor: z.string().min(1).max(512).nullable().default(null),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceEntitledPageV1Schema = z.object({
+export const TeamCredentialResourceEntitledPageV1Schema = lazyZodSchema(() => z.object({
   resources: z.array(TeamCredentialResourceCatalogEntryV1Schema).max(100),
   nextCursor: z.string().min(1).max(512).nullable().default(null),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceMutationResultV1Schema = z.object({
+export const TeamCredentialResourceMutationResultV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string(), revision: z.number().int().nonnegative(),
-}).strict();
+}).strict());
 
-export const TeamCredentialActivityKindV1Schema = z.enum([
+export const TeamCredentialActivityKindV1Schema = lazyZodSchema(() => z.enum([
   'resource_created', 'resource_updated', 'resource_deleted', 'audience_changed',
   'direct_delivered', 'external_key_created', 'external_key_revoked', 'limits_changed',
-]);
+]));
 export type TeamCredentialActivityKindV1 = z.infer<typeof TeamCredentialActivityKindV1Schema>;
 
-export const TeamCredentialResourceActivityReadInputV1Schema = z.object({
+export const TeamCredentialResourceActivityReadInputV1Schema = lazyZodSchema(() => z.object({
   resourceId: z.string().min(1).max(256),
   cursor: z.string().min(1).max(512).optional(),
   limit: z.number().int().min(1).max(100).default(50),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceActivityEventV1Schema = z.object({
+export const TeamCredentialResourceActivityEventV1Schema = lazyZodSchema(() => z.object({
   kind: TeamCredentialActivityKindV1Schema,
   actorDisplayName: z.string().trim().min(1).max(120).nullable(),
   subjectDisplayName: z.string().trim().min(1).max(120),
   createdAt: z.string().datetime({ offset: true }),
-}).strict();
+}).strict());
 
-export const TeamCredentialResourceActivityPageV1Schema = z.object({
+export const TeamCredentialResourceActivityPageV1Schema = lazyZodSchema(() => z.object({
   items: z.array(TeamCredentialResourceActivityEventV1Schema).max(100),
   nextCursor: z.string().min(1).max(512).nullable(),
-}).strict();
+}).strict());
 
 /**
  * The typed refusals a credential-resource operation may answer with.
@@ -619,7 +620,7 @@ export const TeamCredentialResourceActivityPageV1Schema = z.object({
  * refusal — a stale revision, an uncovered cost limit, a subject who left the
  * Team — reaches a surface as an anonymous failure and loses its recovery.
  */
-export const TeamCredentialErrorCodeV1Schema = z.enum([
+export const TeamCredentialErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_resource_input', 'not_found_or_not_visible', 'forbidden', 'resource_changed',
   'team_authentication_required', 'team_authentication_policy_unavailable',
   'feature_disabled',
@@ -629,12 +630,12 @@ export const TeamCredentialErrorCodeV1Schema = z.enum([
   'member_not_eligible', 'session_policy_incompatible',
   'invalid_limit', 'limit_identity_immutable', 'subject_not_in_team',
   'token_limit_unavailable', 'cost_limit_unavailable', 'team_credential_usage_limit',
-]);
+]));
 export type TeamCredentialErrorCodeV1 = z.infer<typeof TeamCredentialErrorCodeV1Schema>;
 
-export const TeamCredentialResourceErrorV1Schema = z.object({
+export const TeamCredentialResourceErrorV1Schema = lazyZodSchema(() => z.object({
   error: TeamCredentialErrorCodeV1Schema,
-}).strict();
+}).strict());
 
 /**
  * The status each refusal is served with, owned beside the vocabulary so the

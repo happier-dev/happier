@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+    ActionApprovalRequestCreatedResultSchema,
     ArtifactActionOutputSchemasV1,
     type ArtifactActionResultV1,
     type ArtifactStorageUsageV1,
@@ -25,7 +26,7 @@ export type ArtifactActionFailure = Readonly<{
 
 export type ArtifactActionOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; failure: ArtifactActionFailure }>;
 
-type ReadId = 'artifact.revisions.list' | 'artifact.storage.usage' | 'artifact.revisions.restore';
+type SurfaceActionId = 'artifact.revisions.list' | 'artifact.storage.usage' | 'artifact.revisions.restore' | 'artifact.delete';
 
 function readRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -47,10 +48,10 @@ export function readArtifactActionFailure(result: unknown): ArtifactActionFailur
 }
 
 export function createArtifactActionsClient(scope: ServerAccountScope, execute = createFrontDoorActionExecute()) {
-    const run = async <Id extends ReadId>(actionId: Id, input: unknown): Promise<ArtifactActionOutcome<ArtifactActionResultV1<Id>>> => {
-        const result = await execute(actionId, input, {
-            surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
-        }).catch(() => null);
+    const dispatch = (actionId: SurfaceActionId, input: unknown) => execute(actionId, input, {
+        surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
+    }).catch(() => null);
+    const readOutcome = <Id extends SurfaceActionId>(actionId: Id, result: Awaited<ReturnType<typeof dispatch>>): ArtifactActionOutcome<ArtifactActionResultV1<Id>> => {
         if (!result) return { ok: false, failure: { code: 'artifact_action_failed' } };
         if (!result.ok) return { ok: false, failure: readArtifactActionFailure(result) };
         const parsed = ArtifactActionOutputSchemasV1[actionId].safeParse(result.result);
@@ -58,11 +59,21 @@ export function createArtifactActionsClient(scope: ServerAccountScope, execute =
             ? { ok: true, value: parsed.data as ArtifactActionResultV1<Id> }
             : { ok: false, failure: { code: 'artifact_action_invalid_result' } };
     };
+    const run = async <Id extends SurfaceActionId>(actionId: Id, input: unknown): Promise<ArtifactActionOutcome<ArtifactActionResultV1<Id>>> => {
+        return readOutcome(actionId, await dispatch(actionId, input));
+    };
     return {
         storageUsage: () => run('artifact.storage.usage', {}),
         listRevisions: (artifactId: string) => run('artifact.revisions.list', { artifactId }),
         restoreRevision: (input: Readonly<{ artifactId: string; bodyVersion: number; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) =>
             run('artifact.revisions.restore', input),
+        deleteArtifact: async (input: Readonly<{ artifactId: string; expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }> }>) => {
+            const result = await dispatch('artifact.delete', input);
+            const pending = result?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+            return pending?.success
+                ? { approvalId: pending.data.artifactId } as const
+                : readOutcome('artifact.delete', result);
+        },
     };
 }
 

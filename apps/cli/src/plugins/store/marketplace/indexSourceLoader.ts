@@ -3,16 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-import {
-  createMarketplaceNpmDiscoveryProjectionV1,
-  deriveMarketplaceNpmCompatibilityPlatformsV1,
-  MarketplaceIndexEntryV1Schema,
-  MarketplaceIndexSourceSnapshotV1Schema,
-  marketplaceNpmDiscoveryProjectionEqualV1,
-  type MarketplaceIndexSourceKindV1,
-  type MarketplaceIndexSourceSnapshotV1,
-} from '@happier-dev/protocol';
-import { parseMarketplaceIndexSourceSnapshotV1, readMarketplaceNpmDiscoveryProjectionV1 } from '@happier-dev/protocol/marketplace/internal';
+import { createMarketplaceNpmDiscoveryProjectionV1, deriveMarketplaceNpmCompatibilityPlatformsV1, MarketplaceIndexEntryV1Schema, MarketplaceIndexSourceSnapshotV1Schema, marketplaceNpmDiscoveryProjectionEqualV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import type { MarketplaceIndexSourceKindV1, MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
+import { parseMarketplaceIndexSourceSnapshotV1, readMarketplaceNpmDiscoveryProjectionV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 
 import {
   assertRemoteAcquisitionUrl,

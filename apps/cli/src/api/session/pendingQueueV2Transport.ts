@@ -6,49 +6,22 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
-import {
-    ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
-    AcceptedPendingSettlementRequestV1Schema,
-    AcceptedPendingSettlementResponseV1Schema,
-    normalizePendingDeliveryBlockedReason,
-    normalizePendingDeliveryStatusV1,
-    normalizePendingRequestedActionV1,
-    PendingProviderActionSchema,
-    SessionInputAdmissionReceiptV1Schema,
-    SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
-    SessionPendingAdmissionSettlementRequestV1Schema,
-    SessionPendingAdmissionSettlementResponseV1Schema,
-    parsePendingDeliveryStatusV1,
-    readPendingLocalId,
-    SessionMessageRoleSchema,
-    type PendingDeliveryBlockedReason,
-    type PendingDeliveryStatusV1,
-    type PendingProviderAction,
-    type SessionInputRequestEqualityEvidenceV1,
-    type SessionInputAdmissionReceiptV1,
-    type SessionPendingAdmissionSettlementRequestV1,
-    type SessionMessageRole,
-    SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2,
-    SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2,
-    SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2,
-    SessionPendingExecutionRunMaterializeNextRequestV2Schema,
-    SessionPendingExecutionRunMaterializeNextResponseV2Schema,
-    SessionPendingExecutionRunAcceptedRequestV2Schema,
-    SessionPendingExecutionRunAcceptedResponseV2Schema,
-    SessionPendingExecutionRunBlockRequestV2Schema,
-    SessionPendingExecutionRunBlockResponseV2Schema,
-    type SessionPendingExecutionRunMaterializeNextRequestV2,
-    type SessionPendingExecutionRunAcceptedRequestV2,
-    type SessionPendingExecutionRunBlockRequestV2,
-    type AcceptedPendingSettlementResponseV1,
-    SessionExecutionRunPendingEnqueueRequestV1Schema,
-    ParticipantExecutionRunRecipientRoutingIdentityV1Schema,
-    SessionAccessErrorCodeV1Schema,
-    type SessionExecutionRunPendingEnqueueRequestV1,
-} from '@happier-dev/protocol';
+import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, AcceptedPendingSettlementRequestV1Schema, AcceptedPendingSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
+import { normalizePendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
+import { normalizePendingDeliveryStatusV1, parsePendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { PendingProviderActionSchema } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
+import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1, SessionPendingAdmissionSettlementRequestV1Schema, SessionPendingAdmissionSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
+import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2, SessionPendingExecutionRunMaterializeNextRequestV2Schema, SessionPendingExecutionRunMaterializeNextResponseV2Schema, SessionPendingExecutionRunAcceptedRequestV2Schema, SessionPendingExecutionRunAcceptedResponseV2Schema, SessionPendingExecutionRunBlockRequestV2Schema, SessionPendingExecutionRunBlockResponseV2Schema, SessionExecutionRunPendingEnqueueRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import type { PendingDeliveryBlockedReason, PendingDeliveryStatusV1, PendingProviderAction, SessionInputRequestEqualityEvidenceV1, SessionInputAdmissionReceiptV1, SessionPendingAdmissionSettlementRequestV1, SessionMessageRole, SessionPendingExecutionRunMaterializeNextRequestV2, SessionPendingExecutionRunAcceptedRequestV2, SessionPendingExecutionRunBlockRequestV2, AcceptedPendingSettlementResponseV1, SessionExecutionRunPendingEnqueueRequestV1 } from '@happier-dev/protocol';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 export type PendingMaterializationDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
 export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';

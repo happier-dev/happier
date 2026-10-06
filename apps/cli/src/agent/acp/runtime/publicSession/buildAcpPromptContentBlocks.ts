@@ -1,5 +1,5 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk';
-import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import { configuration } from '@/configuration';
 import { verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';

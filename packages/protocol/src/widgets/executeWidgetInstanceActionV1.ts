@@ -20,6 +20,17 @@ export const readWidgetActionSurfacePortV1 = (deps: ActionExecutorDeps, surface:
   ?? (surface.owner.kind === 'sessionBoard' && deps.sessionBoardAction ? createSessionBoardWidgetActionPortV1(deps.sessionBoardAction) : undefined);
 const surfacePort = readWidgetActionSurfacePortV1;
 
+/** All configured-instance frontdoors admit saved values before invoking their owner writer. */
+export async function admitWidgetInstanceConfigurationV1(
+  deps: ActionExecutorDeps, ref: WidgetInstanceRefV1, instance: WidgetInstanceV1, context: ActionExecutorContext,
+): Promise<Extract<ActionExecuteResult, { ok: false }> | null> {
+  if (!deps.widgetInputs) return failure('widget_inputs_unavailable');
+  const validation = await deps.widgetInputs.resolve({ ref, instance, context, admission: 'configuration',
+    ...(context.signal ? { signal: context.signal } : {}) });
+  context.signal?.throwIfAborted();
+  return validation.status === 'ready' ? null : { ...failure('widget_inputs_invalid'), details: validation };
+}
+
 /** A refused owner write is known not to have committed; all other failures stay unknown. */
 const knownRefusal = (code: string) => SessionBoardErrorCodeSchema.safeParse(code).success
   || /^(widget_(instance_(changed|already_exists|not_found)|placement_(changed|ambiguous|required|unsupported)|index_placement_unsupported|width_unsupported|edit_denied|view_not_found)|widgets_move_conflict|invalid_widget_shared_content|account_target_mismatch|server_target_mismatch)$/.test(code);
@@ -181,9 +192,8 @@ export async function executeWidgetInstanceActionV1(
       const bindings = actionId === 'widgets.instance.inputs.reset' ? {} : WidgetInstanceActionInputSchemasV1[actionId].parse(args).bindings;
       // Reset deliberately leaves missing input repairable. A set cannot silently admit invalid pins.
       if (actionId === 'widgets.instance.inputs.set') {
-        if (!deps.widgetInputs) return failure('widget_inputs_unavailable');
-        const validation = await deps.widgetInputs.resolve({ ref: ref!, instance: { ...existing!, bindings }, context, admission: 'configuration', ...(context.signal ? { signal: context.signal } : {}) });
-        if (validation.status !== 'ready') return { ...failure('widget_inputs_invalid'), details: validation };
+        const refusal = await admitWidgetInstanceConfigurationV1(deps, ref!, { ...existing!, bindings }, context);
+        if (refusal) return refusal;
       }
       intent = { kind: 'inputs', instanceId: ref!.instanceId, bindings };
       break;
@@ -191,13 +201,9 @@ export async function executeWidgetInstanceActionV1(
     default: return failure('unsupported_action');
   }
   if (intent.kind === 'add') {
-    if (!deps.widgetInputs) return failure('widget_inputs_unavailable');
     const instanceRef = WidgetInstanceRefV1Schema.parse({ surface, instanceId: intent.instance.id });
-    const add = WidgetInstanceActionInputSchemasV1['widgets.instance.add'].parse(args);
-    const validation = await deps.widgetInputs.resolve({ ref: instanceRef, instance: intent.instance, context, admission: 'configuration',
-      ...(context.signal ? { signal: context.signal } : {}) });
-    if (validation.status !== 'ready') return { ...failure('widget_inputs_invalid'), details: validation };
-    context.signal?.throwIfAborted();
+    const refusal = await admitWidgetInstanceConfigurationV1(deps, instanceRef, intent.instance, context);
+    if (refusal) return refusal;
     let added: ActionExecuteResult;
     try { added = await port.apply(surface, intent, context, context.signal); }
     catch { return { ...failure('widget_add_unknown'), details: { ref: instanceRef, reasonCode: context.signal?.aborted ? 'cancelled' : 'widget_write_ack_unknown' } }; }

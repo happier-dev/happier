@@ -1,22 +1,16 @@
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
-import {
-  readPendingLocalId,
-  isConditionalPendingSteerClaim,
-  normalizePendingRequestedActionV1,
-  readHappierStructuredInputV1FromMeta,
-  readSessionInputCausalPermissionAuthorityV1,
-  readSessionMessageProvenance,
-  resolveSessionInputPromptProvenanceV1,
-  readSessionMessageModelSelectionV1,
-  renderSessionInputContextBlockV1,
-  renderSessionInputContextPromptV1,
-  isModelRefGrantedV1,
-  isPermissionModeGrantedV1,
-  type ProviderBoundModelRef,
-  type SessionInputCausalPermissionAuthorityV1,
-} from '@happier-dev/protocol';
-import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { isConditionalPendingSteerClaim } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
+import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { readSessionInputCausalPermissionAuthorityV1, readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1, renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ProviderBoundModelRef, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
+import { logger } from '@/ui/logger';
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
@@ -93,13 +87,13 @@ export type InFlightSteerController = Readonly<{
    * Whether the current active turn can safely accept steering right now.
    *
    * Some runtimes can keep a turn marked in-flight briefly after a terminal event, or after
-   * the selected runtime configuration changes. Ambient input uses the normal queue; an exact
-   * claimed steer is terminally rejected before provider effect.
+   * the selected runtime configuration changes. Unavailable explicit or ambient input uses the normal queue; conditional
+   * claimed steering returns to ordinary Pending admission before provider effect.
    */
   canSteerPrompt?: () => boolean;
   /**
-   * Non-authoritative routing snapshot from the shared session input consumer. Ambient input
-   * observed blocked follows the existing queue path; exact claimed steer input is rejected.
+   * Non-authoritative routing snapshot from the shared session input consumer. Explicit or ambient input
+   * observed blocked follows the existing queue path; conditional steering returns to Pending admission.
    * Provider dispatch authorization remains exclusively owned by runProviderInputDispatch.
    */
   isProviderInputAdmitted?: () => boolean;
@@ -163,8 +157,8 @@ export type InFlightSteerController = Readonly<{
   /**
    * OPTIONAL capability (lane Q): apply a config delta to the RUNNING turn so a config-carrying
    * message can still steer. Backends that cannot own mid-turn config changes (e.g. turn-boundary
-   * protocols) simply do not implement this; ambient messages keep the queue path and exact
-   * claimed steer messages are rejected.
+   * protocols) simply do not implement this; explicit and ambient messages keep the queue path,
+   * while conditional claimed steering returns to ordinary Pending admission.
    */
   applyConfigDeltaInFlight?: ((delta: SteerConfigDelta) => Promise<InFlightConfigApplyOutcome>) | undefined;
   /**
@@ -368,19 +362,24 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       ...(inputProvenance ? { inputProvenance } : {}),
     };
 
+    const enqueuePrompt = (): void => {
+      if (structuredInput) {
+        opts.queue.pushIsolate(queuedPrompt, queueMode);
+      } else {
+        pushMessageToQueueWithSpecialCommands({
+          queue: opts.queue,
+          message: queuedPrompt,
+          text,
+          mode: queueMode,
+        });
+      }
+      if (opts.inFlightSteer?.isTurnInFlight()) notifyPromptQueuedDuringTurnBestEffort();
+    };
+
     if (pendingProviderAction === 'send' || pendingProviderAction === 'interrupt_and_send') {
       const enqueueClaimedSend = (): void => {
-        if (structuredInput) {
-          opts.queue.pushIsolate(queuedPrompt, queueMode);
-          return;
-        }
-        if (isNonSteerablePromptPayload(text)) {
-          pushMessageToQueueWithSpecialCommands({
-            queue: opts.queue,
-            message: queuedPrompt,
-            text,
-            mode: queueMode,
-          });
+        if (structuredInput || isNonSteerablePromptPayload(text)) {
+          enqueuePrompt();
           return;
         }
         opts.queue.pushIsolateAndClear(queuedPrompt, queueMode);
@@ -445,6 +444,18 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       }
     };
 
+    const queueUnavailableSteer = (): void => {
+      if (isExactClaimedSteer && exactSteerRejectionReason === 'conditional_steer_unavailable') {
+        rejectExactSteerBeforeProvider();
+      } else {
+        try {
+          enqueuePrompt();
+        } catch (error) {
+          logger.warnLocalFile('[permissionMode] Failed to queue non-interrupting provider input', { error, localId });
+        }
+      }
+    };
+
     const reportExactSteerEffectMayHaveOccurred = (): void => {
       try {
         opts.inFlightSteer?.reportPromptEffectMayHaveOccurred?.({
@@ -465,7 +476,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     // - and the message either does NOT alter permission mode, or the backend exposes the
     //   `applyConfigDeltaInFlight` capability (lane Q) so it can own the mode change mid-turn.
     //   Without the capability, ambient mode changes keep the queue path (handled by the main
-    //   loop), while exact claimed steer input is rejected.
+    //   loop). Explicit non-interrupting input also uses that queue when steering is unavailable.
     const steer = opts.inFlightSteer;
     const canSteerCurrentProviderTurn = Boolean(
       steer &&
@@ -478,7 +489,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       (!didChangePermissionMode || typeof steer.applyConfigDeltaInFlight === 'function')
     );
     if (isExactClaimedSteer && !canSteerCurrentProviderTurn) {
-      rejectExactSteerBeforeProvider();
+      queueUnavailableSteer();
       return true;
     }
     if (steer && canSteerCurrentProviderTurn) {
@@ -495,47 +506,20 @@ export function registerPermissionModeMessageQueueBinding(opts: {
         // activation seed can be prefixed to two provider inputs.
         await replaySeedSettlementSequence;
         if (stopForLostBinding()) return;
-        const queueBlockedSteer = (
-          queuedText: string = text,
-          queuedMode: PermissionModeQueuedPromptMode = queueMode,
-        ): void => {
-          try {
-            pushMessageToQueueWithSpecialCommands({
-              queue: opts.queue,
-              message: {
-                ...queuedPrompt,
-                text: queuedText,
-              },
-              text: queuedText,
-              mode: queuedMode,
-            });
-            notifyPromptQueuedDuringTurnBestEffort();
-          } catch {
-            // Best-effort fallback: queueing should not be able to crash the process.
-          }
-        };
         if (steer.isProviderInputAdmitted?.() === false) {
-          if (isExactClaimedSteer) {
-            rejectExactSteerBeforeProvider();
-          } else {
-            queueBlockedSteer();
-          }
+          queueUnavailableSteer();
           return;
         }
         // A seed the provider already ACCEPTED must be retired before any further provider
         // input is admitted. The admission boundary retries the same idempotent settler once;
         // while its retirement keeps failing, this input is not dispatched: ambient input
-        // returns to the queue, an exact claimed steer is rejected before provider effect.
+        // returns to the queue; conditional steering is requeued by the Pending owner.
         const unsettledRetirementOutcome = opts.replaySeedRetirement
           ? await opts.replaySeedRetirement.settleBeforeAdmitting()
           : null;
         if (stopForLostBinding()) return;
         if (unsettledRetirementOutcome === 'failed') {
-          if (isExactClaimedSteer) {
-            rejectExactSteerBeforeProvider();
-          } else {
-            queueBlockedSteer();
-          }
+          queueUnavailableSteer();
           return;
         }
         const dispatchSteer = async (): Promise<void> => {
@@ -560,11 +544,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             if (configOutcome.status !== 'applied' && configOutcome.status !== 'scheduled_in_turn') {
               // The backend cannot own the config mid-turn: legacy queue path (the mode applies
               // when the queue drains). The steer was never accepted, so this is not a bounce.
-              if (isExactClaimedSteer) {
-                rejectExactSteerBeforeProvider();
-              } else {
-                queueBlockedSteer();
-              }
+              queueUnavailableSteer();
               return;
             }
           }
@@ -632,14 +612,8 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 && (steer.canSteerPrompt?.() ?? steer.isTurnInFlight())
                 && (steer.isProviderInputAdmitted?.() ?? true)
               ) return false;
-              if (isExactClaimedSteer) {
-                rejectExactSteerBeforeProvider();
-              } else {
-                // Queue the raw user text, not the seeded prompt: the seed is still unretired
-                // because no provider accepted it, so the prompt loop applies it on dispatch.
-                // Queueing the seeded text here would prefix the seed twice.
-                queueBlockedSteer();
-              }
+              // Requeue raw text so an unaccepted replay seed is applied once by normal dispatch.
+              queueUnavailableSteer();
               return true;
             };
             if (stopForUnavailableSteer()) return;
@@ -710,7 +684,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             if (isExactClaimedSteer) {
               reportExactSteerEffectMayHaveOccurred();
             } else {
-              queueBlockedSteer();
+              queueUnavailableSteer();
             }
           } finally {
             const release = releaseUndispatchedReplaySeed;
@@ -724,11 +698,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             dispatch: dispatchSteer,
           });
           if (dispatchOutcome.status === 'cancelled' && isCurrentBinding(session, messageBindingGeneration)) {
-            if (isExactClaimedSteer) {
-              rejectExactSteerBeforeProvider();
-            } else {
-              queueBlockedSteer();
-            }
+            queueUnavailableSteer();
           }
         } else {
           await dispatchSteer();
@@ -737,19 +707,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       return true;
     }
 
-    if (structuredInput) {
-      opts.queue.pushIsolate(queuedPrompt, queueMode);
-    } else {
-      pushMessageToQueueWithSpecialCommands({
-        queue: opts.queue,
-        message: queuedPrompt,
-        text,
-        mode: queueMode,
-      });
-    }
-    if (steer?.isTurnInFlight()) {
-      notifyPromptQueuedDuringTurnBestEffort();
-    }
+    enqueuePrompt();
     return true;
   };
 

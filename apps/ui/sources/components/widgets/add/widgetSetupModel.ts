@@ -46,6 +46,13 @@ export type WidgetSetupField = Readonly<{
     viewer?: Readonly<{ purpose: string }>;
 }>;
 
+/** Literal controls share the public field/parser; discovered references use binding choices. */
+export function isLiteralWidgetSetupField(field: InputFieldHint): boolean {
+    if (field.widget === 'multiselect') return true;
+    if (field.optionsSourceId !== undefined || field.connectedAccountOptions === true) return false;
+    return field.inputType === undefined || field.widget !== 'select';
+}
+
 /** What the step edits: the copy's durable bindings. */
 export type WidgetSetupDraft = Readonly<{
     bindings: WidgetInputBindingsV1;
@@ -61,6 +68,8 @@ export type WidgetSetup = Readonly<{
     hint?: string;
     /** Says where it goes ("Add to Home") or "Save". */
     submitLabel: string;
+    /** The widget being set up, for the preview card's header (its mark and name). */
+    widget?: Readonly<{ title: string; mark: IconName }>;
     fields: readonly WidgetSetupField[];
     initial: WidgetSetupDraft;
     /** The binder's answer for a draft (pure; re-run on every change). */
@@ -71,7 +80,10 @@ export type WidgetSetup = Readonly<{
      */
     renderPreview?: (preview: Readonly<{ input: Readonly<Record<string, JsonValue>>; draft: WidgetSetupDraft }>) => React.ReactNode;
     /** Which widget on which surface consumes the options, so option reads are admitted for exactly it. */
-    optionsConsumer?: InputOptionsConsumerV1;
+    optionsContext?: (draft: WidgetSetupDraft) => Readonly<{
+        draftInput: Readonly<Record<string, JsonValue>>;
+        consumer?: InputOptionsConsumerV1;
+    }>;
     /** The canonical Action behind the button (`widgets.instance.add` / `.inputs.set`). */
     submit: (draft: WidgetSetupDraft) => Promise<WidgetSetupSubmitResult>;
 }>;

@@ -31,12 +31,13 @@ import {
     createMcpActionSettingsProvider,
 } from '@/mcp/server/createMcpActionEnablement';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { z } from 'zod';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SessionClientServerBinding } from '@/api/session/client/transport/sessionClientTransport';
+import { DaemonPluginToolCatalogUnavailableError } from './pluginToolCatalogError';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
     toolName: z.string().trim().min(1).max(256),
@@ -173,12 +174,13 @@ async function readCurrentPluginToolCatalog(
         kind: 'unavailable' as const,
         code: 'daemon_unavailable',
     }));
-    return daemonCatalog.kind === 'available'
-        ? filterPluginToolsForActiveAgentComposition(
-            daemonCatalog.tools,
-            client.getActiveAgentCompositionToolSelection?.() ?? null,
-        )
-        : Object.freeze([]);
+    if (daemonCatalog.kind !== 'available') {
+        throw new DaemonPluginToolCatalogUnavailableError();
+    }
+    return filterPluginToolsForActiveAgentComposition(
+        daemonCatalog.tools,
+        client.getActiveAgentCompositionToolSelection?.() ?? null,
+    );
 }
 
 export function registerHappierSessionAgentToolRpc(
@@ -203,6 +205,13 @@ export function registerHappierSessionAgentToolRpc(
                     error: 'invalid_action_input',
                 };
             }
+            let pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[];
+            try {
+                pluginToolCatalog = await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
+            } catch (error) {
+                if (!(error instanceof DaemonPluginToolCatalogUnavailableError)) throw error;
+                return { ok: false as const, errorCode: error.code, error: error.message };
+            }
             const runtime = createHappierMcpServer(client, {
                 sessionCredentials: opts?.sessionCredentials ?? opts?.credentials ?? null,
                 credentials: opts?.credentials ?? null,
@@ -211,10 +220,7 @@ export function registerHappierSessionAgentToolRpc(
                 actionsSettingsProvider: actionSettingsProvider,
                 accountSettings: opts?.accountSettings ?? null,
                 getAccountSettings: opts?.getAccountSettings ?? null,
-                pluginToolCatalog: await readCurrentPluginToolCatalog(
-                    client,
-                    opts?.pluginRuntimeRegistryLease,
-                ),
+                pluginToolCatalog,
                 ...(opts?.pluginRuntimeRegistryLease
                     ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
                     : {}),
@@ -279,6 +285,23 @@ export async function startHappyServer(
         // Keepalives are only needed for the standalone GET stream (POST response streams are short-lived).
         const stopKeepAlive = req.method === 'GET' ? startMcpSseKeepAlive(res, keepAliveIntervalMs) : () => {};
 
+        let pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[];
+        try {
+            pluginToolCatalog = await readCurrentPluginToolCatalog(client, opts?.pluginRuntimeRegistryLease);
+        } catch (error) {
+            stopKeepAlive();
+            logger.debug('[happierMCP] Plugin catalog unavailable', { error: 'daemon_plugin_catalog_unavailable' });
+            if (!res.headersSent && !res.destroyed) {
+                const failure = new DaemonPluginToolCatalogUnavailableError();
+                res.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({
+                    ok: false, errorCode: failure.code, error: failure.message,
+                }));
+            } else if (!res.destroyed) {
+                res.end();
+            }
+            return;
+        }
+
         // Build a fresh MCP server + transport per request.
         //
         // We intentionally run in stateless mode (no session IDs) because some
@@ -293,10 +316,7 @@ export async function startHappyServer(
             actionsSettingsProvider: actionSettingsProvider,
             accountSettings: opts?.accountSettings ?? null,
             getAccountSettings: opts?.getAccountSettings ?? null,
-            pluginToolCatalog: await readCurrentPluginToolCatalog(
-                client,
-                opts?.pluginRuntimeRegistryLease,
-            ),
+            pluginToolCatalog,
             ...(opts?.pluginRuntimeRegistryLease
                 ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
                 : {}),

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
-import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec } from './actionSpecs.js';
+import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult } from './executor/types.js';
 import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
 
@@ -18,7 +18,8 @@ export const UiActionDispatchRequestV1Schema = z.object({
   }).strict(),
 }).strict().superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
-  if (!Object.hasOwn(request, 'input') || spec.executionPlacement !== 'client' || !spec.inputSchema.safeParse(request.input).success) {
+  const input = spec.inputSchema.safeParse(request.input);
+  if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data) !== 'client') {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
 });

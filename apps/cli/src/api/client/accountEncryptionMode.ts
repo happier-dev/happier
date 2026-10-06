@@ -1,4 +1,4 @@
-import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 
 type AccountEncryptionMode = 'plain' | 'e2ee';
 

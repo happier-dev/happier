@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { SessionCompanionContent } from '../companion/SessionCompanionContent';
 import { HIDDEN_SESSION_COMPANION_PREFERENCE_V1 } from '../companion/state/sessionCompanionPreference';
 import type { SessionCompanionController } from '../companion/state/useSessionCompanionController';
@@ -210,6 +211,8 @@ function ViewportHarness(props: Readonly<{ probe: Probe; recovered: boolean; exp
 }
 
 describe('mounted Session Board primary placement', () => {
+    beforeEach(async () => { await loadSyncSingletonForTests(); });
+
     it.each([false, true])('hands the one live frame across body windows, retirement and re-entry (recovered=%s)', async (recovered) => {
         frames.active = 0;
         frames.maximum = 0;

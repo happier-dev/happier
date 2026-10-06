@@ -49,7 +49,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
     const { mode, toggle, close, hoverProps } = useHoverPreviewPopover({ enabled: Platform.OS === 'web' });
 
     const { viewModel } = props;
-    // The main ring first, then the account's pinned meters; each number is what is left.
+    // Each globally selected window reports the percentage left.
     const rings = viewModel.usageRings.length > 0
         ? viewModel.usageRings
         : [{

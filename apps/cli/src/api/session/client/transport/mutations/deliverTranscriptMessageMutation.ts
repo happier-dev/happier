@@ -1,11 +1,7 @@
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
-import {
-    SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
-    SessionTranscriptObservationAckV1Schema,
-    SessionTranscriptObservationProvenanceV1Schema,
-    MessageAckResponseSchema,
-} from '@happier-dev/protocol';
+import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SessionTranscriptObservationAckV1Schema, SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
 import type { SessionClientConnectionContractResult } from '../sessionClientConnectionContract';
 
 import type {

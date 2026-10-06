@@ -1,15 +1,8 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import {
-  SESSION_METADATA_LAYOUT_VERSION_V1,
-  createPlainSessionOwnerMetadataEnvelopeV1,
-  createSessionOwnerMetadataV1,
-  projectSessionSharedMetadataV1,
-  sealSessionOwnerMetadataEnvelopeV1,
-  type AccountScopedCryptoMaterial,
-  type SessionOwnerMetadataEnvelopeV1,
-  type SessionOwnerMetadataV1,
-} from '@happier-dev/protocol';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import type { AccountScopedCryptoMaterial, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 
 import { encodeBase64, encrypt } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';

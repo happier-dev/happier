@@ -1,9 +1,7 @@
-import {
-  extractShellCommand,
-  parseHappierToolsShellBridgeCommand,
-  resolveEffectiveCodingPromptBehaviorV1,
-} from '@happier-dev/protocol';
-import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
+import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
+import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
+import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2/aliases';
 
 function readActionId(input: unknown): string {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return '';

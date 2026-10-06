@@ -1,4 +1,4 @@
-import { parseBooleanEnv } from '@happier-dev/protocol';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import type { TerminalPtySessionManagerConfig } from './sessions';
 
 export type DaemonTerminalPtyConfig = Readonly<{

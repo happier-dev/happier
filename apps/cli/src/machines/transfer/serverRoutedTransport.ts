@@ -1,4 +1,5 @@
-import { BOX_BUNDLE_PUBLIC_KEY_BYTES, type MachineTransferReceiveEnvelope, type MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import { BOX_BUNDLE_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/boxBundleFormat';
+import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
 
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
 
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
@@ -79,16 +79,13 @@ describe('connectedServiceChildEnvironment', () => {
   });
 
   it('resolves runtime auth context from current session connected-service metadata', () => {
-    const connectedServices = ConnectedServiceBindingsV1Schema.parse({
-      v: 1,
+    const connectedServices = ConnectedServiceBindingsV2Schema.parse({
+      v: 2,
       bindingsByServiceId: {
         'happier.agent.codex/openai-codex': {
           source: 'connected',
           selection: 'group',
-          serviceId: 'happier.agent.codex/openai-codex',
           groupId: 'codex',
-          profileId: 'backup',
-          groupGeneration: 7,
         },
       },
     });
@@ -97,9 +94,8 @@ describe('connectedServiceChildEnvironment', () => {
       getMetadataSnapshot: () => ({ connectedServices }),
     }, 'happier.agent.codex/openai-codex')).toEqual({
       serviceId: 'happier.agent.codex/openai-codex',
-      profileId: 'backup',
+      profileId: null,
       groupId: 'codex',
-      groupGeneration: 7,
     });
   });
 

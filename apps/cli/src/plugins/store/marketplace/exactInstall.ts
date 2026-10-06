@@ -1,17 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  decideMarketplaceListingInstallV1,
-  readMarketplaceListingRegistryProfileRequirementV1,
-  type MarketplaceIndexItemV1,
-  type MarketplaceIndexQueryResultV1,
-  type MarketplaceListingInstallBlockV1,
-} from '@happier-dev/protocol';
+import { decideMarketplaceListingInstallV1, readMarketplaceListingRegistryProfileRequirementV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import type { MarketplaceIndexItemV1, MarketplaceIndexQueryResultV1, MarketplaceListingInstallBlockV1 } from '@happier-dev/protocol';
 
-import {
-  projectExpectedMarketplaceListing,
-  type ExpectedMarketplaceListingV1,
-} from '@happier-dev/protocol/marketplace/internal';
+import { projectExpectedMarketplaceListing } from '@happier-dev/protocol/marketplace/internal';
+import type { ExpectedMarketplaceListingV1 } from '@happier-dev/protocol/marketplace/internal';
 
 import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
 import type { PluginRegistryProfileRequirement } from '@/plugins/daemon/changeContract';

@@ -4,6 +4,7 @@ import type {
 import { parseCredentialRecord } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { CodexConnectedServiceRefreshSelection } from './application.js';
+import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../constants.js';
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -36,9 +37,10 @@ function readCodexOauthCredentialRecord(value: unknown): OauthCredentialRecord |
   return record;
 }
 
-function readCodexRefreshSelection(value: unknown): CodexConnectedServiceRefreshSelection | null {
+export function readCodexConnectedServiceRefreshSelection(value: unknown): CodexConnectedServiceRefreshSelection | null {
   const record = readRecord(value);
-  if (!record || record.serviceId !== 'openai-codex') return null;
+  if (!record || (record.serviceId !== 'openai-codex'
+    && record.serviceId !== CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY)) return null;
   const kind = readString(record.kind);
   if (kind === 'profile') {
     const profileId = readString(record.profileId);
@@ -62,6 +64,25 @@ function readCodexRefreshSelection(value: unknown): CodexConnectedServiceRefresh
       ...(fallbackProfileId ? { fallbackProfileId } : {}),
       generation,
     };
+  }
+  return null;
+}
+
+export function resolveCodexConnectedServiceRefreshSelectionFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): CodexConnectedServiceRefreshSelection | null {
+  const raw = env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON;
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  for (const item of parsed) {
+    const selection = readCodexConnectedServiceRefreshSelection(item);
+    if (selection) return selection;
   }
   return null;
 }
@@ -93,7 +114,7 @@ export function normalizeCodexConnectedServiceAuthGenerationRequest(
     credentialRevision: readString(generation.credentialRevision),
     forcedWorkspaceId: readString(generation.forcedWorkspaceId),
     forcedLoginMethod: readString(generation.forcedLoginMethod),
-    selection: readCodexRefreshSelection(generation.selection),
+    selection: readCodexConnectedServiceRefreshSelection(generation.selection),
     expected: readCodexConnectedServiceExpected(record.expected),
   };
 }

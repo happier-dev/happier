@@ -2,7 +2,7 @@ import type {
   LinkedExternalSessionV1,
   PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
-import { buildLinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol';
+import { buildLinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 export type CurrentExternalSessionAgentIdentity = Readonly<{
   identity: PluginContributionIdentityV1;

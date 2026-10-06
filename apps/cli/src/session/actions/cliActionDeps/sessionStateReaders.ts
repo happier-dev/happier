@@ -10,7 +10,7 @@ import {
   decryptStoredSessionPayload,
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
-import { normalizeSessionMetadataForRead } from '@happier-dev/protocol';
+import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 
 export function normalizeLimit(value: unknown): number | null {

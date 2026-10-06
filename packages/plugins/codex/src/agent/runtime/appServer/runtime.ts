@@ -34,6 +34,7 @@ import type {
 
 import {
   applyCodexConnectedServiceAuthGeneration,
+  applyCodexExternalAuthTokens,
   type CodexConnectedServiceRefreshSelection,
 } from '../../auth/services/runtime/auth/application.js';
 import {
@@ -41,6 +42,7 @@ import {
   resolveCodexAppliedGeneration,
   resolveCodexAppliedGroupId,
   resolveCodexAppliedProfileId,
+  resolveCodexConnectedServiceRefreshSelectionFromEnv,
   type CodexConnectedServiceAuthGenerationRequest,
 } from '../../auth/services/runtime/auth/generationRequest.js';
 import {
@@ -97,12 +99,12 @@ import {
 import {
   buildCodexLiveAccountRuntimeIdentity,
   computeCodexAccessTokenFingerprint,
-  resolveCodexConnectedServiceRefreshSelectionFromEnv,
   resolveCodexInitialConnectedServiceRuntimeIdentity,
   type CodexConnectedServiceRuntimeIdentity,
 } from './connectedServiceRuntimeIdentity.js';
 import {
   createCodexAppServerTurnFailure,
+  isCodexAppServerRejectedStartModelEntitlementError,
   isCodexAppServerContextWindowExhaustedError,
   isCodexAppServerWorkspaceRoutingUnauthorizedError,
 } from './turns/failure.js';
@@ -907,6 +909,7 @@ export function createCodexAppServerRuntime(
   let activeChatGptAuthTokensRefreshSelection: CodexConnectedServiceRefreshSelection | null =
     resolveCodexConnectedServiceRefreshSelectionFromEnv(readRuntimeProcessEnv());
   let activeChatGptAccessTokenFingerprint: string | null = null;
+  let clientHasExternalAuthTokens = false;
   let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeIdentity | null = null;
   let publishedProvisionalProviderAccountUsageRecordId: string | null = null;
   const pendingProviderPrompts = new Set<PendingProviderPrompt>();
@@ -2149,20 +2152,51 @@ export function createCodexAppServerRuntime(
           processEnv,
         }),
         disableUserMcpServers: true,
-      }).then((createdClient) => {
+      }).then(async (createdClient) => {
         if (disposed) {
           void createdClient.dispose().catch(() => undefined);
           throw new Error('Codex app-server runtime has been disposed.');
         }
         collaborationModeSelectionCache.clear();
-        client = createdClient;
+        clientHasExternalAuthTokens = false;
         attachClientHandlers(createdClient);
+        try {
+          if (activeChatGptAuthTokensRefreshSelection && params.host.refreshRuntimeAuth) {
+            const authTokens = await readHostOwnedAuthTokens();
+            if (authTokens.accessToken && authTokens.accountId) {
+              latestConnectedServiceRuntimeIdentity ??= resolveCodexInitialConnectedServiceRuntimeIdentity(
+                processEnv, authTokens,
+              );
+              activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(authTokens.accessToken);
+              const result = await applyCodexExternalAuthTokens({
+                client: createdClient,
+                accessToken: authTokens.accessToken,
+                accountId: authTokens.accountId,
+              });
+              if (!result.applied) {
+                throw Object.assign(new Error('Codex refresh-free Connected Account authentication failed.'), {
+                  code: 'codex_refresh_free_auth_unsupported',
+                  reason: result.reason,
+                });
+              }
+              clientHasExternalAuthTokens = true;
+            }
+          }
+        } catch (error) {
+          await createdClient.dispose().catch(() => undefined);
+          throw error;
+        }
+        if (disposed) {
+          await createdClient.dispose().catch(() => undefined);
+          throw new Error('Codex app-server runtime has been disposed.');
+        }
+        client = createdClient;
         const operationIdentity = latestConnectedServiceRuntimeIdentity;
         void readCodexRuntimeRateLimitsSnapshot(createdClient)
           .then((result) => recordProviderAccountUsageSnapshot(result.rawSnapshot, { operationIdentity }))
           .catch(() => undefined);
         return createdClient;
-      }, (error: unknown) => {
+      }).catch((error: unknown) => {
         clientPromise = null;
         throw error;
       });
@@ -2252,9 +2286,19 @@ export function createCodexAppServerRuntime(
 
   const openSessionOnce = async (options?: Readonly<Record<string, unknown>>): Promise<string> => {
     const authTokens = await readHostOwnedAuthTokens();
-    activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
-      authTokens.accessToken ?? authTokens.idToken,
-    );
+    const hasLiveExternalAuth = client !== null && clientHasExternalAuthTokens;
+    if (activeChatGptAuthTokensRefreshSelection
+      && (!params.host.refreshRuntimeAuth || (!hasLiveExternalAuth && (!authTokens.accessToken || !authTokens.accountId)))) {
+      throw Object.assign(new Error('Codex refresh-free Connected Account authentication is unavailable.'), {
+        code: 'codex_refresh_free_auth_unsupported',
+        reason: !params.host.refreshRuntimeAuth ? 'refresh_bridge_unavailable' : 'provider_account_identity_unavailable',
+      });
+    }
+    if (!hasLiveExternalAuth) {
+      activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
+        authTokens.accessToken ?? authTokens.idToken,
+      );
+    }
     latestConnectedServiceRuntimeIdentity ??= resolveCodexInitialConnectedServiceRuntimeIdentity(
       readRuntimeProcessEnv(),
       authTokens,
@@ -2380,7 +2424,15 @@ export function createCodexAppServerRuntime(
         ...commonFields,
         experimentalRawEvents: true,
         persistExtendedHistory: true,
-        }, 'thread');
+        }, 'thread').catch((error: unknown) => {
+          if (!isCodexAppServerApplicationRejectionForMethod(error, 'thread/start')) throw error;
+          const failure = createCodexAppServerTurnFailure({
+            value: error,
+            sourceAccountIdentity: latestConnectedServiceRuntimeIdentity,
+            providerStartRejected: turnSeq === 0 && pendingTurn === null,
+          });
+          throw isCodexAppServerRejectedStartModelEntitlementError(failure) ? failure : error;
+        });
     const observedThreadId = readThreadId(response);
     if (
       strictRequestedThreadId
@@ -2596,7 +2648,19 @@ export function createCodexAppServerRuntime(
       clearPendingProviderPrompt(pendingProviderPrompt);
     } catch (error) {
       preAckCancelledTurns.delete(activeTurn);
-      const failure = error instanceof Error ? error : new Error(String(error));
+      const classifiedFailure = isCodexAppServerApplicationRejectionForMethod(error, 'turn/start')
+        ? createCodexAppServerTurnFailure({
+            value: error,
+            sourceAccountIdentity: activeTurn.providerOperationIdentity,
+            providerStartRejected: pendingTurn === activeTurn
+              && !activeTurn.providerStartAcknowledged
+              && activeTurn.agentTurnId === null
+              && activeTurn.deferredTerminalNotification === null,
+          })
+        : null;
+      const failure = isCodexAppServerRejectedStartModelEntitlementError(classifiedFailure)
+        ? classifiedFailure
+        : error instanceof Error ? error : new Error(String(error));
       failPendingTurn(failure);
       throw failure;
     }
@@ -2944,6 +3008,9 @@ export function createCodexAppServerRuntime(
         error: 'invalid_request',
       };
     }
+    if (!params.host.refreshRuntimeAuth) {
+      return { ok: false, errorCode: 'codex_refresh_free_auth_unsupported', error: 'refresh_bridge_unavailable' };
+    }
     const appServerClient = await ensureClient();
     const applied = await applyCodexConnectedServiceAuthGeneration({
       client: appServerClient,
@@ -2991,6 +3058,7 @@ export function createCodexAppServerRuntime(
     activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
       request.credential.oauth.accessToken,
     );
+    clientHasExternalAuthTokens = true;
     const appliedRuntimeIdentity = buildConnectedServiceRuntimeIdentity(
       request,
       applied.activeAccountId,

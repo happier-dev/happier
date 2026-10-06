@@ -1,14 +1,7 @@
-import {
-  DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
-  DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
-  SessionPendingQueueDeliveryTimingSchema,
-  SessionPendingQueueDrainModeSchema,
-  isSessionRuntimeActivityProjectionIdleForPendingDrain,
-  type AccountSettings,
-  type SessionRuntimeActivityProjectionForPendingDrain,
-  type SessionPendingQueueDeliveryTiming,
-  type SessionPendingQueueDrainMode,
-} from '@happier-dev/protocol';
+import { DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING, SessionPendingQueueDeliveryTimingSchema } from '@happier-dev/protocol/account/settings/sessionPendingQueueDeliveryTiming';
+import { DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE, SessionPendingQueueDrainModeSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { isSessionRuntimeActivityProjectionIdleForPendingDrain } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import type { AccountSettings, SessionRuntimeActivityProjectionForPendingDrain, SessionPendingQueueDeliveryTiming, SessionPendingQueueDrainMode } from '@happier-dev/protocol';
 
 export const PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE = 1;
 export const PENDING_QUEUE_DRAIN_ALL_MAX_POP_PER_WAKE = 25;

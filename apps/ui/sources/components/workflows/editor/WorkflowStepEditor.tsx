@@ -20,14 +20,14 @@ import type {
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
-import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { PluginJsonValueV2Schema, resolveRoleSelectionV1 } from '@happier-dev/protocol';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { WorkflowEngineSelectionV1, WorkflowStep, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import {
     listWorkflowStepOverriddenFields,
@@ -241,16 +241,20 @@ export function WorkflowStepEditor(props: Readonly<{
     const enginePicker = useSessionAuthoringEnginePicker({ values: effective, facts: props.authoringFacts,
         disabled: !editable, onChangeFields: changeEngineFields, roleSelection });
     const permissionMode = isPermissionMode(effective.permissionMode) ? effective.permissionMode : undefined;
+    // A role reads by its name (a built-in's or this workflow's own), through the one role resolver.
+    const roleName = React.useMemo(() => {
+        if (!engine || !('role' in engine)) return null;
+        const resolved = resolveRoleSelectionV1({ roleId: engine.role, workflowRoles: props.draft.roles ?? [] });
+        return resolved.ok && resolved.selection.name ? resolved.selection.name : engine.role;
+    }, [engine, props.draft.roles]);
     const agentInputContext = React.useMemo(() => ({
         agentType: enginePicker.agentId ?? agentId ?? undefined,
-        agentLabel: engine && 'role' in engine
-            ? props.draft.roles?.flatMap(role => role.roleId === engine.role && 'name' in role ? [role.name] : [])[0] ?? engine.role
-            : enginePicker.label,
-        engineLabel: engine && 'role' in engine
-            ? props.draft.roles?.flatMap(role => role.roleId === engine.role && 'name' in role ? [role.name] : [])[0] ?? engine.role
-            : !editable ? [enginePicker.label, effective.modelSelection?.ref.modelId].filter(Boolean).join(' · ') : undefined,
+        agentLabel: roleName ?? enginePicker.label,
+        engineLabel: roleName
+            ?? (!editable ? [enginePicker.label, effective.modelSelection?.ref.modelId].filter(Boolean).join(' · ') : undefined),
         modelMode: effective.modelSelection?.ref.modelId,
         permissionMode,
+        showStatusPermissionMode: false,
         agentPickerOptions: editable ? enginePicker.options : [],
         agentPickerSelectedOptionId: enginePicker.selectedOptionId,
         onAgentPickerSelect: enginePicker.onSelect,
@@ -258,12 +262,11 @@ export function WorkflowStepEditor(props: Readonly<{
         // the effective engine chip visible in a read-only document.
         onAgentClick: enginePicker.onAgentClick,
     }), [agentId, effective.modelSelection, permissionMode, enginePicker.agentId,
-        editable, engine, props.draft.roles, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
+        editable, roleName, enginePicker.label, enginePicker.onAgentClick, enginePicker.onSelect, enginePicker.options, enginePicker.selectedOptionId]);
     const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
-    const displayName = workflowStepPromptLabel(step)
-        ?? t('workflows.editor.unnamedStep', { position: ordinal });
+    const displayName = workflowBlockReferenceLabel(step);
     const accessibilityLabel = t('workflows.a11y.stepContext', {
         block: displayName,
         position: ordinal,

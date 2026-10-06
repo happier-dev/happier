@@ -29,7 +29,7 @@ test('foreground commands preserve their controlling terminal', { skip: process.
   assert.match(result.stdout, /controlling-terminal-ok/);
 });
 
-for (const helper of ['runCommand', 'run']) {
+for (const helper of ['runCommand', 'run', 'spawnProc']) {
 for (const cancellation of ['parent SIGKILL', 'supervisor group SIGKILL']) {
   test(`${helper} owned foreground custody survives ${cancellation}`, { skip: process.platform === 'win32' }, async (t) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-proc-custody-'));
@@ -44,7 +44,9 @@ for (const cancellation of ['parent SIGKILL', 'supervisor group SIGKILL']) {
     const compiler = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
     wrapper = spawn(process.execPath, ['--input-type=module', '-e', `
       import { ${helper} } from ${JSON.stringify(new URL('./proc.mjs', import.meta.url).href)};
-      await ${helper}(process.execPath, ['-e', ${JSON.stringify(compiler)}], { stdio: 'ignore', ownedProcessGroup: true });
+      await ${helper === 'spawnProc'
+        ? `spawnProc('compiler', process.execPath, ['-e', ${JSON.stringify(compiler)}], process.env, { silent: true, ownedProcessGroup: true }).completion`
+        : `${helper}(process.execPath, ['-e', ${JSON.stringify(compiler)}], { stdio: 'ignore', ownedProcessGroup: true })`};
     `], { detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     wrapper.stderr.on('data', (chunk) => { stderr += chunk; });
@@ -410,6 +412,22 @@ test('runCapture preserves bounded redacted stdout compiler diagnostics on failu
   assert.match(failure?.message ?? '', /\[stderr\][\s\S]*HAPPIER_TEST_SECRET=<redacted>/);
   assert.doesNotMatch(failure?.message ?? '', /must-not-escape/);
   assert.ok((failure?.message.length ?? Infinity) < 20_000, 'failure diagnostic must stay bounded');
+});
+
+test('run preserves inherited progress while capturing compiler failure diagnostics', () => {
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { run } from ${JSON.stringify(new URL('./proc.mjs', import.meta.url).href)};
+    try {
+      await run(process.execPath, ['-e', 'console.log("build-progress"); console.error("src/index.ts(1,1): error TS2322: fixture"); process.exit(2)'], {
+        stdio: ['ignore', 'inherit', 'inherit'], captureFailureDiagnostic: true,
+      });
+    } catch (error) {
+      if (!error.message.includes('TS2322') || error.exitCode !== 2) throw error;
+    }
+  `], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /build-progress/);
+  assert.match(result.stderr, /TS2322/);
 });
 
 test('run keeps quiet child output bounded, failure-only, and redacted', async () => {

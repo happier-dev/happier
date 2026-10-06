@@ -1,8 +1,5 @@
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
-import {
-  isLoopbackHostname,
-  normalizeHostnameForLoopbackCheck,
-} from '@happier-dev/protocol';
+import { isLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import {
   assertResolvedHomeTargetIdentity,

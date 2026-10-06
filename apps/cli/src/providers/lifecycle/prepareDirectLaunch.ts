@@ -1,14 +1,5 @@
-import {
-  createProviderErrorV1,
-  type AgentProviderBindingLaunchMaterializationV1,
-  type BackendTargetRefV2Input,
-  type ConnectedServiceBindingsV2,
-  type PluginExecutionScopeV1,
-  type ProviderErrorV1,
-  type SessionModelSelectionV1,
-  type SessionProviderBindingMetadataV1,
-  type SessionProviderBindingSecurityChangeConfirmationV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { AgentProviderBindingLaunchMaterializationV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, PluginExecutionScopeV1, ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1 } from '@happier-dev/protocol';
 
 import { prepareProviderLaunch } from './prepareLaunch';
 import {

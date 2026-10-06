@@ -1,18 +1,12 @@
-import {
-  ExecutionRunAgentIntentInputV1Schema,
-  ExecutionRunResultContractV1Schema,
-} from '@happier-dev/protocol';
+import { ExecutionRunAgentIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ExecutionRunResultContractV1Schema } from '@happier-dev/protocol/execution/runs/resultContractV1';
 
 import type {
   ExecutionRunIntentProfile,
   ExecutionRunProfileBoundedCompleteResult,
 } from '../ExecutionRunIntentProfile';
-import {
-  buildExecutionRunResultContractPrompt,
-  decodeExecutionRunProfileResult,
-  normalizeExecutionRunProfileResultContract,
-  type ExecutionRunProfileResultContract,
-} from '@happier-dev/protocol';
+import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult, normalizeExecutionRunProfileResultContract } from '@happier-dev/protocol/execution/runs/resultContract';
+import type { ExecutionRunProfileResultContract } from '@happier-dev/protocol';
 
 function readAgentIntentInput(value: unknown) {
   return ExecutionRunAgentIntentInputV1Schema.parse(value ?? {});

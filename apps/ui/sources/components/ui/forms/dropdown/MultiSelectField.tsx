@@ -8,14 +8,14 @@ import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 
-export type PoolMultiSelectCandidate = Readonly<{
+export type MultiSelectCandidate = Readonly<{
     id: string;
     title: string;
     subtitle?: string;
 }>;
 
-export type PoolMultiSelectFieldProps = Readonly<{
-    candidates: ReadonlyArray<PoolMultiSelectCandidate>;
+export type MultiSelectFieldProps = Readonly<{
+    candidates: ReadonlyArray<MultiSelectCandidate>;
     selectedIds: ReadonlyArray<string>;
     onCommit: (selectedIds: ReadonlyArray<string>) => void | Promise<void>;
     title: string;
@@ -44,9 +44,9 @@ export type PoolMultiSelectFieldProps = Readonly<{
 
 const SEARCHABLE_CANDIDATE_THRESHOLD = 8;
 
-/** Shared draft-and-commit interaction owner for Pool multi-select fields. */
-export const PoolMultiSelectField = React.memo(function PoolMultiSelectField(
-    props: PoolMultiSelectFieldProps,
+/** Shared draft-and-commit interaction owner for multi-select fields. */
+export const MultiSelectField = React.memo(function MultiSelectField(
+    props: MultiSelectFieldProps,
 ) {
     const { theme } = useUnistyles();
     const [localOpen, setLocalOpen] = React.useState(false);

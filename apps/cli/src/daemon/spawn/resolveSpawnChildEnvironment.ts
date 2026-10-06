@@ -1,13 +1,10 @@
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  SessionEnvOverlayV1Schema,
-  type ProviderErrorV1,
-  type SessionEnvOverlayV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
+import type { ProviderErrorV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';

@@ -1,18 +1,12 @@
-import {
-  ConnectedServiceUsageSourceV1Schema,
-  isConnectedServiceQuotaObservationFresh,
-  ProviderAccountUsageRecordIdSchema,
-  QualifiedConnectedServiceUsageSourceV4Schema,
-  openSealedProviderAccountUsageSnapshot,
-  parseBuiltInLegacyProviderAccountUsageSnapshotV1,
-  parseQualifiedPluginContributionKey,
-  readBuiltInLegacyConnectedServiceIdForQualifiedService,
-  type ConnectedServiceUsageSourceV1,
-  type ProviderAccountUsageRecordId,
-  type ProviderAccountUsageSnapshotV1,
-  type QualifiedConnectedServiceUsageSourceV4,
-  type SealedProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { ProviderAccountUsageRecordIdSchema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { openSealedProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceUsageSourceV1, ProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1, QualifiedConnectedServiceUsageSourceV4, SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import { isConnectedServiceUsageProviderCompatible } from '@happier-dev/agents';
 
 import {

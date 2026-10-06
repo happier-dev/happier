@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows';
-import type { WorkflowDefinitionV1 } from '@happier-dev/protocol';
 
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { t } from '@/text';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from './workflowProblemPresentation';
 
 /** A workflow a Run a workflow step can name, as the picker and the block both present it. */
 export type WorkflowReferenceOption = Readonly<{
@@ -11,7 +11,7 @@ export type WorkflowReferenceOption = Readonly<{
     title: string;
     /** "Built-in" for catalog workflows; absent for the person's own. */
     origin?: 'builtin';
-    definition?: WorkflowDefinitionV1;
+    unavailableReason?: string;
 }>;
 
 /** The built-in workflows, named by their catalog titles. */
@@ -33,11 +33,12 @@ export function useWorkflowReferenceLibrary(options?: Readonly<{ enabled?: boole
     const library = useWorkflowDefinitionLibrary(options);
     const references = React.useMemo(
         (): readonly WorkflowReferenceOption[] => [
-            ...library.definitions.map((definition) => ({ ref: definition.definitionId, title: definition.metadata.title })),
-            ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title,
-                ...(library.status === 'loaded' ? { definition: source.definition } : {}) })),
+            ...library.definitions.map((definition) => ({ ref: definition.definitionId, title: formatWorkflowDefinitionLibraryTitle(definition),
+                ...(definition.contentStatus === 'unavailable'
+                    ? { unavailableReason: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {}) })),
+            ...library.pluginWorkflows.map((source) => ({ ref: source.workflow, title: source.title })),
         ],
-        [library.definitions, library.pluginWorkflows, library.status],
+        [library.definitions, library.pluginWorkflows],
     );
     return { ...library, options: references };
 }

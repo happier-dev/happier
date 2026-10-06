@@ -64,7 +64,7 @@ export async function resolveTerminalConnectPreAuthTarget(params: Readonly<{
 }
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
-const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
+export const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
 
 function parseTerminalConnectParameters(params: URLSearchParams): ParsedTerminalConnectUrl | null {
     if (params.has('v4')) {
@@ -120,7 +120,9 @@ export function isTerminalConnectWebPathname(pathname: string): boolean {
 function parseTerminalConnectWebUrl(raw: string): ParsedTerminalConnectUrl | null {
     try {
         const parsed = new URL(raw);
-        if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
+        // Bundled macOS/Linux Tauri webviews carry app routes on this local origin.
+        const isLocalTauriCarrier = parsed.protocol === 'tauri:' && parsed.host === 'localhost';
+        if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol) && !isLocalTauriCarrier) return null;
         if (!isTerminalConnectWebPathname(parsed.pathname)) return null;
 
         const hashTail = String(parsed.hash ?? '').replace(/^#/, '');
@@ -276,6 +278,20 @@ export function buildTerminalConnectWebHref(params: Readonly<{
         + `${buildPairingQuerySuffix(params.pairing, params.supportsTokenOnly === true, params.serverIdentityId)}`;
 
     return `${TERMINAL_CONNECT_WEB_PATH}${hash}`;
+}
+
+/** Translates an incoming link to the web carrier without upgrading its pairing authority. */
+export function resolveTerminalConnectWebHref(url: string): string | null {
+    const terminal = parseTerminalConnectUrl(url);
+    if (!terminal) return null;
+    if (terminal.compatibility?.admission === 'update_required') {
+        // cli-v0.2.11-preview.2's released V3 shape must reach the same read adapter on web.
+        // The current writer correctly refuses to generate that identity-free pairing shape.
+        const parsed = new URL(url);
+        const parameters = parsed.hash.slice(1) || parsed.search.slice(1);
+        return `${TERMINAL_CONNECT_WEB_PATH}#${parameters}`;
+    }
+    return buildTerminalConnectWebHref(terminal);
 }
 
 export function buildTerminalConnectAuthRedirectHref(params: Readonly<{

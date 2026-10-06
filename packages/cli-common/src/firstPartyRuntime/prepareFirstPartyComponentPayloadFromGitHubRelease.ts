@@ -92,6 +92,7 @@ export async function resolveFirstPartyComponentRelease(params: Readonly<{
   params.signal?.throwIfAborted();
   const release = await fetchGitHubReleaseByTag({
     githubRepo,
+    apiBaseUrl: source.apiBaseUrl,
     tag: releaseTag,
     githubToken,
     userAgent,
@@ -229,9 +230,30 @@ function resolveFirstPartyReleaseArtifactSource(params: Readonly<{
   githubRepo: string;
   githubToken: string;
   userAgent: string;
+  apiBaseUrl?: string;
 }> {
   const source = params.artifactSource?.kind === 'github-release' ? params.artifactSource : null;
+  const override = process.env.HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL;
+  let apiBaseUrl: string | undefined;
+  if (override !== undefined) {
+    if (process.env.NODE_ENV !== 'development') {
+      throw new Error('[first-party-release] Release-source override requires development mode');
+    }
+    let url: URL;
+    try {
+      url = new URL(override);
+    } catch {
+      throw new Error('[first-party-release] Release-source override must be an HTTP(S) loopback origin');
+    }
+    if (!['http:', 'https:'].includes(url.protocol)
+      || !['127.0.0.1', '[::1]'].includes(url.hostname)
+      || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('[first-party-release] Release-source override must be an HTTP(S) loopback origin');
+    }
+    apiBaseUrl = url.origin;
+  }
   return {
+    apiBaseUrl,
     githubRepo: normalizeFirstPartyReleaseValue(
       source?.githubRepo
         ?? params.githubRepo
@@ -240,7 +262,8 @@ function resolveFirstPartyReleaseArtifactSource(params: Readonly<{
         ?? 'happier-dev/happier',
       'happier-dev/happier',
     ),
-    githubToken: normalizeFirstPartyReleaseValue(
+    // A local QA mirror must never receive credentials intended for GitHub.
+    githubToken: apiBaseUrl ? '' : normalizeFirstPartyReleaseValue(
       source?.githubToken
         ?? params.githubToken
         ?? process.env.HAPPIER_FIRST_PARTY_RELEASE_TOKEN

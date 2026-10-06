@@ -17,10 +17,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, vi } from 'vitest';
-import {
-    buildBackendTargetKeyV2,
-    type TeamCredentialProviderModelSelectionV1,
-} from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 
 import { reloadConfiguration } from '@/configuration';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';

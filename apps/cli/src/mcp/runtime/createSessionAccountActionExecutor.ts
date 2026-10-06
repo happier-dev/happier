@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { ActionIdSchema, getActionSpec, RoleActionInputSchemasV1, WaitActionInputV1Schema, type ActionExecuteResult, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { WaitActionInputV1Schema } from '@happier-dev/protocol/actions/specs/wait';
+import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { configuration } from '@/configuration';
 import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
@@ -25,8 +29,9 @@ export function createSessionAccountActionExecutor(params: Readonly<{
     execute: async (actionId, input, context) => {
       // Contributed ids remain with the existing plugin catalog/execution owner.
       const builtIn = ActionIdSchema.safeParse(actionId);
-      if (!builtIn.success || (getActionSpec(builtIn.data).executionPlacement !== 'account'
-        && getActionSpec(builtIn.data).executionPlacement !== 'client'
+      const executionPlacement = builtIn.success ? resolveActionExecutionPlacementForInput(getActionSpec(builtIn.data), input) : null;
+      if (!builtIn.success || (executionPlacement !== 'account'
+        && executionPlacement !== 'client'
         && !(Object.hasOwn(RoleActionInputSchemasV1, builtIn.data) && builtIn.data.startsWith('session.')))) {
         return await params.base.execute(actionId, input, context);
       }

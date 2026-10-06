@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Pressable } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -94,6 +95,15 @@ describe('UpdatesPopoverButton', () => {
     });
     afterEach(async () => {
         await act(async () => { storage.setState({ profileScope: null }); });
+    });
+    it('opens the same Updates content from a menu row trigger', async () => {
+        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
+        const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="footer"
+            renderTrigger={({ onPress, open }) => <Pressable testID="updates-menu-row" onPress={onPress}
+                accessibilityState={{ expanded: open }} />} />);
+        expect(screen.findByTestId('updates-menu-row')).not.toBeNull();
+        await screen.pressByTestIdAsync('updates-menu-row');
+        expect(screen.findAllByTestId('updates.content.popover').length).toBeGreaterThan(0);
     });
     it('is absent at zero, and a closed pill renders no detail content', async () => {
         const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');

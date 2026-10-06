@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { prepareArtifactHeaderForRevisionV1 } from './artifactHeaderRestorationV1.js';
 
 import {
   filterArtifactSharingResourcesByKindV1,
@@ -15,6 +16,19 @@ const artifact = {
   },
 };
 describe('Document sharing kind owner', () => {
+  it('restores unknown stored Workflow body fields through the canonical header projection', () => {
+    const header = { kind: 'workflow-definition.v1', definitionId: 'definition-1',
+      revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' }, savedBy: { kind: 'person' } };
+    const body = JSON.stringify({ kind: 'workflow-definition.v1', extra: true, definition: {
+      version: 1, extra: true, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+      blocks: [{ kind: 'step', id: 'review', extra: true, document: { text: 'Review', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
+    } });
+    const restored = prepareArtifactHeaderForRevisionV1({ artifactId: 'definition-1', header, body,
+      expectedRevision: header.revision, nextRevision: { headerVersion: 2, bodyVersion: 2 } });
+    expect(restored).toMatchObject({ kind: 'workflow-definition.v1', definitionId: 'definition-1', revision: { headerVersion: 2, bodyVersion: 2 },
+      metadata: { title: 'Review' }, previewSteps: ['Review'] });
+    expect(restored).not.toHaveProperty('savedBy');
+  });
   it('routes ordinary documents and specialized text kinds through their canonical policies', () => {
     expect(getArtifactUseTargetV1({ artifactId: 'doc', header: {} }).kind).toBe('open');
     expect(getArtifactUseTargetV1({ artifactId: 'doc', header: { kind: 'prompt_doc.v2' } }).kind).toBe('prompt_doc');

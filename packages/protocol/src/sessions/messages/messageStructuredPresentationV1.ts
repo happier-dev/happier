@@ -8,7 +8,7 @@ import { PluginIdSchema } from '../../plugins/pluginId.js';
 import {
   PluginTranscriptPresentationNodeV1Schema,
   type PluginTranscriptPresentationNodeV1,
-} from '../../plugins/contributions/ui/index.js';
+} from '../../plugins/contributions/ui/transcriptPresentation.js';
 
 export const MESSAGE_STRUCTURED_PRESENTATION_V1_MAX_NODES = 256;
 export const MESSAGE_STRUCTURED_PRESENTATION_V1_MAX_DEPTH = 16;

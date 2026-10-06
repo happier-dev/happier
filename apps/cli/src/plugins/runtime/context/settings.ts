@@ -2,13 +2,13 @@ import type {
     PluginJsonSchemaValidator,
     PluginSettingFieldV2,
 } from '@happier-dev/protocol';
-import { isBoundedPluginPerActiveServerValueV1 } from '@happier-dev/protocol';
+import { isBoundedPluginPerActiveServerValueV1 } from '@happier-dev/protocol/plugins/contributions/settings';
 
 import {
     compilePluginSettingFieldSchema,
     PluginSettingFieldSchemaCompilationError,
 } from '@/plugins/settings/fieldSchemaValidation';
-import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginContextServiceError } from './errors';
 
 function settingsError(code: string, message: string): PluginContextServiceError {

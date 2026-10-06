@@ -1,8 +1,6 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceIdSchema,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { ConnectedServiceProviderAdoptedGenerationTarget } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 

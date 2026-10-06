@@ -11,26 +11,13 @@ import { classifyServerEndpointError } from '@/api/client/classifyServerEndpoint
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
-import {
-  applyAccountSettingMutationV1,
-  assertAccountWorkspaceSettingsTransition,
-  accountSettingsParse,
-  AccountSettingsV2GetResponseSchema,
-  AccountSettingsV2UpdateRequestSchema,
-  AccountSettingsV2UpdateResponseSchema,
-  AccountSettingsPersistedObjectSchema,
-  openAccountScopedBlobCiphertext,
-  resealSecretsDeepV1,
-  sealAccountScopedBlobCiphertext,
-  unsealSecretsDeepWithKeysV1,
-  type AccountSettings,
-  type AccountSettingMutationV1,
-  type AccountSettingsMutationResult,
-  type AccountSettingsPersistedObject,
-  type AccountSettingsStoredContentEnvelope,
-  type AccountSettingsV2UpdateResponse,
-  type LegacyAuthoringMemorySettingsKey,
-} from '@happier-dev/protocol';
+import { applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
+import { assertAccountWorkspaceSettingsTransition, accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AccountSettingsPersistedObjectSchema } from '@happier-dev/protocol/account/settings/accountSettingsPersistedObject';
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resealSecretsDeepV1, unsealSecretsDeepWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import type { AccountSettings, AccountSettingMutationV1, AccountSettingsMutationResult, AccountSettingsPersistedObject, AccountSettingsStoredContentEnvelope, AccountSettingsV2UpdateResponse, LegacyAuthoringMemorySettingsKey } from '@happier-dev/protocol';
 
 import {
   resolveAccountSettingsCachePath,

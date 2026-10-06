@@ -1,4 +1,4 @@
-import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol';
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 
 type UnknownRecord = Record<string, unknown>;
 

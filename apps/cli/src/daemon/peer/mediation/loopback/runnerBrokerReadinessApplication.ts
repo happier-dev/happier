@@ -1,12 +1,8 @@
 import fastify, { type FastifyInstance } from 'fastify';
 import axios from 'axios';
-import {
-  doesRunnerBrokerReadinessResponseMatchRequestV1,
-  RunnerBrokerReadinessRequestV1Schema,
-  RunnerBrokerReadinessResponseV1Schema,
-  type RunnerBrokerReadinessRequestV1,
-  type RunnerBrokerReadinessResponseV1,
-} from '@happier-dev/protocol/teams';
+import { doesRunnerBrokerReadinessResponseMatchRequestV1, RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
+import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
+import type { RunnerBrokerReadinessRequestV1, RunnerBrokerReadinessResponseV1 } from '@happier-dev/protocol/teams';
 
 const RUNNER_BROKER_READINESS_BODY_LIMIT_BYTES = 64 * 1024;
 

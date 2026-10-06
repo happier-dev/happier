@@ -1,6 +1,6 @@
 import { isPidProvablyAbsent } from '@happier-dev/cli-common/process';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
-import { SessionTerminalMetadataSchema } from '@happier-dev/protocol';
+import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
 import type { StoredCredentials } from '@/persistence';

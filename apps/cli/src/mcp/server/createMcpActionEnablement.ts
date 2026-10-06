@@ -1,11 +1,7 @@
-import {
-  getActionRequiredServerFeatureId,
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-  type AccountSettings,
-  type ActionId,
-  type ActionSurfaces,
-} from '@happier-dev/protocol';
+import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import type { AccountSettings, ActionId, ActionSurfaces } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

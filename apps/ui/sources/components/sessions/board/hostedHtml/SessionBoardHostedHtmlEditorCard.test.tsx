@@ -28,6 +28,11 @@ vi.mock('@react-navigation/native', async (importOriginal) => ({
     usePreventRemove: () => undefined,
 }));
 
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit');
+    return createExpoRouterMock().module;
+});
+
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
     CodeEditor: React.forwardRef(function MockCodeEditor(props: Readonly<{
         testID?: string;

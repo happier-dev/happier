@@ -1,15 +1,18 @@
 import type { StoredCredentials } from '@/persistence';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
-import { buildExecutionRunResultContractPrompt, WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS, deriveWorkflowSessionInputLocalIdV2, areSessionMcpSelectionsEquivalent } from '@happier-dev/protocol';
+import { buildExecutionRunResultContractPrompt } from '@happier-dev/protocol/execution/runs/resultContract';
+import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
+import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { areSessionMcpSelectionsEquivalent } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows';
+import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
+import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import {
   resolveSessionSpawnConnectedServicesDefaultsPayload,
   type ResolveSpawnConnectedServicesTeamResourceCatalog,
@@ -22,7 +25,7 @@ import type {
   WorkflowWorkspaceDescriptorV1,
 } from '@happier-dev/protocol/workflows';
 import type { ResolvedRoleV1, SessionAwarenessOriginV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
-import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol';
+import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import {
   classifyWorkflowAbort,
   assertWorkflowAdmissionSignal,

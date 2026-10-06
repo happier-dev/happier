@@ -11,7 +11,6 @@ describe('buildCodexMaterializedAuthPlan', () => {
     const plan = buildCodexMaterializedAuthPlan({
       rootDir,
       accessToken: 'access',
-      refreshToken: 'refresh',
       idToken: 'id',
       accountId: 'chatgpt-account',
       lastRefreshIso: '2026-06-06T00:00:00.000Z',
@@ -21,13 +20,14 @@ describe('buildCodexMaterializedAuthPlan', () => {
     expect(plan.authFilePath).toBe(join(rootDir, 'auth.json'));
     expect(plan.env).toEqual({ CODEX_HOME: rootDir });
     expect(plan.authFile).toMatchObject({
-      auth_mode: 'chatgpt',
+      auth_mode: 'chatgptAuthTokens',
       OPENAI_API_KEY: null,
       access_token: 'access',
-      refresh_token: 'refresh',
+      refresh_token: '',
       id_token: 'id',
       account_id: 'chatgpt-account',
       last_refresh: '2026-06-06T00:00:00.000Z',
+      tokens: { access_token: 'access', refresh_token: '', account_id: 'chatgpt-account' },
     });
   });
 });

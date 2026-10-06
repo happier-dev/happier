@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -235,6 +236,68 @@ async function mountController(input: Readonly<{
 }
 
 describe('useSessionBoardController', () => {
+    it('retains identity when Ask availability is unchanged and invokes the current handler', async () => {
+        const snapshot = readySnapshot();
+        const actions = recordingActions().port;
+        const firstAsk = vi.fn();
+        const nextAsk = vi.fn();
+        const initialProps: Readonly<{ snapshot: SessionBoardSnapshot; ask?: () => void }> = { snapshot, ask: firstAsk };
+        const hook = await renderHook((props: Readonly<{ snapshot: SessionBoardSnapshot; ask?: () => void }>) => useSessionBoardController({
+            sessionId: 'session-1', serverId: 'home-1',
+            binding: binding(props.snapshot), actions, onAskAgent: props.ask,
+        }), { initialProps });
+        const retained = hook.getCurrent();
+        expect(await hook.rerender({ snapshot, ask: nextAsk })).toBe(retained);
+        await act(async () => { await retained.run({ kind: 'add', intent: 'askAgent' }); });
+        expect(firstAsk).not.toHaveBeenCalled();
+        expect(nextAsk).toHaveBeenCalledOnce();
+
+        const readOnly = readySnapshot({ canEdit: false });
+        await hook.rerender({ snapshot: readOnly });
+        const unavailable = hook.getCurrent();
+        expect(await hook.rerender({ snapshot: readOnly, ask: nextAsk })).toBe(unavailable);
+        expect(unavailable.addIntents).toEqual([]);
+        await hook.unmount();
+    });
+
+    it.each([false, true])('retains identity for unchanged public fields (continuity: %s) and keeps draft getters live', async (withContinuity) => {
+        const snapshot = readySnapshot({
+            layout: LAYOUT_TWO_VIEWS,
+            items: [{ itemId: 'note-1', item: note('A note', 'Body') }],
+        });
+        const actions = recordingActions().port;
+        const hook = await renderHook((props: Readonly<{ snapshot: SessionBoardSnapshot }>) => useSessionBoardController({
+            sessionId: 'session-1',
+            serverId: 'home-1',
+            binding: binding(props.snapshot),
+            actions,
+        }), {
+            initialProps: { snapshot },
+            ...(withContinuity ? { wrapper: continuityWrapper } : {}),
+        });
+        const retained = hook.getCurrent();
+        expect(await hook.rerender()).toBe(retained);
+
+        await act(async () => { await retained.run({ kind: 'item.edit', itemId: 'note-1' }); });
+        expect(retained.noteDraft?.itemId).toBe('note-1');
+        const editing = hook.getCurrent();
+        expect(editing).not.toBe(retained);
+        expect(await hook.rerender()).toBe(editing);
+
+        await act(async () => { retained.onNoteSaved(null); });
+        expect(retained.noteDraft).toBeNull();
+        expect(retained.lastOutcome).toEqual({ kind: 'applied' });
+        const settled = hook.getCurrent();
+        expect(settled).not.toBe(editing);
+        expect(await hook.rerender()).toBe(settled);
+
+        const updated = readySnapshot({ canEdit: false });
+        expect(await hook.rerender({ snapshot: updated })).not.toBe(settled);
+        expect(hook.getCurrent().snapshot).toBe(updated);
+        expect(hook.getCurrent().supports('item.edit')).toBe(false);
+        await hook.unmount();
+    });
+
     it('preserves readable CAS revisions in the controller conflict outcome', () => {
         expect(describeSessionBoardOutcome({
             status: 'refused',

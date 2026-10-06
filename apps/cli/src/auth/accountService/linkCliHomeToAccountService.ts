@@ -1,21 +1,8 @@
 import { publishAccountServiceHomeLink } from '@happier-dev/cli-common/accountService';
 import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
-import {
-  ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1,
-  ACCOUNT_DIRECTORY_ERROR_CODES_V1,
-  AccountDirectoryCapabilitiesSchema,
-  AccountDirectoryHomePutRequestV1Schema,
-  AccountDirectoryHomePutResponseV1Schema,
-  AccountDirectoryLinkDeleteRequestV1Schema,
-  AccountDirectoryLinkDeleteResponseV1Schema,
-  AccountDirectoryLinkPutRequestV1Schema,
-  AccountDirectoryLinkPutResponseV1Schema,
-  AccountDirectoryMeResponseV1Schema,
-  AccountDirectoryRouteErrorResponseV1Schema,
-  buildAccountDirectoryHomeHttpPathV1,
-  buildAccountDirectoryLinkHttpPathV1,
-  normalizeServerIdentityIdCapability,
-} from '@happier-dev/protocol';
+import { ACCOUNT_DIRECTORY_ME_HTTP_PATH_V1, ACCOUNT_DIRECTORY_ERROR_CODES_V1, AccountDirectoryHomePutRequestV1Schema, AccountDirectoryHomePutResponseV1Schema, AccountDirectoryLinkDeleteRequestV1Schema, AccountDirectoryLinkDeleteResponseV1Schema, AccountDirectoryLinkPutRequestV1Schema, AccountDirectoryLinkPutResponseV1Schema, AccountDirectoryMeResponseV1Schema, AccountDirectoryRouteErrorResponseV1Schema, buildAccountDirectoryHomeHttpPathV1, buildAccountDirectoryLinkHttpPathV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { AccountDirectoryCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { buildTerminalAuthorityCeilingHttpHeaders } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';

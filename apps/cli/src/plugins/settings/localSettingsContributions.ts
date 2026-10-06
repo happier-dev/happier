@@ -1,11 +1,8 @@
-import {
-    PluginSettingsContributionV2Schema,
-    type PluginSettingFieldV2,
-    type PluginSettingsContributionV2,
-} from '@happier-dev/protocol';
+import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
+import type { PluginSettingFieldV2, PluginSettingsContributionV2 } from '@happier-dev/protocol';
 
 import type { ResolvedSettingsContribution } from '@/plugins/projection/registry/types';
-import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     evaluateContributionAvailability,
     type ContributionPolicyFacts,

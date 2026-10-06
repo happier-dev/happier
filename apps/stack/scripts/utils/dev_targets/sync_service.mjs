@@ -19,6 +19,7 @@ import {
 } from './mutagen_runtime.mjs';
 import {
   ensureDevTargetSyncProject,
+  flushDevTargetSync,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   prepareDevTargetOpenSsh,
   releaseIndependentDevTargetSyncProject,
@@ -178,7 +179,16 @@ async function inspectAndRepairSync({
   inspectSync,
   repairSync,
 }) {
-  const status = await inspectSync({ target, stackBaseDir, env });
+  let status = await inspectSync({ target, stackBaseDir, env });
+  // With both endpoints unwatched, Mutagen waits for a flush even for the
+  // first scan. Seed it here so normal command admission can require a scan.
+  if (status.state === 'synchronizing'
+    && status.session?.alpha?.watch?.mode === 'no-watch'
+    && status.session?.beta?.watch?.mode === 'no-watch'
+    && !(status.session.successfulCycles > 0)) {
+    await flushDevTargetSync({ target, env });
+    status = await inspectSync({ target, stackBaseDir, env });
+  }
   const repair = await repairSync({ target, status, sourceDir, stackBaseDir, env });
   if (!repair?.repaired) return status;
   return {
@@ -242,7 +252,7 @@ export async function startDevTargetSyncService(
       target,
       sourceDir,
       stackBaseDir,
-      env,
+      env: project.env,
       inspectSync,
       repairSync,
     });

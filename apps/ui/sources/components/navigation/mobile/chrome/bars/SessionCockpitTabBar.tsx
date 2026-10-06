@@ -8,7 +8,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
-import { useLocalSettingMutable, useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
+import { useSession, useSessionProjectScmStatus, useSetting } from '@/sync/domains/state/storage';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
@@ -17,12 +17,14 @@ import { t } from '@/text';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
-    SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS,
     resolveSessionCockpitMobileCatalog,
     resolveSessionCockpitMobileTabVisibility,
     type SessionCockpitMobileCatalogEntry,
 } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
-import { toggleSessionCockpitBarSurface } from '@/sync/domains/settings/mobileSurfacePinning';
+import { updateNavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
+import { Modal } from '@/modal';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveFloatingTabBarSlotCount } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { layout } from '@/components/ui/layout/layout';
@@ -101,7 +103,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
     const scmStatus = useSessionProjectScmStatus(props.sessionId, props.serverId);
     const gitBadgeMode = useSetting('tabBarGitBadgeMode');
     const openTabsBadgeEnabled = useSetting('tabBarOpenTabsBadgeEnabled');
-    const [barSurfaceIds, setBarSurfaceIds] = useLocalSettingMutable('sessionCockpitBarSurfaceIds');
+    const { preferences, setPreferences } = useNavigationSurfacePlacement('sessionTabBar');
     // "Always swipe between sessions" depends on the sideways swipe itself.
     const alwaysSwipeSetting = useSetting('sessionCockpitSwipeAlwaysSessionsEnabled');
     const swipeSetting = useSetting('sessionCockpitSwipeNavigationEnabled');
@@ -138,10 +140,10 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
     }), [boardFeatureEnabled, sessionSharingAvailable, props.pluginPlacements, props.projectionGeneration, props.terminalTabAvailable]);
     const visibility = React.useMemo(() => resolveSessionCockpitMobileTabVisibility({
         catalog,
-        barSurfaceIds,
+        preferences,
         slotCount,
         alwaysSwipe,
-    }), [alwaysSwipe, barSurfaceIds, catalog, slotCount]);
+    }), [alwaysSwipe, preferences, catalog, slotCount]);
     // A scrolling bar owns the horizontal axis; the band's session swipe reads this and steps aside.
     const barScrolls = visibility.mode === 'scroll';
     React.useEffect(() => {
@@ -211,7 +213,20 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
         ...visibility.held.map((entry) => ({ entry, pinned: true })),
         ...visibility.overflow.map((entry) => ({ entry, pinned: false })),
     ];
-    const menuItems: readonly DropdownMenuItem[] = menuEntries.map(({ entry, pinned }) => {
+    const customize = () => {
+        setMoreOpen(false);
+        fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
+            Modal.show({ component: NavigationPlacementCustomizer, props: {
+                surfaceId: 'sessionTabBar',
+                items: catalog.filter((entry) => entry.id !== 'chat').map((entry) => {
+                    const tab = tabForEntry(entry);
+                    return { id: entry.id, title: tab.label, icon: typeof tab.icon === 'string' ? tab.icon : 'puzzle-piece' as const, defaultPlacement: entry.defaultPlacement };
+                }),
+                testID: 'session-cockpit-customizer',
+            } });
+        }), { tag: 'SessionCockpitTabBar.customize' });
+    };
+    const menuItems: readonly DropdownMenuItem[] = [...menuEntries.map(({ entry, pinned }) => {
         const tab = tabForEntry(entry);
         const pinLabel = t(pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar');
         return {
@@ -245,17 +260,13 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
                         variant="plain"
                         onPress={(event) => {
                             event?.stopPropagation?.();
-                            setBarSurfaceIds([...toggleSessionCockpitBarSurface(
-                                barSurfaceIds,
-                                entry.id,
-                                SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS,
-                            )]);
+                            setPreferences(updateNavigationPlacement(preferences, entry.id, pinned ? 'overflow' : 'pinned'));
                         }}
                     />
                 </>
             ),
         };
-    });
+    }), { id: 'customize', title: t('navigationPlacement.customize'), icon: <Icon name="sliders-horizontal" size={18} />, testID: 'session-cockpit-more-customize' }];
     // A tool opened from More lives behind it: the More slot shows that tool, selected.
     const activeBehindMore = visibility.visible.some((entry) => entry.id === props.activeSurface)
         ? null
@@ -282,6 +293,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
                     selectedId={activeBehindMore ? props.activeSurface : null}
                     showCategoryTitles
                     onSelect={(surface) => {
+                        if (surface === 'customize') { customize(); return; }
                         setMoreOpen(false);
                         props.onSurfacePress(surface as SessionMobileSurface);
                     }}

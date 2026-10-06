@@ -1,9 +1,6 @@
-import {
-    browserViewKey,
-    BrowserDiagnosticEventV1Schema,
-    type BrowserDiagnosticEventV1,
-    type BrowserDiagnosticsSnapshotV1,
-} from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserDiagnosticEventV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { BrowserDiagnosticEventV1, BrowserDiagnosticsSnapshotV1 } from '@happier-dev/protocol';
 
 const DEFAULT_MAX_EVENTS_PER_VIEW = 1_000;
 const DEFAULT_MAX_SNAPSHOT_EVENTS = 5_000;

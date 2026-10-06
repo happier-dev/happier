@@ -289,6 +289,13 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(first).not.toBeNull();
+    const firstAuth = JSON.parse(await readFile(join(first!.env.CODEX_HOME!, 'auth.json'), 'utf8'));
+    expect(firstAuth).toMatchObject({
+      auth_mode: 'chatgptAuthTokens',
+      access_token: 'access',
+      refresh_token: '',
+      tokens: { access_token: 'access', refresh_token: '' },
+    });
     const copiedConfig = await readFile(join(first!.env.CODEX_HOME!, 'config.toml'), 'utf8');
     expect(copiedConfig).toContain('model = "gpt-5.2-codex"');
     expect(copiedConfig).toContain('cli_auth_credentials_store = "file"');
@@ -311,6 +318,14 @@ describe('materializeConnectedServicesForSpawn', () => {
         providerEmail: null,
       },
     });
+
+    // Simulate a predecessor-created materialized home before resume/replacement.
+    await writeFile(join(first!.env.CODEX_HOME!, 'auth.json'), JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: { access_token: 'historical-access', refresh_token: 'historical-refresh' },
+    }));
+    await mkdir(join(first!.env.CODEX_HOME!, 'accounts'), { recursive: true });
+    await writeFile(join(first!.env.CODEX_HOME!, 'accounts', 'old.json'), '{"refresh_token":"historical-refresh"}');
 
     const second = await materializeConnectedServicesForSpawn({
       agentId: 'codex',
@@ -344,6 +359,12 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(second).not.toBeNull();
     const auth = JSON.parse(await readFile(join(second!.env.CODEX_HOME!, 'auth.json'), 'utf8'));
     expect(auth.access_token).toBe('isolated-access');
+    expect(auth).toMatchObject({
+      auth_mode: 'chatgptAuthTokens',
+      refresh_token: '',
+      tokens: { access_token: 'isolated-access', refresh_token: '' },
+    });
+    await expect(lstat(join(second!.env.CODEX_HOME!, 'accounts'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(lstat(join(second!.env.CODEX_HOME!, 'config.toml'))).rejects.toThrow();
     await expect(lstat(join(second!.env.CODEX_HOME!, 'prompts'))).rejects.toThrow();
     await expect(lstat(join(second!.env.CODEX_HOME!, 'sessions'))).rejects.toThrow();

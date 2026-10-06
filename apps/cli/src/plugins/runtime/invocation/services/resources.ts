@@ -6,24 +6,11 @@ import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin
 import { type ResourceDescriptor as PluginResourceDescriptor, type PluginResourceKind, type ResourcesService as PluginResourcesService } from '@happier-dev/plugin-sdk/resources';
 import type { PluginRuntimeRegistration } from '@happier-dev/plugin-sdk/host/registration';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
-import {
-    createPluginContributionIdentity,
-    isDynamicPluginResourceContributionV2,
-    normalizeStrictJsonValue,
-    pluginJsonValuesEqual,
-    PluginDynamicResourceScopeV1Schema,
-    PluginResourceKindV2Schema,
-    PluginResourceContextV1Schema,
-    PluginResourceSourceV2Schema,
-    type PluginProjectionBrandAssetV2,
-    type PluginDynamicResourceScopeV1,
-    type JsonValue,
-    type PluginResourceContextV1,
-    type PluginUiResourceBindingCapabilityV1,
-    type PluginResourceContributionV2,
-    type PluginResourceSourceV2,
-    type SessionAccessWitnessV1,
-} from '@happier-dev/protocol';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isDynamicPluginResourceContributionV2, PluginDynamicResourceScopeV1Schema, PluginResourceKindV2Schema, PluginResourceContextV1Schema, PluginResourceSourceV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import type { PluginProjectionBrandAssetV2, PluginDynamicResourceScopeV1, JsonValue, PluginResourceContextV1, PluginUiResourceBindingCapabilityV1, PluginResourceContributionV2, PluginResourceSourceV2, SessionAccessWitnessV1 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry, ResolvedResourceContribution } from '@/plugins/projection/registry/types';
 import {

@@ -34,7 +34,10 @@ import {
   startCodexAppServerRuntime,
   type CodexAppServerRuntimeHost,
 } from './runtime.js';
-import { sanitizeCodexAppServerRuntimeAuthClassification } from './turns/failure.js';
+import {
+  isCodexAppServerRejectedStartModelEntitlementError,
+  sanitizeCodexAppServerRuntimeAuthClassification,
+} from './turns/failure.js';
 import { parseCodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
 import { reconcileCodexResumeRolloutPath } from '../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import type { CodexGoalProjection } from './work/goalProjection.js';
@@ -292,19 +295,7 @@ function readBoundedRuntimeAuthDiagnosticDetails(
     (error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
   );
   if (!classification) return undefined;
-  const boundedClassification = {
-    kind: classification.kind,
-    source: classification.source,
-    ...(classification.limitCategory ? { limitCategory: classification.limitCategory } : {}),
-    ...(classification.planType ? { planType: classification.planType } : {}),
-    ...(typeof classification.retryAfterMs === 'number'
-      ? { retryAfterMs: classification.retryAfterMs }
-      : {}),
-    ...(typeof classification.resetsAtMs === 'number'
-      ? { resetsAtMs: classification.resetsAtMs }
-      : {}),
-  };
-  return toJsonValue({ runtimeAuthClassification: boundedClassification });
+  return toJsonValue({ runtimeAuthClassification: classification });
 }
 
 function createSanitizedNativeRuntimeError(message: string, error: unknown): Error {
@@ -325,8 +316,11 @@ function createSanitizedNativeRuntimeError(message: string, error: unknown): Err
   ) {
     Object.assign(sanitized, { happierNativeResumeIdentityMismatch: true });
   }
-  if (error instanceof Error && 'code' in error && error.code === 'AGENT_RESUME_PROVIDER_STATE_MISSING') {
-    Object.assign(sanitized, { code: 'AGENT_RESUME_PROVIDER_STATE_MISSING' as const });
+  if (error instanceof Error && 'code' in error && (
+    error.code === 'AGENT_RESUME_PROVIDER_STATE_MISSING'
+    || error.code === 'codex_refresh_free_auth_unsupported'
+  )) {
+    Object.assign(sanitized, { code: error.code });
   }
   return sanitized;
 }
@@ -660,10 +654,29 @@ function createCodexNativeAppServerConversationRuntime(
           ...(request.delivery.kind === 'newTurn' ? {} : { deliverAs: request.delivery.kind }),
         });
       } catch (error) {
+        const admissionFailure = readBufferedEventFailure();
         const queued = bufferedEvents?.drain() ?? [];
         bufferedEvents?.dispose();
         bufferedEvents = null;
         bufferedEventFailure = null;
+        // The app-server emits attempted host lifecycle before turn/start replies.
+        // Only those synthetic events may be discarded for a proven rejection.
+        const onlyAttemptedLifecycle = queued.every(({ event }) => (
+          (event.kind === 'turn-start' && !event.agentTurnId && event.startedBy === 'host')
+          || (event.kind === 'turn-failed' && !event.agentTurnId)
+          || (event.kind === 'runtime-ended' && event.cause === 'protocolError'
+            && event.diagnostic?.code === 'codex_app_server_turn_failed')
+        ));
+        if (request.delivery.kind === 'newTurn' && admissionFailure === null
+          && onlyAttemptedLifecycle && isCodexAppServerRejectedStartModelEntitlementError(error)) {
+          const failure = diagnostic(
+            'connected_service_model_start_rejected',
+            'The connected account cannot start the requested model.',
+            readBoundedRuntimeAuthDiagnosticDetails(error),
+          );
+          emit({ kind: 'input-rejected', inputIds: request.inputIds, retryable: false, diagnostic: failure });
+          return { status: 'rejected', retryable: false, diagnostic: failure };
+        }
         const failure = diagnostic(
           'codex_send_outcome_unknown',
           'Codex send outcome is unknown.',

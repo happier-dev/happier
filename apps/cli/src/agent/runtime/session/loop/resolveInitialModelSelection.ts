@@ -1,8 +1,6 @@
-import {
-  BackendTargetKeyV2InputSchema,
-  SessionModelSelectionResolutionError,
-  type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+import { BackendTargetKeyV2InputSchema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 export function resolveInitialHostSessionModelSelection(params: Readonly<{
   agentTargetKey: string;

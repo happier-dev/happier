@@ -1,11 +1,9 @@
 import { resolve } from 'path';
 
-import { createScmCapabilities, type ScmBackendPreference } from '@happier-dev/protocol';
-import {
-    SCM_OPERATION_ERROR_CODES,
-    ScmOperationErrorCodeSchema,
-    type ScmOperationErrorCode,
-} from '@happier-dev/protocol';
+import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
+import type { ScmBackendPreference } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm/operationError';
+import type { ScmOperationErrorCode } from '@happier-dev/protocol';
 
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import {

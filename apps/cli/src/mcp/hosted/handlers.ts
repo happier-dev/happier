@@ -9,11 +9,9 @@ import type {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import {
-  compilePluginJsonSchema,
-  isValidPluginJsonSchemaValue,
-  type PluginJsonSchemaValidator,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import type { PluginJsonSchemaValidator } from '@happier-dev/protocol';
 
 import { assertHostedMcpServerRegistration } from './validation';
 import type {

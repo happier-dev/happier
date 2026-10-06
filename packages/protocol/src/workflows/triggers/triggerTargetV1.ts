@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionV1Schema } from '../workflowV1.js';
-import { AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
+import { AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeV2.js';
 
 export const TriggerTargetV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('workflow'), ref: WorkflowDefinitionRefV1StringSchema }).strict(),
@@ -17,7 +17,7 @@ export function readTriggerTargetV1(
   automation: Readonly<{ workflowDefinitionId?: string | null; scopeSessionId?: string | null }>,
   openedPayload: unknown,
 ): ReadTriggerTargetV1Result {
-  const payload = AutomationStoredWorkflowDefinitionV2Schema.safeParse(openedPayload);
+  const payload = AutomationStoredWorkflowDefinitionV2ReadSchema.safeParse(openedPayload);
   if (!payload.success || (payload.data.onComplete !== undefined && !automation.scopeSessionId)) {
     return { kind: 'unavailable', code: 'source_unavailable' };
   }

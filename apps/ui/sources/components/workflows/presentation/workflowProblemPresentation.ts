@@ -2,6 +2,7 @@ import type {
     WorkflowOperationErrorCodeV1,
     WorkflowRunAvailabilityV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowDefinitionContentUnavailableReasonV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
@@ -115,6 +116,23 @@ const WORKFLOW_AVAILABILITY_REASON_KEYS = {
     custody_settled: 'workflows.problem.custodySettled',
 } as const satisfies Readonly<Record<string, TranslationKeyNoParams>>;
 
+const WORKFLOW_CONTENT_REASON_KEYS = {
+    invalid_header: 'workflows.contentReasons.invalidHeader',
+    revision_mismatch: 'workflows.contentReasons.revisionMismatch',
+    missing_body: 'workflows.contentReasons.missingBody',
+    invalid_body: 'workflows.contentReasons.invalidBody',
+    not_found: 'workflows.contentReasons.notFound',
+} as const satisfies Readonly<Record<WorkflowDefinitionContentUnavailableReasonV1, TranslationKeyNoParams>>;
+
+export function formatWorkflowDefinitionContentUnavailableReason(reason: WorkflowDefinitionContentUnavailableReasonV1): string {
+    return t(WORKFLOW_CONTENT_REASON_KEYS[reason]);
+}
+
+/** A missing rejected-header title is unavailable, not a fabricated authored name. */
+export function formatWorkflowDefinitionLibraryTitle(definition: Readonly<{ metadata: WorkflowDefinitionMetadataV1 | null }>): string {
+    return definition.metadata?.title ?? t('common.unavailable');
+}
+
 function repairLabelFor(repair: WorkflowProblemRepair): string | null {
     if (repair === 'retry') return t('workflows.retry');
     if (repair === 'refresh') return t('common.refresh');
@@ -127,7 +145,7 @@ function present(
 ): WorkflowProblemPresentation {
     return {
         code,
-        title: shape.accessibilitySemantics === 'status'
+        title: code === 'content_unavailable' ? t('common.unavailable') : shape.accessibilitySemantics === 'status'
             ? t('workflows.problem.waitingTitle')
             : t('workflows.problem.title'),
         message: t(shape.messageKey),
@@ -154,6 +172,10 @@ const GENERIC_SHAPE: WorkflowProblemShape = {
 export function resolveWorkflowProblemPresentation(error: unknown): WorkflowProblemPresentation {
     const code = error instanceof WorkflowActionError ? error.code : null;
     const failure = error instanceof WorkflowActionError ? error.failure : null;
+    if (failure?.errorCode === 'content_unavailable' && failure.details !== undefined) {
+        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
+            messageKey: WORKFLOW_CONTENT_REASON_KEYS[failure.details.reason] });
+    }
     if (failure?.errorCode === 'legacy_conversion_unsupported' && failure.details.reason === 'channel_reply_handoff') {
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.legacy_conversion_unsupported,
             messageKey: 'workflows.triggers.legacy.channelReplyRefusal' });

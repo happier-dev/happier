@@ -4,6 +4,7 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 
 /**
@@ -15,15 +16,21 @@ import { t } from '@/text';
 export function useWidgetFrameRename(input: Readonly<{
     title: string;
     /** The surface's rename write; absent when this viewer cannot rename the copy. */
-    onRename?: (next: string) => void;
+    onRename?: (next: string) => void | Promise<void>;
     testID: string;
 }>): Readonly<{ begin: (() => void) | undefined; field: React.ReactElement | null }> {
     const [renaming, setRenaming] = React.useState(false);
     const onRename = input.onRename;
     const begin = React.useCallback(() => setRenaming(true), []);
-    const commit = React.useCallback((next: string) => {
-        setRenaming(false);
-        onRename?.(next);
+    const commit = React.useCallback(async (next: string): Promise<boolean> => {
+        try {
+            await onRename?.(next);
+            setRenaming(false);
+            return true;
+        } catch {
+            Modal.alert(t('common.error'), t('widgetAdd.saveFailed'));
+            return false;
+        }
     }, [onRename]);
     const cancel = React.useCallback(() => setRenaming(false), []);
     return {
@@ -36,24 +43,34 @@ export function useWidgetFrameRename(input: Readonly<{
 
 function WidgetFrameTitleField(props: Readonly<{
     value: string;
-    onCommit: (next: string) => void;
+    onCommit: (next: string) => Promise<boolean>;
     onCancel: () => void;
     testID: string;
 }>): React.ReactElement {
     const [draft, setDraft] = React.useState(props.value);
+    const [saving, setSaving] = React.useState(false);
     // Enter, blur and Escape can each arrive; only the first one decides.
     const settled = React.useRef(false);
     const finish = (keep: boolean) => {
         if (settled.current) return;
         settled.current = true;
-        if (keep) props.onCommit(draft.trim());
-        else props.onCancel();
+        if (keep) {
+            setSaving(true);
+            void props.onCommit(draft.trim()).then(saved => {
+                if (!saved) {
+                    settled.current = false;
+                    setSaving(false);
+                }
+            });
+        } else props.onCancel();
     };
     return (
         <TextInput
             testID={props.testID}
             style={styles.input}
             value={draft}
+            editable={!saving}
+            accessibilityState={{ busy: saving }}
             autoFocus
             selectTextOnFocus
             accessibilityLabel={t('sessionBoard.item.renameA11y')}

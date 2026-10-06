@@ -1,6 +1,4 @@
-import {
-  AgentSessionStartupInstructionsMarkerV1Schema,
-} from '@happier-dev/protocol';
+import { AgentSessionStartupInstructionsMarkerV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 
 import { readProcessIdentityByPid } from '../processIdentity';

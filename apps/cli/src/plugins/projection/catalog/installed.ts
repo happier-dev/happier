@@ -17,7 +17,7 @@ import { resolvePluginAuthoringSource } from '@/plugins/authoring/sourceModule';
 import { removeInstalledPlugin, type RemoveInstalledPluginResult } from '@/plugins/store/install/remove';
 import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
 import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
-import { resolvePluginSource } from '@/plugins/discovery/sources/resolve';
+import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
 import type { ResolvedPluginSource } from '@/plugins/discovery/sources/resolve';
 import {
   resolvePluginDaemonEntryPath,
@@ -276,6 +276,7 @@ async function resolvePluginCatalogEntryFromRecord(
   desiredGeneration: string | null = null,
   rollbackAvailability: 'available' | 'unavailable' = 'unavailable',
   admittedIntegrity: string | null = null,
+  approvedAuthorityManifest?: CanonicalPluginManifest,
 ): Promise<PluginCatalogEntry> {
   if (record.install.mode !== 'managed_install' && record.source.kind !== 'path') {
     return buildCatalogEntry({
@@ -296,33 +297,7 @@ async function resolvePluginCatalogEntryFromRecord(
     });
   }
 
-  const preferredLocator = record.install.mode === 'managed_install'
-    ? record.install.installedPath ?? record.source.resolvedPath ?? null
-    : record.source.kind === 'path'
-      ? record.source.manifestPath
-      : record.source.resolvedPath ?? null;
-
-  const sourceResolution = typeof preferredLocator === 'string' && preferredLocator.trim().length > 0
-    ? await resolvePluginSource({
-      source: record.source.kind === 'path'
-        ? record.source
-        : {
-            ...record.source,
-            kind: 'path',
-            locator: preferredLocator,
-            installPolicy: 'link',
-          },
-      manifestPathHint: record.source.manifestPath,
-    })
-    : {
-        ok: false,
-        diagnostics: [
-          {
-            code: 'plugin_source_missing',
-            message: `Plugin state for '${pluginId}' is missing a resolvable install path`,
-          },
-        ],
-      } satisfies ResolvedPluginSource;
+  const sourceResolution = await resolveInstalledPluginSource({ record, approvedAuthorityManifest });
 
   const resolvedManifest = readResolvedManifest(pluginId, sourceResolution);
   const daemonEntryDiagnostics = await (async (): Promise<readonly PluginCompatibilityDiagnostic[]> => {
@@ -364,6 +339,7 @@ async function projectInstalledPluginCatalog(
   pluginOccurrenceIds: Readonly<Record<string, Readonly<{ immutableGenerationId: string }>>>,
   rollbackAvailabilityByPluginId: Readonly<Record<string, 'available' | 'unavailable'>>,
   admittedIntegrityByPluginId: Readonly<Record<string, string>>,
+  approvedAuthorityManifestsByPluginId: Readonly<Record<string, CanonicalPluginManifest>>,
 ): Promise<readonly PluginCatalogEntry[]> {
   const entries: PluginCatalogEntry[] = [];
 
@@ -374,6 +350,7 @@ async function projectInstalledPluginCatalog(
       pluginOccurrenceIds[pluginId]?.immutableGenerationId ?? null,
       rollbackAvailabilityByPluginId[pluginId] ?? 'unavailable',
       admittedIntegrityByPluginId[pluginId] ?? null,
+      approvedAuthorityManifestsByPluginId[pluginId],
     ));
   }
 
@@ -392,6 +369,7 @@ export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
       snapshot.pluginOccurrenceIds,
       snapshot.rollbackAvailabilityByPluginId,
       snapshot.admittedIntegrityByPluginId,
+      snapshot.approvedAuthorityManifestsByPluginId,
     ),
   });
 }

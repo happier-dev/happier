@@ -29,6 +29,10 @@ export async function runStackStopCommand({ rootDir, stackName, passthrough, jso
   });
 
   if (json) {
-    printResult({ json, data: { ok: true, stopped: out } });
+    printResult({ json, data: { ok: out.finalization?.finalized !== false, stopped: out } });
+  }
+  if (out.finalization?.finalized === false) {
+    if (!json) console.error(`[stack] ${stackName} stop incomplete: ${out.finalization.reason}`);
+    process.exitCode = 1;
   }
 }

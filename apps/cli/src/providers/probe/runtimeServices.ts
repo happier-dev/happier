@@ -1,26 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 
-import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  createProviderEndpointFingerprintV1,
-  createProviderErrorV1,
-  readContributedProviderCatalogParserIds,
-  createProviderManagedRuntimeDeclarationEqualityKeyV1,
-  createProviderProbeRequestFingerprintV1,
-  createProviderManagedProbeRequestFingerprintV1,
-  readOwnRecordValue,
-  resolveProviderManagedRuntimeDeclarationV1,
-  serializeModelVisibilityRefV1,
-  type ProviderErrorV1,
-  type ProviderCatalogRuntimeStateRecordV1,
-  type ProviderMergedCatalogRowV1,
-  type ProviderObservationAuthorizationFingerprintV1,
-  type ProviderProbeObservationIdentityV1,
-  type ProviderRuntimeStateFileV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
-import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rpc';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { createProviderEndpointFingerprintV1, createProviderProbeRequestFingerprintV1, createProviderManagedProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
+import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderErrorV1, ProviderCatalogRuntimeStateRecordV1, ProviderMergedCatalogRowV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { configuration } from '@/configuration';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';

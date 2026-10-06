@@ -1,9 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
-import {
-  SESSION_TRANSCRIPT_GET_MAX_LIMIT,
-  type SessionTranscriptGetExternalShareableResultV1,
-  type SessionTranscriptGetResult,
-} from '@happier-dev/protocol/actions';
+import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
+import type { SessionTranscriptGetExternalShareableResultV1, SessionTranscriptGetResult } from '@happier-dev/protocol/actions';
 
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { fetchTranscriptSemanticPage } from './transcript/fetchTranscriptSemanticPage';

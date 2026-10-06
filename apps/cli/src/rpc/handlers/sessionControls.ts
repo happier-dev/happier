@@ -1,50 +1,18 @@
 import { z } from 'zod';
 
-import {
-  ReviewStartInputSchema,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
-  SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
-  SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
-  SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema,
-  SessionConnectedServiceAuthApplyGenerationRequestV1Schema,
-  SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
-  SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema,
-  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1Schema,
-  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,
-  SessionGoalClearRequestV1Schema,
-  SessionGoalGetRequestV1Schema,
-  SessionGoalSetRequestV1Schema,
-  SessionPendingQueueWakeCapabilityRequestV1Schema,
-  SessionPendingQueueWakeRequestV1Schema,
-  SessionUsageLimitCheckNowRequestV1Schema,
-  SessionUsageLimitConsumeResetCreditRequestV1Schema,
-  SessionSkillCatalogListRequestV1Schema,
-  SessionTerminalComposerClearRequestV1Schema,
-  SessionTerminalComposerClearResultV1Schema,
-  SessionUsageLimitWaitResumeCancelRequestV1Schema,
-  SessionUsageLimitWaitResumeEnableRequestV1Schema,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  SessionVendorPluginCatalogListRequestV1Schema,
-  SessionWorkStateGetRequestV1Schema,
-  SessionWorkStateV1Schema,
-  buildUnsupportedSessionTerminalComposerClearResult,
-  SessionPendingInputInterruptAndRunRequestV1Schema,
-  SessionPendingInputInterruptAndRunResultV1Schema,
-  buildUnsupportedSessionPendingInputInterruptAndRunResult,
-  readDisplayableSessionWorkStateV1,
-  type SessionConnectedServiceAuthApplyGenerationRequestV1,
-  type SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
-  type ComposerContentHandleV1,
-  type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
-  type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
-  SessionMediaMessageMetaV1Schema,
-  SessionInputCancelExactTurnRequestV1Schema,
-  SessionInputCancelExactTurnResultV1Schema,
-  buildUnsupportedSessionInputCancelExactTurnResultV1,
-} from '@happier-dev/protocol';
-import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { SessionPendingMessageComposerAdmissionPrepareRequestV1Schema, SessionPendingMessageComposerAdmissionPrepareResponseV1Schema, SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema, SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema } from '@happier-dev/protocol/sessions/userMessageRpc';
+import { SessionConnectedServiceAuthApplyGenerationRequestV1Schema, SessionConnectedServiceAuthApplyGenerationResponseV1Schema, SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema, SessionConnectedServiceAuthReadRuntimeIdentityRequestV1Schema, SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema, SessionGoalClearRequestV1Schema, SessionGoalGetRequestV1Schema, SessionGoalSetRequestV1Schema, SessionUsageLimitCheckNowRequestV1Schema, SessionUsageLimitConsumeResetCreditRequestV1Schema, SessionSkillCatalogListRequestV1Schema, SessionUsageLimitWaitResumeCancelRequestV1Schema, SessionUsageLimitWaitResumeEnableRequestV1Schema, SessionVendorPluginCatalogListRequestV1Schema, SessionWorkStateGetRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { SessionPendingQueueWakeCapabilityRequestV1Schema, SessionPendingQueueWakeRequestV1Schema } from '@happier-dev/protocol/sessions/pending/sessionPendingQueueWakeV1';
+import { SessionTerminalComposerClearRequestV1Schema, SessionTerminalComposerClearResultV1Schema, buildUnsupportedSessionTerminalComposerClearResult } from '@happier-dev/protocol/sessions/control/terminalComposerClearV1';
+import { SessionPendingInputInterruptAndRunRequestV1Schema, SessionPendingInputInterruptAndRunResultV1Schema, buildUnsupportedSessionPendingInputInterruptAndRunResult } from '@happier-dev/protocol/sessions/control/pendingInputInterruptAndRunV1';
+import { SessionInputCancelExactTurnRequestV1Schema, SessionInputCancelExactTurnResultV1Schema, buildUnsupportedSessionInputCancelExactTurnResultV1 } from '@happier-dev/protocol/sessions/control/exactTurnCancellationV1';
+import type { SessionUsageLimitRecoveryResumePromptModeV1, SessionConnectedServiceAuthApplyGenerationRequestV1, SessionConnectedServiceAuthReadRuntimeIdentityRequestV1, ComposerContentHandleV1, SessionPendingMessageComposerAdmissionAcceptedRequestV1, SessionPendingMessageComposerAdmissionAbandonedRequestV1 } from '@happier-dev/protocol';
+import { SessionWorkStateV1Schema, readDisplayableSessionWorkStateV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { Metadata } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';

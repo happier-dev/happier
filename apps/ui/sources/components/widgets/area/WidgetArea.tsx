@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import type { WidgetAreaLayoutV1, WidgetInstanceV1, WidgetPlacementV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
@@ -18,7 +19,14 @@ import { Typography } from '@/constants/Typography';
 import { WidgetAddPopover } from '@/components/widgets/add/WidgetAddPopover';
 import { useAccountWidgetAddSections, type AccountWidgetSurfaceLabels } from '@/components/widgets/add/accountWidgetAddSections';
 import { WidgetFrame, type WidgetFramePlacement } from '@/components/widgets/frame/WidgetFrame';
-import { buildWidgetFrameStyleActions, buildWidgetInstanceActions, buildWidgetWidthActions } from '@/components/widgets/frame/widgetFrameMenu';
+import {
+    buildWidgetDefinitionActions,
+    buildWidgetFrameStyleActions,
+    buildWidgetInstanceActions,
+    buildWidgetMoveActions,
+    buildWidgetWidthActions,
+    orderWidgetMenu,
+} from '@/components/widgets/frame/widgetFrameMenu';
 import { WIDGET_FRAME_PLACEMENT_DEFAULTS, resolveWidgetFrameStyle } from '@/components/widgets/frame/widgetFrameStyle';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
@@ -26,9 +34,10 @@ import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInp
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
-import { runWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
+import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
+import { useIsNearViewport, type NearViewportSpan } from '@/components/widgets/nearViewport';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
@@ -68,7 +77,7 @@ export type WidgetAreaProps = Readonly<{
     /** The page's or project's name: "Add to PRs & Issues", "PRs & Issues uses Card". */
     surfaceName: string;
     /** Replaces the layout state with the host's own refusal (a Project without a known source). */
-    unavailable?: Readonly<{ title: string; reason: string; reasonCode: string }>;
+    unavailable?: Readonly<{ title: string; reason?: string; reasonCode: string }>;
     testID: string;
 }>;
 
@@ -81,9 +90,7 @@ export type WidgetAreaProps = Readonly<{
  */
 export function WidgetArea(props: WidgetAreaProps): React.ReactElement {
     if (props.unavailable || !props.port) {
-        const unavailable = props.unavailable ?? {
-            title: t('widgetAdd.areaUnavailableTitle'), reason: t('widgetAdd.areaUnavailableReason'), reasonCode: 'widget_area_unavailable',
-        };
+        const unavailable = props.unavailable ?? { title: t('widgetAdd.areaUnavailableTitle'), reasonCode: 'widget_area_unavailable' };
         return (
             <View testID={props.testID} style={styles.area}>
                 <WidgetAreaHeader title={props.title} meta={props.meta} testID={props.testID} />
@@ -93,7 +100,7 @@ export function WidgetArea(props: WidgetAreaProps): React.ReactElement {
                     size="line"
                     layout="inline"
                     title={unavailable.title}
-                    reason={unavailable.reason}
+                    {...(unavailable.reason ? { reason: unavailable.reason } : {})}
                     diagnosticCode={unavailable.reasonCode}
                 />
             </View>
@@ -106,11 +113,17 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     const layout = useWidgetAreaLayout(props.port, props.context);
     const addAnchorRef = React.useRef<View | null>(null);
     const [addOpen, setAddOpen] = React.useState(false);
-    const [notice, setNotice] = React.useState<string | null>(null);
+    // What the last change came to, said where it belongs (never a line that pushes the area down):
+    // a refused change on the card it was for, with Retry, until a later change succeeds; one held
+    // for someone's approval as the header's quiet meta. A refused add stays on its gallery tile.
+    const [notice, setNotice] = React.useState<AreaNotice | null>(null);
     const [organizing, setOrganizing] = React.useState(false);
     const state = layout.state;
     const ready = state.status === 'ready' ? state : null;
     const canAdd = ready?.canEdit === true;
+    // Organize exists only when there is something to organize (two or more widgets) and only for a
+    // coarse pointer: a hover-capable pointer already has each widget's grip (lab PG; DnD K1h).
+    const canOrganize = canAdd && (ready?.placements.length ?? 0) > 1 && (Platform.OS !== 'web' || readCoarsePrimaryPointer());
     const viewer = useActiveServerAccountScope();
     const focused = useIsFocused();
     const current = ready !== null && focused && viewer?.serverId === ready.surface.serverId && viewer.accountId === ready.surface.accountId;
@@ -129,7 +142,10 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
     const layoutWrite = layout.write;
     const write = React.useCallback(async (operation: Parameters<WidgetAreaWrite>[0]): Promise<WidgetAreaWriteOutcome> => {
         const outcome = await layoutWrite(operation);
-        setNotice(outcome.kind === 'refused' ? t('widgetAdd.areaWriteFailed') : outcome.kind === 'approvalPending' ? t('widgetAdd.areaApprovalPending') : null);
+        setNotice(outcome.kind === 'approvalPending' ? { kind: 'pending' }
+            : outcome.kind === 'refused' && 'instanceId' in operation
+                ? { kind: 'failed', instanceId: operation.instanceId, retry: () => write(operation) }
+                : null);
         return outcome;
     }, [layoutWrite]);
     const closeAdd = React.useCallback(() => setAddOpen(false), []);
@@ -138,12 +154,12 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
         <View ref={drop.ref} onLayout={drop.onLayout} testID={props.testID} style={styles.area}>
             <WidgetAreaHeader
                 title={props.title}
-                meta={props.meta}
+                meta={notice?.kind === 'pending' ? t('widgetAdd.areaApprovalPending') : props.meta}
                 testID={props.testID}
                 // The Add keeps its place while the layout first loads, so nothing moves on arrival.
                 add={state.status === 'loading' || canAdd ? (
                     <View style={styles.header}>
-                        {canAdd ? <RoundButton size="small" display="secondary" testID={`${props.testID}.organize`}
+                        {canOrganize ? <RoundButton size="small" display="secondary" testID={`${props.testID}.organize`}
                             title={t(organizing ? 'common.done' : 'entityDragDrop.organize.title')}
                             onPress={() => { setOrganizing(value => !value); drop.runtime.cancel('organize-changed'); }} /> : null}
                         <View ref={addAnchorRef} collapsable={false}>
@@ -163,7 +179,6 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                     </View>
                 ) : null}
             />
-            {notice ? <Text testID={`${props.testID}.notice`} style={styles.notice}>{notice}</Text> : null}
             {state.status === 'unavailable' ? (
                 <SurfaceStateCard
                     testID={`${props.testID}.unavailable`}
@@ -171,7 +186,6 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                     size="line"
                     layout="inline"
                     title={t('widgetAdd.areaUnavailableTitle')}
-                    reason={t('widgetAdd.areaUnavailableReason')}
                     diagnosticCode={state.reasonCode}
                 />
             ) : ready && ready.placements.length === 0 ? (
@@ -186,7 +200,8 @@ function WidgetAreaWithLayout(props: WidgetAreaProps & Readonly<{ port: WidgetAr
                 />
             ) : ready ? (
                 <WidgetAreaPlacements {...props} context={ready.context} surface={ready.surface} placements={ready.placements} canEdit={ready.canEdit}
-                    current={current} organizing={organizing} admitWidgetMovement={movement.admit} write={write} />
+                    current={current} organizing={organizing && canOrganize} admitWidgetMovement={movement.admit} write={write}
+                    failed={notice?.kind === 'failed' ? notice : null} />
             ) : null}
             {ready ? <SessionSurfaceEntityFeedback kind="widget-area-instance" scope={ready.surface} address={null} widgetSurface={ready.surface} testID={`${props.testID}.move`} /> : null}
             <SessionSurfaceEntityTargetFeedback drag={drop} testID={props.testID} />
@@ -210,14 +225,19 @@ function WidgetAreaHeader(props: Readonly<{ title: string; meta?: string | undef
     return (
         <View style={styles.header}>
             <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>{props.title}</Text>
-            {props.meta ? <Text style={styles.meta} numberOfLines={1}>{props.meta}</Text> : null}
+            {props.meta ? <Text style={styles.meta} numberOfLines={1} testID={`${props.testID}.meta`}>{props.meta}</Text> : null}
             <View style={styles.grow} />
             {props.add ?? null}
         </View>
     );
 }
 
+type AreaNotice =
+    | Readonly<{ kind: 'pending' }>
+    | Readonly<{ kind: 'failed'; instanceId: string; retry: () => Promise<WidgetAreaWriteOutcome> }>;
+
 type PlacementsProps = WidgetAreaProps & Readonly<{
+    failed: Extract<AreaNotice, { kind: 'failed' }> | null;
     surface: WidgetSurfaceRefV1;
     placements: WidgetAreaLayoutV1['instances'];
     canEdit: boolean;
@@ -232,6 +252,7 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
         <WidgetAreaItem
             key={placement.instance.id}
             {...props}
+            failed={props.failed?.instanceId === placement.instance.id ? props.failed : null}
             placement={placement}
             index={index}
             count={props.placements.length}
@@ -262,18 +283,51 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const providedContext = React.useMemo(() => widgetProvidedContext(context), [context]);
     const focused = useIsFocused();
     const hover = useRowActionHoverHost();
+    const tracker = useOptionalPluginUiScrollActivityTracker();
+    const sectionRef = React.useRef<View | null>(null);
+    const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
+    const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
+    const near = useIsNearViewport(tracker, span);
+    const [bodyHeight, setBodyHeight] = React.useState(0);
+    const active = props.current && focused && near;
+    const measure = React.useCallback(() => {
+        if (!tracker) return;
+        const node = sectionRef.current;
+        const measurement = tracker.measureSpan(node);
+        latestMeasurement.current = measurement;
+        void measurement.then(next => {
+            if (latestMeasurement.current !== measurement || sectionRef.current !== node) return;
+            setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
+        });
+    }, [tracker]);
+    React.useEffect(() => {
+        if (!tracker) return;
+        let revision = tracker.getLayoutRevision();
+        measure();
+        const unsubscribe = tracker.subscribe(() => {
+            const next = tracker.getLayoutRevision();
+            if (next === revision) return;
+            revision = next;
+            measure();
+        });
+        return () => { unsubscribe(); latestMeasurement.current = null; };
+    }, [measure, tracker, focused, instance.id]);
+    const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = event.nativeEvent.layout.height;
+        setBodyHeight(current => current === height ? current : height);
+    }, []);
     const [menuFocused, setMenuFocused] = React.useState(false);
     const bindingLabel = useWidgetInstanceBindingLabel(instance, candidate, context);
 
-    const saveInputs = React.useCallback((bindings: WidgetInstanceV1['bindings']) => runWidgetSetupCommand(async () => {
-        const outcome = await write({ actionId: 'widgets.instance.inputs.set', instanceId: instance.id, bindings });
-        if (outcome.kind === 'refused') throw new Error(outcome.errorCode);
-    }, t('widgetAdd.saveFailed')), [instance.id, write]);
+    const saveInputs = React.useCallback((bindings: WidgetInstanceV1['bindings']) => runAcknowledgedWidgetSetupCommand(
+        () => write({ actionId: 'widgets.instance.inputs.set', instanceId: instance.id, bindings }),
+        t('widgetAdd.saveFailed'),
+    ), [instance.id, write]);
     const edit = useWidgetInputsEditor({
         instance, candidate, scope: surface, context, audience: 'personal',
         ...(props.canEdit ? { setInputs: saveInputs } : {}), testID,
     });
-    const definition = useWidgetDefinitionFlows({ instance, scope: surface, anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
+    const definition = useWidgetDefinitionFlows({ instance, scope: surface, providedContext, anchorRef: edit.anchorRef, editInputs: edit.editInputs, testID });
     const title = instance.displayName ?? candidate?.title ?? t('sessionBoard.item.pluginUnavailable.title');
     const drag = useSessionSurfaceEntityDrag(props.current && props.canEdit ? {
         scope: surface, title, isCurrent: () => props.current && props.canEdit && props.placements.some(entry => entry.instance.id === instance.id),
@@ -293,10 +347,12 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const renaming = useWidgetFrameRename({
         title,
         testID,
-        ...(props.canEdit ? { onRename: (next: string) => {
+        ...(props.canEdit ? { onRename: async (next: string) => {
             // An empty name, or the widget's own, goes back to it.
             const displayName = next.length > 0 && next !== candidate?.title ? next : null;
-            if ((displayName ?? undefined) !== instance.displayName) void write({ actionId: 'widgets.instance.rename', instanceId: instance.id, displayName });
+            if ((displayName ?? undefined) === instance.displayName) return;
+            const outcome = await write({ actionId: 'widgets.instance.rename', instanceId: instance.id, displayName });
+            if (outcome.kind === 'refused') throw new Error(outcome.errorCode);
         } } : {}),
     });
 
@@ -318,28 +374,33 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 compactThreshold={ALWAYS_OVERFLOW}
                 compactActionIds={[]}
                 overflowTriggerTestID={`${testID}.menuTrigger`}
-                overflowTriggerAccessibilityLabel={`${t('settingsOverview.homeSectionOptions')}: ${title}`}
-                actions={[
-                    ...buildWidgetInstanceActions({ editInputs: edit.editInputs, onRename: renaming.begin, onAbout: definition.about }),
-                    { id: 'moveTo', title: t('entityDragDrop.organize.title'), icon: 'arrows-down-up', onPress: toggle },
-                    { id: 'moveUp', title: t('common.moveUp'), icon: 'caret-up', disabled: props.index === 0,
-                        onPress: () => { void write({ actionId: 'widgets.instance.move', instanceId: instance.id, toIndex: props.index - 1 }); } },
-                    { id: 'moveDown', title: t('common.moveDown'), icon: 'caret-down', disabled: props.index === props.count - 1,
-                        onPress: () => { void write({ actionId: 'widgets.instance.move', instanceId: instance.id, toIndex: props.index + 1 }); } },
-                    ...(geometry === 'grid' ? buildWidgetWidthActions({
+                overflowTriggerAccessibilityLabel={`${t('widgetAdd.widgetOptions')}: ${title}`}
+                actions={orderWidgetMenu({
+                    instance: buildWidgetInstanceActions({ editInputs: edit.editInputs, onRename: renaming.begin }),
+                    width: geometry === 'grid' ? buildWidgetWidthActions({
                         width: placement.width ?? 'half',
                         onSet: (width) => { void write({ actionId: 'widgets.instance.width.set', instanceId: instance.id, width }); },
-                    }) : []),
-                    ...buildWidgetFrameStyleActions({
+                    }) : [],
+                    frame: buildWidgetFrameStyleActions({
                         placement: GEOMETRY_PLACEMENT[geometry],
                         surfaceDefault: WIDGET_FRAME_PLACEMENT_DEFAULTS[GEOMETRY_PLACEMENT[geometry]],
                         override: placement.frameStyle ?? null,
                         surfaceLabel: props.surfaceName,
                         onSet: (style) => { void write({ actionId: 'widgets.instance.frame.set', instanceId: instance.id, frameStyle: style }); },
                     }),
-                    { id: 'remove', title: t('common.remove'), icon: 'trash', destructive: true,
-                        onPress: () => { void write({ actionId: 'widgets.instance.remove', instanceId: instance.id }); } },
-                ]}
+                    // One Move… where the host binds widget movement: the Organize chooser lists every place
+                    // it can go (lab dbind E). Without it, the steps that reorder this area.
+                    move: buildWidgetMoveActions({
+                        index: props.index,
+                        count: props.count,
+                        ...(props.port?.movement ? { chooser: toggle } : {
+                            onMove: (delta: -1 | 1) => { void write({ actionId: 'widgets.instance.move', instanceId: instance.id, toIndex: props.index + delta }); },
+                        }),
+                    }),
+                    definition: buildWidgetDefinitionActions({ onAbout: definition.about }),
+                    remove: [{ id: 'remove', title: t('common.remove'), icon: 'trash', destructive: true,
+                        onPress: () => { void write({ actionId: 'widgets.instance.remove', instanceId: instance.id }); } }],
+                })}
                     />
                 </View>} />
         </View>
@@ -347,8 +408,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
 
     const body = React.useMemo(() => ({
         kind: 'content' as const,
-        // Its body exists only while the page is the focused route; leaving holds no plugin work.
-        children: focused ? (
+        // Release executable demand outside the host's admitted window while retaining its room.
+        children: active ? (
+            <View testID={`${testID}.bodyHeight`} onLayout={onBodyLayout}>
             <WidgetSurface
                 scope={surface}
                 instance={instance}
@@ -360,11 +422,13 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 {...(edit.onRepairInputs ? { onRepairInputs: edit.onRepairInputs } : {})}
                 testID={`${testID}.body`}
             />
-        ) : null,
-    }), [candidate, edit.onRepairInputs, focused, instance, providedContext, runtime, surface, testID]);
+            </View>
+        ) : <View testID={`${testID}.deferred`} style={{ minHeight: bodyHeight }} />,
+    }), [active, bodyHeight, candidate, edit.onRepairInputs, instance, onBodyLayout, providedContext, runtime, surface, testID]);
 
     return (
-        <View ref={drag.ref} onLayout={drag.onLayout} testID={testID} style={styles.cell} {...hover.hoverProps}>
+        <View ref={node => { sectionRef.current = node; drag.ref(node); }} collapsable={false}
+            onLayout={() => { measure(); drag.onLayout(); }} testID={testID} style={styles.cell} {...hover.hoverProps}>
             <WidgetFrame
                 testID={`${testID}.frame`}
                 frameStyle={frameStyle}
@@ -375,6 +439,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 source={bindingLabel ?? candidate?.pluginName ?? undefined}
                 menu={menu}
                 body={body}
+                // A change to this card that was refused stays on it, with Retry, until one succeeds.
+                footer={props.failed ? { kind: 'refreshFailed', reason: t('widgetAdd.areaWriteFailed'), onRetry: props.failed.retry } : null}
             />
             {edit.popover}
             {definition.panel}
@@ -403,11 +469,9 @@ function WidgetAreaAddPopover(props: Readonly<{
     const { write } = props;
     const instances = React.useMemo(() => props.placements.map((placement) => placement.instance), [props.placements]);
     const labels = React.useMemo(() => AREA_LABELS(props.surfaceName), [props.surfaceName]);
-    const addInstance = React.useCallback(async (instance: WidgetInstanceV1) => {
-        const outcome = await write({ actionId: 'widgets.instance.add', instance });
-        if (outcome.kind === 'refused') throw new Error(outcome.errorCode);
-        return outcome;
-    }, [write]);
+    const addInstance = React.useCallback((instance: WidgetInstanceV1) => runAcknowledgedWidgetSetupCommand(
+        () => write({ actionId: 'widgets.instance.add', instance }), t('widgetAdd.addFailed'),
+    ), [write]);
     const sections = useAccountWidgetAddSections({ scope: props.surface, instances, addInstance, labels, context: props.context, testID: props.testID });
     return (
         <WidgetAddPopover
@@ -430,7 +494,6 @@ const styles = StyleSheet.create((theme) => ({
     title: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), color: theme.colors.text.primary, flexShrink: 1 },
     meta: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary, flexShrink: 1 },
     grow: { flex: 1 },
-    notice: { ...Typography.default(), ...happierPageTextMetrics('rowDescription'), color: theme.colors.text.secondary },
     column: { gap: 12 },
     // The frame fills its grid cell, so cards in one row share a height.
     cell: { flexGrow: 1 },

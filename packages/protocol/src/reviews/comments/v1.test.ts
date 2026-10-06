@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 import {
   createReviewCommentLinkedIssueIdV1,
   ReviewCommentActorRefV1Schema,
+  ReviewCommentAnchorV1Schema,
   ReviewCommentCreateRequestV1Schema,
   ReviewCommentEventV1Schema,
   ReviewCommentSnapshotV1Schema,
@@ -11,6 +15,25 @@ import {
 } from './v1.js';
 
 describe('ReviewCommentV1Schema', () => {
+  it('retains classic nested JSON projection and refinement error identity', () => {
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      expect(zodSchemaToJsonSchemaObject(ReviewCommentCreateRequestV1Schema, { target })).toMatchObject({
+        type: 'object', additionalProperties: false,
+        properties: {
+          workspace: { type: 'object', additionalProperties: false, required: ['machineId', 'path'] },
+          anchor: { anyOf: expect.arrayContaining([
+            expect.objectContaining({ type: 'object', additionalProperties: false, required: ['kind', 'filePath', 'startLine', 'endLine'] }),
+          ]) },
+        },
+      });
+    }
+    const invalid = ReviewCommentAnchorV1Schema.safeParse({ kind: 'range', filePath: 'a.ts', startLine: 2, endLine: 1 });
+    expect(invalid.success).toBe(false);
+    if (!invalid.success) {
+      expect(invalid.error).toBeInstanceOf(z.ZodError);
+      expect(invalid.error.issues).toContainEqual(expect.objectContaining({ code: 'custom', path: ['endLine'] }));
+    }
+  });
   it('persists deferred triage without claiming a new dismissal verdict', () => {
     const annotation = {
       workspace: { machineId: 'machine-1', path: '/repo' }, commentId: 'comment-1',

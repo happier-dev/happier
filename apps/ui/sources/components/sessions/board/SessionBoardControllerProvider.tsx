@@ -101,7 +101,7 @@ function SessionBoardWidgetCandidateSelection(props: Readonly<{
 }>): React.ReactElement {
     if (!props.session) return props.children({
         candidates: NO_INSTALLED_WIDGET_CANDIDATES,
-        resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(null, {
+        resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver({
             hostedHtmlRendererAvailable: props.hostedHtmlRendererAvailable,
         }),
     });
@@ -143,11 +143,10 @@ function SessionBoardWidgetCandidateSelectionReady(props: Readonly<{
         [policyContext, props.boardFeatureEnabled, props.canEdit, props.runtime],
     );
     const resolveSourceAvailability = React.useMemo(
-        () => createSessionBoardSourceAvailabilityResolver(props.runtime, {
+        () => createSessionBoardSourceAvailabilityResolver({
             hostedHtmlRendererAvailable: props.hostedHtmlRendererAvailable,
-            policyContext,
         }),
-        [policyContext, props.hostedHtmlRendererAvailable, props.runtime],
+        [props.hostedHtmlRendererAvailable],
     );
     return props.children({ candidates, resolveSourceAvailability });
 }

@@ -1,25 +1,5 @@
-import {
-  PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID,
-  PluginSessionHookInstallInputV1Schema,
-  PluginSessionHookInstallActionInputV1Schema,
-  PluginSessionHookInstallResponseV1Schema,
-  PluginSessionHookInstallationMutationInputV1Schema,
-  PluginSessionHookInstallationMutationActionInputV1Schema,
-  PluginSessionHookStatusActionInputV1Schema,
-  PluginSessionHookStatusInputV1Schema,
-  PluginSessionHookStatusResponseV1Schema,
-  PluginSessionHookToggleResponseV1Schema,
-  PluginSessionHookUninstallResponseV1Schema,
-  type ActionExecuteResult,
-  type FeatureDecision,
-  type PluginSessionHookInstallInputV1,
-  type PluginSessionHookInstallResponseV1,
-  type PluginSessionHookInstallationMutationInputV1,
-  type PluginSessionHookStatusInputV1,
-  type PluginSessionHookStatusResponseV1,
-  type PluginSessionHookToggleResponseV1,
-  type PluginSessionHookUninstallResponseV1,
-} from '@happier-dev/protocol';
+import { PLUGIN_SESSION_HOOK_MANAGEMENT_FEATURE_ID, PluginSessionHookInstallInputV1Schema, PluginSessionHookInstallActionInputV1Schema, PluginSessionHookInstallResponseV1Schema, PluginSessionHookInstallationMutationInputV1Schema, PluginSessionHookInstallationMutationActionInputV1Schema, PluginSessionHookStatusActionInputV1Schema, PluginSessionHookStatusInputV1Schema, PluginSessionHookStatusResponseV1Schema, PluginSessionHookToggleResponseV1Schema, PluginSessionHookUninstallResponseV1Schema } from '@happier-dev/protocol/sessions/external/hookManagementV1';
+import type { ActionExecuteResult, FeatureDecision, PluginSessionHookInstallInputV1, PluginSessionHookInstallResponseV1, PluginSessionHookInstallationMutationInputV1, PluginSessionHookStatusInputV1, PluginSessionHookStatusResponseV1, PluginSessionHookToggleResponseV1, PluginSessionHookUninstallResponseV1 } from '@happier-dev/protocol';
 
 type PluginSessionHookManagementExecutionOptions = Readonly<{
   surface?: 'rpc' | 'action';

@@ -223,6 +223,11 @@
       "import": "./dist/componentArtifacts/index.js",
       "default": "./dist/componentArtifacts/index.js"
     },
+    "./componentArtifactTarget": {
+      "types": "./componentArtifactTarget.d.mts",
+      "import": "./componentArtifactTarget.mjs",
+      "default": "./componentArtifactTarget.mjs"
+    },
     "./firstPartyRuntime/componentCatalog": {
       "types": "./dist/firstPartyRuntime/componentCatalog.d.ts",
       "import": "./dist/firstPartyRuntime/componentCatalog.js",

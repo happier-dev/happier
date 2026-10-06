@@ -57,7 +57,11 @@ describe('standalone MCP client Action admission', () => {
         const request = UiActionDispatchRequestV1Schema.parse(raw);
         admitted.push(request);
         options.onIssued();
-        const result = request.actionId === 'ui.find' ? { status: 'idle' }
+        const result = request.actionId === 'widgets.instance.inputs.get' ? {
+          ref: typeof request.input === 'object' && request.input !== null ? Reflect.get(request.input, 'ref') : undefined,
+          bindings: {},
+        }
+          : request.actionId === 'ui.find' ? { status: 'idle' }
           : request.actionId === 'session.pending.next' ? { status: 'none' }
           : request.actionId === 'session.target.primary.set' ? { ok: true, status: 'ok',
             sessionId: primarySessionId, serverId: primarySessionId ? configuration.activeServerId : null,
@@ -109,6 +113,15 @@ describe('standalone MCP client Action admission', () => {
         expect(JSON.parse(text.text)).toEqual(connected ? connectedResult : absentResult);
       }
       expect(admitted).toHaveLength(connected ? 3 : 0);
+      const ref = { surface: { serverId: configuration.activeServerId, accountId: 'viewer',
+        owner: { kind: 'companion', sessionId: 'mcp-session-active' } }, instanceId: 'checks' };
+      const companion = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'widgets.instance.inputs.get', input: { ref },
+      } }));
+      const companionText = companion.content.find(entry => entry.type === 'text');
+      if (!companionText || companionText.type !== 'text') throw new Error('Missing Companion result');
+      expect(JSON.parse(companionText.text)).toMatchObject(connected ? { ref, bindings: {} } : { errorCode: 'unavailable' });
+      if (connected) expect(admitted.at(-1)).toMatchObject({ actionId: 'widgets.instance.inputs.get', context: { defaultSessionId: 'mcp-session-active' } });
       if (connected) for (const request of admitted) expect(request).toMatchObject({ context: {
         surface: 'mcp', authority: 'account_automation', defaultSessionId: 'mcp-session-active', defaultSessionMachineId: 'mcp-machine',
       } });
@@ -119,7 +132,7 @@ describe('standalone MCP client Action admission', () => {
       if (!approvalText || approvalText.type !== 'text') throw new Error('Missing approval refusal');
       expect(JSON.parse(approvalText.text)).toMatchObject({ errorCode: 'approvals_not_supported' });
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({ actionId: 'session.draft.delete', surface: 'mcp' }));
-      expect(admitted).toHaveLength(connected ? 3 : 0);
+      expect(admitted).toHaveLength(connected ? 4 : 0);
       if (connected) {
         const selected = CallToolResultSchema.parse(await client.callTool({ name: 'session_target_primary_set', arguments: {
           sessionId: 'requested-session', serverId: configuration.activeServerId,

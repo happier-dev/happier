@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports';
+import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 const redactBugReportSensitiveText: (input: string) => string = canonicalRedactBugReportSensitiveText;
 

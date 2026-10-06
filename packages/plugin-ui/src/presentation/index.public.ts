@@ -11,6 +11,8 @@
  *   adapters     → presentation + plugin-sdk/ui
  */
 export type { HappierLayoutChangeEvent, HappierTextSelection } from './portableTypes.js';
+export type { CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collection/collectionVirtualizer.js';
+export { HappierDropTargetOutline } from './interaction/DropTargetOutline.js';
 export { HappierArtifactPreviewCard, type HappierArtifactPreview, type HappierArtifactPreviewCardProps, type HappierArtifactPreviewCardHost } from './artifacts/ArtifactPreviewCard.js';
 export { HappierHtmlSandboxFrame, type HappierHtmlSandboxFrameProps, type HappierHtmlSandboxFrameHost } from './artifacts/HtmlSandboxFrame.js';
 export { HappierPublicLinkCard, type HappierPublicLinkCardProps } from './artifacts/PublicLinkCard.js';
@@ -337,8 +339,21 @@ export {
   type HappierStagedMoveHint,
 } from './interaction/ReleasePreview.js';
 export {
+  describeHappierDropAnnouncement,
+  describeHappierDropOutcome,
+  describeHappierSettledDrop,
+  resolveHappierStagedMoveHints,
+  type HappierDropAdmission,
+  type HappierDropEffect,
+  type HappierDropOutcomeVocabulary,
+  type HappierDropSettlement,
+  type HappierDropVerdict,
+} from './interaction/dropOutcome.js';
+export {
   HAPPIER_DRAG_GRIP_METRICS,
   HappierDragGrip,
+  HappierDragGripTrigger,
+  type HappierDragGripTriggerProps,
   type HappierDragGripDensity,
   type HappierDragGripProps,
 } from './interaction/DragGrip.js';

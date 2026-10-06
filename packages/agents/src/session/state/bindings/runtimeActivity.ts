@@ -2,7 +2,7 @@ import {
   type SessionMetadata,
   type SessionStateFieldValue,
 } from '@happier-dev/protocol';
-import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions';
+import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 
 import type { SessionStateBinding, SessionStateStoredValue } from '../_types.js';
 

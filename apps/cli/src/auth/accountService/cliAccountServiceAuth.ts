@@ -1,14 +1,9 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import {
-  ExternalOAuthFinalizeAuthSuccessResponseSchema,
-  ExternalOAuthParamsResponseSchema,
-  KeyChallengeV2IssueResponseSchema,
-  canonicalizeKeyChallengeV2AudienceOrigin,
-  createKeyChallengeV2SigningInput,
-  encodeBase64,
-  parseRecoveryKey,
-} from '@happier-dev/protocol';
+import { ExternalOAuthFinalizeAuthSuccessResponseSchema, ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
+import { KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin, createKeyChallengeV2SigningInput } from '@happier-dev/protocol/auth/keyChallenge';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 
 import { captureLoopbackOauthRedirect } from '@/cloud/loopbackOauthPkce';
 import { describeBrowserHandoffFallback, openBrowser } from '@/ui/openBrowser';

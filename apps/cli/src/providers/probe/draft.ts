@@ -1,25 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  DEFAULT_PROVIDER_SETTINGS_V1,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
-  ProviderConnectionV1Schema,
-  ProviderProbeAuthorizationV1Schema,
-  ProviderSettingsV1Schema,
-  createEmptyProviderRuntimeStateFileV1,
-  createProviderCredentialDestinationFingerprintV1,
-  createProviderErrorV1,
-  createProviderFingerprintV1,
-  createProviderObservationAuthorizationFingerprintV1,
-  createProviderProbeRequestFingerprintV1,
-  type ProviderErrorV1,
-  type ProviderProbeAuthorizationV1,
-  type ProviderRuntimeStateFileV1,
-} from '@happier-dev/protocol';
-import {
-  DaemonProviderDraftProbeRequestV1Schema,
-  type DaemonProviderDraftProbeRequestV1,
-} from '@happier-dev/protocol/rpc';
+import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderProbeAuthorizationV1Schema } from '@happier-dev/protocol/providers/grants/v1';
+import { createEmptyProviderRuntimeStateFileV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import { createProviderCredentialDestinationFingerprintV1, createProviderObservationAuthorizationFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderFingerprintV1 } from '@happier-dev/protocol/providers/fingerprints';
+import type { ProviderErrorV1, ProviderProbeAuthorizationV1, ProviderRuntimeStateFileV1 } from '@happier-dev/protocol';
+import { DaemonProviderDraftProbeRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderDraftProbeRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';

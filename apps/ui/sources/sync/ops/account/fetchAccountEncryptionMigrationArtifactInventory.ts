@@ -32,8 +32,13 @@ export async function fetchAccountEncryptionMigrationArtifactInventory(params: R
         }
         for (const row of page.items) {
             const plain = params.encryptionMode === 'plain';
+            const privateMetadata = [row.provenance, ...row.revisions.map(revision => revision.provenance)]
+                .filter((content): content is string => content != null);
             if (ids.has(row.id) || isPlainArtifactDataKeyMarker(row.dataEncryptionKey) !== plain
-                || [row.header, row.body, ...row.revisions.map(revision => revision.body)].some(content => isPlainArtifactStoredContent(content) !== plain)) {
+                || [row.header, row.body, ...row.revisions.map(revision => revision.body), ...privateMetadata]
+                    .some(content => isPlainArtifactStoredContent(content) !== plain)
+                || (plain && row.provenanceDataEncryptionKey != null)
+                || (!plain && privateMetadata.length > 0 && !row.provenanceDataEncryptionKey)) {
                 throw new Error('Account Artifact migration inventory content is inconsistent');
             }
             ids.add(row.id);

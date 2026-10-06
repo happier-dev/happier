@@ -4,7 +4,7 @@ import type {
   PluginJsonSchemaV2,
   PluginToolContributionV2,
 } from '@happier-dev/protocol';
-import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol';
+import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 
 import {
   evaluateContributionAvailability,

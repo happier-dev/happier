@@ -6,6 +6,14 @@ import { voiceAgentSelectionBinding, voiceLocalConversationBinding, voiceSetting
 import { voiceMemoryRestoreBinding } from './memoryRestore';
 
 describe('Voice nested declaration mutations', () => {
+    it('rejects compound JSON at scalar declaration mutation boundaries', () => {
+        for (const binding of [voiceSettingBinding('privacy.shareRecentMessages'), voiceLocalConversationBinding('tts.localNeural.speed')]) {
+            if (!('kind' in binding) || binding.kind !== 'owner') throw new Error('Expected a scalar preference owner');
+            expect(binding.parse({ enabled: false })).toEqual({ success: false });
+            expect(binding.mutate(settingsDefaults, { enabled: false })).toBeNull();
+        }
+        expect(settingsDefaults.voice.privacy.shareRecentMessages).toBe(true);
+    });
     it('changes reply language independently from recognition, output voice and Dictation', () => {
         const binding = voiceSettingBinding('assistantLanguage');
         if (!('kind' in binding) || binding.kind !== 'owner') throw new Error('Expected the reply-language owner');

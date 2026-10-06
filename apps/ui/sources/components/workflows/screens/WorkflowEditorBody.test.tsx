@@ -549,6 +549,37 @@ describe('workflow editor body', () => {
         expect(screen.findByTestId('workflow-editor-inspector-options')).toBeNull();
     });
 
+    it('offers only the engine picker and Permissions in workflow Agent and model settings', async () => {
+        const harness = await loadHarness();
+        const changed = vi.fn();
+        const screen = await renderBody(harness, {
+            onChange: changed,
+            authoringFacts: {
+                agentTargets: [{ id: 'agent:happier.agent.claude/claude', label: 'Claude Code', target: AGENT_TARGET, agentId: 'claude' }],
+            },
+        });
+
+        const defaults = screen.findByTestId('workflow-editor-defaults');
+        if (defaults === null) throw new Error('Expected workflow default controls');
+        const rowIds = defaults.findAll(node => typeof node.type === 'string'
+            && typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('workflow-editor-defaults-')
+            && node.props.testID.endsWith('-row')).map(node => node.props.testID);
+        expect(rowIds).toEqual([
+            'workflow-editor-defaults-agentTarget-row',
+            'workflow-editor-defaults-permissionMode-row',
+        ]);
+        expect(defaults.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.endsWith('-unavailable'))).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('workflow-editor-defaults-permissionMode');
+        const { AgentInputChipPickerPopover } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerPopover');
+        const picker = screen.root.findAllByType(AgentInputChipPickerPopover).find(node => node.props.open);
+        if (picker === undefined) throw new Error('Expected the Permissions picker');
+        await act(async () => { picker.props.onSelect('yolo'); });
+        expect(changed.mock.lastCall?.[0].defaults.permissionMode).toBe('yolo');
+    });
+
     /**
      * The strict Workflow schema requires an effective Agent, so a host that
      * contributes its Agent catalog must produce a real picker here. Without
@@ -1383,13 +1414,17 @@ describe('workflow editor body', () => {
                 { sessionId: 'here', machineId: 'machine-1', label: 'Fix login' },
                 { sessionId: 'there', machineId: 'machine-2', label: 'Elsewhere' },
             ],
-        }, { wrapper: ({ children }) => <><Realm />{children}</>, createNodeMock: element =>
-            React.isValidElement<{ testID?: string }>(element) && element.props.testID === 'workflow-editor-step-analyze-session-drop'
-                ? { getBoundingClientRect: () => ({ x: 10, y: 10, left: 10, top: 10, width: 500, height: 200 }) } : null });
+        }, { wrapper: ({ children }) => <><Realm />{children}</>, createNodeMock: element => {
+            // The renderer supplies a host descriptor, not a React element, at this OS geometry boundary.
+            const props: unknown = element.props;
+            return props !== null && typeof props === 'object' && 'testID' in props
+                && props.testID === 'workflow-editor-step-analyze-session-drop'
+                ? { getBoundingClientRect: () => ({ x: 10, y: 10, left: 10, top: 10, width: 500, height: 200 }) } : null;
+        } });
         let sessionId = 'there';
         const retireSource = runtime!.registerSource({ id: 'workflow-source', scope, isCurrent: () => true,
             getItem: () => ({ kind: 'session', scope, address: { serverId: scope.serverId, sessionId } }) });
-        const target = runtime!.getDestinations('workflow-source').find(destination => destination.label === 'Analyze the repository')!;
+        const target = runtime!.getDestinations('workflow-source').find(destination => destination.label === 'workflows.editor.addStep')!;
         expect(target.admission).toMatchObject({ status: 'refused', reason: { code: 'workflow_where_machine_mismatch' } });
         const drop = async () => {
             let result: Awaited<ReturnType<NonNullable<typeof runtime>['perform']>> = null;
@@ -1965,10 +2000,10 @@ describe('workflow editor body', () => {
         // are always rendered, so only the exclusive selected state can tell an
         // unauthored final output from an authored one.
         const none = await renderBody(harness);
-        expect(none.findByTestId('workflow-editor-final-output-clear')?.props.accessibilityState)
-            .toEqual({ selected: true });
-        expect(none.findByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState)
-            .toEqual({ selected: false });
+        expect(none.tree.findHostByTestId('workflow-editor-final-output-clear')?.props.accessibilityState?.checked)
+            .toBe(true);
+        expect(none.tree.findHostByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState?.checked)
+            .toBe(false);
         expect(none.findByTestId('workflow-editor-final-output-path')).toBeNull();
         await none.unmount();
 
@@ -1979,12 +2014,12 @@ describe('workflow editor body', () => {
                 path: [],
             }),
         });
-        expect(bound.findByTestId('workflow-editor-final-output-clear')?.props.accessibilityState)
-            .toEqual({ selected: false });
-        expect(bound.findByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState)
-            .toEqual({ selected: true });
-        // The producer is named by its authored label, never by its internal id.
-        expect(bound.getTextContent()).toContain('Analyze the repository');
+        expect(bound.tree.findHostByTestId('workflow-editor-final-output-clear')?.props.accessibilityState?.checked)
+            .toBe(false);
+        expect(bound.tree.findHostByTestId('workflow-editor-final-output-option-analyze')?.props.accessibilityState?.checked)
+            .toBe(true);
+        // The producer uses the document vocabulary, never a clipped prompt or internal id.
+        expect(bound.getTextContent()).toContain('workflows.editor.addStep');
         expect(bound.findByTestId('workflow-editor-final-output-path')).not.toBeNull();
     });
 

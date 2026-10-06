@@ -1,10 +1,8 @@
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 
-import {
-  INSTALLABLE_KEYS,
-  type SessionSummaryShardV1,
-} from '@happier-dev/protocol';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import type { SessionSummaryShardV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS, readMemorySettingsFromDisk, type MemorySettingsV1 } from '@/settings/memorySettings';

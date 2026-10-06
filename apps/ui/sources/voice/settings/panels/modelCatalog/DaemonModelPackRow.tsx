@@ -3,7 +3,6 @@ import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -68,14 +67,7 @@ export function DaemonModelPackRow(props: Readonly<{
             onPress={(event: any) => {
                 event?.stopPropagation?.();
                 if (props.actionsDisabled || props.actionInFlight) return;
-                fireAndForget((async () => {
-                    const confirmed = await Modal.confirm(
-                        t('settingsVoice.local.models.removeConfirmTitle'),
-                        t('settingsVoice.local.models.removeConfirmBody', { name: row.displayName }),
-                        { confirmText: actionLabel, destructive: true },
-                    );
-                    if (confirmed) await props.onRemove(row.packId);
-                })(), { tag: 'DaemonModelPackRow.remove' });
+                fireAndForget(Promise.resolve(props.onRemove(row.packId)), { tag: 'DaemonModelPackRow.remove' });
             }}
         >
             <Icon name="trash" size={20} color={theme.colors.text.secondary} />

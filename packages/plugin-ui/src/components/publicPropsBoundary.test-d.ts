@@ -3,6 +3,7 @@ import { usePluginUiFocusTarget } from '../index.js';
 import type {
   CollectionProps, CollectionAnatomy, DetailsPaneProps, StepProps, TabsProps, TabsItemProps,
   PluginTranslationValues, PluginUiFocusTarget,
+  CollectionVirtualizer, CollectionVirtualizerHandle, CollectionVirtualizerRequest,
 } from '../index.js';
 import type { FormProps, SelectProps, TextFieldProps, TextSelection } from './Form.js';
 import type { ActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';
@@ -48,7 +49,7 @@ type IsEqual<Left, Right> = (
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
   | 'model' | 'anatomy' | 'accessibilityLabel' | 'presentation' | 'boardLayout' | 'detail' | 'renderDetail' | 'detailHeader'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'groupAction'
-  | 'scroll' | 'loading' | 'useRowActions' | 'selection' | 'search' | 'empty' | 'header' | 'footer'
+  | 'scroll' | 'virtualizer' | 'loading' | 'useRowActions' | 'selection' | 'search' | 'empty' | 'header' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
@@ -56,6 +57,13 @@ type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAna
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
   | 'testID' | 'columnTitles'
 >>;
+type _VirtualizerDoesNotOwnSelectionOrNativeRefs = Assert<IsEqual<keyof CollectionVirtualizer, 'render'>>;
+type _VirtualizerHandleOnlyPositions = Assert<IsEqual<keyof CollectionVirtualizerHandle, 'reveal' | 'scrollToOffset' | 'scrollToEnd'>>;
+type _VirtualizerRequestHasNoNativeRefOrSelectionWriter = Assert<
+  Extract<keyof CollectionVirtualizerRequest<unknown>, 'ref' | 'setSelection' | 'setFocus' | 'store'> extends never ? true : false
+>;
+type _CollectionVirtualizerIsPublic = Assert<IsEqual<CollectionProps<unknown>['virtualizer'], CollectionVirtualizer | undefined>>;
+type _VirtualizedListConsumesSameAdapter = Assert<IsEqual<Extract<ListProps<unknown>, { items: readonly unknown[] }>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _AuthorDetailsPaneKeysAreCurated = Assert<IsEqual<keyof DetailsPaneProps,
   'open' | 'title' | 'subtitle' | 'actions' | 'onClose' | 'children' | 'testID'
 >>;

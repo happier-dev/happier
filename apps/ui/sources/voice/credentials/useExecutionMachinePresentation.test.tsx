@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { persistVoiceAutoTargetMachineId } from '@/voice/persistence/voiceAutoTargetMachineSettings';
+import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 
 import { useVoiceExecutionMachinePresentation } from './useExecutionMachinePresentation';
@@ -20,6 +23,21 @@ function machine(id: string, displayName: string) {
 }
 
 describe('useVoiceExecutionMachinePresentation', () => {
+  it('reacts to local auto-target memory without an Account settings write', async () => {
+    const scope = { serverId: 'voice-memory-home', accountId: 'voice-memory-account' };
+    storage.setState((state) => ({
+      settingsScope: scope,
+      machines: { 'machine-a': machine('machine-a', 'Machine A'), 'machine-b': machine('machine-b', 'Machine B') },
+      settings: { ...state.settings, voice: voiceSettingsDefaults },
+    }));
+    useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
+    const hook = await renderHook(() => useVoiceExecutionMachinePresentation());
+    const settings = storage.getState().settings;
+    await act(async () => { persistVoiceAutoTargetMachineId('machine-b', scope); });
+    expect(hook.getCurrent()).toEqual({ selectedMachineId: 'machine-b', machineId: 'machine-b', machineLabel: 'Machine B', selectionKind: 'resolved' });
+    expect(storage.getState().settings).toBe(settings);
+    await hook.unmount();
+  });
   afterEach(() => {
     standardCleanup();
     storage.setState(initialState, true);
@@ -49,7 +67,6 @@ describe('useVoiceExecutionMachinePresentation', () => {
             executionMachine: {
               mode: 'fixed',
               machineId: 'machine-a',
-              autoMachineId: null,
             },
           } as any,
         },
@@ -65,7 +82,7 @@ describe('useVoiceExecutionMachinePresentation', () => {
       machines: { 'f98b860d-63e0': { ...machine('f98b860d-63e0', ''), metadata: {} } },
       settings: {
         ...state.settings,
-        voice: { executionMachine: { mode: 'fixed', machineId: 'f98b860d-63e0', autoMachineId: null } } as any,
+        voice: { executionMachine: { mode: 'fixed', machineId: 'f98b860d-63e0' } } as any,
       },
     }));
     const hook = await renderHook(() => useVoiceExecutionMachinePresentation());
@@ -85,7 +102,6 @@ describe('useVoiceExecutionMachinePresentation', () => {
           executionMachine: {
             mode: 'fixed',
             machineId: 'machine-a',
-            autoMachineId: null,
           },
         } as any,
       },
@@ -103,7 +119,6 @@ describe('useVoiceExecutionMachinePresentation', () => {
             executionMachine: {
               mode: 'fixed',
               machineId: 'machine-b',
-              autoMachineId: null,
             },
           },
         },

@@ -5,7 +5,6 @@ declare module 'react-native-unistyles' {
         readonly light: Theme;
         readonly dark: Theme;
     }
-
     export interface UnistylesBreakpoints {
         xs: number;
         sm: number;

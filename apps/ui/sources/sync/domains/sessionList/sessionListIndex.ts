@@ -7,6 +7,7 @@ import {
 } from '../session/folders';
 import type {
     SessionListAttentionPlacementReason,
+    SessionListAttentionPlacementOrdering,
     SessionListWorkingPlacementReason,
 } from '../session/listing/sessionListAttentionPlacementTypes';
 import { sessionAddressKey } from '../session/sessionAddress';
@@ -51,6 +52,7 @@ export type SessionListIndexItem =
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
         attentionPlacementReason?: SessionListAttentionPlacementReason;
+        attentionPlacementOrdering?: SessionListAttentionPlacementOrdering;
         workingPlacementReason?: SessionListWorkingPlacementReason;
         serverId?: string;
         serverName?: string;
@@ -177,6 +179,8 @@ export function areSessionListIndexItemsEqual(
             && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
             && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
             && (previous.attentionPlacementReason ?? null) === (next.attentionPlacementReason ?? null)
+            && previous.attentionPlacementOrdering?.reason === next.attentionPlacementOrdering?.reason
+            && previous.attentionPlacementOrdering?.timestamp === next.attentionPlacementOrdering?.timestamp
             && (previous.workingPlacementReason ?? null) === (next.workingPlacementReason ?? null)
             && previous.serverId === next.serverId
             && previous.serverName === next.serverName

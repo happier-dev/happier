@@ -7,7 +7,7 @@ import {
   type SpawnSessionOptions,
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { listExecutionRunMarkersForRehydration } from '@/daemon/executionRunRegistry';
@@ -23,11 +23,8 @@ import type {
   DaemonExecutionRunProcessInfo,
   SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
-import {
-  DaemonExecutionRunBrokerAuthorityRequestV1Schema,
-  DaemonExecutionRunBrokerAuthorityResponseV1Schema,
-  StructuredQuestionAnswersV1Schema,
-} from '@happier-dev/protocol';
+import { DaemonExecutionRunBrokerAuthorityRequestV1Schema, DaemonExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
+import { StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
@@ -163,13 +160,10 @@ import type {
   SessionRunnerRuntimeStateV1,
   SessionRunnerRuntimeStatusV2,
 } from '@happier-dev/protocol';
-import {
-  RestartAllSessionRunnersRequestV1Schema,
-  RestartSessionRunnerRequestV1Schema,
-  RestartSessionRunnerRequestV2Schema,
-  SessionConnectedServiceAuthSwitchRpcParamsSchema,
-  SessionRunnerStatusGetRequestV1Schema,
-} from '@happier-dev/protocol';
+import { RestartAllSessionRunnersRequestV1Schema, RestartSessionRunnerRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
+import { SessionRunnerStatusGetRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
@@ -204,7 +198,7 @@ import {
   type ExternalActionRpcRegistrationOptions,
 } from '@/rpc/handlers/externalAction';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
-import { WORKFLOW_ACTION_IDS_V1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WORKFLOW_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
@@ -286,6 +280,7 @@ export type MachineRpcHandlerDeps = Readonly<{
     getV2: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStatusV2>;
   }>;
   actionOperations?: Readonly<{
+    attachOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
     handlers: ActionOperationRpcHandlers;
     observeExecution: NonNullable<RegisterActionSpecRpcHandlersParams['observeExecution']>;
   }>;
@@ -695,6 +690,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   }
   const externalSessionsRegistration = registerMachineExternalSessionsRpcHandlers({
     rpcHandlerManager,
+    ...(params.deps?.actionOperations?.attachOwner ? { actionOperations: { attachOwner: params.deps.actionOperations.attachOwner } } : {}),
     operationExclusion: externalSessionOperationExclusion,
     spawnSession,
     stopSession: async (sessionId) => (

@@ -5,8 +5,7 @@ import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } fr
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { readRpcErrorCode } from '../../rpc/errors.js';
-import { RPC_ERROR_CODES } from '../../rpc/index.js';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '../../rpc/errors.js';
 
 const SessionIdZodSchema = asProtocolZod(SessionIdSchema);
 

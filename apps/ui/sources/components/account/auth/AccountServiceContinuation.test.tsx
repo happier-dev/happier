@@ -2,8 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
@@ -16,8 +17,10 @@ import { AccountDirectorySession } from '@/sync/domains/accountDirectory/account
 import { completeAccountServicePostAuth, type AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 import { cancelPendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment } from '@/sync/ops/accountDirectory/enrollDirectoryHome';
 import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPollingBackoff';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 
 installTokenStorageWebPlatformMocks();
+installDisconnectedServerSocketBoundary();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock('@/sync/http/client', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/http/client')>(),
@@ -53,6 +56,9 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 import { AccountServiceContinuation } from './AccountServiceContinuation';
 import { Modal } from '@/modal';
 
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+
 /** Non-secret binding to the Account credential a continuation was created under. */
 const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
 
@@ -65,12 +71,22 @@ function actionTitle(testID: string): string | undefined {
 describe('exact invoking-surface continuation', () => {
     let fixture: ReturnType<typeof createDirectoryHttpFixture>;
     let restore: () => void;
+    let restoreLocks: () => void;
     beforeEach(() => {
         restore = installLocalStorageMock().restore;
+        restoreLocks = installWebLockManagerMock().restore;
         fixture = createDirectoryHttpFixture();
         boundary.request.mockImplementation(fixture.request);
     });
-    afterEach(async () => { await screen?.unmount(); screen = undefined; await cancelPendingDirectoryHomeEnrollment(); restore(); vi.unstubAllGlobals(); });
+    afterEach(async () => {
+        await screen?.unmount();
+        screen = undefined;
+        await cancelPendingDirectoryHomeEnrollment();
+        await disconnectActiveServerConnection();
+        restoreLocks();
+        restore();
+        vi.unstubAllGlobals();
+    });
 
     it('requests exact service reauthentication rather than treating recovery as Back', async () => {
         const input = { service: fixture.service,

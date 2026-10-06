@@ -1,12 +1,9 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
-import {
-  WorkspaceFaviconResolveRequestV1Schema,
-  type WorkspaceFaviconMimeTypeV1,
-  type WorkspaceFaviconResolveResponseV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { WorkspaceFaviconResolveRequestV1Schema } from '@happier-dev/protocol/workspace/favicon/v1';
+import type { WorkspaceFaviconMimeTypeV1, WorkspaceFaviconResolveResponseV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';

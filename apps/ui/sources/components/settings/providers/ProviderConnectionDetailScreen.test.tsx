@@ -176,7 +176,7 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => ({
         connectedAccountGroupsV4: connectedAccountProfileState.groups,
     }),
     useActiveServerAccountScope: () => ({ serverId: 'srv_test', accountId: 'account-a' }),
-    useSettings: () => ({ connectedServicesProfileLabelByKey: {} }),
+    useSettingsSelector: <T,>(selector: (settings: Record<string, unknown>) => T) => selector({ connectedServicesProfileLabelByKey: {} }),
     useLocalSetting: () => 'comfortable',
 }));
 vi.mock('@/sync/sync', () => ({ sync: { refreshProfile } }));

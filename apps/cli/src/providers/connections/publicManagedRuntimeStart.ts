@@ -1,8 +1,5 @@
-import {
-  ProviderErrorV1Schema,
-  createProviderErrorV1,
-  parseProviderContributionIdentityV1,
-} from '@happier-dev/protocol';
+import { ProviderErrorV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
 
 import type {
   PluginReloadController,

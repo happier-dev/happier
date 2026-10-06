@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
 import { renderMutagenProject } from './mutagen_project.mjs';
 import {
@@ -22,6 +23,47 @@ const targets = [
   { name: 'mac' },
   { name: 'mac2' },
 ];
+
+test('sync startup seeds an unscanned no-watch session once through the canonical flush barrier', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-no-watch-start-' });
+  const bin = fixture.path('bin');
+  await mkdir(bin);
+  // Only external Mutagen/SSH are replaced. Setup, public-model parsing,
+  // native flush admission and persisted startup observations stay real.
+  await writeFile(fixture.path('mutagen.mjs'), [
+    'import fs from "node:fs";',
+    'const args = process.argv.slice(2);',
+    'const [family,action] = args;',
+    'const name = args[2] === "--template" ? "happier-worker" : args[2];',
+    'const template = args[args.indexOf("--template") + 1];',
+    'const marker = process.env.HSTACK_TEST_SYNC_STATE;',
+    'if (family === "sync" && action === "flush") {',
+    '  if (process.env.HSTACK_TEST_SYNC_FLUSH_FAILED === "1") process.exit(7);',
+    '  fs.writeFileSync(marker, String(Number(fs.existsSync(marker) ? fs.readFileSync(marker,"utf8") : 0) + 1));',
+    '}',
+    'if (family === "sync" && action === "list") {',
+    '  const seeded = fs.existsSync(marker);',
+    '  const session = {name,paused:false,status:"watching",successfulCycles:seeded?1:0,alpha:{connected:true,scanned:seeded,watch:{mode:"no-watch"}},beta:{connected:true,scanned:seeded,watch:{mode:"no-watch"}}};',
+    '  if (template === "{{json .}}") console.log(JSON.stringify([session]));',
+    '  else console.log(`${name}|Watching|false|true|${seeded?1:0}|0/0|0/0|true|${seeded?1:0}|0/0|0/0|active|${seeded?1:0}|ok|0|0`);',
+    '}',
+  ].join('\n'));
+  await writeFile(join(bin, 'mutagen'), `#!/bin/sh\nexec "${process.execPath}" "${fixture.path('mutagen.mjs')}" "$@"\n`);
+  await writeFile(join(bin, 'ssh'), '#!/bin/sh\nexit 0\n');
+  await Promise.all(['mutagen', 'ssh'].map(name => chmod(join(bin, name), 0o700)));
+  const marker = fixture.path('seeded');
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '', HSTACK_TEST_SYNC_STATE: marker };
+  const target = { name: 'worker', platform: 'windows', ssh: 'worker', repoDir: 'C:/repo', cliHomeDir: 'C:/home' };
+  const start = () => startDevTargetSyncService({ stackBaseDir: fixture.path('stack'), sourceDir: '/repo', targets: [target], detached: true, env });
+  assert.equal((await start()).statuses[0].status.state, 'ready');
+  assert.equal(await readFile(marker, 'utf8'), '1');
+  assert.equal((await start()).statuses[0].status.state, 'ready');
+  assert.equal(await readFile(marker, 'utf8'), '1', 'resuming an already seeded session must not scan again');
+  env.HSTACK_TEST_SYNC_STATE = fixture.path('failed-seed');
+  env.HSTACK_TEST_SYNC_FLUSH_FAILED = '1';
+  await assert.rejects(start(), /Mutagen initial flush failed/);
+  assert.equal((await inspectDevTargetSyncService({ stackBaseDir: fixture.path('stack'), targets: [target], env })).preparation.state, 'failed');
+});
 
 test('detached sync start recreates requested sessions missing from its canonical project', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-service-missing-sessions-'));

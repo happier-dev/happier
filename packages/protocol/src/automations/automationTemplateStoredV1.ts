@@ -1,4 +1,5 @@
 import tweetnacl from 'tweetnacl';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { decodeBase64 } from '../crypto/base64.js';
 import { parseSerializedJsonValue } from '../crypto/serializedJsonValue.js';
 import { openAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
@@ -26,7 +27,7 @@ export function readAutomationTemplateStoredEnvelopeV1(bytes: string): Automatio
 
 /** Both decrypted and plain content take the same predecessor schema and outer-id consistency check. */
 export function readAutomationTemplateStoredPayloadV1(stored: AutomationTemplateEnvelopeStoredRead, payload: unknown): AutomationTemplatePayloadV1 | null {
-  const parsed = AutomationTemplatePayloadV1Schema.safeParse(payload);
+  const parsed = createStoredReadSchema(AutomationTemplatePayloadV1Schema).safeParse(payload);
   if (!parsed.success || !automationTemplateStoredPayloadMatchesEnvelopeV1(stored, parsed.data)) return null;
   return parsed.data;
 }

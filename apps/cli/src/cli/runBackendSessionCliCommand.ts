@@ -2,14 +2,10 @@ import type { AgentId } from '@happier-dev/agents';
 import { randomUUID } from 'node:crypto';
 import { consumeSessionInitialAccessFile } from '@/daemon/spawn/sessionInitialAccessFile';
 import { errorFrame, warn } from '@happier-dev/cli-common/output';
-import {
-  isLaunchProfileV2,
-  pluginSourceCustodyV1Equal,
-  readBackendTargetRefV2,
-  type BackendTargetRefV2Input,
-  type PluginSourceCustodyV1,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { BackendTargetRefV2Input, PluginSourceCustodyV1, ProviderErrorV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';

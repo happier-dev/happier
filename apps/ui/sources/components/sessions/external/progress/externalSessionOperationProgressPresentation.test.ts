@@ -552,11 +552,12 @@ describe('presentExternalSessionOperationProgress', () => {
     });
 
     it.each([
-        ['admitting', 'admission_failed'],
-        ['spawning', 'spawn_failed'],
-    ] as const)('offers Retry and safe Cancel for retryable external-linked %s recovery', (
+        ['admitting', 'admission_failed', true],
+        ['spawning', 'spawn_failed', false],
+    ] as const)('offers Retry and only canonical safe cancellation for external-linked %s recovery', (
         phase,
         errorCode,
+        canCancel,
     ) => {
         const progress = createProgress({
             request: {
@@ -583,11 +584,11 @@ describe('presentExternalSessionOperationProgress', () => {
                 titleKey: 'common.retry',
                 enabled: true,
             }),
-            expect.objectContaining({
+            ...(canCancel ? [expect.objectContaining({
                 kind: 'cancel',
                 titleKey: 'externalSessions.operationActionCancel',
                 enabled: true,
-            }),
+            })] : []),
         ]);
     });
 

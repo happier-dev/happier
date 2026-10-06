@@ -10,7 +10,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { JsonValue } from './identity.js';
 import type { Disposable, PluginCancellationOptions } from './lifecycle.js';
-import { InteractionTransientAuthorRequestV1Schema as protocolInteractionTransientAuthorRequestV1Schema } from '@happier-dev/protocol';
+import { InteractionTransientAuthorRequestV1Schema as protocolInteractionTransientAuthorRequestV1Schema } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
 /** Author input validation only; host-stamped custody remains outside this schema. */
 export const InteractionTransientAuthorRequestV1Schema: Readonly<{

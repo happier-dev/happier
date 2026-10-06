@@ -1,8 +1,6 @@
-import {
-    buildQualifiedPluginContributionKey,
-    projectWorkflowPluginSourceV1,
-    type WorkflowPluginSourceV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectWorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceV1';
+import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol';
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { ResolvedContributionRegistry } from './types';
 

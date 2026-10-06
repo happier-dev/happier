@@ -1,9 +1,6 @@
-import {
-    readMachineLiveStreamRelayCaps,
-    readServerEnabledBit,
-    type FeaturesResponse,
-    type MachineLiveStreamRelayCaps,
-} from '@happier-dev/protocol';
+import { readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import type { FeaturesResponse, MachineLiveStreamRelayCaps } from '@happier-dev/protocol';
 
 import {
     mapPeerDirectPolicyDenyReasonToLiveStreamDisabledReason,

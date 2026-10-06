@@ -1,7 +1,5 @@
-import {
-    RequestAuthRequiredHeadersV1Schema,
-    type QualifiedConnectedAccountRequestAuthUseV1,
-} from '@happier-dev/protocol';
+import { RequestAuthRequiredHeadersV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import type { QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 /**
  * Validates the only request-auth materialization shape that can be projected into the daemon

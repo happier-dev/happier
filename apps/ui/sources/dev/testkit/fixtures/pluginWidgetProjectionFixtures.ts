@@ -1,4 +1,4 @@
-import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2, PluginProjectedFamilyEntryV2 } from '@happier-dev/protocol';
 import type { InputHints } from '@happier-dev/protocol/inputs';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -39,10 +39,10 @@ function entryId(input: WidgetFixtureEntry): string {
     return input.entryId ?? `surfacePlacement:${input.pluginId}:${input.localId}`;
 }
 
-export function widgetProjectionEntry(input: WidgetFixtureEntry) {
+export function widgetProjectionEntry(input: WidgetFixtureEntry): Extract<PluginProjectedFamilyEntryV2, { occurrenceId: string }> {
     const sessionWidget = (input.target ?? 'session') === 'session' && (input.role ?? WIDGET_ROLE) === WIDGET_ROLE;
     const inputs = input.inputs ?? (sessionWidget ? { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, required: true }] } : undefined);
-    const inputSchema = input.inputSchema ?? (sessionWidget ? {
+    const inputSchema: PluginJsonSchemaV2 | undefined = input.inputSchema ?? (sessionWidget ? {
         type: 'object', properties: { session: { type: 'object', properties: { serverId: { type: 'string', minLength: 1 }, sessionId: { type: 'string', minLength: 1 } }, required: ['serverId', 'sessionId'], additionalProperties: false } }, required: ['session'], additionalProperties: false,
     } : undefined);
     const binding = normalizePluginUiInlineSurfaceBindingV1({
@@ -61,14 +61,14 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry) {
         // The daemon producer stamps every projected UI entry with its exact plugin-slot
         // occurrence; a fixture without one is not a projection the product can produce.
         occurrenceId: input.occurrenceId ?? `${input.pluginId}#1`,
-        binding,
+        binding: { ...binding, rendererChain: [...binding.rendererChain], platforms: [...binding.platforms] },
         target: binding.target,
         renderer: { kind: 'declarative', contributionId: 'widget-native' },
         display: { title: input.title ?? input.localId },
         ...(input.homeDefault ? { home: { default: input.homeDefault } } : {}),
         ...(inputs ? { inputs } : {}),
         ...(inputSchema ? { inputSchema } : {}),
-        ...(input.resources ? { resources: input.resources } : {}),
+        ...(input.resources ? { resources: [...input.resources] } : {}),
         ...((input.sessionInputPath ?? (sessionWidget ? 'session' : undefined)) ? { sessionInputPath: input.sessionInputPath ?? 'session' } : {}),
         availability: {
             state: input.availability === 'unavailable' ? 'disabled' : 'available',

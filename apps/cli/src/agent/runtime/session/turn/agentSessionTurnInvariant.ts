@@ -1,7 +1,5 @@
-import {
-    AgentSessionRuntimeEventSchema,
-    type AgentSessionRuntimeEvent,
-} from '@happier-dev/protocol/runtime';
+import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 
 type AgentSessionTurnInvariantDiagnosticCode =

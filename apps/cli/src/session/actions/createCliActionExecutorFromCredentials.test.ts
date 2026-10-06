@@ -12,6 +12,7 @@ import {
 } from '@/testkit/backends/sessionFixtures';
 import type { SessionSpawnDirectTargetTransport } from './createCliActionDeps';
 import type { createCliActionExecutor as CreateCliActionExecutor } from './createCliActionExecutor';
+import { configuration } from '@/configuration';
 
 type CreateCliActionExecutorOptions = Parameters<typeof CreateCliActionExecutor>[0];
 
@@ -174,7 +175,7 @@ describe('createCliActionExecutorFromCredentials', () => {
     )).resolves.toEqual({ ok: true, result: { childSessionId: 'legacy-terminal-child' } });
 
     expect(createCliActionExecutor).toHaveBeenCalledTimes(1);
-    expect(ensureCliActionPolicySettings).toHaveBeenCalledWith(credentials);
+    expect(ensureCliActionPolicySettings).toHaveBeenCalledWith(credentials, configuration.apiServerUrl);
     expect(events).toEqual(['settings', 'execute']);
   });
 
@@ -587,7 +588,7 @@ describe('createCliActionExecutorFromCredentials', () => {
       token: 'token_rotated',
       credentials: rotatedCredentials,
     }));
-    expect(ensureCliActionPolicySettings).toHaveBeenLastCalledWith(rotatedCredentials);
+    expect(ensureCliActionPolicySettings).toHaveBeenLastCalledWith(rotatedCredentials, configuration.apiServerUrl);
 
     const delegatedExecutionsBeforeLogout = execute.mock.calls.length;
     const policyReadsBeforeLogout = ensureCliActionPolicySettings.mock.calls.length;

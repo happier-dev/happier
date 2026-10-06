@@ -7,6 +7,21 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
 describe('declared settings Actions', () => {
+  it('round-trips compound JSON settings through the same strict Action envelope', async () => {
+    const value = { appRail: { orderedIds: ['plugin:removed', 'sessions'], placements: { sessions: 'overflow', 'plugin:removed': 'hidden' } } };
+    // The answering UI is the process boundary; Protocol admission and snapshots stay real.
+    const executor = createActionExecutor({ settingsDeclarationAction: async ({ input }: Parameters<NonNullable<ActionExecutorDeps['settingsDeclarationAction']>>[0]) => {
+      expect(input).toEqual({ anchor: 'appearance.navigationPlacements', value });
+      return { anchor: 'appearance.navigationPlacements', value };
+    } } as unknown as ActionExecutorDeps);
+    const context = { surface: 'ui', actionsSettings, authority: 'present_user', presentUserConfirmation: { actionId: 'settings.set' } } as const;
+    expect(await executor.execute('settings.set', { anchor: 'appearance.navigationPlacements', value }, context))
+      .toEqual({ ok: true, result: { anchor: 'appearance.navigationPlacements', value } });
+    expect(await executor.execute('settings.set', { anchor: 'appearance.navigationPlacements', value, accountId: 'injected' }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(await executor.execute('settings.set', { anchor: 'appearance.navigationPlacements', value: { bad: Number.NaN } }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
   it('admits typed exact operation input and validated result facts', async () => {
     // The answering UI is the process boundary; input/output admission stays real.
     const executor = createActionExecutor({ settingsDeclarationAction: async ({ input }: Parameters<NonNullable<ActionExecutorDeps['settingsDeclarationAction']>>[0]) => {
@@ -43,12 +58,10 @@ describe('declared settings Actions', () => {
       .toEqual({ ok: true, result: { anchor: 'appearance.density', value: 'compact' } });
     expect(await executor.execute('settings.invoke' as ActionId, { anchor: 'appearance.density' }, { surface: 'agent', actionsSettings }))
       .toEqual({ ok: true, result: { anchor: 'appearance.density', status: 'interaction_opened' } });
-    // Client-placed Actions have no CLI transport to the answering app's owner.
-    expect(await executor.execute('settings.set', { anchor: 'appearance.density', value: 'compact' }, { surface: 'cli', actionsSettings }))
-      .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
-    for (const id of ['settings.list', 'settings.get', 'settings.set', 'settings.invoke']) {
-      expect(getActionSpec(id as ActionId).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false });
+    for (const id of ['settings.list', 'settings.get', 'settings.set']) {
+      expect(getActionSpec(id as ActionId).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
     }
+    expect(getActionSpec('settings.invoke').surfaces.cli).toBe(false);
   });
 
   it('rejects unknown selectors and malformed results without interpreting them as settings values', async () => {

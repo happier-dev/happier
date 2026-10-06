@@ -1,11 +1,6 @@
-import {
-  UiBrowserAutomationDispatchRequestV1Schema,
-  UiBrowserAutomationDispatchResultV1Schema,
-  uiBrowserAutomationDispatchMethod,
-  BrowserAutomationActionKindV1Schema,
-  isBrowserAutomationMutatingActionKind,
-  type RuntimeActionExecute,
-} from '@happier-dev/protocol';
+import { UiBrowserAutomationDispatchRequestV1Schema, UiBrowserAutomationDispatchResultV1Schema, uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
+import { BrowserAutomationActionKindV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
+import type { RuntimeActionExecute } from '@happier-dev/protocol';
 
 import type { ReverseCaptureMachineRpcClient } from '../recording/reverseChannel/desktopReverseCaptureUiCall';
 

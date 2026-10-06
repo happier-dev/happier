@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    describeSessionListDropOutcome,
-    describeSessionListDropReason,
-} from './sessionListDropPresentation';
+import { describeEntityDropOutcome } from '@/components/ui/treeDragDrop/ui/entityDropOutcome';
 
-describe('describeSessionListDropOutcome', () => {
+import { describeSessionListDropReason, describeSessionListDropPreview, type SessionListDropTargetPreview } from './sessionListDropPresentation';
+import { entityReorderPreview } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+
+// The Session list words its previews and reasons; the one outcome presenter turns them into the card.
+describe('Session-list verdicts through the one outcome presenter', () => {
     it('names the effect and its limit for an allowed relation drop', () => {
-        const outcome = describeSessionListDropOutcome({
+        const outcome = describeEntityDropOutcome({
             phase: 'carrying',
             admission: { status: 'allowed', effect: {
                 actionId: 'session.reports_to.set',
                 input: { sessionId: 'a', leadSessionId: 'b', expectedLeadSessionId: null },
-                preview: { verb: 'Put under Fix settings modal remount', target: 'Fix settings modal remount', consequence: 'Reports to it · both keep running' },
+                preview: describeSessionListDropPreview({ kind: 'put-under', leadName: 'Fix settings modal remount' }),
             } },
         });
         expect(outcome).toEqual({
@@ -24,7 +25,7 @@ describe('describeSessionListDropOutcome', () => {
     });
 
     it('marks a refusal as refused with the owner reason, never as the effect it would have had', () => {
-        const outcome = describeSessionListDropOutcome({
+        const outcome = describeEntityDropOutcome({
             phase: 'carrying',
             admission: { status: 'refused', reason: describeSessionListDropReason('read'),
                 preview: { verb: 'Can’t put under Docs search index', target: 'Docs search index' } },
@@ -35,7 +36,7 @@ describe('describeSessionListDropOutcome', () => {
     });
 
     it('stays visibly uncommitted while a released relation waits for its owner', () => {
-        const outcome = describeSessionListDropOutcome({
+        const outcome = describeEntityDropOutcome({
             phase: 'pending',
             admission: { status: 'allowed', effect: {
                 actionId: 'session.reports_to.set',
@@ -48,13 +49,16 @@ describe('describeSessionListDropOutcome', () => {
     });
 
     it('draws the order or folder mark for organization moves', () => {
-        const effect = (instructionKind: string) => ({ status: 'allowed' as const, effect: {
-            actionId: 'session.organization.move', input: { instructionKind }, preview: { verb: 'x', target: 'y' },
-        } });
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: effect('reorder-before') })?.glyph).toBe('above');
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: effect('reorder-after') })?.glyph).toBe('below');
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: effect('nest-into') })?.glyph).toBe('folder');
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: effect('move-to-root') })?.glyph).toBe('topLevel');
+        const cases: readonly [SessionListDropTargetPreview, string][] = [
+            [{ kind: 'reorder', edge: 'above', siblingName: 'B' }, 'above'],
+            [{ kind: 'reorder', edge: 'below', siblingName: 'B' }, 'below'],
+            [{ kind: 'folder', folderName: 'Work' }, 'folder'], [{ kind: 'top-level' }, 'topLevel'],
+        ];
+        for (const [target, glyph] of cases) {
+            expect(describeEntityDropOutcome({ phase: 'carrying', admission: { status: 'allowed', effect: {
+                actionId: 'session.organization.move', input: {}, preview: describeSessionListDropPreview(target),
+            } } })?.glyph).toBe(glyph);
+        }
     });
 
     it.each(['before', 'after'] as const)('draws the same %s order mark for flat-list Action envelopes', placement => {
@@ -65,15 +69,15 @@ describe('describeSessionListDropOutcome', () => {
             ['connectedServices.pools.reorder', { move: { position } }],
             ['home.hub.layout.update', { intent: { position } }],
         ] as const) {
-            expect(describeSessionListDropOutcome({ phase: 'carrying', admission: { status: 'allowed', effect: {
-                actionId, input, preview: { verb: 'Move relative to B', target: 'B' },
+            expect(describeEntityDropOutcome({ phase: 'carrying', admission: { status: 'allowed', effect: {
+                actionId, input, preview: entityReorderPreview(position, [{ id: 'b', title: 'B' }]),
             } } })?.glyph).toBe(placement === 'before' ? 'above' : 'below');
         }
     });
 
     it('shows nothing while nothing under the pointer takes the item', () => {
-        expect(describeSessionListDropOutcome({ phase: 'carrying', admission: null })).toBeNull();
-        expect(describeSessionListDropOutcome({ phase: 'carrying',
+        expect(describeEntityDropOutcome({ phase: 'carrying', admission: null })).toBeNull();
+        expect(describeEntityDropOutcome({ phase: 'carrying',
             admission: { status: 'refused', reason: describeSessionListDropReason('no-target') } })).toBeNull();
     });
 });

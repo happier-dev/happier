@@ -46,6 +46,38 @@ beforeEach(() => {
 afterEach(standardCleanup);
 
 describe('workflow editor declared bindings', () => {
+    it('reads declared input titles rather than wire keys in a read-only settings pane', async () => {
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'builtin', name: 'Built-in',
+            definition: createWorkflowDefinitionFixture({ inputs: [
+                { name: 'maxRounds', valueType: 'number', required: false },
+                { name: 'secondOpinion', valueType: 'boolean', required: false },
+                { name: 'customKey', valueType: 'string', required: false },
+            ] }) });
+        const screen = await renderScreen(<harness.WorkflowInspector subject={{ kind: 'workflow' }} presentation="pane"
+            documentEditable={false} draft={draft} machineName={null} testIDPrefix="editor" onChange={() => {}} />);
+        const text = screen.getTextContent();
+        expect(text).toContain('workflows.page.fields.maxRounds');
+        expect(text).toContain('workflows.page.fields.secondOpinion');
+        expect(text).toContain('Custom Key');
+        expect(text).not.toContain('customKey');
+    });
+    it('reads a builtin Action with human execution values, not its wire fields', async () => {
+        const block = { kind: 'action' as const, id: 'panel', actionId: 'subagents.plan.start', input: {
+            target: { kind: 'literal' as const, value: { kind: 'detached' } },
+            permissionMode: { kind: 'literal' as const, value: 'read_only' },
+        } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'panel', name: 'Panel',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const screen = await renderScreen(<harness.WorkflowActionBlockEditor block={block} draft={draft}
+            editable={false} ordinal={1} total={1} actions={[]} onSelect={() => {}}
+            onChangeBlock={() => {}} testIDPrefix="editor" />);
+        expect(screen.getTextContent()).toContain('workflows.page.sections.aBackgroundRun');
+        expect(screen.getTextContent()).toContain('executionRuns.newRun.permissionModes.readOnly');
+        expect(screen.getTextContent()).not.toContain('detached');
+        expect(screen.getTextContent()).not.toContain('read_only');
+        expect(screen.getTextContent()).not.toContain('(json)');
+    });
+
     it('edits workflow-local role pins through the same undo history without changing Settings', async () => {
         const initial = buildWorkflowEditorDraftFromDefinition({ draftId: 'draft', name: 'Workflow', definition });
         const changed = vi.fn();
@@ -84,6 +116,48 @@ describe('workflow editor declared bindings', () => {
         expect(screen.findByTestId('editor-workflow-child-input-topic')).not.toBeNull();
         expect(screen.findByTestId('editor-workflow-child-input-oldField')).not.toBeNull();
         expect(changed).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('reads a later-page plugin child, retaining bindings and retrying a failed page (%s)', async (failPage) => {
+        let failing = failPage;
+        const cursors: unknown[] = [];
+        const successor = createDeferred<unknown>();
+        execute.mockImplementation(async (actionId: string, input: unknown) => {
+            if (actionId !== 'workflow.definition.list') return { ok: false, errorCode: 'unsupported_action', error: 'Unsupported' };
+            if (getStorage().getState().profileScope?.accountId === 'account-b') return successor.promise;
+            const { cursor } = (await import('@happier-dev/protocol')).WorkflowDefinitionListRequestV1Schema.parse(input);
+            cursors.push(cursor);
+            if (!cursor) return { ok: true, result: { definitions: [], pluginWorkflows: [], nextCursor: 'later-child-page' } };
+            if (failing) return { ok: false, errorCode: 'target_unavailable', error: 'Page temporarily unavailable' };
+            return { ok: true, result: { definitions: [], pluginWorkflows: [{ workflow: 'plugin:example.tools/later-child',
+                pluginId: 'example.tools', version: '1.0.0', title: 'Later child', definition: child }] } };
+        });
+        const block = { kind: 'workflow' as const, id: 'later', workflowRef: 'plugin:example.tools/later-child',
+            input: { oldField: { kind: 'literal' as const, value: 'Keep me' } } };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'draft', name: 'Parent',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const changed = vi.fn();
+        const screen = await renderScreen(<harness.WorkflowNestedWorkflowBlockEditor block={block} draft={draft}
+            ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={changed} testIDPrefix="editor" />);
+        if (failPage) {
+            expect(cursors).toContain('later-child-page');
+            expect(screen.findByTestId('editor-workflow-later-input-topic')).toBeNull();
+            expect(screen.findByTestId('editor-workflow-later-input-oldField')).not.toBeNull();
+            failing = false;
+            await screen.pressByTestIdAsync('editor-workflow-later-retry');
+        }
+        expect(screen.findByTestId('editor-workflow-later-input-topic')).not.toBeNull();
+        expect(screen.findByTestId('editor-workflow-later-input-oldField')).not.toBeNull();
+        expect(cursors).toContain('later-child-page');
+        expect(changed).not.toHaveBeenCalled();
+        if (!failPage) {
+            await act(async () => { getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-b' } }); });
+            expect(screen.findByTestId('editor-workflow-later-input-topic')).toBeNull();
+            expect(screen.findByTestId('editor-workflow-later-input-oldField')).not.toBeNull();
+            await act(async () => successor.resolve({ ok: true, result: { definitions: [], pluginWorkflows: [] } }));
+            expect(screen.findByTestId('editor-workflow-later-input-topic')).toBeNull();
+            expect(changed).not.toHaveBeenCalled();
+        }
     });
 
     it('adds, edits and removes an inline workflow role without creating an Account preset', async ({ onTestFinished }) => {
@@ -170,7 +244,8 @@ describe('workflow editor declared bindings', () => {
         await act(async () => screen.tree.update(<harness.WorkflowActionBlockEditor block={authored} draft={draft}
             composerScope={{ kind: 'machine', machineId: null }} ordinal={1} total={1} actions={[]}
             onSelect={() => {}} onChangeBlock={changed} testIDPrefix="editor" />));
-        expect(screen.getTextContent()).toContain(block.actionId);
+        expect(screen.getTextContent()).toContain('workflows.page.blocks.menuAction');
+        expect(screen.getTextContent()).not.toContain(block.actionId);
         expect(screen.findByTestId('editor-action-plugin-field-topic')).not.toBeNull();
         expect(screen.findByTestId('editor-action-plugin-field-oldField')).not.toBeNull();
         expect(changed).toHaveBeenCalledTimes(1);

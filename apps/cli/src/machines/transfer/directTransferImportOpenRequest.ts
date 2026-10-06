@@ -1,12 +1,7 @@
-import {
-  ComposerContentDisplayNameV1Schema,
-  ComposerContentHandleV1Schema,
-  ComposerContentMediaKindV1Schema,
-  ComposerContentMimeTypeV1Schema,
-  PluginContributionIdentityV1Schema,
-  SessionExecutionTargetV1Schema,
-  SessionAttachmentUploadInitRequestV1Schema,
-} from '@happier-dev/protocol';
+import { ComposerContentDisplayNameV1Schema, ComposerContentHandleV1Schema, ComposerContentMediaKindV1Schema, ComposerContentMimeTypeV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
 import { z } from 'zod';
 
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';

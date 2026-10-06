@@ -1,5 +1,5 @@
 import { ok } from '@happier-dev/cli-common/output';
-import { resolveSessionWaitTimeoutSeconds } from '@happier-dev/protocol';
+import { resolveSessionWaitTimeoutSeconds } from '@happier-dev/protocol/actions/specs/sessionCommandCli';
 
 import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import type { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';

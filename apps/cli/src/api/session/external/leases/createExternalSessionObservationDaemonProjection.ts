@@ -1,11 +1,8 @@
 import type {
     OccurrenceBoundExternalSessionObservation,
 } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
-import {
-    ExternalAgentObservationResourceDescriptorV1Schema,
-    type ExternalAgentObservationResourceDescriptorV1,
-    type ExternalAgentObservationSnapshotV1,
-} from '@happier-dev/protocol';
+import { ExternalAgentObservationResourceDescriptorV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import type { ExternalAgentObservationResourceDescriptorV1, ExternalAgentObservationSnapshotV1 } from '@happier-dev/protocol';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';

@@ -4,7 +4,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   en: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Reveal captured variables',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Reveal sensitive captured variables?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Captured local variables can contain credentials, tokens, personal data, and request bodies. They stay in this Stack trace panel and are discarded when you leave it.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Captured local variables can contain credentials, tokens, personal data, and request bodies.',
     'plugins.posthog.ui.codeVariables.loading': 'Revealing captured variables',
     'plugins.posthog.ui.codeVariables.title': 'Captured variables',
     'plugins.posthog.ui.codeVariables.truncated': 'The provider response exceeded the Action envelope, so the visible value was shortened.',
@@ -14,7 +14,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   de: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Erfasste Variablen anzeigen',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Sensible erfasste Variablen anzeigen?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Erfasste lokale Variablen können Anmeldedaten, Token, personenbezogene Daten und Anfrageinhalte enthalten. Sie verbleiben in diesem Stacktrace-Bereich und werden verworfen, wenn Sie ihn verlassen.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Erfasste lokale Variablen können Anmeldedaten, Token, personenbezogene Daten und Anfrageinhalte enthalten.',
     'plugins.posthog.ui.codeVariables.loading': 'Erfasste Variablen werden angezeigt',
     'plugins.posthog.ui.codeVariables.title': 'Erfasste Variablen',
     'plugins.posthog.ui.codeVariables.truncated': 'Die Antwort des Anbieters überschritt die Größe des Action-Umschlags, daher wurde der sichtbare Wert gekürzt.',
@@ -24,7 +24,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   ru: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Показать захваченные переменные',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Показать конфиденциальные захваченные переменные?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Захваченные локальные переменные могут содержать учётные данные, токены, персональные данные и тела запросов. Они остаются только на этой вкладке трассировки стека и удаляются при выходе.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Захваченные локальные переменные могут содержать учётные данные, токены, персональные данные и тела запросов.',
     'plugins.posthog.ui.codeVariables.loading': 'Загрузка захваченных переменных',
     'plugins.posthog.ui.codeVariables.title': 'Захваченные переменные',
     'plugins.posthog.ui.codeVariables.truncated': 'Ответ провайдера превысил размер конверта действия, поэтому видимое значение было сокращено.',
@@ -34,7 +34,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   pl: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Pokaż przechwycone zmienne',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Pokazać poufne przechwycone zmienne?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Przechwycone zmienne lokalne mogą zawierać dane logowania, tokeny, dane osobowe i treści żądań. Pozostają tylko na tej karcie stosu i są usuwane po jej opuszczeniu.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Przechwycone zmienne lokalne mogą zawierać dane logowania, tokeny, dane osobowe i treści żądań.',
     'plugins.posthog.ui.codeVariables.loading': 'Odczytywanie przechwyconych zmiennych',
     'plugins.posthog.ui.codeVariables.title': 'Przechwycone zmienne',
     'plugins.posthog.ui.codeVariables.truncated': 'Odpowiedź dostawcy przekroczyła rozmiar koperty akcji, dlatego widoczna wartość została skrócona.',
@@ -44,7 +44,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   es: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Mostrar variables capturadas',
     'plugins.posthog.ui.codeVariables.confirmTitle': '¿Mostrar variables capturadas sensibles?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Las variables locales capturadas pueden contener credenciales, tokens, datos personales y cuerpos de solicitudes. Solo permanecen en esta pestaña de la pila y se descartan al salir.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Las variables locales capturadas pueden contener credenciales, tokens, datos personales y cuerpos de solicitudes.',
     'plugins.posthog.ui.codeVariables.loading': 'Leyendo variables capturadas',
     'plugins.posthog.ui.codeVariables.title': 'Variables capturadas',
     'plugins.posthog.ui.codeVariables.truncated': 'La respuesta del proveedor superó el sobre de la acción, por lo que se acortó el valor visible.',
@@ -54,7 +54,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   fr: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Afficher les variables capturées',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Afficher les variables capturées sensibles ?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Les variables locales capturées peuvent contenir des identifiants, des jetons, des données personnelles et des corps de requête. Elles restent dans cet onglet de pile et sont supprimées lorsque vous le quittez.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Les variables locales capturées peuvent contenir des identifiants, des jetons, des données personnelles et des corps de requête.',
     'plugins.posthog.ui.codeVariables.loading': 'Lecture des variables capturées',
     'plugins.posthog.ui.codeVariables.title': 'Variables capturées',
     'plugins.posthog.ui.codeVariables.truncated': 'La réponse du fournisseur dépassait l’enveloppe de l’action ; la valeur visible a donc été raccourcie.',
@@ -64,7 +64,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   it: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Mostra variabili acquisite',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Mostrare le variabili acquisite sensibili?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Le variabili locali acquisite possono contenere credenziali, token, dati personali e corpi delle richieste. Restano solo in questa scheda dello stack e vengono eliminate quando la lasci.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Le variabili locali acquisite possono contenere credenziali, token, dati personali e corpi delle richieste.',
     'plugins.posthog.ui.codeVariables.loading': 'Lettura delle variabili acquisite',
     'plugins.posthog.ui.codeVariables.title': 'Variabili acquisite',
     'plugins.posthog.ui.codeVariables.truncated': 'La risposta del provider ha superato l’involucro dell’azione, quindi il valore visibile è stato abbreviato.',
@@ -74,7 +74,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   pt: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Mostrar variáveis capturadas',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Mostrar variáveis capturadas sensíveis?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'As variáveis locais capturadas podem conter credenciais, tokens, dados pessoais e corpos de pedidos. Permanecem apenas neste separador da pilha e são descartadas ao sair.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'As variáveis locais capturadas podem conter credenciais, tokens, dados pessoais e corpos de pedidos.',
     'plugins.posthog.ui.codeVariables.loading': 'A ler variáveis capturadas',
     'plugins.posthog.ui.codeVariables.title': 'Variáveis capturadas',
     'plugins.posthog.ui.codeVariables.truncated': 'A resposta do fornecedor excedeu o invólucro da ação, por isso o valor visível foi abreviado.',
@@ -84,7 +84,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   ca: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': 'Mostra les variables capturades',
     'plugins.posthog.ui.codeVariables.confirmTitle': 'Voleu mostrar variables capturades sensibles?',
-    'plugins.posthog.ui.codeVariables.confirmDescription': 'Les variables locals capturades poden contenir credencials, testimonis, dades personals i cossos de sol·licitud. Només romanen en aquesta pestanya de la pila i es descarten en sortir-ne.',
+    'plugins.posthog.ui.codeVariables.confirmDescription': 'Les variables locals capturades poden contenir credencials, testimonis, dades personals i cossos de sol·licitud.',
     'plugins.posthog.ui.codeVariables.loading': 'S’estan llegint les variables capturades',
     'plugins.posthog.ui.codeVariables.title': 'Variables capturades',
     'plugins.posthog.ui.codeVariables.truncated': 'La resposta del proveïdor ha superat l’embolcall de l’acció i el valor visible s’ha escurçat.',
@@ -94,7 +94,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   'zh-Hans': Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': '显示捕获的变量',
     'plugins.posthog.ui.codeVariables.confirmTitle': '显示敏感的捕获变量？',
-    'plugins.posthog.ui.codeVariables.confirmDescription': '捕获的局部变量可能包含凭据、令牌、个人数据和请求正文。它们只保留在此堆栈跟踪标签页中，离开时即被丢弃。',
+    'plugins.posthog.ui.codeVariables.confirmDescription': '捕获的局部变量可能包含凭据、令牌、个人数据和请求正文。',
     'plugins.posthog.ui.codeVariables.loading': '正在读取捕获的变量',
     'plugins.posthog.ui.codeVariables.title': '捕获的变量',
     'plugins.posthog.ui.codeVariables.truncated': '提供方响应超出了操作信封，显示的值已缩短。',
@@ -104,7 +104,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   'zh-Hant': Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': '顯示擷取的變數',
     'plugins.posthog.ui.codeVariables.confirmTitle': '顯示敏感的擷取變數？',
-    'plugins.posthog.ui.codeVariables.confirmDescription': '擷取的區域變數可能包含憑證、權杖、個人資料和請求本文。它們只保留在此堆疊追蹤分頁中，離開時即會捨棄。',
+    'plugins.posthog.ui.codeVariables.confirmDescription': '擷取的區域變數可能包含憑證、權杖、個人資料和請求本文。',
     'plugins.posthog.ui.codeVariables.loading': '正在讀取擷取的變數',
     'plugins.posthog.ui.codeVariables.title': '擷取的變數',
     'plugins.posthog.ui.codeVariables.truncated': '供應商回應超出動作信封，因此顯示值已縮短。',
@@ -114,7 +114,7 @@ const POSTHOG_CODE_VARIABLE_TRANSLATIONS = Object.freeze({
   ja: Object.freeze({
     'plugins.posthog.ui.codeVariables.reveal': '取得した変数を表示',
     'plugins.posthog.ui.codeVariables.confirmTitle': '機密性の高い取得変数を表示しますか？',
-    'plugins.posthog.ui.codeVariables.confirmDescription': '取得したローカル変数には、認証情報、トークン、個人データ、リクエスト本文が含まれる場合があります。このスタックトレースタブ内だけに保持され、タブを離れると破棄されます。',
+    'plugins.posthog.ui.codeVariables.confirmDescription': '取得したローカル変数には、認証情報、トークン、個人データ、リクエスト本文が含まれる場合があります。',
     'plugins.posthog.ui.codeVariables.loading': '取得した変数を読み込み中',
     'plugins.posthog.ui.codeVariables.title': '取得した変数',
     'plugins.posthog.ui.codeVariables.truncated': 'プロバイダー応答がアクションの上限を超えたため、表示値を短縮しました。',

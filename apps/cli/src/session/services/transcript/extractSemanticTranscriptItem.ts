@@ -1,4 +1,4 @@
-import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol';
+import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 
 import {
   type TranscriptHistoryNormalizationSequenceState,

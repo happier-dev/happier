@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -40,6 +41,29 @@ function presentLegacy(hidden: boolean, labelsByKey: Readonly<Record<string, str
 }
 
 describe('presentConnectedServicesIndexAccount privacy for released profiles', () => {
+    it('keeps the provider UUID out of the subtitle when an email identifies a qualified account', () => {
+        const profile: QualifiedConnectedAccountProfileV4 = {
+            ref: { service: ENTRY.service!, accountId: 'internal-account-id' },
+            status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+            credentialRevision: 'credential-1', configurationReady: true, configurationRevision: null,
+            scopes: [], providerIdentity: { email: 'you@example.com', accountId: '00ae5eea-6286-48bc-b82a-30a5f8492864' },
+        };
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [ENTRY], qualifiedAccounts: [profile], qualifiedGroups: [],
+            legacyServices: [], defaultAccountByServiceKey: {}, resolveLabel: () => 'Claude',
+            resolveFallbackEntry: () => null, presentDiagnostics: () => ({ primary: null, supportDetails: null }),
+            loadingLabel: 'Loading',
+        });
+        const sheet = model.sheets[0]!;
+        const shown = presentConnectedServicesIndexAccount(sheet, sheet.accounts[0]!, {}, (input) => presentConnectedAccountIdentity({
+            ...input, hidden: false, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+        }));
+        expect(shown.title).toBe('you@example.com');
+        expect(shown.identityLabel).toBeNull();
+        // The actual provider id remains available to intentional detail/support surfaces.
+        expect(shown.accountIdLabel).toBe(profile.providerIdentity!.accountId);
+    });
+
     it('masks an id fallback and an email used as a user label through the same privacy owner', () => {
         const presentation = presentLegacy(true, {
             [connectedServiceProfileKey({ serviceId: SERVICE_ID, profileId: 'work' })]: 'work@example.com',

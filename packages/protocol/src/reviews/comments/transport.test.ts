@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { executeReviewCommentTransportV1, buildReviewCommentCreateEquivalenceCommitmentV1, type ReviewCommentTransportContextV1 } from './transport.js';
 import {
   deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
@@ -18,6 +19,19 @@ const create = { workspace, anchor: { kind: 'file' as const, filePath: 'a.ts' },
   metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'], reviewGroupIds: ['PRIVATE-group'] } };
 
 describe('canonical Review Comment client transport', () => {
+  it('retains classic validation errors and issue paths for malformed stored responses', async () => {
+    const result = executeReviewCommentTransportV1({
+      actionId: 'reviews.comments.get', input: { commentId: 'comment-1' },
+      context: { accountId: 'account-1', mode: 'plain', material: null }, actor,
+      request: async () => ({ comment: null, extra: true }),
+      randomBytes: (length) => new Uint8Array(length),
+    });
+    await expect(result).rejects.toBeInstanceOf(z.ZodError);
+    await expect(result).rejects.toMatchObject({ issues: [
+      { code: 'invalid_union', path: ['comment'] },
+      { code: 'unrecognized_keys', path: [], keys: ['extra'] },
+    ] });
+  });
   it('rejects a same-scope prepared previous record for another target before sealing or committing', async () => {
     const previous: ReviewCommentV1 = { v: 1, id: 'other-comment', accountId: context.accountId, workspace,
       anchor: create.anchor, snapshot: create.snapshot, body: 'Other private content', bodyVersion: 1, edits: [], author: actor,

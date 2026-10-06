@@ -73,7 +73,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'FreshnessLine', 'NavigationList', 'NavigationList.Group', 'NavigationList.Row',
   'DetailsPane', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
   // Entity drag-and-drop r1: declared sources/targets join the mounted host lifecycle.
-  'DragSource', 'DropTarget',
+  'DragSource', 'DropTarget', 'HostedAnchoredMenu',
   // Widgets platform r1 (WGT-11): the native metric, rows/table and one-series chart nodes.
   'Metric', 'DataRows', 'DataTable', 'Chart',
   // Widgets platform: declared areas delegate to the incumbent mounted host.
@@ -580,6 +580,9 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
   {
     publicName: 'List',
     propTypeName: 'ListProps',
+    // The public CollectionVirtualizer prop delegates only platform windowing;
+    // components/List remains the focus/selection/viewport owner. Collection
+    // feeds the same adapter to row and card Lists, with RN lists as fallback.
     family: 'List root',
     disposition: 'required',
     proofTier: 'behavior-owning',
@@ -1107,6 +1110,23 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     declarative: { kind: 'not-applicable' as const, reason: 'Overlay nodes remain semantic ActionPanel/Select adapters, not arbitrary portal content.' },
   })),
   {
+    publicName: 'HostedAnchoredMenu',
+    propTypeName: 'HostedAnchoredMenuProps',
+    family: 'Menu',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/interaction/Menu.ts',
+    sharedSymbol: 'useHappierMenuInteraction',
+    pluginOwner: { module: 'components/Overlay.tsx', symbol: 'HostedAnchoredMenu' },
+    // The hosted drag chooser consumes this adapter internally; that is not
+    // an independent public product-consumer or loaded-platform graduation proof.
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The hosted drag chooser anchors a native dialog; MenuRows delegates choices to the existing Menu interaction owner.' },
+  },
+  {
     publicName: 'Form',
     propTypeName: 'FormProps',
     family: 'Form root',
@@ -1423,8 +1443,10 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     propTypeName: 'CollectionProps',
     family: 'Collection',
     disposition: 'required',
-    // COLLECTION.md r0.41: one item anatomy drawn as table, list, board or grid, with the split, push and drawer
-    // detail containers. PRs & Issues and the Plugins settings page consume the same public adapter.
+    // One item anatomy drawn as table, list, board or grid. Its public virtualizer
+    // prop feeds the existing List boundary, including card Lists; it does not
+    // introduce another focus/selection/viewport owner. PRs & Issues and the
+    // Plugins settings page consume the same public Collection adapter.
     proofTier: 'behavior-owning',
     phase: 'graduated',
     publiclyExported: true,
@@ -2241,6 +2263,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'BrandMark',
       'StoredImage',
       'DiffViewer',
+      'HostedAnchoredMenu',
       'WidgetSurface',
       'TargetedSurface',
       'SessionProvider',

@@ -6,13 +6,11 @@ import type {
 import type {
     PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
-import {
-  CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
-  QualifiedConnectedAccountIdSchema,
-  pluginSourceCustodyV1Equal,
-  sameQualifiedConnectedAccountRef,
-  type PluginConnectedAccountAuthenticationModeV2,
-} from '@happier-dev/protocol';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/protocol';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
@@ -1481,7 +1479,81 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
     }
 
-    async function checkCurrentness(attempt: ActiveStoredAttempt): Promise<AttemptResponse | null> {
+    async function refreshRuntimeAdmission(attempt: ActiveStoredAttempt): Promise<AttemptResponse | null> {
+        const ownershipFailure = attemptOwnershipFailure(attempt);
+        if (ownershipFailure) return ownershipFailure;
+        let admitted: ConnectedAccountAttemptModeAdmission;
+        try {
+            admitted = await params.runtime.admit({
+                service: attempt.admission.service,
+                modeId: attempt.admission.modeId,
+            });
+        } catch (error) {
+            return attemptOwnershipFailure(attempt) ?? {
+                ...runtimeAdmissionFailure(error),
+                status: 'unavailable',
+                attemptId: attempt.id,
+            };
+        }
+        const afterAdmission = attemptOwnershipFailure(attempt);
+        if (afterAdmission) return afterAdmission;
+        // Rebind an occurrence, never a different producer or authentication contract.
+        // The caller has proved provider entry did not happen for this step.
+        if (
+            admitted.occurrenceId === attempt.admission.occurrenceId
+            || !sameService(admitted.service, attempt.admission.service)
+            || !pluginSourceCustodyV1Equal(admitted.sourceCustody, attempt.admission.sourceCustody)
+            || !isDeepStrictEqual(admitted.descriptor, attempt.admission.descriptor)
+        ) {
+            return {
+                status: 'conflict',
+                attemptId: attempt.id,
+                code: 'connected_account_runtime_generation_changed',
+            };
+        }
+        if (attempt.configuration) {
+            let configuration: ConnectedAccountAttemptConfigurationAdmission;
+            try {
+                configuration = await params.configuration.admit({
+                    intent: attempt.intent,
+                    service: admitted.service,
+                    ...(attempt.account ? { account: attempt.account } : {}),
+                    mode: admitted.descriptor,
+                    occurrenceId: admitted.occurrenceId,
+                    sourceCustody: admitted.sourceCustody,
+                    ...(attempt.intent === 'connect' ? { attemptId: attempt.id } : {}),
+                    expectedConfigurationRevision: attempt.configuration.snapshot.revision,
+                });
+            } catch {
+                return attemptOwnershipFailure(attempt) ?? {
+                    status: 'unavailable',
+                    attemptId: attempt.id,
+                    code: 'connected_account_configuration_unavailable',
+                };
+            }
+            const afterConfiguration = attemptOwnershipFailure(attempt);
+            if (afterConfiguration) return afterConfiguration;
+            if (
+                configuration.status !== 'ready'
+                || configuration.snapshot.revision !== attempt.configuration.snapshot.revision
+                || !isDeepStrictEqual(configuration.snapshot.target, attempt.configuration.snapshot.target)
+            ) {
+                return {
+                    status: 'conflict',
+                    attemptId: attempt.id,
+                    code: 'connected_account_configuration_changed',
+                };
+            }
+            attempt.configuration = configuration;
+        }
+        attempt.admission = Object.freeze({ ...admitted, modeId: admitted.descriptor.id });
+        return null;
+    }
+
+    async function checkCurrentness(
+        attempt: ActiveStoredAttempt,
+        beforeProviderEntry = false,
+    ): Promise<AttemptResponse | null> {
         const before = attemptOwnershipFailure(attempt);
         if (before) return before;
         if (isAttemptExpired(attempt)) {
@@ -1490,6 +1562,25 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 attemptId: attempt.id,
                 code: 'connected_account_attempt_expired',
             };
+        }
+        if (beforeProviderEntry) {
+            let runtimeCurrent: boolean;
+            try {
+                runtimeCurrent = await params.runtime.isCurrent(attempt.admission);
+            } catch (error) {
+                if (!(error instanceof ConnectedAccountRuntimeInvocationNotStartedError)) {
+                    return attemptOwnershipFailure(attempt) ?? {
+                        status: 'unavailable',
+                        attemptId: attempt.id,
+                        code: 'connected_account_attempt_internal_unavailable',
+                    };
+                }
+                runtimeCurrent = false;
+            }
+            if (!runtimeCurrent) {
+                const failure = await refreshRuntimeAdmission(attempt);
+                if (failure) return failure;
+            }
         }
         if (!attempt.configuration) {
             return {
@@ -2480,7 +2571,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     ): Promise<AttemptResponse> {
         if (isAttemptExpired(attempt)) return (await expireAttemptIfNeeded(attempt))!;
         attempt.phase = 'inFlight';
-        const before = await checkCurrentness(attempt);
+        const before = await checkCurrentness(attempt, true);
         if (before) {
             attempt.phase = 'rejected';
             attempt.lastResponse = before;
@@ -2490,7 +2581,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const admissionFailure =
             await rejectAttemptWhenEffectfulOperationIsDisallowed(attempt);
         if (admissionFailure) return admissionFailure;
-        const afterAdmissionCurrentness = await checkCurrentness(attempt);
+        const afterAdmissionCurrentness = await checkCurrentness(attempt, true);
         if (afterAdmissionCurrentness) {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
@@ -2514,12 +2605,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 error
                 instanceof ConnectedAccountRuntimeInvocationNotStartedError
             ) {
+                const refreshFailure = await refreshRuntimeAdmission(attempt);
+                if (!refreshFailure) return await invoke(attempt, operation, signal);
                 attempt.phase = 'rejected';
-                const response: AttemptResponse = {
-                    status: 'unavailable',
-                    attemptId: attempt.id,
-                    code: error.code,
-                };
+                const response = refreshFailure;
                 attempt.lastResponse = response;
                 await destroyAttempt(attempt, response);
                 return response;
@@ -2584,7 +2673,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return await invoke(attempt, { kind: 'beginDevice' });
         }
         attempt.phase = 'inFlight';
-        const before = await checkCurrentness(attempt);
+        const before = await checkCurrentness(attempt, true);
         if (before) {
             await destroyAttempt(attempt, before);
             return before;
@@ -2628,7 +2717,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return ownershipFailure;
         }
         finishDurableOperation();
-        const afterTransaction = await checkCurrentness(attempt);
+        const afterTransaction = await checkCurrentness(attempt, true);
         if (afterTransaction) {
             if (attemptOwnershipFailure(attempt)) {
                 await compensateLateDurableWrite(attempt, 'oauth');
@@ -3501,20 +3590,22 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             } catch (error) {
                 const ownershipFailure = attemptOwnershipFailure(attempt);
                 if (ownershipFailure) return ownershipFailure;
-                attempt.phase = 'configurationRequired';
-                return {
-                    ...runtimeAdmissionFailure(error),
-                    attemptId: input.attemptId,
-                };
+                if (error instanceof ConnectedAccountRuntimeInvocationNotStartedError) {
+                    runtimeCurrent = false;
+                } else {
+                    attempt.phase = 'configurationRequired';
+                    return {
+                        ...runtimeAdmissionFailure(error),
+                        attemptId: input.attemptId,
+                    };
+                }
             }
             if (!runtimeCurrent) {
-                const response: AttemptResponse = {
-                    status: 'conflict',
-                    attemptId: input.attemptId,
-                    code: 'connected_account_runtime_generation_changed',
-                };
-                await destroyAttempt(attempt, response);
-                return response;
+                const failure = await refreshRuntimeAdmission(attempt);
+                if (failure) {
+                    await destroyAttempt(attempt, failure);
+                    return failure;
+                }
             }
             const afterRuntime = attemptOwnershipFailure(attempt);
             if (afterRuntime) return afterRuntime;
@@ -3622,6 +3713,24 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         : 'connected_account_attempt_phase_mismatch',
                 };
             }
+            const fields = attempt.admission.descriptor.fields;
+            const declaredIds = new Set(fields.map((field) => field.id));
+            let valid = Object.keys(input.fields).every((id) => declaredIds.has(id));
+            try {
+                valid = valid && fields.every((field) => isValidPluginJsonSchemaValue(
+                    compilePluginJsonSchema(field.schema), input.fields[field.id] ?? '',
+                ));
+            } catch {
+                valid = false;
+            }
+            if (!valid) {
+                const response: AttemptResponse = {
+                    status: 'rejected', attemptId: attempt.id,
+                    code: 'connected_account_manual_fields_invalid',
+                };
+                await destroyAttempt(attempt, response);
+                return response;
+            }
             return await invoke(attempt, {
                 kind: 'submitManual',
                 fields: Object.freeze({ ...input.fields }),
@@ -3668,7 +3777,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     };
             }
             attempt.phase = 'inFlight';
-            const beforeCompletion = await checkCurrentness(attempt);
+            const beforeCompletion = await checkCurrentness(attempt, true);
             if (beforeCompletion) {
                 attempt.phase = 'rejected';
                 attempt.lastResponse = beforeCompletion;
@@ -3723,7 +3832,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 await destroyAttempt(attempt, response);
                 return response;
             }
-            const afterAcknowledge = await checkCurrentness(attempt);
+            const afterAcknowledge = await checkCurrentness(attempt, true);
             if (afterAcknowledge) {
                 const uncertain = preservePossibleProviderOutcome(
                     attempt,

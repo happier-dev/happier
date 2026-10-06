@@ -324,7 +324,7 @@ describe('SessionItem navigation', () => {
         await screen.unmount();
     });
 
-    it('renders a draggable split-canvas handle that triggers the default split action from the row', async () => {
+    it('keeps the desktop row as the navigation target without a separate split handle', async () => {
         splitCanvasActionState.mode = 'open';
 
         const screen = await renderSessionItem({
@@ -342,14 +342,12 @@ describe('SessionItem navigation', () => {
 
         await triggerAllHoverTargets(screen);
 
-        const handle = screen.findByTestId('session-item-split-drag-handle-sess_drag') as any;
-        expect(handle).toBeTruthy();
-
-        await act(async () => {
-            handle.props.onPress?.();
-        });
-
-        expect(splitCanvasActionState.openInSplitRight).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('session-item-split-drag-handle-sess_drag')).toBeNull();
+        navigateSpy.mockClear();
+        await screen.pressByTestIdAsync('session-list-item-sess_drag');
+        expect(navigateSpy).toHaveBeenCalledWith('sess_drag', { serverId: 'server_a' });
+        expect(splitCanvasActionState.openInSplitRight).not.toHaveBeenCalled();
+        expect(splitCanvasActionState.openInSplitDown).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

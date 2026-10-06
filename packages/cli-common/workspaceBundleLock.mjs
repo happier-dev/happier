@@ -510,7 +510,7 @@ function reclaimLockSnapshot(lockPath, expectedRaw) {
     renameSync(lockPath, reclaimPath);
   } catch (error) {
     if (error?.code === 'ENOENT') return true;
-    return false;
+    throw error;
   }
 
   let movedRaw = null;
@@ -792,13 +792,9 @@ function refreshPriorityClaim({
 
 function clearPriorityClaimIfOwned(claimPath, claimRaw) {
   if (claimRaw == null) return true;
-  try {
-    if (readLockOwnerSnapshot(claimPath).raw !== claimRaw) return true;
-    if (reclaimLockSnapshot(claimPath, claimRaw)) return true;
-    return readLockOwnerSnapshot(claimPath).raw !== claimRaw;
-  } catch {
-    return false;
-  }
+  if (readLockOwnerSnapshot(claimPath).raw !== claimRaw) return true;
+  if (reclaimLockSnapshot(claimPath, claimRaw)) return true;
+  return readLockOwnerSnapshot(claimPath).raw !== claimRaw;
 }
 
 function callerHoldsWorkspaceBundleLock(lockPath, heldLockValue) {
@@ -1131,7 +1127,6 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     stopWorkspaceLockHeartbeat(heartbeatWorker);
-    clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     try {
       if (fd !== null) closeSync(fd);
     } catch {}
@@ -1141,6 +1136,7 @@ export async function withWorkspaceBundleLock(fn, options = {}) {
         processInstanceFingerprint,
       })) unlinkSync(lockPath);
     } catch {}
+    clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     classifyRetainedLockSnapshots(claimPath, { ...claimHistoryOptions, releasedOwner: { ownerToken, processInstanceFingerprint } });
   }
 }
@@ -1350,7 +1346,6 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
     });
   } finally {
     stopWorkspaceLockHeartbeat(heartbeatWorker);
-    clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     try {
       if (fd !== null) closeSync(fd);
     } catch {}
@@ -1360,6 +1355,7 @@ export function withWorkspaceBundleLockSync(fn, options = {}) {
         processInstanceFingerprint,
       })) unlinkSync(lockPath);
     } catch {}
+    clearPriorityClaimIfOwned(claimPath, ownClaimRaw);
     classifyRetainedLockSnapshots(claimPath, { ...claimHistoryOptions, releasedOwner: { ownerToken, processInstanceFingerprint } });
   }
 }

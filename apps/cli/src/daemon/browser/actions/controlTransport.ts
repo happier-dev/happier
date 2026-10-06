@@ -1,12 +1,9 @@
 import { z } from 'zod';
-import {
-  RuntimeActionIdV1Schema,
-  StrictJsonValueSchema,
-  createUnavailableRuntimeActionExecutor,
-  getActionSpec,
-  resolveRuntimeActionExecutionFamily,
-  type RuntimeActionExecute,
-} from '@happier-dev/protocol';
+import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { RuntimeActionExecute } from '@happier-dev/protocol';
 
 import { daemonPost } from '@/daemon/controlHttp';
 

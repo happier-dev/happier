@@ -93,15 +93,9 @@ import type {
   PluginChangeRequest,
 } from '@/plugins/daemon/changeContract';
 import type { PluginChangePendingReviewResult } from '@happier-dev/protocol/marketplace/internal';
-import {
-  PluginIdSchema,
-  PluginScaffoldTemplateSchema,
-  PluginScaffoldUiModeSchema,
-  type MarketplaceIndexItemV1,
-  type MarketplaceSourceRegistryV1,
-  type MarketplaceSourceV1,
-  type PluginScaffoldUiMode,
-} from '@happier-dev/protocol';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginScaffoldTemplateSchema, PluginScaffoldUiModeSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import type { MarketplaceIndexItemV1, MarketplaceSourceRegistryV1, MarketplaceSourceV1, PluginScaffoldUiMode } from '@happier-dev/protocol';
 import {
   marketplaceInstallUnavailableReason,
   queryAllMarketplaceSourceItems,

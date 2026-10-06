@@ -1,8 +1,6 @@
-import {
-  clearConnectedServiceAuthGroupMemberRuntimeBlockers,
-  compareConnectedServiceQuotaObservationRecency,
-  type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+import { clearConnectedServiceAuthGroupMemberRuntimeBlockers } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
+import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol/connect/quotaObservationTime';
+import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
 import type {

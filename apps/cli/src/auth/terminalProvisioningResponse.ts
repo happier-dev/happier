@@ -1,7 +1,4 @@
-import {
-  isTerminalProvisioningV3Payload,
-  openTerminalProvisioningV3Response,
-} from '@happier-dev/protocol';
+import { isTerminalProvisioningV3Payload, openTerminalProvisioningV3Response } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 export type TerminalPairingAuthentication = Readonly<{
   secret: Uint8Array;

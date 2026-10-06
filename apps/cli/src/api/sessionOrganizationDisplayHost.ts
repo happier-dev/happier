@@ -1,16 +1,8 @@
 import axios from 'axios';
-import {
-  CreateOrUpdateSessionOrganizationFolderRequestSchema,
-  CreateOrUpdateSessionOrganizationFolderResponseSchema,
-  CreateOrUpdateSessionOrganizationTagRequestSchema,
-  CreateOrUpdateSessionOrganizationTagResponseSchema,
-  SessionOrganizationSnapshotResponseSchema,
-  prepareSessionOrganizationDisplayEnvelopeForAccountModeV1,
-  projectSessionOrganizationDisplayEnvelopeForReadV1,
-  type AccountScopedCryptoMaterial,
-  type HomeDomainActionIdV1,
-  type SessionOrganizationContentEnvelope,
-} from '@happier-dev/protocol';
+import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
+import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { prepareSessionOrganizationDisplayEnvelopeForAccountModeV1, projectSessionOrganizationDisplayEnvelopeForReadV1 } from '@happier-dev/protocol/sessions/organization/content';
+import type { AccountScopedCryptoMaterial, HomeDomainActionIdV1, SessionOrganizationContentEnvelope } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { getRandomBytes } from '@/api/encryption';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';

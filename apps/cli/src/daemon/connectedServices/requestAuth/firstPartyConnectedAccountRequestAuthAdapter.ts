@@ -1,19 +1,7 @@
-import {
-    buildQualifiedPluginContributionKey,
-    ConnectedServiceCredentialRevisionV1Schema,
-    readBuiltInLegacyConnectedAccountServiceKeyIngress,
-    type ConnectedAccountPurposeDeclarationV1,
-    type ConnectedAccountServiceKey,
-    type ConnectedServiceBindingsV2,
-    type ConnectedServiceCredentialRecordV1,
-    type ConnectedServiceCredentialRevisionV1,
-    type ConnectedServiceId,
-    type PluginContributionIdentityV1,
-    type QualifiedConnectedAccountRef,
-    type QualifiedConnectedAccountPurposeBindingV1,
-    type QualifiedConnectedAccountPurposeV1,
-    type QualifiedConnectedAccountRequestAuthUseV1,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountPurposeDeclarationV1, ConnectedAccountServiceKey, ConnectedServiceBindingsV2, ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevisionV1, ConnectedServiceId, PluginContributionIdentityV1, QualifiedConnectedAccountRef, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 import type {
     ConnectedAccountRequestAuthResolvedBinding,
 } from './ConnectedAccountRequestAuthService';

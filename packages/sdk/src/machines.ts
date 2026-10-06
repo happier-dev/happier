@@ -1,12 +1,7 @@
-import {
-  openEncryptedDataKeyEnvelopeV1,
-  resolvePublishedMachineDataEncryptionKeyV1,
-} from '@happier-dev/protocol';
-import {
-  ExternalActionMachineBootstrapListV1Schema,
-  type ExternalActionMachineBootstrapV1,
-  type ExternalActionTargetV1,
-} from '@happier-dev/protocol/actions';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { ExternalActionMachineBootstrapListV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionMachineBootstrapV1, ExternalActionTargetV1 } from '@happier-dev/protocol/actions';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { HappierTransportError } from './errors.js';

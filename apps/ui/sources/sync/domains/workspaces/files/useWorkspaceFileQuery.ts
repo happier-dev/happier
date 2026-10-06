@@ -70,11 +70,12 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
                         signal: controller.signal, includeCoverage: true,
                     });
                     if (!controller.signal.aborted) setState({ scope, lifetime: accountLifetime, query, page, isSearching: false, error: null });
-                } catch {
+                } catch (error) {
                     if (!controller.signal.aborted) setState((previous) => ({
                         scope, lifetime: accountLifetime, query: previous?.query ?? query,
                         page: previous?.scope === scope && previous.lifetime === accountLifetime ? previous.page : null,
-                        isSearching: false, error: new WorkspaceFileSearchUnavailableError(),
+                        isSearching: false, error: error instanceof WorkspaceFileSearchUnavailableError
+                            ? error : new WorkspaceFileSearchUnavailableError(),
                     }));
                 }
             })();

@@ -1,6 +1,6 @@
 import { logger } from '@/ui/logger';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
-import { SessionMessagesPageV1Schema } from '@happier-dev/protocol';
+import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { createSessionTranscriptStoredContentUnavailableError } from '@/api/session/sessionTranscriptStoredContentUnavailable';
 import { openSessionMessageContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
 

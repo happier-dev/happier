@@ -35,6 +35,48 @@ function expectActionSurfaceEnabled(
 }
 
 describe('accountSettings', () => {
+  it('reads predecessor profile and secret collections beyond current write budgets without loss', () => {
+    // 0.2 at 682f9f1222bc55fcfa8640d2b796b1acab1c1ac1: accountProfilesSettingDefinitions
+    // uses unbounded arrays of AIBackendProfileSchema and SavedSecretSchema. These are
+    // complete predecessor records, including defaults emitted by those field schemas.
+    const profiles = Array.from({ length: 257 }, (_, index) => ({
+      id: `profile-${index}`, name: `Profile ${index}`, environmentVariables: [],
+      defaultPermissionModeByTargetKey: {}, defaultPermissionModeByAgent: {},
+      defaultPersistenceModeByTargetKey: {}, defaultPersistenceModeByAgent: {},
+      compatibilityByTargetKey: {}, compatibility: {}, envVarRequirements: [],
+      isBuiltIn: false, defaultEnabled: true, createdAt: 1, updatedAt: 1, version: '1.0.0',
+    }));
+    const secrets = Array.from({ length: 257 }, (_, index) => ({
+      id: `secret-${index}`, name: `Secret ${index}`, kind: 'apiKey',
+      encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'x'.repeat(600) } },
+      createdAt: 1, updatedAt: 1,
+    }));
+    const raw = { profiles, secrets };
+    expect(JSON.stringify(secrets).length).toBeGreaterThan(128 * 1024);
+    const parsed = accountSettingsParse(raw);
+    expect(parsed.profiles).toEqual(profiles);
+    expect(parsed.secrets).toEqual(secrets);
+    expect(accountSettingsParse(JSON.parse(JSON.stringify(parsed))).profiles).toEqual(profiles);
+    expect(accountSettingsParse(JSON.parse(JSON.stringify(parsed))).secrets).toEqual(secrets);
+    expect(ACCOUNT_SETTING_DEFINITIONS.profiles.parseMutationValue(profiles))
+      .toMatchObject({ success: false, reason: 'tooLarge' });
+    expect(ACCOUNT_SETTING_DEFINITIONS.secrets.parseMutationValue(secrets))
+      .toMatchObject({ success: false, reason: 'tooLarge' });
+  });
+
+  it('preserves legacy gauge preferences until global windows are selected', () => {
+    const legacy = accountSettingsParse({ sessionProviderUsageGaugeWindowMode: 'weekly' });
+    expect(legacy.sessionProviderUsageGaugeWindowMode).toBe('weekly');
+    expect(legacy.sessionProviderUsageGaugeWindowModes).toBeNull();
+    expect(accountSettingsParse({ sessionProviderUsageGaugeWindowModes: [] }).sessionProviderUsageGaugeWindowModes).toBeNull();
+    expect(accountSettingsParse({ sessionProviderUsageGaugeWindowModes: ['daily', 'weekly'] }).sessionProviderUsageGaugeWindowModes).toEqual(['daily', 'weekly']);
+  });
+
+  it('clears due reminders on open by default and preserves the manual preference', () => {
+    expect(accountSettingsParse({}).sessionReminderAutoClearOnOpen).toBe(true);
+    expect(accountSettingsParse({ sessionReminderAutoClearOnOpen: false }).sessionReminderAutoClearOnOpen).toBe(false);
+  });
+
   it('defaults committed message actions and the composer Library button on while retaining explicit opt-outs', () => {
     const keys = ['transcriptMessageCopyActionEnabled', 'transcriptMessageForkActionEnabled',
       'transcriptMessageRollbackActionEnabled', 'transcriptMessagePinActionEnabled',
@@ -1334,7 +1376,7 @@ describe('accountSettings', () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it('defaults workspace references and preserves forward-compatible workspace fields', () => {
+  it('defaults workspace references and projects known fields while preserving unknown Account roots', () => {
     const empty = accountSettingsParse({});
     expect(empty.workspaceRefsV1).toEqual([]);
 
@@ -1360,9 +1402,9 @@ describe('accountSettings', () => {
         serverId: 'server_1',
         machineId: 'machine_1',
         rootPath: '/repo',
-        futureWorkspaceField: { keep: true },
       }),
     ]);
+    expect(parsed.workspaceRefsV1[0]).not.toHaveProperty('futureWorkspaceField');
     expect(parsed.futureAccountField).toBe(true);
   });
 

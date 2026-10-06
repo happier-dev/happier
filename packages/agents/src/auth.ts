@@ -1,4 +1,4 @@
-import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol';
+import { isPluginAgentCliAuthBackgroundCheckSafe } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
 import { isBundledAgentId, type AgentId } from './types.js';

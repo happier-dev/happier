@@ -326,6 +326,53 @@ describe('Directory enrollment production composition', () => {
         });
     });
 
+    it.each(['fresh', 'same-account', 'different-account'] as const)(
+        'keeps the different-Account cause visible without refusing valid Home HTTP redemption (%s)', async (custody) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `directory_account_conflict_${Date.now()}_${Math.random()}`;
+        const fixture = createDirectoryHttpFixture({ sameServiceHome: true });
+        fixture.state.approval = 'approved';
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        const { AccountDirectorySession } = await import('@/sync/domains/accountDirectory/accountDirectorySession');
+        const { completeAccountServicePostAuth } = await import('./completeAccountServicePostAuth');
+        await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor, source: 'manual' });
+        const incumbent = {
+            token: `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({
+                sub: custody === 'same-account' ? 'account-directory' : 'incumbent-account', refresh: 1,
+            })), 'base64url')}.signature`,
+        };
+        if (custody !== 'fresh') {
+            await TokenStorage.setCredentialsForServerUrl(fixture.home.canonicalServerUrl,
+                { serverId: fixture.home.homeServerIdentityId }, incumbent);
+        }
+        await TokenStorage.accountDirectoryAuthCredentials.set(
+            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId },
+            { token: 'directory-fixture-credential' },
+        );
+        endpointFetchMock.mockImplementation((path: string, init?: RequestInit) => fixture.request(
+            fixture.service.endpointUrl, path, init,
+        ));
+        const session = new AccountDirectorySession(
+            { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId },
+            { capability: fixture.service.capability },
+        );
+
+        const result = await completeAccountServicePostAuth({
+            credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service: fixture.service, session,
+            intent: { kind: 'enroll', homeServerIdentityId: fixture.home.homeServerIdentityId },
+        });
+
+        expect(result).toMatchObject(custody === 'different-account' ? {
+            kind: 'failure', stage: 'enroll', homeCredentialCommitted: false,
+            code: { source: 'home', code: 'failed', reason: 'account_mismatch' }, recovery: 'use_home_auth',
+        } : { kind: 'home_enrolled', homeServerIdentityId: fixture.home.homeServerIdentityId });
+        expect(fixture.state.calls.map(({ path }) => path)).toContain('/v1/features/authenticated');
+        await expect(TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl,
+            { serverId: fixture.home.homeServerIdentityId })).resolves.toEqual(
+                custody === 'different-account' ? incumbent : { token: fixture.token },
+            );
+    });
+
     it('fails closed before Home contact when the production caller receives the wrong signed destination digest', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `directory_enrollment_wrong_digest_${Date.now()}_${Math.random()}`;
         const now = Date.now();

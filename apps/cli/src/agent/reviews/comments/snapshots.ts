@@ -6,14 +6,7 @@ import type {
     ReviewCommentAnchorV1,
     ReviewCommentSnapshotV1,
 } from '@happier-dev/protocol';
-import {
-    buildReviewCommentTextSnapshotHashes,
-    REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1,
-    REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1,
-    reviewCommentTextSnapshotHasBidiControlsV1,
-    reviewCommentTextSnapshotIsLikelyMinifiedV1,
-    reviewCommentTextSnapshotUtf8BytesV1,
-} from '@happier-dev/protocol';
+import { buildReviewCommentTextSnapshotHashes, REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1, REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_LINE_BYTES_V1, reviewCommentTextSnapshotHasBidiControlsV1, reviewCommentTextSnapshotIsLikelyMinifiedV1, reviewCommentTextSnapshotUtf8BytesV1 } from '@happier-dev/protocol/reviews/comments/snapshots';
 
 const DEFAULT_CONTEXT_LINE_COUNT = 5;
 const MAX_TEXT_SNAPSHOT_BYTES = REVIEW_COMMENT_TEXT_SNAPSHOT_MAX_BYTES_V1;

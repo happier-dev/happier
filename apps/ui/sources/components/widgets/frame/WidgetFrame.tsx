@@ -22,6 +22,8 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -58,7 +60,7 @@ export type WidgetFrameBody =
 
 /**
  * The one footer row: where the widget leads, or — while last-known rows are shown after a failed
- * refresh — why they are not current, with Retry.
+ * refresh, or after a change to this card was refused — why it is not as expected, with Retry.
  */
 export type WidgetFrameFooter =
     | Readonly<{ kind: 'open'; label: string; onPress: () => void;
@@ -127,10 +129,17 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             return next;
         });
     }, []);
-    const meta = refreshingResources.size > 0 ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
-        {props.meta}
-        <Text testID={`${props.testID}.refreshing`} style={styles.source} numberOfLines={1}>{t('widgetDefinition.refreshing')}</Text>
-    </View> : props.meta;
+    // While a read refreshes, the meta slot says so in place of its time (lab ST "Refreshing"): the
+    // shared activity glyph and the word, then the time returns. The content below never moves.
+    const meta = refreshingResources.size > 0 ? (
+        <View testID={`${props.testID}.refreshing`} style={styles.refreshing} accessibilityLiveRegion="polite">
+            <ActivitySpinner size={ICON_SIZE.xs - 2} color={theme.colors.text.tertiary} />
+            <Text style={styles.source} numberOfLines={1}>{t('widgetDefinition.refreshing')}</Text>
+        </View>
+    ) : props.meta;
+    // The frame sizes every state inside it (W1 bodies, a refusal, a plugin's own): a card's states on
+    // Home and a Board, one line under the header in a Companion or other column (lab ST "Compact").
+    const stateSize = props.placement === 'companion' ? 'line' : 'pane';
 
     const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => (
         <Text
@@ -193,7 +202,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     ) : null;
 
     if (props.presentation === 'body') {
-        return <>{props.meta}<WidgetFrameBodyView testID={props.testID} body={props.body} rows={0} />{footerNode}</>;
+        return <>{props.meta}<SurfaceStateSizeProvider size={stateSize}>
+            <WidgetFrameBodyView testID={props.testID} body={props.body} rows={0} />
+        </SurfaceStateSizeProvider>{footerNode}</>;
     }
     return (
         <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
@@ -222,13 +233,15 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
             overlay={props.fresh ? <WidgetFrameArrivalRing key={String(props.fresh)} frameStyle={props.frameStyle} /> : null}
         >
-            {rows > 0 ? (
-                <WidgetFrameReservedRows rows={rows}>
+            <SurfaceStateSizeProvider size={stateSize}>
+                {rows > 0 ? (
+                    <WidgetFrameReservedRows rows={rows}>
+                        <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                    </WidgetFrameReservedRows>
+                ) : (
                     <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
-                </WidgetFrameReservedRows>
-            ) : (
-                <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
-            )}
+                )}
+            </SurfaceStateSizeProvider>
         </HappierWidgetFrame>
         </WidgetFrameResourceActivityContext.Provider>
     );
@@ -296,7 +309,6 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
                 <SurfaceStateCard
                     testID={`${props.testID}.empty`}
                     kind="empty"
-                    size="pane"
                     title={body.title}
                     reason={body.reason}
                     {...(body.action ? { action: body.action } : {})}
@@ -308,7 +320,6 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
                 <SurfaceStateCard
                     testID={`${props.testID}.error`}
                     kind="error"
-                    size="pane"
                     title={body.title}
                     reason={body.reason}
                     accessibilitySemantics="status"
@@ -337,6 +348,11 @@ const stylesheet = StyleSheet.create((theme) => {
             ...Typography.default('semiBold'),
             ...happierPageTextMetrics('sectionTitle'),
             color: theme.colors.text.primary,
+        },
+        refreshing: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
         },
         titleWithMeta: {
             flexDirection: 'row',

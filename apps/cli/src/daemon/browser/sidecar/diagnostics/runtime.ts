@@ -1,8 +1,5 @@
-import {
-    BrowserAdapterCapabilitiesV1Schema,
-    type BrowserAdapterCapabilitiesV1,
-    type BrowserDiagnosticFamilyV1,
-} from '@happier-dev/protocol';
+import { BrowserAdapterCapabilitiesV1Schema } from '@happier-dev/protocol/browser/adapters/v1';
+import type { BrowserAdapterCapabilitiesV1, BrowserDiagnosticFamilyV1 } from '@happier-dev/protocol';
 
 import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 import type {

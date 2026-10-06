@@ -1,34 +1,12 @@
-import {
-    compilePluginJsonSchema,
-    PluginDeclarativeDocumentNormalizationErrorV1,
-    PluginIdSchema,
-    PluginUiRendererV2Schema,
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    isValidPluginJsonSchemaValue,
-    normalizePluginDeclarativeDocumentV1,
-    type ActionId,
-    type PluginContributionIdentityV1,
-    type PluginDeclarativeActionVariantV2,
-    type PluginDeclarativeComposerApplyEffectV1,
-    type PluginDeclarativeCollectionRowCommandV1,
-    type PluginDeclarativeCollectionListProjectionV1,
-    type PluginDeclarativeControlV2,
-    type PluginDeclarativeMetadataEntryV2,
-    type PluginDeclarativeNormalizedNodeV1,
-    type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
-    type PluginDeclarativeStateV2,
-    type PluginDeclarativeToneV2,
-    type PluginJsonValueV2,
-    type PluginJsonSchemaV2,
-    type PluginLocalizedStringV2,
-    type NormalizedPluginCollectionUiQueryDescriptorV1,
-    type PluginCollectionUiQueryRequestV1,
-    PluginDeclarativeProjectedModelV1Schema,
-    type PluginUiIconTokenV1,
-    type PluginUiRendererV2,
-    type PluginUiTargetedContributionSurfaceV1,
-} from '@happier-dev/protocol';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { PluginDeclarativeDocumentNormalizationErrorV1, normalizePluginDeclarativeDocumentV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
+import { PluginDeclarativeProjectedModelV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import { PluginUiRendererV2Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionId, PluginContributionIdentityV1, PluginDeclarativeActionVariantV2, PluginDeclarativeComposerApplyEffectV1, PluginDeclarativeCollectionRowCommandV1, PluginDeclarativeCollectionListProjectionV1, PluginDeclarativeControlV2, PluginDeclarativeMetadataEntryV2, PluginDeclarativeNormalizedNodeV1, PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1, PluginDeclarativeStateV2, PluginDeclarativeToneV2, PluginJsonValueV2, PluginJsonSchemaV2, PluginLocalizedStringV2, NormalizedPluginCollectionUiQueryDescriptorV1, PluginCollectionUiQueryRequestV1, PluginUiIconTokenV1, PluginUiRendererV2, PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/protocol';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import { clonePluginPlainData } from '../../plainData';

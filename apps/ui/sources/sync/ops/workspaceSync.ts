@@ -25,7 +25,6 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
 
 type WorkspaceSyncControllerScope = Readonly<{
@@ -229,6 +228,7 @@ export async function resolveWorkspaceSyncConflict(
     const method = RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE;
     const actionInput = WorkspaceSyncConflictResolveActionInputV1Schema.parse(input.request);
     if (actionInput.controllerMachineId !== input.controllerMachineId) unsupported(method);
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     let subordinateRpcFailure: unknown = null;
     const executor = createDefaultActionExecutor({
         workspaceSyncConflictResolve: async ({ actionReceiptId, input: approvedInput, signal }) => {

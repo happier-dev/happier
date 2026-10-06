@@ -5,21 +5,7 @@ import { createSessionFixture, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@happier-dev/agents', () => ({
-    resolveAgentIdFromSessionMetadata: (metadata: { flavor?: string | null } | null | undefined) => (
-        metadata?.flavor === 'codex' ? 'codex' : null
-    ),
-}));
 vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
-vi.mock('@/sync/domains/session/readSessionOwnerMetadataView', () => ({
-    readSessionOwnerMetadataView: (session: { metadata?: unknown }) => session.metadata ?? null,
-}));
-vi.mock('@/sync/domains/session/presentation/readSessionPresentationAgentId', () => ({
-    readSessionPresentationAgentId: (session: { metadata?: { flavor?: string } }) => (
-        session.metadata?.flavor === 'codex' ? 'codex' : null
-    ),
-}));
-vi.mock('@/utils/sessions/sessionUtils', () => ({ getSessionAvatarId: () => 'avatar-1' }));
 vi.mock('../presentation/SessionAgentCatalogIdentityIcon', () => ({
     SessionAgentCatalogIdentityIcon: 'SessionAgentCatalogIdentityIcon',
 }));

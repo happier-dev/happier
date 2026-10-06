@@ -1,14 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  TranscriptRawAgentEventV1Schema,
-  buildAgentEventLocalId,
-  normalizeConnectedServiceUxDiagnosticV1,
-  type ConnectedServiceUxDiagnosticV1,
-  type TranscriptRawAgentEventV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, normalizeConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { TranscriptRawAgentEventV1Schema, buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import type { ConnectedServiceUxDiagnosticV1, TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
 
 import { buildConnectedServiceUxDiagnostic } from '../../diagnostics/connectedServiceUxDiagnostics';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';

@@ -2,58 +2,21 @@ import axios, { type AxiosResponse } from 'axios';
 import { readSessionCreationInitialTriggerError } from '@/api/session/sessionCreationInitialTriggerError';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { z } from 'zod';
-import {
-  SESSION_CREATION_AUTHORIZATION_HEADER_V1,
-  agentEventLocalIdAttentionImpact,
-  type SessionMessageAttentionImpact,
-  type SessionStoredMessageContent,
-  SessionStoredMessageContentSchema,
-  type V2SessionByIdResponse,
-  type V2SessionListResponse,
-  type SessionLookupByTagsResponseV2,
-  SessionLookupByTagsRequestV2Schema,
-  SessionLookupByTagsResponseV2Schema,
-  V2SessionByIdResponseSchema,
-  V2SessionListResponseSchema,
-  V2SessionMessageResponseSchema,
-  SessionTurnsProjectionV1Schema,
-  SessionMetadataActiveConflictV1Schema,
-  SessionMetadataInactiveModelIntentPatchSuccessV1Schema,
-  SessionMetadataInactiveModelIntentVersionConflictV1Schema,
-  SessionMetadataTuplePatchSuccessV1Schema,
-  SessionMetadataVersionConflictV1Schema,
-  SessionOrganizationSnapshotResponseSchema,
-  normalizeSessionCreationOrganizationPlacementV1,
-  type SessionMetadataInactiveModelIntentExpectationV1,
-  type SessionMetadataInactiveModelIntentOwnerPatchV1,
-  type SessionMetadataInactiveModelIntentPatchV1,
-  type SessionMetadataTuplePatchV1,
-  type SessionOrganizationPlacementV1,
-  type SessionTurnsProjectionV1,
-  type AccountEncryptionCurrentnessResponse,
-  type SessionListQueryV1,
-  type SessionListQueryResponseV1,
-  SessionListQueryResponseV1Schema,
-  SessionListUnavailableQueryV1Schema,
-  type SessionListUnavailableQueryV1,
-  SessionCurrentProjectionRecordV1Schema,
-  type SessionInitialAccessDraftV1,
-  SessionReportsToSetActionInputV1Schema,
-  SessionReportsToSetResultV1Schema,
-  SessionAttentionSetResultV1Schema,
-  buildSessionAttentionStandingHttpPath,
-  type SessionAttentionSetResultV1,
-  type SessionReportsToSetActionInputV1,
-  type SessionReportsToSetResultV1,
-  type SessionReportsToV1,
-} from '@happier-dev/protocol';
-import {
-  SessionTeamCredentialBindingMutationRejectionV1Schema,
-  type SessionTeamCredentialBindingIntentV1,
-  type SessionTeamCredentialBindingIntentListV1,
-  type SessionTeamCredentialBindingMetadataPatchV1,
-  type SessionTeamCredentialBindingRejectionV1,
-} from '@happier-dev/protocol/teams';
+import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
+import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, AccountEncryptionCurrentnessResponse, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionInitialAccessDraftV1, SessionAttentionSetResultV1, SessionReportsToSetActionInputV1, SessionReportsToSetResultV1, SessionReportsToV1 } from '@happier-dev/protocol';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
+import { normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionListQueryResponseV1Schema, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { SessionListUnavailableQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { SessionAttentionSetResultV1Schema, buildSessionAttentionStandingHttpPath } from '@happier-dev/protocol/sessions/organization/attentionAction';
+import { SessionReportsToSetActionInputV1Schema, SessionReportsToSetResultV1Schema } from '@happier-dev/protocol/sessions/relations/sessionReportsToV1';
+import { SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import type { SessionTeamCredentialBindingIntentV1, SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBindingMetadataPatchV1, SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams';
 
 import type { StoredCredentials } from '@/persistence';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';

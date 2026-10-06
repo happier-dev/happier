@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 import {
   openAccountScopedBlobCiphertext,
@@ -32,7 +33,7 @@ type AutomationReplyHandoffStoredContentOpenResultV1<TPayload> =
 
 /**
  * Parses the serialized Run result envelope from its persistence boundary.
- * The strict stored-result schema is then used by all consumers. Current
+ * Known fields are validated and unknown fields dropped for all consumers. Current
  * result content has no synthetic transport ceiling; the legacy summary arm
  * retains its historical bound in that schema.
  */
@@ -41,7 +42,7 @@ export function parseAutomationRunResultStoredEnvelopeV1(serialized: unknown) {
     return null;
   }
   try {
-    const parsed = AutomationRunResultStoredV1Schema.safeParse(JSON.parse(serialized));
+    const parsed = createStoredReadSchema(AutomationRunResultStoredV1Schema).safeParse(JSON.parse(serialized));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
@@ -76,7 +77,7 @@ function openAutomationReplyHandoffStoredEnvelopeV1<TPayload>(params: Readonly<{
     if (!opened) return { kind: 'contentInvalid' };
     rawPayload = opened.value;
   }
-  const payload = params.payloadSchema.safeParse(rawPayload);
+  const payload = createStoredReadSchema(params.payloadSchema).safeParse(rawPayload);
   return payload.success
     ? { kind: 'available', payload: payload.data }
     : { kind: 'contentInvalid' };

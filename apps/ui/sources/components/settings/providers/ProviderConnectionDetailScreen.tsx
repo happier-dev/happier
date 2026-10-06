@@ -63,7 +63,7 @@ import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConn
 import { useProviderConnectionMachineViews } from '@/providers/hooks/useProviderConnectionMachineViews';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { probeProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
@@ -152,7 +152,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const styles = stylesheet;
     const profile = useProfile();
     const { present } = useConnectedAccountIdentityPrivacy();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+    }));
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const connectedAccountUiNegotiation = resolveConnectedAccountUiNegotiation(

@@ -1,10 +1,6 @@
 import type { z } from 'zod';
-import {
-  DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema,
-  DaemonAgentInstallCancelResponseSchema, DaemonAgentInstallListResponseSchema,
-  type DaemonAgentInstallStartRequest, type DaemonAgentInstallReadRequest,
-  type DaemonAgentInstallCancelRequest,
-} from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelResponseSchema, DaemonAgentInstallListResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import type { DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { daemonPost, type DaemonControlRequestOptions } from './controlHttp';
 
 export type AgentInstallTransportError = { ok: false; errorCode: 'daemon_unavailable' | 'invalid_daemon_response'; error: string };

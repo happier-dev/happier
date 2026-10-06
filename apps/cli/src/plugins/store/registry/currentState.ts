@@ -2,17 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 
-import {
-  normalizePluginReleaseFactsV1,
-  type PluginAvailabilityReleasePublishActionInputV1,
-  PluginInstallReviewPrincipalDigestSchema,
-  PluginInstallReviewPrincipalPresentationV1Schema,
-  PluginManifestV2Schema,
-  type PluginMachineMaterializationV1,
-  type PluginInstallReviewPrincipalDigest,
-  type PluginInstallReviewPrincipalPresentationV1,
-  type PluginUpdatePolicyV1,
-} from '@happier-dev/protocol';
+import { normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import type { PluginAvailabilityReleasePublishActionInputV1, PluginMachineMaterializationV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
+import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';

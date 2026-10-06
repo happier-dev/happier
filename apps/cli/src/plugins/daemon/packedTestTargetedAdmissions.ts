@@ -1,9 +1,7 @@
 import { z } from 'zod';
 
-import {
-  PluginContributionLocalIdSchema,
-  PluginIdSchema,
-} from '@happier-dev/protocol';
+import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 

@@ -47,7 +47,6 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
     const card = props.layout === 'card';
     const presentation = getConnectedServiceSetupPresentation(entry.service);
     const signIn = presentation ? t(presentation.catalogDescriptionKey) : describeConnectedServiceSignIn(entry.entry);
-    const connectDisplay = presentation && 'connectPrimary' in presentation && presentation.connectPrimary ? 'default' : 'secondary';
     const count = props.showCount && entry.connectedCount > 0
         ? t('connectedServicesSettings.setupConnectedCount', { count: entry.connectedCount })
         : null;
@@ -84,7 +83,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     <View style={styles.foot}>
                         {agents}
                         <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
-                            size="small" display={connectDisplay} title={t('connectedServicesSettings.connect')}
+                            size="small" display="secondary" title={t('connectedServicesSettings.connect')}
                             accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                             accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
                             onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />
@@ -108,7 +107,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     <View style={styles.rowFoot}>
                     {agents}
                     <RoundButton testID={`connected-service-setup:connect:${entry.serviceKey}`}
-                        size="small" display={connectDisplay} title={t('connectedServicesSettings.connect')}
+                        size="small" display="secondary" title={t('connectedServicesSettings.connect')}
                         accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                         accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
                         onPress={(event) => { event?.stopPropagation?.(); props.onConnect(); }} />

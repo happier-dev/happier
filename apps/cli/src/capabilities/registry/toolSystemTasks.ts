@@ -1,9 +1,6 @@
-import {
-  SSH_TUNNEL_SYSTEM_TASK_KIND_IDS,
-  SSH_TUNNEL_SYSTEM_TASK_KINDS,
-  SystemTaskSpecSchema,
-  type SystemTaskJsonValue,
-} from '@happier-dev/protocol';
+import { SSH_TUNNEL_SYSTEM_TASK_KIND_IDS, SSH_TUNNEL_SYSTEM_TASK_KINDS } from '@happier-dev/protocol/ssh/tunnels';
+import { SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskJsonValue } from '@happier-dev/protocol';
 import { PERSONAL_HOME_SYSTEM_TASK_KIND_IDS } from '@happier-dev/cli-common/systemTasks';
 
 import { type Capability } from '../service';

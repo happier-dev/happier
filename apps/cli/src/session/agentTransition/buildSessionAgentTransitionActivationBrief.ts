@@ -1,7 +1,5 @@
-import {
-  HappierReplayWritableMaxSeedCharsSchema,
-  readSessionWorkStateV1FromMetadata,
-} from '@happier-dev/protocol';
+import { HappierReplayWritableMaxSeedCharsSchema } from '@happier-dev/protocol/sessions/replay-seed-budget';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 
 import { buildSessionTranscriptRetrievalInvocation } from '@/agent/tools/happierTools/runtime/buildSessionTranscriptRetrievalInvocation';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';

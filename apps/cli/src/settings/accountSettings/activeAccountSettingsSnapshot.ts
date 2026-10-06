@@ -1,8 +1,5 @@
-import {
-  projectSavedSecretCatalogCollisionStateV1,
-  type AccountSettings,
-  type SavedSecretCatalogCollisionStateV1,
-} from '@happier-dev/protocol';
+import { projectSavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { AccountSettings, SavedSecretCatalogCollisionStateV1 } from '@happier-dev/protocol';
 import type {
   SavedSecretCatalogResourceInputV1,
   SavedSecretCatalogState,

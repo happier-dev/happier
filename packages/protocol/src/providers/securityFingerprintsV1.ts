@@ -65,13 +65,15 @@ import {
   ProviderModelIdSchema,
 } from './ids.js';
 import {
-  assessProviderEndpoint,
-  buildProviderEndpointSetFingerprintInput,
   normalizeProviderCredentialHeaderName,
   normalizeProviderPublicHeaders,
   normalizeProviderQueryParameterName,
+} from './safety/headers.js';
+import {
+  assessProviderEndpoint,
+  buildProviderEndpointSetFingerprintInput,
   type AssessedProviderEndpoint,
-} from './safety/index.js';
+} from './safety/url.js';
 import { ProviderAdapterBindingKeyV1Schema } from './sessions/adapterBindingKeyV1.js';
 import { ProviderOriginRelativePathSchema } from './originRelativePathSchema.js';
 

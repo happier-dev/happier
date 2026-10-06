@@ -15,7 +15,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import type { KeyboardCommandId } from '@/keyboard/types';
 import { Modal } from '@/modal';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -45,7 +45,13 @@ const Keycaps = React.memo(function Keycaps(props: Readonly<{ label: string; tes
 
 export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcutsSettingsView() {
     const { theme } = useUnistyles();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        commandPaletteEnabled: settings.commandPaletteEnabled,
+        keyboardShortcutsV2Enabled: settings.keyboardShortcutsV2Enabled,
+        keyboardSingleKeyShortcutsEnabled: settings.keyboardSingleKeyShortcutsEnabled,
+        keyboardShortcutDisabledCommandIdsV1: settings.keyboardShortcutDisabledCommandIdsV1,
+        keyboardShortcutOverridesV1: settings.keyboardShortcutOverridesV1,
+    }));
     const applySettings = useApplySettings();
     const reducedMotion = useReducedMotionPreference();
     const platform = React.useMemo(() => resolveKeyboardPlatform(), []);

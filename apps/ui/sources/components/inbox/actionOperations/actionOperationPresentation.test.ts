@@ -134,4 +134,10 @@ describe('action operation inbox presentation', () => {
             result: { sessionId: 'legacy-shape-without-input-disposition' },
         }))).toBeNull();
     });
+    it('keeps external recovery in attention and identifies its canonical core action', () => {
+        const external = operation({ actionId: 'sessions.external.materialize.start', progress: { kind: 'phase', phase: 'awaiting_user_resume', label: 'Needs resume' } });
+        expect(classifyActionOperationSection(external)).toBe('needsAttention');
+        expect(readActionOperationPluginIdentity(external.actionId)).toBeNull();
+    });
+
 });

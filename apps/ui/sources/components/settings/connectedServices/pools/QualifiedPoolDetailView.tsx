@@ -42,7 +42,7 @@ import {
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiGroupMember,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import { ConnectedServiceAuthGroupStrategyV1Schema, compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupStrategyV1Schema, compareConnectedServicePoolMemberOrderV1, resolveAnchoredListMoveV1, resolveConnectedServiceQuotaMeterLabel, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol';
 import {
     presentQualifiedConnectedAccountTarget,
     type QualifiedConnectedAccountPresentationAccount,
@@ -156,14 +156,6 @@ function sortMembersByPriority(
     ));
 }
 
-function humanizeProviderLimitId(providerLimitId: string): string {
-    return providerLimitId
-        .split(/[_-]+/g)
-        .filter(Boolean)
-        .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-        .join(' ');
-}
-
 function formatQuotaWindowDuration(durationMs: number): string {
     const totalMinutes = Math.max(1, Math.round(durationMs / 60_000));
     const days = Math.floor(totalMinutes / (24 * 60));
@@ -197,7 +189,8 @@ export function buildPoolQuotaLimitCandidates(input: Readonly<{
                 modelIds: new Set<string>(),
                 reportingMembers: new Set<number>(),
             };
-            const label = meter.label.trim().replace(/\s+[·•]\s+(Primary|Secondary)$/i, '').trim();
+            const label = resolveConnectedServiceQuotaMeterLabel(meter.meterId, meter.label)
+                .replace(/\s+[·•]\s+(Primary|Secondary)$/i, '').trim();
             if (label) evidence.labels.add(label);
             evidence.meterIds.add(meter.meterId);
             const duration = meter.windowDurationMs ?? null;
@@ -229,7 +222,7 @@ export function buildPoolQuotaLimitCandidates(input: Readonly<{
             providerLimitId,
             title: opaque
                 ? t('connectedServices.detail.groupDetail.quotaLimitProviderAllowanceTitle')
-                : providerLabel ?? humanizeProviderLimitId(providerLimitId),
+                : providerLabel ?? resolveConnectedServiceQuotaMeterLabel(providerLimitId),
             modelIds: Array.from(evidence.modelIds).sort(),
             windowCount: evidence.meterIds.size,
             windowSummary,
@@ -242,7 +235,7 @@ export function buildPoolQuotaLimitCandidates(input: Readonly<{
         if (evidenceById.has(providerLimitId)) continue;
         candidates.push({
             providerLimitId,
-            title: humanizeProviderLimitId(providerLimitId),
+            title: resolveConnectedServiceQuotaMeterLabel(providerLimitId),
             modelIds: [],
             windowCount: 0,
             windowSummary: null,

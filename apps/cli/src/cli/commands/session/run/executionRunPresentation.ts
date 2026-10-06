@@ -1,14 +1,6 @@
 import chalk from 'chalk';
-import {
-  ExecutionRunGetResponseSchema,
-  ExecutionRunListResponseSchema,
-  ExecutionRunStartResponseSchema,
-  ExecutionRunStopResponseSchema,
-  ExecutionRunTurnStreamCancelResponseSchema,
-  ExecutionRunTurnStreamReadResponseSchema,
-  ExecutionRunTurnStreamStartResponseSchema,
-  ExecutionRunWaitResultSchema,
-} from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 
 import type { ActionCliPresentation } from '@/cli/actions/commandPresentation';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';

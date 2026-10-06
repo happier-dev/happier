@@ -3,7 +3,7 @@ import {
   type BackendTargetRefV2,
   type SessionOwnerMetadataV1,
 } from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import {

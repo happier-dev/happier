@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { platform } from 'os';
 import { projectPath } from '@/projectPath';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
 import { ensureOptionalRuntime } from '@/packagedRuntime/installables/optionalRuntimes';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 

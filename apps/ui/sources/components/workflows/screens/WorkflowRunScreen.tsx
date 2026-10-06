@@ -1555,14 +1555,15 @@ export function WorkflowRunScreen(): React.ReactElement {
                 label: t('workflows.start.agentForStep', { step: runAgainAgentOverride.step }),
                 testID: 'workflow-run-another-agent-chip',
                 revision: JSON.stringify(runAgainAgentOverride.engine),
-                disabled: runNow.stateFor(pendingRunAgainIdRef.current ?? '') === 'submitting',
+                disabled: runNow.isPending(pendingRunAgainIdRef.current ?? ''),
                 renderContent: <WorkflowRunAgentOverrideField step={runAgainAgentOverride.step} value={runAgainAgentOverride.engine}
-                    disabled={runNow.stateFor(pendingRunAgainIdRef.current ?? '') === 'submitting'}
+                    disabled={runNow.isPending(pendingRunAgainIdRef.current ?? '')}
                     onChange={(engine) => setRunAgainAgentOverride((current) => current === null ? null : { ...current, engine })} />,
             }), controlId: 'engine' as const }])] }),
             onRun: (inputs) => { void admitRunAgain(inputs); },
             onCancel: () => setRunAgainInputOpen(false),
-            pending: runNow.stateFor(pendingRunAgainIdRef.current ?? '') === 'submitting',
+            pending: runNow.isPending(pendingRunAgainIdRef.current ?? ''),
+            reconciling: runNow.stateFor(pendingRunAgainIdRef.current ?? '') === 'reconciling',
         }),
         [admitRunAgain, runAgainAgentOverride, runAgainRawTextValues, runAgainValues, runMachine, runNow, sourceRef, visibleAcceptedContext, visibleDefinition],
     );

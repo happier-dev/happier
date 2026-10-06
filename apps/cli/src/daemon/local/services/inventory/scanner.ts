@@ -11,7 +11,7 @@ import {
 } from './provenance';
 import type { TerminalProcessRegistry } from './terminalRegistry';
 import type { LocalServiceEndpointFact } from './endpoint';
-import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls';
+import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export type LocalServiceInventoryDiagnostic = Readonly<{
     code: string;

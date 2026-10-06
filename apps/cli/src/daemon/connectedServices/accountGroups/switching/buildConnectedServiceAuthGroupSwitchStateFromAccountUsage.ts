@@ -6,7 +6,7 @@ import type {
     ConnectedServiceUsageSourceV1,
     ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { ProviderAccountUsageStore } from '../../accountUsage/store';
 import { projectProviderAccountUsageSnapshotToAuthGroupRuntimeState } from '../quotas/projection';

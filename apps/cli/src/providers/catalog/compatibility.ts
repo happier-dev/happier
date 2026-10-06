@@ -1,9 +1,5 @@
-import {
-  resolveProviderBindingCompatibilityWithFingerprintV1,
-  type AgentProviderRequirementsV1,
-  type ProviderModelDescriptorV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { AgentProviderRequirementsV1, ProviderModelDescriptorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 
 import type { ResolvedProviderConnectionRecord } from '../registry';
 import { resolveProviderSourceFacts } from '../registry/sourceFacts';

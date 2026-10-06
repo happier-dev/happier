@@ -3,7 +3,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 
 import type { TrackedSession } from '../types';
 import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTakeoverAdmission';
-import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol';
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { logger } from '@/ui/logger';
 
 export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS };

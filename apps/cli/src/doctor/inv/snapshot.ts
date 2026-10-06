@@ -2,11 +2,8 @@ import { configuration } from '@/configuration';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { DoctorRepairReport } from '@/diagnostics/doctorRepair/types';
 
-import {
-  DoctorSnapshotSchema,
-  sanitizeDoctorSnapshotUrls,
-  type DoctorSnapshot as ProtocolDoctorSnapshot,
-} from '@happier-dev/protocol';
+import { DoctorSnapshotSchema, sanitizeDoctorSnapshotUrls } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
+import type { DoctorSnapshot as ProtocolDoctorSnapshot } from '@happier-dev/protocol';
 
 import type { DoctorRuntimeInventory } from './runtime';
 

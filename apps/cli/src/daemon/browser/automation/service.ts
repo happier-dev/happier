@@ -1,25 +1,8 @@
-import {
-  BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS,
-  BrowserActiveTargetV1Schema,
-  type BrowserActiveTargetV1,
-  browserViewKey,
-  type BrowserEventV1,
-  BrowserAutomationActionRequestV1Schema,
-  BrowserAutomationActionResultV1Schema,
-  BrowserAutomationTimelineEntryV1Schema,
-  BrowserAutomationTimelineV1Schema,
-  isBrowserAutomationMutatingActionKind,
-  type BrowserAutomationActionKindV1,
-  type BrowserAutomationActionRequestV1,
-  type BrowserAutomationActionResultV1,
-  type BrowserAutomationControllerKindV1,
-  type BrowserAutomationControllerStateV1,
-  type BrowserAutomationErrorCodeV1,
-  type BrowserAutomationRequesterKindV1,
-  type BrowserAutomationRequesterRefV1,
-  type BrowserAutomationTimelineEntryV1,
-  type BrowserAutomationTimelineV1,
-} from '@happier-dev/protocol';
+import { BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS } from '@happier-dev/protocol/browser/automation/notImplemented';
+import { BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
+import type { BrowserActiveTargetV1, BrowserEventV1, BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationControllerKindV1, BrowserAutomationControllerStateV1, BrowserAutomationErrorCodeV1, BrowserAutomationRequesterKindV1, BrowserAutomationRequesterRefV1, BrowserAutomationTimelineEntryV1, BrowserAutomationTimelineV1 } from '@happier-dev/protocol';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
+import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineEntryV1Schema, BrowserAutomationTimelineV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
 
 import { executeBrowserAutomationAction } from './actions';
 import type { BrowserAutomationAdapter } from './adapters/types';

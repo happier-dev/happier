@@ -1,11 +1,7 @@
-import {
-  RPC_ERROR_CODES,
-  RPC_ERROR_MESSAGES,
-  RPC_METHODS,
-  parseSocketRpcAuthorizationContext,
-  resolveSocketRpcSessionWriteAuthorizationMethod,
-  type SocketRpcAuthorizationContext,
-} from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import { parseSocketRpcAuthorizationContext, resolveSocketRpcSessionWriteAuthorizationMethod } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 
 import type { RpcAuthorizationResult } from '@/api/rpc/types';
 

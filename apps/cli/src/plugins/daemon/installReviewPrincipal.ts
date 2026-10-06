@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import {
-  PluginInstallReviewPrincipalDigestSchema,
-  PluginInstallReviewPrincipalPresentationV1Schema,
-  type PluginInstallReviewPrincipalDigest,
-  type PluginInstallReviewPrincipalPresentationV1,
-} from '@happier-dev/protocol';
+import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
+import type { PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1 } from '@happier-dev/protocol';
 
 import type { PluginInstallationReview } from '@happier-dev/protocol/marketplace/internal';
 

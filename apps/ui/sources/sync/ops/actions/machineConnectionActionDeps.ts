@@ -20,6 +20,9 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             });
             if (outcome.kind === 'connected') return { kind: 'connected', serverId: outcome.profile.id,
                 serverUrl: outcome.profile.serverUrl, name: outcome.profile.name };
+            if (outcome.kind === 'identity_mismatch') return {
+                ok: false, errorCode: 'home_identity_mismatch', error: 'The address answered as a different Home.',
+            };
             if (outcome.kind === 'unreachable') return { kind: 'unreachable' };
             return outcome;
         },

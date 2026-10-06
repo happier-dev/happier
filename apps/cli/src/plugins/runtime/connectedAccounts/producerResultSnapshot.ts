@@ -1,8 +1,6 @@
-import {
-    PluginDiagnosticDataV1Schema,
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
-    ProviderAccountSubscriptionV1Schema,
-} from '@happier-dev/protocol';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { ProviderAccountSubscriptionV1Schema } from '@happier-dev/protocol/connect/accountSubscription';
 import type {
     ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
     ConnectedAccountMaterialization as PluginConnectedAccountMaterialization,

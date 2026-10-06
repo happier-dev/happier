@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useShallow } from 'zustand/react/shallow';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -141,21 +140,6 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
     });
 }
 
-export function useStableSessionViewShellSession(session: Session | null): Session | null {
-    const signature = React.useMemo(
-        () => (session ? buildSessionViewShellSessionSignature(session) : 'null'),
-        [session],
-    );
-    const ref = React.useRef<{ signature: string; session: Session | null }>({
-        signature,
-        session,
-    });
-    if (ref.current.signature !== signature) {
-        ref.current = { signature, session };
-    }
-    return ref.current.session;
-}
-
 export function selectSessionViewShellSessionForRouteState(
     state: Pick<StorageState, 'sessions' | 'sessionListIndexByServerId' | 'sessionListRowsByServerId'>,
     sessionId: string,
@@ -182,20 +166,25 @@ export function selectSessionViewShellSessionForRouteState(
 }
 
 export function useSessionViewShellSession(sessionId: string, expectedServerId?: string | null): Session | null {
-    const session = storage(
-        useShallow((state) => {
-            return selectSessionViewShellSessionForRouteState(
-                {
-                    sessions: state.sessions,
-                    sessionListIndexByServerId: state.sessionListIndexByServerId,
-                    sessionListRowsByServerId: state.sessionListRowsByServerId,
-                },
-                sessionId,
-                expectedServerId,
-            );
-        }),
-    );
-    return useStableSessionViewShellSession(session);
+    const selectShellSession = React.useMemo(() => {
+        let previousSession: Session | null = null;
+        let previousSignature = 'null';
+        let previousSource: Session | null = null;
+        return (state: StorageState): Session | null => {
+            const session = selectSessionViewShellSessionForRouteState(state, sessionId, expectedServerId);
+            if (session === previousSource) return previousSession;
+            previousSource = session;
+            const signature = session ? buildSessionViewShellSessionSignature(session) : 'null';
+            // Apply the existing shell projection before Zustand notifies React. Transcript-only
+            // fields have their own leaf subscriptions and must not invalidate the shell.
+            if (signature !== previousSignature) {
+                previousSignature = signature;
+                previousSession = session;
+            }
+            return previousSession;
+        };
+    }, [sessionId, expectedServerId]);
+    return storage(selectShellSession);
 }
 
 export function useSessionViewShellSessionSeq(sessionId: string): number {

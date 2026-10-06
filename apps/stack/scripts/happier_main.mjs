@@ -76,8 +76,16 @@ function printHstackHappierHelp({ json }) {
   });
 }
 
-function stripHstackHappierWrapperFlags(argv) {
-  return argv.filter((arg) => arg !== '--stack-help' && arg !== '--runtime' && arg !== '--source');
+function splitHstackHappierWrapperArgs(argv) {
+  const wrapperFlags = ['--stack-help', '--runtime', '--source'];
+  let childIndex = 0;
+  while (wrapperFlags.includes(argv[childIndex])) childIndex += 1;
+  // Mode flags belong to the wrapper prefix. Everything from the child command
+  // onward, including a child's own separator, belongs to the CLI.
+  return {
+    wrapperArgv: argv.slice(0, childIndex),
+    forwardedArgv: argv.slice(argv[childIndex] === '--' ? childIndex + 1 : childIndex),
+  };
 }
 
 function takePrefixFlagValue(args, name) {
@@ -202,10 +210,11 @@ function resolveStackCliHomeOverrideForBase(value, stackBaseDir) {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const { wrapperArgv, forwardedArgv } = splitHstackHappierWrapperArgs(argv);
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
 
-  if (flags.has('--stack-help')) {
+  if (wrapperArgv.includes('--stack-help')) {
     printHstackHappierHelp({ json });
     return;
   }
@@ -233,7 +242,7 @@ async function main() {
       ? recordedRuntimeState
       : null;
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({
-    argv,
+    argv: wrapperArgv,
     env: process.env,
     activeRuntimeState,
   });
@@ -392,14 +401,13 @@ async function main() {
   if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection) {
     runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl });
   }
-  const forwardedArgv = stripHstackHappierWrapperFlags(argv);
   if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
     const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
     await ensureStackDaemonPreflight({
       rootDir,
       stackName,
       env: process.env,
-      argv,
+      argv: wrapperArgv,
       cliIdentity,
       activeRuntimeState,
     });

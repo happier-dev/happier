@@ -1,7 +1,5 @@
-import {
-  createProviderErrorV1,
-  type ProviderErrorV1,
-} from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
 import type { ProviderConnectionResolution } from '@/providers/registry';
 import { describeProviderConnections } from './describe';

@@ -3,11 +3,14 @@ type Copy = Readonly<{
     title: string; fromExample: string; description: string; use: string; chooseSession: string; builtInDescription: string;
     /** An example card's footer fact (07 S2 "{n} steps"). */
     stepCount: (params: { count: number }) => string;
+    /** Catalog-declared names for the starter mini-maps, not clipped prompts. */
+    nodes: Readonly<Record<'ask' | 'review-correctness' | 'review-tests' | 'summarize' | 'analyze' | 'review' | 'fix' | 'check' | 'classify' | 'reply' | 'digest', string>>;
     askOnce: ExampleCopy; reviewPullRequest: ExampleCopy; workThroughEachFile: ExampleCopy;
     repairUntilItPasses: ExampleCopy; triageAnIssue: ExampleCopy; morningDigest: ExampleCopy;
 }>;
 export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy> = {
     en: {
+        nodes: { ask: 'Ask', 'review-correctness': 'Review correctness', 'review-tests': 'Review tests', summarize: 'Summarize findings', analyze: 'Analyze', review: 'Review', fix: 'Fix', check: 'Check', classify: 'Classify', reply: 'Draft a reply', digest: 'Summarize changes' },
         title: 'Start from an example', fromExample: 'From an example', description: 'Each one opens as a draft. Nothing runs until you choose Run now.', use: 'Use this', chooseSession: 'Choose a session…', builtInDescription: 'Part of Happier. Duplicate one to change it.', stepCount: ({ count }) => `${count} ${count === 1 ? 'step' : 'steps'}`,
         askOnce: { title: 'Ask once', description: 'One step: ask an agent for something and get its answer.' },
         reviewPullRequest: { title: 'Review a pull request', description: 'Two reviewers side by side, then one summary with every finding.' },
@@ -17,6 +20,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Morning digest', description: 'Sum up what changed in your project and send it to you. Add a trigger to get it every morning.' },
     },
     de: {
+        nodes: { ask: 'Fragen', 'review-correctness': 'Korrektheit prüfen', 'review-tests': 'Tests prüfen', summarize: 'Befunde zusammenfassen', analyze: 'Analysieren', review: 'Prüfen', fix: 'Beheben', check: 'Überprüfen', classify: 'Einordnen', reply: 'Antwort entwerfen', digest: 'Änderungen zusammenfassen' },
         title: 'Mit einem Beispiel beginnen', fromExample: 'Aus einem Beispiel', description: 'Jedes öffnet sich als Entwurf. Erst mit „Jetzt ausführen“ startet etwas.', use: 'Dieses verwenden', chooseSession: 'Sitzung auswählen…', builtInDescription: 'Teil von Happier. Zum Ändern duplizieren.', stepCount: ({ count }) => `${count} ${count === 1 ? 'Schritt' : 'Schritte'}`,
         askOnce: { title: 'Einmal fragen', description: 'Ein Schritt: einen Agenten fragen und seine Antwort erhalten.' },
         reviewPullRequest: { title: 'Pull-Request prüfen', description: 'Zwei Prüfer nebeneinander, dann eine Zusammenfassung aller Befunde.' },
@@ -26,6 +30,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Morgenüberblick', description: 'Projektänderungen zusammenfassen und dir senden. Für jeden Morgen einen Auslöser hinzufügen.' },
     },
     es: {
+        nodes: { ask: 'Preguntar', 'review-correctness': 'Revisar la corrección', 'review-tests': 'Revisar pruebas', summarize: 'Resumir hallazgos', analyze: 'Analizar', review: 'Revisar', fix: 'Corregir', check: 'Comprobar', classify: 'Clasificar', reply: 'Redactar una respuesta', digest: 'Resumir cambios' },
         title: 'Empezar con un ejemplo', fromExample: 'Desde un ejemplo', description: 'Cada uno se abre como borrador. Nada se ejecuta hasta que elijas Ejecutar ahora.', use: 'Usar este', chooseSession: 'Elegir una sesión…', builtInDescription: 'Parte de Happier. Duplica uno para cambiarlo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'paso' : 'pasos'}`,
         askOnce: { title: 'Preguntar una vez', description: 'Un paso: pregunta algo a un agente y recibe su respuesta.' },
         reviewPullRequest: { title: 'Revisar un pull request', description: 'Dos revisores en paralelo y después un resumen con todos los hallazgos.' },
@@ -35,6 +40,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Resumen de la mañana', description: 'Resume los cambios de tu proyecto y envíatelos. Añade un disparador para recibirlo cada mañana.' },
     },
     fr: {
+        nodes: { ask: 'Demander', 'review-correctness': 'Vérifier la justesse', 'review-tests': 'Examiner les tests', summarize: 'Résumer les constats', analyze: 'Analyser', review: 'Examiner', fix: 'Corriger', check: 'Vérifier', classify: 'Classer', reply: 'Rédiger une réponse', digest: 'Résumer les changements' },
         title: 'Partir d’un exemple', fromExample: 'À partir d’un exemple', description: 'Chaque exemple s’ouvre comme brouillon. Rien ne démarre avant votre choix Exécuter maintenant.', use: 'Utiliser celui-ci', chooseSession: 'Choisir une session…', builtInDescription: 'Inclus dans Happier. Dupliquez-le pour le modifier.', stepCount: ({ count }) => `${count} ${count === 1 ? 'étape' : 'étapes'}`,
         askOnce: { title: 'Poser une question', description: 'Une étape : demander quelque chose à un agent et recevoir sa réponse.' },
         reviewPullRequest: { title: 'Examiner une pull request', description: 'Deux réviseurs en parallèle, puis un résumé de tous les constats.' },
@@ -44,6 +50,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Résumé du matin', description: 'Résumer les changements du projet et vous les envoyer. Ajouter un déclencheur pour chaque matin.' },
     },
     it: {
+        nodes: { ask: 'Chiedi', 'review-correctness': 'Verifica la correttezza', 'review-tests': 'Rivedi i test', summarize: 'Riassumi i risultati', analyze: 'Analizza', review: 'Rivedi', fix: 'Correggi', check: 'Verifica', classify: 'Classifica', reply: 'Prepara una risposta', digest: 'Riassumi le modifiche' },
         title: 'Inizia da un esempio', fromExample: 'Da un esempio', description: 'Ognuno si apre come bozza. Nulla parte finché non scegli Esegui ora.', use: 'Usa questo', chooseSession: 'Scegli una sessione…', builtInDescription: 'Parte di Happier. Duplica per modificarlo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'passo' : 'passi'}`,
         askOnce: { title: 'Chiedi una volta', description: 'Un passo: chiedi qualcosa a un agente e ricevi la risposta.' },
         reviewPullRequest: { title: 'Rivedi una pull request', description: 'Due revisori in parallelo, poi un riepilogo di tutti i risultati.' },
@@ -53,6 +60,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Riepilogo mattutino', description: 'Riassumi le modifiche del progetto e inviatele. Aggiungi un trigger per ogni mattina.' },
     },
     pt: {
+        nodes: { ask: 'Perguntar', 'review-correctness': 'Revisar a correção', 'review-tests': 'Revisar testes', summarize: 'Resumir achados', analyze: 'Analisar', review: 'Revisar', fix: 'Corrigir', check: 'Verificar', classify: 'Classificar', reply: 'Redigir uma resposta', digest: 'Resumir mudanças' },
         title: 'Começar com um exemplo', fromExample: 'De um exemplo', description: 'Cada um abre como rascunho. Nada executa até você escolher Executar agora.', use: 'Usar este', chooseSession: 'Escolher uma sessão…', builtInDescription: 'Parte do Happier. Duplique para alterar.', stepCount: ({ count }) => `${count} ${count === 1 ? 'etapa' : 'etapas'}`,
         askOnce: { title: 'Perguntar uma vez', description: 'Um passo: pergunte algo a um agente e receba a resposta.' },
         reviewPullRequest: { title: 'Revisar um pull request', description: 'Dois revisores em paralelo, depois um resumo com todos os achados.' },
@@ -62,6 +70,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Resumo da manhã', description: 'Resuma as mudanças do projeto e envie para você. Adicione um gatilho para cada manhã.' },
     },
     ca: {
+        nodes: { ask: 'Preguntar', 'review-correctness': 'Revisar la correcció', 'review-tests': 'Revisar proves', summarize: 'Resumir troballes', analyze: 'Analitzar', review: 'Revisar', fix: 'Corregir', check: 'Comprovar', classify: 'Classificar', reply: 'Redactar una resposta', digest: 'Resumir canvis' },
         title: 'Comença amb un exemple', fromExample: 'D’un exemple', description: 'Cadascun s’obre com a esborrany. Res no s’executa fins que triïs Executa ara.', use: 'Fes servir aquest', chooseSession: 'Tria una sessió…', builtInDescription: 'Part de Happier. Duplica’l per canviar-lo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'pas' : 'passos'}`,
         askOnce: { title: 'Pregunta una vegada', description: 'Un pas: pregunta alguna cosa a un agent i rep-ne la resposta.' },
         reviewPullRequest: { title: 'Revisa un pull request', description: 'Dos revisors en paral·lel i després un resum amb totes les troballes.' },
@@ -71,6 +80,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Resum del matí', description: 'Resumeix els canvis del projecte i envia-te’ls. Afegeix un activador per rebre’l cada matí.' },
     },
     pl: {
+        nodes: { ask: 'Zapytaj', 'review-correctness': 'Sprawdź poprawność', 'review-tests': 'Sprawdź testy', summarize: 'Podsumuj ustalenia', analyze: 'Analizuj', review: 'Przejrzyj', fix: 'Napraw', check: 'Sprawdź', classify: 'Klasyfikuj', reply: 'Przygotuj odpowiedź', digest: 'Podsumuj zmiany' },
         title: 'Zacznij od przykładu', fromExample: 'Z przykładu', description: 'Każdy otwiera się jako szkic. Nic nie ruszy, dopóki nie wybierzesz Uruchom teraz.', use: 'Użyj tego', chooseSession: 'Wybierz sesję…', builtInDescription: 'Część Happier. Powiel, aby zmienić.', stepCount: ({ count }) => `Kroki: ${count}`,
         askOnce: { title: 'Zapytaj raz', description: 'Jeden krok: zapytaj agenta i otrzymaj odpowiedź.' },
         reviewPullRequest: { title: 'Sprawdź pull request', description: 'Dwóch recenzentów równolegle, potem podsumowanie wszystkich ustaleń.' },
@@ -80,6 +90,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Poranne podsumowanie', description: 'Podsumuj zmiany projektu i wyślij je sobie. Dodaj wyzwalacz na każdy poranek.' },
     },
     ru: {
+        nodes: { ask: 'Спросить', 'review-correctness': 'Проверить корректность', 'review-tests': 'Проверить тесты', summarize: 'Подвести итоги', analyze: 'Проанализировать', review: 'Проверить', fix: 'Исправить', check: 'Проверить результат', classify: 'Классифицировать', reply: 'Подготовить ответ', digest: 'Собрать изменения' },
         title: 'Начать с примера', fromExample: 'Из примера', description: 'Каждый открывается как черновик. Ничего не запускается до выбора «Запустить сейчас».', use: 'Использовать', chooseSession: 'Выбрать сессию…', builtInDescription: 'Часть Happier. Создайте копию для изменений.', stepCount: ({ count }) => `Шагов: ${count}`,
         askOnce: { title: 'Спросить один раз', description: 'Один шаг: задать агенту вопрос и получить ответ.' },
         reviewPullRequest: { title: 'Проверить pull request', description: 'Два рецензента параллельно, затем сводка всех замечаний.' },
@@ -89,6 +100,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: 'Утренняя сводка', description: 'Собрать изменения проекта и отправить вам. Добавьте триггер на каждое утро.' },
     },
     ja: {
+        nodes: { ask: '質問', 'review-correctness': '正確性をレビュー', 'review-tests': 'テストをレビュー', summarize: '指摘をまとめる', analyze: '分析', review: 'レビュー', fix: '修正', check: '確認', classify: '分類', reply: '返信を作成', digest: '変更をまとめる' },
         title: '例から始める', fromExample: '例から', description: 'どれも下書きとして開きます。「今すぐ実行」を選ぶまで実行されません。', use: 'これを使う', chooseSession: 'セッションを選択…', builtInDescription: 'Happierに組み込まれています。変更するには複製してください。', stepCount: ({ count }) => `${count} ステップ`,
         askOnce: { title: '一度だけ質問', description: '1ステップ：エージェントに質問して回答を受け取ります。' },
         reviewPullRequest: { title: 'プルリクエストをレビュー', description: '2人が並行でレビューし、すべての指摘をまとめます。' },
@@ -98,6 +110,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: '朝のダイジェスト', description: 'プロジェクトの変更をまとめて送ります。毎朝受け取るにはトリガーを追加してください。' },
     },
     zhHans: {
+        nodes: { ask: '提问', 'review-correctness': '审查正确性', 'review-tests': '审查测试', summarize: '汇总发现', analyze: '分析', review: '审查', fix: '修复', check: '检查', classify: '分类', reply: '起草回复', digest: '汇总变更' },
         title: '从示例开始', fromExample: '使用示例', description: '每个示例都以草稿打开。选择“立即运行”之前不会运行。', use: '使用此示例', chooseSession: '选择会话…', builtInDescription: 'Happier 内置。复制后即可修改。', stepCount: ({ count }) => `${count} 个步骤`,
         askOnce: { title: '问一次', description: '一个步骤：向代理提问并获取回答。' },
         reviewPullRequest: { title: '审查拉取请求', description: '两位审查者并行工作，然后汇总所有发现。' },
@@ -107,6 +120,7 @@ export const workflowExamplesTranslations: Record<'en'|'de'|'es'|'fr'|'it'|'pt'|
         morningDigest: { title: '晨间摘要', description: '汇总项目变更并发送给你。添加触发器即可每天早上收到。' },
     },
     zhHant: {
+        nodes: { ask: '提問', 'review-correctness': '審查正確性', 'review-tests': '審查測試', summarize: '彙總發現', analyze: '分析', review: '審查', fix: '修復', check: '檢查', classify: '分類', reply: '起草回覆', digest: '彙總變更' },
         title: '從範例開始', fromExample: '使用範例', description: '每個範例都以草稿開啟。選擇「立即執行」之前不會執行。', use: '使用此範例', chooseSession: '選擇工作階段…', builtInDescription: 'Happier 內建。複製後即可修改。', stepCount: ({ count }) => `${count} 個步驟`,
         askOnce: { title: '問一次', description: '一個步驟：向代理提問並取得回答。' },
         reviewPullRequest: { title: '審查提取請求', description: '兩位審查者並行工作，然後彙總所有發現。' },

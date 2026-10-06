@@ -1,12 +1,8 @@
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
-import {
-  createHomeCredentialDestinationV1,
-  isHomeCredentialDestinationAllowedV1,
-  normalizeServerIdentityIdCapability,
-  type HomeConnectionDescriptorV1,
-  type HomeCredentialDestinationSelectionV1,
-} from '@happier-dev/protocol';
+import { createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import type { HomeConnectionDescriptorV1, HomeCredentialDestinationSelectionV1 } from '@happier-dev/protocol';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';

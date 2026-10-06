@@ -1,7 +1,5 @@
 /** Neutral frame primitives. Payloads remain binary all the way through this package. */
-import {
-    encodePeerTcpTunnelBinaryFrameV2,
-} from '@happier-dev/protocol';
+import { encodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 
 export const MAX_SCHEDULABLE_TIMEOUT_MS = 2_147_483_647;
 

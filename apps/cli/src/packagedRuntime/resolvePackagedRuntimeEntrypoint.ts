@@ -198,6 +198,23 @@ function isExplicitStackSourceRoot(
   }
 }
 
+function resolveRunnerSnapshotRuntimeAuthority(
+  snapshotRoot: string,
+  processEnv: NodeJS.ProcessEnv,
+): AuthoritativeRuntimeAuthority | null {
+  const backingRoot = resolveRunnerSnapshotBackingRuntimeRootFromPath(snapshotRoot);
+  if (!backingRoot) return null;
+  const isSourceSnapshot = isExplicitStackSourceRoot(backingRoot, processEnv);
+  // Packaged snapshots carry their own manifest and dependency closure. Their
+  // parent can be a daemon home with no package at all; only an explicitly
+  // proven source snapshot uses its backing checkout for authoring packages.
+  return {
+    projectRoot: isSourceSnapshot ? backingRoot : snapshotRoot,
+    runtimeRoot: snapshotRoot,
+    provenance: isSourceSnapshot ? 'source-snapshot' : 'packaged-snapshot',
+  };
+}
+
 function resolveModuleRuntimeAuthority(
   moduleUrl: string,
   processEnv: NodeJS.ProcessEnv,
@@ -209,15 +226,7 @@ function resolveModuleRuntimeAuthority(
     }
     const snapshotRoot = resolveRunnerSnapshotRuntimeRootFromPath(modulePath);
     if (snapshotRoot) {
-      const backingRoot = resolveRunnerSnapshotBackingRuntimeRootFromPath(snapshotRoot);
-      if (!backingRoot) return null;
-      return {
-        projectRoot: backingRoot,
-        runtimeRoot: snapshotRoot,
-        provenance: isExplicitStackSourceRoot(backingRoot, processEnv)
-          ? 'source-snapshot'
-          : 'packaged-snapshot',
-      };
+      return resolveRunnerSnapshotRuntimeAuthority(snapshotRoot, processEnv);
     }
 
     const moduleProjectRoot = projectPathFromModuleUrl(moduleUrl);
@@ -282,16 +291,8 @@ function resolveAuthoritativeRuntimeAuthority(
     currentExecPath: params.currentExecPath ?? process.execPath,
   })[0];
   if (launchedRoot) {
-    const backingRoot = resolveRunnerSnapshotBackingRuntimeRootFromPath(launchedRoot);
-    if (backingRoot) {
-      return {
-        projectRoot: backingRoot,
-        runtimeRoot: launchedRoot,
-        provenance: isExplicitStackSourceRoot(backingRoot, processEnv)
-          ? 'source-snapshot'
-          : 'packaged-snapshot',
-      };
-    }
+    const snapshotAuthority = resolveRunnerSnapshotRuntimeAuthority(launchedRoot, processEnv);
+    if (snapshotAuthority) return snapshotAuthority;
     return {
       projectRoot: launchedRoot,
       runtimeRoot: launchedRoot,

@@ -1,20 +1,7 @@
-import {
-  SessionHandoffPrepareTargetResponseSchema,
-  SessionHandoffPrepareTargetResultGetSuccessResponseSchema,
-  SessionHandoffAbortResponseSchema,
-  SessionHandoffCommitResponseSchema,
-  SessionHandoffStartResponseSchema,
-  SessionHandoffStatusSchema,
-  HandoffWorkspaceOutcomeV1Schema,
-  type ActionExecuteResult,
-  type HandoffWorkspaceOutcomeV1,
-  type WorkspaceSyncCleanupWarningV1,
-  type SessionHandoffPrepareTargetResponse,
-  type SessionHandoffStatus,
-  type SessionHandoffStorageMode,
-  type HandoffWorkspaceActionV1,
-  type HandoffTargetReplacementApprovalV1,
-} from '@happier-dev/protocol';
+import { SessionHandoffPrepareTargetResponseSchema, SessionHandoffPrepareTargetResultGetSuccessResponseSchema, SessionHandoffAbortResponseSchema, SessionHandoffCommitResponseSchema, SessionHandoffStartResponseSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
+import { SessionHandoffStatusSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import { HandoffWorkspaceOutcomeV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionExecuteResult, HandoffWorkspaceOutcomeV1, WorkspaceSyncCleanupWarningV1, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode, HandoffWorkspaceActionV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 
 import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
 import type {

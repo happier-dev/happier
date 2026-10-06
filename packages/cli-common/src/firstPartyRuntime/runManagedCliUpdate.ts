@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 
-import { CliUpdateLastResultSchema, type CliUpdateLastResult } from '@happier-dev/protocol';
+import { CliUpdateLastResultSchema } from '@happier-dev/protocol/machines/cliUpdateFacts';
+import type { CliUpdateLastResult } from '@happier-dev/protocol';
 import { resolvePublicReleaseRingLabelForId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { joinPathForPathShape } from '../path/pathShape.js';

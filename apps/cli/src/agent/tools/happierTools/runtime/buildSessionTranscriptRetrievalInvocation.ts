@@ -1,4 +1,4 @@
-import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, getActionSpec } from '@happier-dev/protocol';
+import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { buildHappierToolsShellBridgeCommand } from './buildHappierToolsShellBridgeCommand';
 import { resolveAgentToolsDelivery } from './resolveAgentToolsDelivery';

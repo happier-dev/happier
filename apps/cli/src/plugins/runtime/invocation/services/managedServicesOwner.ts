@@ -6,14 +6,11 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type {
     AgentProviderBindingMaterializationV1,
 } from '@happier-dev/protocol';
-import {
-    AgentProviderBindingMaterializationV1Schema,
-    managedServiceEndpointHostPolicyForMode,
-    normalizeProviderOriginRelativePathSyntax,
-    normalizeProviderPublicHeaders,
-    PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
-    readManagedServiceEndpointUrl,
-} from '@happier-dev/protocol';
+import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
+import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
+import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '@happier-dev/protocol/providers/capabilities/v1';
+import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
 import type {
     ManagedDependenciesService,
     ManagedServiceCredentialBinding,

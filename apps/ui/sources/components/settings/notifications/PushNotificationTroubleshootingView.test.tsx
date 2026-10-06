@@ -97,7 +97,7 @@ installSettingsViewCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useSettings: () => settingsValue,
+            useSettingsSelector: <T,>(selector: (settings: typeof settingsValue) => T) => selector(settingsValue),
         });
     },
     unistyles: async () => {

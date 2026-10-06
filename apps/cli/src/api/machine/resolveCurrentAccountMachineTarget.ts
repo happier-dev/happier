@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { z } from 'zod';
-import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

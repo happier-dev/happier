@@ -1,8 +1,5 @@
-import {
-    AndroidSimulatorAdapterHealthV1Schema,
-    type AndroidSimulatorAdapterHealthV1,
-    type AndroidSimulatorAdapterUnavailableReasonV1,
-} from '@happier-dev/protocol';
+import { AndroidSimulatorAdapterHealthV1Schema } from '@happier-dev/protocol/devices/simulator/androidV1';
+import type { AndroidSimulatorAdapterHealthV1, AndroidSimulatorAdapterUnavailableReasonV1 } from '@happier-dev/protocol';
 
 export function createAndroidSimulatorUnavailableHealth(input: Readonly<{
     reasonCode: AndroidSimulatorAdapterUnavailableReasonV1;

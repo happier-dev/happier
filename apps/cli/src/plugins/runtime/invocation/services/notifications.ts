@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     isPluginError,
     PluginError,

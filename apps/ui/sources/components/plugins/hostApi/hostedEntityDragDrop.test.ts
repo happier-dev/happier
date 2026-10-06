@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PluginUiJsonValueV1, PluginUiEntityDragDropStateV1 } from '@happier-dev/protocol/plugins/ui';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
 import { createPluginEntityDragDropBinding } from '../surfaces/entityDragDrop/pluginEntityDragDropBinding';
@@ -14,10 +14,11 @@ describe('hosted entity coordinates and mount retirement', () => {
         const pending = new Promise<void>(resolve => { finish = resolve; });
         const descriptor = { id: 'board', title: 'Board', client: { artifactId: 'ui', exportName: 'activate' }, platforms: ['web' as const],
             acceptedKinds: ['session' as const], actions: [{ kind: 'plugin' as const, action: 'add' }] };
+        const target = { descriptor, isCurrent: () => true, resolve: () => refused
+                ? { status: 'refused' as const, reason: { code: 'read_only', message: 'Read only' } }
+                : { status: 'allowed' as const, effect: { actionId: 'plugin:acme.board/add', input: {}, preview: { verb: 'Add', target: 'Board' } } } };
         const binding = createPluginEntityDragDropBinding({ runtime, pluginId: 'acme.board', mountKey: 'iframe', scope, isCurrent: () => true,
-            readSource: () => null, readTarget: () => ({ descriptor, isCurrent: () => true, resolve: () => refused
-                ? { status: 'refused', reason: { code: 'read_only', message: 'Read only' } }
-                : { status: 'allowed', effect: { actionId: 'plugin:acme.board/add', input: {}, preview: { verb: 'Add', target: 'Board' } } } }),
+            readSource: () => null, readTarget: () => target,
             executeAction: async () => { await pending; return { status: 'applied' }; } });
         const hosted = createHostedEntityDragDropHandlers({ binding, isCurrent: () => true, readSessionItem: () => null });
         const surface = { pluginId: 'acme.board', contributionId: 'board', surfaceId: 'iframe', placement: 'sessionPane' as const,
@@ -39,8 +40,7 @@ describe('hosted entity coordinates and mount retirement', () => {
         expect(states.at(-1)).toMatchObject({ phase: 'carrying', admission: { status: 'refused', reason: { code: 'read_only' } } });
         refused = false; binding.refresh();
         const settling = carry.release();
-        await Promise.resolve(); await Promise.resolve();
-        expect(states.at(-1)).toMatchObject({ phase: 'pending', admission: { status: 'allowed' } });
+        await vi.waitFor(() => expect(states.at(-1)).toMatchObject({ phase: 'pending', admission: { status: 'allowed' } }));
         finish?.(); await settling;
         expect(states.at(-1)).toMatchObject({ phase: 'settled', outcome: { status: 'applied' } });
         await api.handleRequest(request('updateEntityDragDrop', { kind: 'unmount', mountId: 'target' }));

@@ -20,7 +20,6 @@ import {
 } from '@/components/ui/treeDragDrop';
 import { describeReportsToRefusal } from '@/components/sessions/work/putSessionUnderLead';
 import { resolvePutUnderEligibility } from '@/components/sessions/work/putUnderCandidates';
-import { Modal } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -118,7 +117,7 @@ function itemForSnapshot(snapshot: SessionListDragSnapshot, scope: EntityDragSco
 }
 
 /** Keyboard and chooser destinations carry the same semantic intent the pointer geometry produces. */
-function readDestinationIntent(destination: PluginUiJsonValueV1 | null, scope: EntityDragScopeV1): SessionListDragIntent | null {
+export function readSessionListDestinationIntent(destination: PluginUiJsonValueV1 | null | undefined, scope: EntityDragScopeV1): SessionListDragIntent | null {
     if (!destination || typeof destination !== 'object' || Array.isArray(destination)) return null;
     const value = destination as Readonly<Record<string, unknown>>;
     if (typeof value.sourceRowId !== 'string' || typeof value.instructionKind !== 'string') return null;
@@ -263,7 +262,7 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 scope: current,
             });
         } else {
-            intent = readDestinationIntent(context.destination, current);
+            intent = readSessionListDestinationIntent(context.destination, current);
         }
         if (!intent || intent.instructionKind === 'idle') return refuse(SESSION_LIST_NO_TARGET_CODE);
         const admission = resolveSessionListEntityDrop({
@@ -397,12 +396,9 @@ export function useSessionListEntityDragDrop(input: UseSessionListEntityDragDrop
                 carry.choose(targetId, semantic as unknown as PluginUiJsonValueV1);
             },
             end: async (success, pointer) => {
-                const admittedAtRelease = runtime.getSnapshot().admission?.status === 'allowed';
-                const outcome = await adapter.end(success, pointer);
+                // A late refusal or an unknown result stays on the source row's line (lab ST4), not in an alert.
+                await adapter.end(success, pointer);
                 source.dispose();
-                if (admittedAtRelease && outcome?.status === 'unknown') {
-                    Modal.alert(t('entityDragDrop.preview.unknownTitle'), outcome.reason.message);
-                }
             },
             cancel: () => { adapter.cancel(); source.dispose(); },
         };

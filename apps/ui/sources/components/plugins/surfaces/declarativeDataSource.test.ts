@@ -28,6 +28,15 @@ describe('declarative Resource data projection', () => {
         failed = true;
         const refreshed = await entry.refresh();
         expect(projectDeclarativeDataResourceSnapshot(node, refreshed, true)).toMatchObject({ node: { data: { value: 7 } }, freshness: 'stale', errorCode: 'unavailable' });
+        const good = projectDeclarativeDataResourceSnapshot(node, initial, true);
+        const malformed = { ...initial, digest: 'invalid', value: { ...initial.value!, digest: 'invalid',
+            bytes: new TextEncoder().encode('{"count":"wrong"}') } };
+        const retained = projectDeclarativeDataResourceSnapshot(node, malformed, true, good);
+        expect(retained).toMatchObject({ node: { data: { value: 7 } }, digest: 'v1', freshness: 'stale', errorCode: 'declarative_data_output_invalid' });
+        expect(retained.node).toBe(good.node);
+        expect(projectDeclarativeDataResourceSnapshot(node, malformed, false, good).node).toBeNull();
+        expect(projectDeclarativeDataResourceSnapshot(node, { freshness: 'unknown', pending: 'idle', subscription: 'ended',
+            error: { code: 'denied', message: 'Read denied' } }, true, good).node).toBeNull();
         store.dispose();
         expect(projectDeclarativeDataResourceSnapshot(node, entry.getSnapshot(), false).node).toBeNull();
     });

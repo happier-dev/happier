@@ -54,6 +54,46 @@ function computeWithStanding(standingPolicy: SessionAttentionStandingPolicy): Re
 }
 
 describe('computeVisibleSessionListIndex attention standing under hide-inactive', () => {
+    it.each(['global', 'withinGroups'] as const)('preserves the position of an opened due reminder in %s placement until leaving', (mode) => {
+        const key = buildSessionOrganizationSessionKey('server-a', 'reminded');
+        const source = [
+            { type: 'header', headerKind: 'project', title: 'Repo', serverId: 'server-a', groupKey: GROUP_KEY },
+            ...['kept', 'reminded', 'unread', 'quiet'].map((sessionId) => ({
+                type: 'session' as const, sessionId, serverId: 'server-a', section: 'inactive' as const,
+                groupKey: GROUP_KEY, groupKind: 'project' as const,
+            })),
+        ] satisfies SessionListIndexItem[];
+        const compute = (standingPolicy: SessionAttentionStandingPolicy, retainPlacements?: ReadonlyArray<{
+            key: string; reason: 'standing'; timestamp: number;
+        }>) => computeVisibleSessionListIndex({
+            source,
+            resolveSessionRow: (_serverId, sessionId) => ({
+                ...makeInactiveReadRow(sessionId),
+                ...(sessionId === 'unread' ? { seq: 5, hasUnreadMessages: true } : {}),
+            }),
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            sessionListOrderingModeV1: 'custom',
+            attentionPlacement: { mode, standingPolicy, retainPlacements },
+            presentation: { enabled: false, presentation: 'grouped' },
+            nowMs: NOW_MS,
+        });
+        const keptKey = buildSessionOrganizationSessionKey('server-a', 'kept');
+        const afterPolicy = { defaultStanding: false, overridesBySessionKey: { [keptKey]: true } };
+        const before = compute({ ...afterPolicy, overridesBySessionKey: {
+            ...afterPolicy.overridesBySessionKey,
+            [key]: { standing: false, remindAt: 1, updatedAt: 1 },
+        } });
+        const positions = (items: ReadonlyArray<SessionListIndexItem> | null) => items?.filter((item) => item.type === 'session')
+            .map((item) => `${item.sessionId}:${item.attentionPlacementReason ? 'attention' : 'normal'}`);
+        const retained = compute(afterPolicy, [{ key, reason: 'standing', timestamp: 0 }]);
+        expect(positions(retained)).toEqual(positions(before));
+        expect(retained?.find((item) => item.type === 'session' && item.sessionId === 'reminded'))
+            .toHaveProperty('attentionPlacementReason', 'ready');
+        expect(positions(compute(afterPolicy))).not.toEqual(positions(before));
+    });
+
     it('keeps an explicitly kept inactive session visible in the band', () => {
         const result = computeWithStanding({
             defaultStanding: false,

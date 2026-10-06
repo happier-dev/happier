@@ -16,16 +16,13 @@ import type {
   WorkspaceSyncPrepareBetweenRequestV1,
   WorkspaceSyncPrepareBetweenResultV1,
 } from '@happier-dev/protocol';
-import {
-  ApprovalRequestV2Schema,
-  WorkspaceSyncConflictResolveActionInputV1Schema,
-  WorkspaceSyncStatusV1Schema,
-  getActionSpec,
-  resolveWorkspaceSyncTransferRoute,
-  WorkspaceSyncPrepareBetweenResultV1Schema,
-} from '@happier-dev/protocol';
-import { TransferEndpointCandidateSchema, type TransferEndpointCandidate } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveWorkspaceSyncTransferRoute } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
+import type { TransferEndpointCandidate } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';

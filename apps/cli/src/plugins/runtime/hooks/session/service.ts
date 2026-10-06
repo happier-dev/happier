@@ -4,11 +4,8 @@ import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'no
 
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import {
-    SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
-    SessionProviderTranscriptEventPayloadV1Schema,
-    type PluginExecutionScopeV1,
-} from '@happier-dev/protocol';
+import { SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1, SessionProviderTranscriptEventPayloadV1Schema } from '@happier-dev/protocol/plugins/events/session';
+import type { PluginExecutionScopeV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';

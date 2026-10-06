@@ -1,45 +1,14 @@
 import axios, { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
-import {
-  ApprovalRequestOriginV1Schema,
-  bindSessionDiscussionActionHttpRequestV1,
-  buildSessionDiscussionMutationRequestBodyV1,
-  SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1,
-  SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1,
-  SessionDiscussionCreateInputV1Schema,
-  SessionDiscussionCreateResponseV1Schema,
-  SessionDiscussionCreateResultV1Schema,
-  SessionDiscussionDetailsResponseV1Schema,
-  SessionDiscussionDetailsResultV1Schema,
-  SessionDiscussionErrorResponseV1Schema,
-  SessionDiscussionListResponseV1Schema,
-  SessionDiscussionListResultV1Schema,
-  SessionDiscussionMessageV1Schema,
-  SessionDiscussionMessageContentV1Schema,
-  SessionDiscussionMessagesResponseV1Schema,
-  SessionDiscussionOpenedMessageV1Schema,
-  SessionDiscussionOpenedSummaryV1Schema,
-  SessionDiscussionPostInputV1Schema,
-  SessionDiscussionAgentPostRequestV1Schema,
-  SessionDiscussionAgentPostResponseV1Schema,
-  SessionDiscussionPostResponseV1Schema,
-  SessionDiscussionPostResultV1Schema,
-  SessionDiscussionReadInputV1Schema,
-  SessionDiscussionReadResponseV1Schema,
-  SessionDiscussionReadResultV1Schema,
-  SessionDiscussionReadStateResultV1Schema,
-  SessionDiscussionRenameInputV1Schema,
-  SessionDiscussionSummaryV1Schema,
-  SessionDiscussionTitleV1Schema,
-  deriveSessionMutationEqualityTagV1,
-  serializeSessionDiscussionMutationEqualityIntentV1,
-  type ActionExecutorDeps,
-  type SessionDiscussionActionIdV1,
-  type SessionDiscussionAgentPostRequestV1,
-  type SessionDiscussionAgentPostResponseV1,
-  type SessionDiscussionMessageContentV1,
-  type StrictSessionStoredMessageContentEnvelope,
-} from '@happier-dev/protocol';
+import { ApprovalRequestOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { bindSessionDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionDiscussionActionFamily';
+import { buildSessionDiscussionMutationRequestBodyV1, SessionDiscussionCreateResponseV1Schema, SessionDiscussionDetailsResponseV1Schema, SessionDiscussionErrorResponseV1Schema, SessionDiscussionListResponseV1Schema, SessionDiscussionMessagesResponseV1Schema, SessionDiscussionAgentPostRequestV1Schema, SessionDiscussionAgentPostResponseV1Schema, SessionDiscussionPostResponseV1Schema, SessionDiscussionReadResponseV1Schema } from '@happier-dev/protocol/sessions/discussions/api';
+import { SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1, SessionDiscussionCreateInputV1Schema, SessionDiscussionCreateResultV1Schema, SessionDiscussionDetailsResultV1Schema, SessionDiscussionListResultV1Schema, SessionDiscussionOpenedMessageV1Schema, SessionDiscussionOpenedSummaryV1Schema, SessionDiscussionPostInputV1Schema, SessionDiscussionPostResultV1Schema, SessionDiscussionReadInputV1Schema, SessionDiscussionReadResultV1Schema, SessionDiscussionReadStateResultV1Schema, SessionDiscussionRenameInputV1Schema } from '@happier-dev/protocol/sessions/discussions/actions';
+import { SessionDiscussionMessageV1Schema, SessionDiscussionSummaryV1Schema } from '@happier-dev/protocol/sessions/discussions/models';
+import { SessionDiscussionMessageContentV1Schema, SessionDiscussionTitleV1Schema } from '@happier-dev/protocol/sessions/discussions/content';
+import { serializeSessionDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/sessions/discussions/equality';
+import { SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1, deriveSessionMutationEqualityTagV1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
+import type { ActionExecutorDeps, SessionDiscussionActionIdV1, SessionDiscussionAgentPostRequestV1, SessionDiscussionAgentPostResponseV1, SessionDiscussionMessageContentV1, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';

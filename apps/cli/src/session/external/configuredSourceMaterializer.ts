@@ -1,20 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  ConnectedServiceIdSchema,
-  ExternalSessionAgentIdSchema,
-  ExternalSessionRefreshCursorV1Schema,
-  ExternalSessionRefSchema,
-  ExternalSessionSourceIdSchema,
-  ExternalSessionTranscriptFollowCursorV1Schema,
-  MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
-  materializeExternalSessionSourceInstances,
-  type AccountProfile,
-  type ExternalSessionsSource,
-  type PluginContributionIdentityV1,
-  type PluginSourceCustodyV1,
-  validateExternalSessionTranscriptFollowEventV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ExternalSessionAgentIdSchema, ExternalSessionRefSchema, ExternalSessionSourceIdSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { ExternalSessionRefreshCursorV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import { ExternalSessionTranscriptFollowCursorV1Schema, validateExternalSessionTranscriptFollowEventV1 } from '@happier-dev/protocol/sessions/external/publicTranscriptFollowV1';
+import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from '@happier-dev/protocol/plugins/contributionLimits';
+import { materializeExternalSessionSourceInstances } from '@happier-dev/protocol/plugins/backendExternalSessionSourceInstances';
+import type { AccountProfile, ExternalSessionsSource, PluginContributionIdentityV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import {
   isPluginError,
   PluginError,

@@ -117,9 +117,10 @@ function createDeferredVoid(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-function createSocketEventBoundary() {
+function createSocketEventBoundary(clientType?: 'machine-scoped' | 'session-scoped') {
   const handlers = new Map<string, Array<(payload: unknown) => void>>();
   const socket = {
+    auth: { clientType },
     emit: vi.fn(),
     on: vi.fn((event: string, handler: (payload: unknown) => void) => {
       const current = handlers.get(event) ?? [];
@@ -141,6 +142,60 @@ function createSocketEventBoundary() {
 }
 
 describe('RpcHandlerManager registration receipts', () => {
+  it.each(['machine-scoped', 'session-scoped'] as const)(
+    'publishes only handlers owned by the %s socket across connect, late registration and replay',
+    async (clientType) => {
+      const rpc = new RpcHandlerManager({ scopePrefix: 'owner-1', encryptionMode: 'plain', logger: () => {} });
+      const sessionMethods = [
+        RPC_METHODS.SESSION_AGENT_TRANSITION,
+        RPC_METHODS.SESSION_FORK,
+        'execution.run.start',
+        'execution.run.brokerAuthority.resolve.v1',
+        'session.permission.respond',
+        'session.user_action.answer',
+        RPC_METHODS.TRANSCRIPT_PAGE,
+        'session.unlisted',
+        'managedServer.endpoint.unlisted',
+        'abort',
+      ];
+      const machineMethods = [
+        RPC_METHODS.BASH,
+        RPC_METHODS.STOP_SESSION,
+        RPC_METHODS.SESSION_SPAWN_NEW,
+        RPC_METHODS.SPAWN_HAPPY_SESSION,
+        RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+        RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
+      ];
+      const handler = async () => ({ ok: true });
+      for (const method of [...machineMethods, ...sessionMethods.slice(0, -1)]) {
+        rpc.registerHandler(method, handler);
+      }
+      const boundary = createSocketEventBoundary(clientType);
+      const publishedMethods = () => boundary.emit.mock.calls
+        .filter(([event]) => event === SOCKET_RPC_EVENTS.REGISTER)
+        .map(([, payload]) => payload.method);
+      const allowedMethods = clientType === 'machine-scoped'
+        ? machineMethods : [...machineMethods, ...sessionMethods];
+      const expected = allowedMethods.map((method) => `owner-1:${method}`).sort();
+
+      rpc.onSocketConnect(boundary.socket);
+      // Late registration takes a different publication path from initial connect.
+      rpc.registerHandler('abort', handler);
+      expect(publishedMethods().sort()).toEqual(expected);
+      boundary.emit.mockClear();
+      expect([...rpc.replayUnacknowledgedHandlerRegistrations()].sort()).toEqual([...allowedMethods].sort());
+      expect(publishedMethods().sort()).toEqual(expected);
+      boundary.emit.mockClear();
+      rpc.onSocketDisconnect();
+      rpc.onSocketConnect(boundary.socket);
+      expect(publishedMethods().sort()).toEqual(expected);
+
+      // Daemon Actions still consume local handlers, even when they cannot be published.
+      expect(await rpc.invokeLocal('execution.run.start', {})).toEqual({ ok: true });
+      expect(await rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, {})).toEqual({ ok: true });
+    },
+  );
+
   it('logs one safe correlated rejection after repeated reconnects and retries only recoverable registrations', () => {
     const logger = vi.fn();
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger });

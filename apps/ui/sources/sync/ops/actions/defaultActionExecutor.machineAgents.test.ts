@@ -300,15 +300,22 @@ describe('UI machine Agent inventory Action transport', () => {
         ]);
     });
 
-    it('starts connected sign-in through the Connected Account owner and retains its typed unavailable result', async () => {
+    it.each(['ui', 'agent'] as const)('preserves %s connected sign-in admission before the shared daemon owner', async (surface) => {
         const serverId = await harness.addHome({ name: 'Sign-in Home', serverUrl: 'https://signin.test', accountId: 'alice' });
         const signal = new AbortController().signal;
         const command = { operation: 'beginConnect', service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' }, modeId: 'api-key' };
         const unavailable = { status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' };
         rpc.machine.mockResolvedValueOnce({ method: 'connected', command }).mockResolvedValueOnce(unavailable);
-        expect(await createDefaultActionExecutor().execute('machines.agents.signIn.start', {
+        const result = await createDefaultActionExecutor().execute('machines.agents.signIn.start', {
             machineId: 'machine-1', agentId: 'gemini', method: 'connected', serviceId: 'gemini-account',
-        }, { surface: 'ui', authority: 'present_user', serverId, signal })).toEqual({ ok: true, result: unavailable });
+        }, { surface, authority: 'present_user', serverId, signal });
+        if (surface === 'agent') {
+            // An Agent cannot bypass the existing present-user approval gate.
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+            expect(rpc.machine).not.toHaveBeenCalled();
+            return;
+        }
+        expect(result).toEqual({ ok: true, result: unavailable });
         expect(rpc.machine.mock.calls.map(([request]) => request)).toEqual([
             { machineId: 'machine-1', serverId, signal, method: 'daemon.agents.signIn.prepare',
                 payload: { agentId: 'gemini', method: 'connected', serviceId: 'gemini-account' } },

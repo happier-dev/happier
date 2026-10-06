@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import {
     ConnectedServiceIdSchema,
@@ -37,6 +39,36 @@ import {
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConnectedServiceAuthSwitch.js';
 
 describe('connectedServiceSchemas', () => {
+    it('preserves both JSON Schema dialects, defaults and fluent credential-health derivatives', () => {
+        const reference = z.object({
+            v: z.literal(1),
+            status: z.enum(['connected', 'refreshing', 'needs_reauth', 'refresh_failed_retryable']),
+            reconnectRequired: z.boolean().default(false),
+        }).strict();
+        const health = ConnectedServiceCredentialHealthV1Schema.pick({ v: true, status: true, reconnectRequired: true });
+        for (const target of ['draft-2020-12', 'draft-7'] as const) {
+            expect(zodSchemaToJsonSchemaObject(health, { target }))
+                .toEqual(zodSchemaToJsonSchemaObject(reference, { target }));
+        }
+        expect(ConnectedServiceCredentialHealthV1Schema.parse({ v: 1, status: 'connected' }))
+            .toEqual({ v: 1, status: 'connected', reconnectRequired: false });
+    });
+
+    it('retains classic errors for structural failures and credential guard refinements', () => {
+        const structural = ConnectedServiceCredentialHealthV1Schema.safeParse({ v: 1, status: 'connected', providerHttpStatus: 99 });
+        expect(structural.success).toBe(false);
+        if (!structural.success) {
+            expect(structural.error).toBeInstanceOf(z.ZodError);
+            expect(structural.error.issues).toMatchObject([{ code: 'too_small', path: ['providerHttpStatus'], minimum: 100 }]);
+        }
+        const refined = ConnectedServiceCredentialMutationGuardV1Schema.safeParse({ refreshLeaseOwnerId: 'owner' });
+        expect(refined.success).toBe(false);
+        if (!refined.success) {
+            expect(refined.error).toBeInstanceOf(z.ZodError);
+            expect(refined.error.issues).toMatchObject([{ code: 'custom', path: ['expectedCredentialRevision'] }]);
+        }
+        expect(() => ConnectedServiceCredentialHealthV1Schema.parse({})).toThrow(z.ZodError);
+    });
     it('defines one strict credential revision and mutation fence contract', () => {
         expect(ConnectedServiceCredentialRevisionV1Schema.parse('csr_0123456789ABCDEFGHJKMNPQRS')).toBe(
             'csr_0123456789ABCDEFGHJKMNPQRS',

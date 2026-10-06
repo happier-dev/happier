@@ -1,9 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import {
-  WORKSPACE_SYNC_MAX_PATTERN_BYTES,
-  WORKSPACE_SYNC_MAX_PATTERNS,
-  WorkspaceSyncSelectionDiagnoseV1Schema,
-} from '@happier-dev/protocol';
+import { WORKSPACE_SYNC_MAX_PATTERN_BYTES, WORKSPACE_SYNC_MAX_PATTERNS, WorkspaceSyncSelectionDiagnoseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export const WORKSPACE_SYNC_BROKER_PROTOCOL = 1 as const;
 export const WORKSPACE_SYNC_BROKER_MAX_FRAME_BYTES = 64 * 1024;

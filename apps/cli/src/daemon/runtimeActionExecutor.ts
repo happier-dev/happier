@@ -1,8 +1,5 @@
-import {
-  createUnavailableRuntimeActionExecutor,
-  resolveRuntimeActionExecutionFamily,
-  type RuntimeActionExecute,
-} from '@happier-dev/protocol';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import type { RuntimeActionExecute } from '@happier-dev/protocol';
 
 import {
   createBrowserDaemonRuntimeActionExecutor,

@@ -49,6 +49,56 @@ function createTempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
+test('latest component lookup selects only complete artifacts for the requested runtime target', async (t) => {
+  const root = createTempDir('stack-artifact-target-select-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const target = { platform: 'linux', arch: 'x64' };
+  for (const [id, arch, createdAt] of [['matching', 'x64', '2026-10-05T01:00:00Z'], ['foreign', 'arm64', '2026-10-05T02:00:00Z']]) {
+    const artifactDir = join(root, 'artifacts/web', id);
+    mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+    writeFileSync(join(artifactDir, 'payload/index.html'), '<html>web</html>');
+    writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
+      version: 1, component: 'web', artifactFingerprint: id, sourceFingerprint: 'source',
+      target: { platform: 'linux', arch }, createdAt, payloadDir: 'payload', entrypoint: 'index.html',
+    }));
+  }
+  assert.equal((await resolveLatestComponentArtifact({ stackBaseDir: root, component: 'web', target })).manifest.artifactFingerprint, 'matching');
+});
+
+test('web publication records the requested consumer target while exporting on the worker', async (t) => {
+  const root = createTempDir('stack-web-target-');
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const app of ['ui', 'cli', 'server']) {
+    mkdirSync(join(root, 'apps', app), { recursive: true });
+    writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@happier-dev/${app}` }));
+  }
+  const priorRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
+  process.env.HAPPIER_STACK_REPO_DIR = root;
+  t.after(() => {
+    if (priorRepoDir === undefined) delete process.env.HAPPIER_STACK_REPO_DIR;
+    else process.env.HAPPIER_STACK_REPO_DIR = priorRepoDir;
+  });
+  const target = { platform: 'linux', arch: process.arch === 'arm64' ? 'x64' : 'arm64' };
+  const artifactDir = join(root, 'artifacts', 'web', 'target-web');
+  const result = await buildWebArtifact({
+    rootDir: root, artifactDir, artifactFingerprint: 'target-web', target,
+    sourceMetadata: { repoDir: root, sourceFingerprint: 'source', builtAt: '2026-10-05T00:00:00Z' },
+    env: { HAPPIER_STACK_HOME_DIR: join(root, 'home') },
+    // Package installation/postinstall and Expo are external tool boundaries;
+    // export staging, payload validation, atomic publication and manifests stay real.
+    ensureDepsInstalledImpl: async (_dir, _label, { onDependenciesReady }) => await onDependenciesReady(),
+    runUiPostinstallImpl: () => {},
+    expoExecImpl: async ({ args }) => {
+      const output = args[args.indexOf('--output-dir') + 1];
+      writeFileSync(join(output, 'index.html'), '<script src="./chunk.js"></script>');
+      writeFileSync(join(output, 'chunk.js'), 'browser payload');
+    },
+  });
+  assert.deepEqual(result.manifest.target, target);
+  assert.deepEqual(JSON.parse(readFileSync(join(artifactDir, 'manifest.json'), 'utf8')).target, target);
+  assert.equal(readFileSync(join(artifactDir, 'payload', 'chunk.js'), 'utf8'), 'browser payload');
+});
+
 test('web artifact dependencies run the canonical UI postinstall through the dependency-ready callback', async () => {
   const events = [];
   const uiDir = '/tmp/happier-ui';

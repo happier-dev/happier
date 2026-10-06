@@ -57,6 +57,28 @@ test('every component identity separates consumer architectures', () => {
   }
 });
 
+test('explicit build targets determine request identity independently of the worker host', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'runtime-target-inputs-'));
+  t.after(async () => await rm(repoDir, { recursive: true, force: true }));
+  await mkdir(join(repoDir, 'apps', 'ui', 'sources'), { recursive: true });
+  await writeFile(join(repoDir, 'apps', 'ui', 'package.json'), JSON.stringify({ name: '@happier-dev/ui' }));
+  await writeFile(join(repoDir, 'apps', 'ui', 'sources', 'index.ts'), 'export const value = 1;');
+  const options = {
+    rootDir: repoDir,
+    selection: { components: { web: true, server: false, daemon: false }, activateRuntime: false },
+    env: {}, sourceMetadata: { ...sourceMetadata, repoDir },
+  };
+  const arm = await resolveRuntimeBuildRequestIdentity({ ...options, target: { platform: 'linux', arch: 'arm64' } });
+  const x64 = await resolveRuntimeBuildRequestIdentity({ ...options, target: { platform: 'linux', arch: 'x64' } });
+  assert.equal(arm.componentSourceFingerprints.web, x64.componentSourceFingerprints.web);
+  assert.notEqual(arm.artifactFingerprints.web, x64.artifactFingerprints.web);
+  assert.equal(arm.artifactFingerprints.web, createRuntimeArtifactFingerprint({
+    component: 'web', sourceMetadata: options.sourceMetadata,
+    componentSourceFingerprint: arm.componentSourceFingerprints.web,
+    toolchainInputs: [`node=${process.version}`], platform: 'linux', arch: 'arm64', env: {},
+  }));
+});
+
 test('QA stale outputs give artifacts distinct identities even with identical current inputs', () => {
   const inputs = { component: 'web', sourceMetadata, componentSourceFingerprint: 'same-source' };
   const stalePackages = [{ packageName: '@happier-dev/example', outputIdentity: 'old-output' }];
@@ -177,6 +199,7 @@ test('component artifact recipes use only their consumed source, toolchain, and 
 });
 
 test('build request identity matches the exact all-component artifact recipe and snapshot', async () => {
+  const target = { platform: 'linux', arch: 'arm64' };
   const selection = {
     components: { web: true, server: true, daemon: true },
     activateRuntime: true,
@@ -191,6 +214,7 @@ test('build request identity matches the exact all-component artifact recipe and
     rootDir: '/repo',
     producerStackBaseDir: '/stacks/producer',
     selection,
+    target,
     env,
     collectBuildSourceMetadataImpl: async () => sourceMetadata,
     collectRuntimeComponentSourceFingerprintsImpl: async () => componentSourceFingerprints,
@@ -202,6 +226,7 @@ test('build request identity matches the exact all-component artifact recipe and
   });
 
   const web = createRuntimeArtifactFingerprint({
+    ...target,
     component: 'web',
     sourceMetadata,
     componentSourceFingerprint: componentSourceFingerprints.web,
@@ -209,6 +234,7 @@ test('build request identity matches the exact all-component artifact recipe and
     env,
   });
   const server = createRuntimeArtifactFingerprint({
+    ...target,
     component: 'server',
     sourceMetadata,
     componentSourceFingerprint: componentSourceFingerprints.server,
@@ -217,6 +243,7 @@ test('build request identity matches the exact all-component artifact recipe and
     env,
   });
   const daemon = createRuntimeArtifactFingerprint({
+    ...target,
     component: 'daemon',
     sourceMetadata,
     componentSourceFingerprint: componentSourceFingerprints.daemon,
@@ -229,7 +256,7 @@ test('build request identity matches the exact all-component artifact recipe and
   assert.equal(result.daemonWorkspaceSourceFingerprint, 'a'.repeat(64));
   assert.equal(
     result.snapshotId,
-    createRuntimeSnapshotId({ sourceMetadata, componentFingerprints: { web, server, daemon } }),
+    createRuntimeSnapshotId({ sourceMetadata, componentFingerprints: { web, server, daemon }, ...target }),
   );
 });
 

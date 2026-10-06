@@ -153,6 +153,38 @@ const remoteRecoveryCredits = {
     }],
 } as const;
 
+describe('legacy recovery-credit schema characterization', () => {
+    it('normalizes identifiers and independently defaults omitted details', () => {
+        const { credits: _credits, ...summary } = remoteRecoveryCredits;
+        const input = { ...remoteQuotaSnapshot, recoveryCredits: { ...summary, availableCount: 0 } };
+        const first = parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(input);
+        expect(first.recoveryCredits?.credits).toEqual([]);
+        first.recoveryCredits?.credits.push({ kind: 'unknown', status: 'unknown' });
+        expect(parseBuiltInLegacyConnectedServiceQuotaSnapshotV1(input).recoveryCredits?.credits).toEqual([]);
+        const trimmed = parseBuiltInLegacyConnectedServiceQuotaSnapshotV1({
+            ...remoteQuotaSnapshot,
+            recoveryCredits: { ...remoteRecoveryCredits, credits: [{
+                ...remoteRecoveryCredits.credits[0], providerCreditId: '  credit_123  ', description: '  detail  ',
+            }] },
+        });
+        expect(trimmed.recoveryCredits?.credits[0]).toMatchObject({ id: 'credit_123', description: 'detail' });
+    });
+
+    it('retains closed objects and the aggregate count refinement', () => {
+        for (const recoveryCredits of [
+            { ...remoteRecoveryCredits, extra: true },
+            { ...remoteRecoveryCredits, credits: [{ ...remoteRecoveryCredits.credits[0], extra: true }] },
+            { ...remoteRecoveryCredits, totalCount: 0 },
+            { ...remoteRecoveryCredits, availableCount: 1.5 },
+        ]) {
+            let error: unknown;
+            try { parseBuiltInLegacyConnectedServiceQuotaSnapshotV1({ ...remoteQuotaSnapshot, recoveryCredits }); }
+            catch (caught) { error = caught; }
+            expect(error).toMatchObject({ code: 'connected_service_recovery_credits_invalid' });
+        }
+    });
+});
+
 const meter = {
     meterId: 'five-hour',
     label: 'Five hour',

@@ -1,12 +1,5 @@
-import {
-  MACHINE_LIVE_STREAM_BASELINE_CODEC_V1,
-  type BrowserRecordingMachineLiveStreamCaptureSourceV1,
-  type BrowserRecordingOutcomeReasonV1,
-  type BrowserRecordingSessionV1,
-  type MachineLiveStreamFrameV1,
-  type MachineLiveStreamReceiptV1,
-  type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+import { MACHINE_LIVE_STREAM_BASELINE_CODEC_V1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type { BrowserRecordingMachineLiveStreamCaptureSourceV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingSessionV1, MachineLiveStreamFrameV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
 import type {
   BrowserRecordingCaptureAdapter,

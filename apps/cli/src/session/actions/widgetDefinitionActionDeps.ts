@@ -1,7 +1,8 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { createWidgetDefinitionArtifactPortV1, createSessionWidgetDefinitionSourceReaderV1,
-    isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, type WidgetDefinitionArtifactTransportV1,
-    type WidgetInputDescriptorV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetDefinitionArtifactPortV1 } from '@happier-dev/protocol/widgets/widgetDefinitionArtifactV1';
+import { createSessionWidgetDefinitionSourceReaderV1 } from '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1';
+import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
+import type { WidgetDefinitionArtifactTransportV1, WidgetInputDescriptorV1, WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 export function createCliWidgetDefinitionActionDepsV1(input: Readonly<{

@@ -1,14 +1,8 @@
-import {
-  AccountSettingsSavedSecretMutationError,
-  ProviderErrorV1Schema,
-  SavedSecretSchema,
-  applyAccountSettingsSavedSecretMutation,
-  createProviderErrorV1,
-  readProviderSettingsMutationBasisV1,
-  writeProviderSettingsToAccountSettingsV1,
-  type ProviderErrorV1,
-  type ProviderSettingsV1,
-} from '@happier-dev/protocol';
+import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { ProviderErrorV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readProviderSettingsMutationBasisV1, writeProviderSettingsToAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import {
   createSavedSecretMaterializerV1,
   type SavedSecretCatalogResourceInputV1,

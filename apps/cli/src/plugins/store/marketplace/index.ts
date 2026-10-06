@@ -2,16 +2,8 @@ import { createHash } from 'node:crypto';
 
 import semver from 'semver';
 
-import {
-  MarketplaceIndexQueryV1Schema,
-  MarketplaceIndexSourceSnapshotV1Schema,
-  type MarketplaceIndexAdmissionV1,
-  type MarketplaceIndexItemV1,
-  type MarketplaceIndexQueryV1,
-  type MarketplaceIndexQueryResultV1,
-  type MarketplaceIndexSourceKindV1,
-  type MarketplaceIndexSourceSnapshotV1,
-} from '@happier-dev/protocol';
+import { MarketplaceIndexQueryV1Schema, MarketplaceIndexSourceSnapshotV1Schema } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
+import type { MarketplaceIndexAdmissionV1, MarketplaceIndexItemV1, MarketplaceIndexQueryV1, MarketplaceIndexQueryResultV1, MarketplaceIndexSourceKindV1, MarketplaceIndexSourceSnapshotV1 } from '@happier-dev/protocol';
 
 type IndexDiagnostic = { code: string; message: string };
 

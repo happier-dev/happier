@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol';
 import { sanitizeAttachmentFileName } from '../targets/resolveAttachmentTransferTarget';
 

@@ -1,10 +1,5 @@
-import {
-  resolveProviderBindingCompatibilityWithFingerprintV1,
-  type AgentProviderRequirementsV1,
-  type ProviderApiKeyCredentialRequirementV1,
-  type ProviderBrokerApplicationBindingV1,
-  type ProviderEndpointTemplateV1,
-} from '@happier-dev/protocol';
+import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { AgentProviderRequirementsV1, ProviderApiKeyCredentialRequirementV1, ProviderBrokerApplicationBindingV1, ProviderEndpointTemplateV1 } from '@happier-dev/protocol';
 
 export function resolveReviewedRunnerBrokerApplicationCompatibility(input: Readonly<{
   agentTargetKey: string;

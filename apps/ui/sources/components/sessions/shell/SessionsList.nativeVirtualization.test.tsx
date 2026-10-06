@@ -8,7 +8,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
     splitStreamingRevealTextParts: () => [],
 }));
 
-import { findGestureByKind, renderScreen, standardCleanup } from '@/dev/testkit';
+import { findGestureByKind, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { SESSION_LIST_ROW_HEIGHT_DEFAULT } from './sessionListRowHeights';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { buildSessionListIndexFromViewData, buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
@@ -18,6 +18,7 @@ import { clearSessionListViewFilterRetentionForTests } from './search/useSession
 import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 import { createUseSettingMock, createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { buildSessionOrganizationServerKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,8 +33,8 @@ const fetchMoreSessionsMock = vi.hoisted(() => vi.fn(async () => undefined));
 const refreshSessionsMock = vi.hoisted(() => vi.fn<() => Promise<undefined>>(async () => undefined));
 const markSessionListScrollActivityMock = vi.hoisted(() => vi.fn());
 const preloadEnrichedMarkdownRuntimeSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
-const setSessionPinOp = vi.hoisted(() => vi.fn(async () => undefined));
-const setSessionTagAssignmentsOp = vi.hoisted(() => vi.fn(async () => undefined));
+const setSessionPinApi = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionPin>());
+const setSessionTagAssignmentsApi = vi.hoisted(() => vi.fn<typeof import('@/sync/api/session/sessionOrganizationApi').setSessionTagAssignments>());
 const exactHomeCredentialAccounts = vi.hoisted(() => new Map<string, string>());
 const keyboardShortcutHandlersRef = vi.hoisted(() => ({
     current: null as Record<string, (() => void)> | null,
@@ -363,7 +364,7 @@ installSessionShellCommonModuleMocks({
         return createModalModuleMock().module;
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         const { buildMachineDisplayRenderableFromMachine } = await import('@/sync/domains/machines/machineDisplayRenderable');
         const resolveRowRenderableForTest = (serverId: unknown, sessionId: unknown) => {
             const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
@@ -452,7 +453,6 @@ installSessionShellCommonModuleMocks({
                         sess_b: sessionB,
                     },
                 }) as any,
-                storage: createStorageStoreMock(storageState),
             },
         });
     },
@@ -485,31 +485,16 @@ vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => (
     preloadEnrichedMarkdownRuntime: preloadEnrichedMarkdownRuntimeSpy,
 }));
 
-vi.mock('@/sync/ops/sessionOrganization', () => ({
-    resolveSessionOrganizationMutationScope: async (serverId: string) => ({
-        ok: true,
-        scope: {
-            credentials: { token: 'test-token' },
-            serverId,
-            serverIdAliases: [],
-            serverUrl: 'https://server-a.example.test',
-        },
-    }),
-    writeSessionOrganizationFolderAssignment: vi.fn(async () => undefined),
-    writeSessionOrganizationFolders: vi.fn(async () => undefined),
-    writeSessionOrganizationGroupOrder: vi.fn(async () => undefined),
-    writeSessionOrganizationPin: setSessionPinOp,
-    writeSessionOrganizationTagLabels: setSessionTagAssignmentsOp,
-    writeSessionOrganizationWorkspaceLabels: vi.fn(async () => undefined),
-    writeSessionOrganizationWorkspaceOrder: vi.fn(async () => undefined),
+// Substitute the network API only; exact-Home resolution and optimistic writers stay real.
+vi.mock('@/sync/api/session/sessionOrganizationApi', () => ({
+    setSessionPin: setSessionPinApi,
+    setSessionTagAssignments: setSessionTagAssignmentsApi,
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
     const serverProfiles = [{ id: 'server_a', serverUrl: 'https://server-a.example.test' }];
-    const readServerProfiles = () => exactHomeCredentialAccounts.has('server_b')
-        ? [...serverProfiles, { id: 'server_b', serverUrl: 'https://server-b.example.test' }]
-        : serverProfiles;
+    const readServerProfiles = () => [...serverProfiles, { id: 'server_b', serverUrl: 'https://server-b.example.test' }];
     return {
         ...actual,
         listServerProfiles: readServerProfiles,
@@ -671,8 +656,21 @@ function resetVisibleSessionListViewData(): void {
 }
 
 async function renderSessionsList(props: React.ComponentProps<typeof import('./SessionsList').SessionsList> = {}) {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const membership: Record<string, string[]> = {};
+    for (const item of mockVisibleSessionListViewData) {
+        if (item.type !== 'session') continue;
+        (membership[item.serverId] ??= []).push(item.session.id);
+    }
+    await act(async () => storage.setState({
+        ordinarySessionListMembershipByServerId: membership,
+        sessionListRowsByServerId: storageState.sessionListRowsByServerId,
+    }));
     const { SessionsList } = await import('./SessionsList');
-    return renderScreen(<SessionsList {...props} />);
+    const screen = await renderScreen(<SessionsList {...props} />);
+    // Resolve the fixture's async secure-storage reads before identity baselines are captured.
+    await flushHookEffects();
+    return screen;
 }
 
 async function renderSessionsListWithSurfaceOwnership(surfaceOwnership: Readonly<{
@@ -711,15 +709,19 @@ function findFirstDropdownMenuItems(screen: Awaited<ReturnType<typeof renderSess
     return [];
 }
 
-function findDropdownByItemTitle(
+async function selectHeaderTagFilter(
     screen: Awaited<ReturnType<typeof renderSessionsList>>,
-    title: string,
+    label: string,
 ) {
-    return screen.root.findAll((node) =>
-        String(node.type) === 'DropdownMenu'
-        && Array.isArray((node.props as any)?.items)
-        && (node.props as any).items.some((item: any) => item.title === title)
-    )[0] ?? null;
+    const control = screen.root.find((node) => typeof node.props.editor?.updateFilters === 'function');
+    const { editor } = control.props as import('./search/SessionListFilterEditorControl').SessionListFilterEditorControlProps;
+    const tag = expectPresent(editor.tags.find((option) => option.label === label), 'expected qualified tag filter option');
+    // The phone modal is a presentation boundary; exercise its canonical editor callback and
+    // retained filter owner instead of restoring the retired standalone tag dropdown.
+    await act(async () => editor.updateFilters({
+        ...editor.filters,
+        tagIds: [{ serverId: tag.serverId, tagId: tag.tagId }],
+    }));
 }
 
 function findRecordedGestureDetectors(
@@ -745,8 +747,15 @@ describe('SessionsList (native virtualization)', () => {
         setSessionListOrderingModeV1.mockClear();
         setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
-        setSessionPinOp.mockClear();
-        setSessionTagAssignmentsOp.mockClear();
+        setSessionPinApi.mockReset();
+        setSessionPinApi.mockImplementation(async ({ sessionId, request }) => ({
+            success: true, version: 1,
+            pin: request.pinned ? { sessionId, sortKey: request.sortKey ?? null, pinnedAt: 1 } : null,
+        }));
+        setSessionTagAssignmentsApi.mockReset();
+        setSessionTagAssignmentsApi.mockImplementation(async ({ sessionId, request }) => ({
+            success: true, version: 1, sessionId, tagIds: request.tagIds,
+        }));
         navigateToSessionSpy.mockClear();
         routerPushSpy.mockClear();
         openUniversalSearchSpy.mockClear();
@@ -775,7 +784,10 @@ describe('SessionsList (native virtualization)', () => {
         };
         const { storage: realStorage } = await import('@/sync/domains/state/storageStore');
         previousRealStorageState = realStorage.getState();
-        realStorage.setState({ sessionListRowsByServerId: storageState.sessionListRowsByServerId });
+        realStorage.setState({
+            sessionListRowsByServerId: storageState.sessionListRowsByServerId,
+            ordinarySessionListMembershipByServerId: { server_a: ['sess_a', 'sess_b'] },
+        });
         const { resetServerFeaturesClientForTests, primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
         primeServerFeaturesSnapshot({
@@ -916,7 +928,7 @@ describe('SessionsList (native virtualization)', () => {
         )).toHaveLength(1);
     });
 
-    it('renders the canonical filter editor trigger when structural listing is available', async () => {
+    it('labels the filter trigger with the legacy corpus when its Home lacks structural listing support', async () => {
         filteredListingEnabled = true;
 
         const screen = await renderSessionsList();
@@ -926,7 +938,7 @@ describe('SessionsList (native virtualization)', () => {
             'expected filter editor trigger',
         );
         expect(trigger.props.accessibilityRole).toBe('button');
-        expect(trigger.props.accessibilityLabel).toBe('sessionsList.filtersMyWork');
+        expect(trigger.props.accessibilityLabel).toBe('sessionsList.filtersLegacyOwnerDirect');
     });
 
     it('keeps the header search input open with text and filters visible sessions', async () => {
@@ -1323,18 +1335,7 @@ describe('SessionsList (native virtualization)', () => {
         ];
 
         const screen = await renderSessionsList();
-        const tagMenu = expectPresent(
-            findDropdownByItemTitle(screen, 'important'),
-            'expected tag filter dropdown',
-        );
-        const importantItem = expectPresent(
-            tagMenu.props.items.find((item: any) => item.title === 'important'),
-            'expected important tag filter item',
-        );
-
-        await act(async () => {
-            tagMenu.props.onSelect?.(importantItem.id);
-        });
+        await selectHeaderTagFilter(screen, 'important');
 
         expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(1);
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
@@ -1344,18 +1345,7 @@ describe('SessionsList (native virtualization)', () => {
         const { SessionsList } = await import('./SessionsList');
         sessionTagsV1 = { 'server_a:sess_a': ['important'], 'server_a:sess_b': ['later'] };
         const screen = await renderSessionsList();
-        const tagMenu = expectPresent(
-            findDropdownByItemTitle(screen, 'important'),
-            'expected tag filter dropdown',
-        );
-        const importantItem = expectPresent(
-            tagMenu.props.items.find((item: any) => item.title === 'important'),
-            'expected important tag filter item',
-        );
-
-        await act(async () => {
-            tagMenu.props.onSelect?.(importantItem.id);
-        });
+        await selectHeaderTagFilter(screen, 'important');
         expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(0);
 
         // A loading/offline projection may temporarily have no known tags. That
@@ -1627,7 +1617,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(virtualizedListState.current?.props?.extraData?.sessionListIdentityDisplay).toBe('none');
     });
 
-    it('emits one bounded semantic status-demand batch without invalidating rows on a native viewability change', async () => {
+    it('emits one bounded semantic status-demand batch and projects native viewability to row subscription inputs', async () => {
         platformOs = 'ios';
         const header = expectPresent(
             mockVisibleSessionListViewData.find((item) => item.type === 'header'),
@@ -1680,8 +1670,7 @@ describe('SessionsList (native virtualization)', () => {
             'server_a',
             emitStatusDemand,
         );
-        const { SessionsList } = await import('./SessionsList');
-        await renderScreen(<SessionsList />);
+        await renderSessionsList();
         const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
         syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
         syncPerformanceTelemetry.reset();
@@ -1721,7 +1710,17 @@ describe('SessionsList (native virtualization)', () => {
             };
             expect(visibleDemand.entries).toHaveLength(13);
             expect(visibleDemand.entries.every((entry) => entry.demand === 'visible')).toBe(true);
-            expect(virtualizedListState.current?.props?.extraData).toBe(initialExtraData);
+            const nextExtraData = virtualizedListState.current?.props?.extraData;
+            const changedKeys = Object.keys(initialExtraData ?? {}).filter((key) =>
+                !Object.is(initialExtraData[key], nextExtraData?.[key]));
+            const changedAudienceInputs = Object.keys(initialExtraData?.audience ?? {}).filter((key) =>
+                !Object.is(initialExtraData.audience[key], nextExtraData?.audience?.[key]));
+            // Mounted Run rows consume this exact viewport set to retire offscreen subscriptions.
+            // The global row input must change; every unrelated row input must stay stable.
+            expect(changedKeys, `changed audience inputs: ${changedAudienceInputs.join(', ')}`).toEqual(['viewableSessionRowKeys']);
+            expect(nextExtraData.viewableSessionRowKeys).toEqual(new Set(
+                profiledSessions.slice(75, 88).map((session) => buildSessionListServerScopedRowKey('server_a', session.id)),
+            ));
             expect(virtualizedListState.current?.props?.data).toBe(initialData);
             const events = syncPerformanceTelemetry.snapshot().events;
             expect(events.find((event) => event.name === 'ui.sessionsList.viewableRows.changed')?.fields).toEqual(expect.objectContaining({
@@ -1799,7 +1798,12 @@ describe('SessionsList (native virtualization)', () => {
         await screen.update(<SessionsList />);
 
         expect(virtualizedListState.current?.props?.data).toBe(initialData);
-        expect(virtualizedListState.current?.props?.extraData).toBe(initialExtraData);
+        const updatedExtraData = virtualizedListState.current?.props?.extraData;
+        const changedInputs = Object.keys(initialExtraData ?? {}).filter((key) =>
+            !Object.is(initialExtraData[key], updatedExtraData?.[key]));
+        const changedAudienceInputs = Object.keys(initialExtraData?.audience ?? {}).filter((key) =>
+            !Object.is(initialExtraData.audience[key], updatedExtraData?.audience?.[key]));
+        expect(updatedExtraData, `changed row inputs: ${changedInputs.join(', ')}; audience: ${changedAudienceInputs.join(', ')}`).toBe(initialExtraData);
     });
 
     it('keeps row move action props stable when an equivalent session-list refresh only replaces data objects', async () => {
@@ -2018,15 +2022,15 @@ describe('SessionsList (native virtualization)', () => {
             await Promise.resolve();
         });
 
-        expect(setSessionPinOp).toHaveBeenCalledTimes(1);
-        expect(setSessionPinOp).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server_a',
-                serverUrl: 'https://server-a.example.test',
-            }),
-            sessionKey: 'server_a:sess_a',
-            pinned: true,
+        expect(setSessionPinApi).toHaveBeenCalledTimes(1);
+        expect(setSessionPinApi).toHaveBeenCalledWith(expect.objectContaining({
+            credentials: { token: 'test-token' },
+            serverUrl: 'https://server-a.example.test',
+            sessionId: 'sess_a',
+            request: { pinned: true, sortKey: undefined },
         }));
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        expect(storage.getState().sessionOrganizationPinsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toMatchObject({ sessionId: 'sess_a' });
     });
 
     it('does not rewrite focused-session MRU from the active list projection', async () => {
@@ -2359,6 +2363,12 @@ describe('SessionsList (native virtualization)', () => {
 
     it('writes session tags through session organization assignments', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const projection = buildSessionOrganizationProjectionFromLegacyTestSettings({
+            serverId: 'server_a', sessionTagsV1: { 'server_a:sess_a': ['urgent'] },
+        });
+        const tag = expectPresent(Object.values(projection.tagsById)[0], 'expected existing urgent tag');
+        storage.setState({ sessionOrganizationTagsByTagKey: { [buildSessionOrganizationServerKey('server_a', tag.tagId)]: tag } });
 
         const screen = await renderSessionsList();
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected first session item');
@@ -2369,15 +2379,16 @@ describe('SessionsList (native virtualization)', () => {
             await Promise.resolve();
         });
 
-        expect(setSessionTagAssignmentsOp).toHaveBeenCalledTimes(1);
-        expect(setSessionTagAssignmentsOp).toHaveBeenCalledWith(expect.objectContaining({
-            scope: expect.objectContaining({
-                serverId: 'server_a',
-                serverUrl: 'https://server-a.example.test',
-            }),
-            sessionKey: 'server_a:sess_a',
-            tags: ['urgent'],
+        expect(setSessionTagAssignmentsApi).toHaveBeenCalledTimes(1);
+        expect(setSessionTagAssignmentsApi).toHaveBeenCalledWith(expect.objectContaining({
+            credentials: { token: 'test-token' },
+            serverUrl: 'https://server-a.example.test',
+            sessionId: 'sess_a',
+            request: { tagIds: [tag.tagId] },
         }));
+        expect(storage.getState().sessionOrganizationTagAssignmentsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toEqual({
+            sessionId: 'sess_a', tagIds: [tag.tagId],
+        });
     });
 
     it('shows pinned server badges only when multiple servers are selected', async () => {

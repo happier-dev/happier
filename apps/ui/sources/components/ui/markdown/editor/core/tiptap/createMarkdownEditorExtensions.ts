@@ -21,6 +21,8 @@
  */
 
 import type { AnyExtension } from '@tiptap/core';
+// Keep Markdown's Editor augmentation available across declaration-project boundaries.
+import '@tiptap/markdown';
 import { Markdown } from '@tiptap/markdown';
 import { StarterKit } from '@tiptap/starter-kit';
 import { TaskItem } from '@tiptap/extension-task-item';

@@ -1,8 +1,6 @@
-import { StopSessionResultSchema } from '@happier-dev/protocol';
-import {
-  RPC_METHODS,
-  resolveSocketRpcSessionWriteAuthorizationMethod,
-} from '@happier-dev/protocol/rpc';
+import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { resolveSocketRpcSessionWriteAuthorizationMethod } from '@happier-dev/protocol/socketRpc';
 import type {
   SocketRpcTransportAcknowledgementV1,
 } from '@happier-dev/protocol/socketRpc';

@@ -1,19 +1,13 @@
-import {
-  AIBackendProfileSchema,
-  buildBackendTargetKeyV2,
-  DEFAULT_BUILT_IN_BACKEND_PROFILES,
-  ProviderConnectionIdSchema,
-  ProviderModelIdSchema,
-  ProviderSettingsMigrationSourceOutcomeV1Schema,
-  LaunchProfileV2Schema,
-  isLegacyAiLaunchEndpointLikeEnvironmentNameV1,
-  isCanonicalProviderSavedSecretIdV1,
-  compareProviderCanonicalStringsV1,
-  readBackendTargetRefV2,
-  type ProviderAccountSettingsMigrationCandidateV1,
-  type ProviderAccountSettingsMigrationContextV1,
-  type ProviderContributionV1,
-} from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { DEFAULT_BUILT_IN_BACKEND_PROFILES } from '@happier-dev/protocol/profiles/builtInBackendProfiles';
+import { ProviderConnectionIdSchema, ProviderModelIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderSettingsMigrationSourceOutcomeV1Schema, isCanonicalProviderSavedSecretIdV1 } from '@happier-dev/protocol/providers/settings/v1';
+import { isLegacyAiLaunchEndpointLikeEnvironmentNameV1 } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
+import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
+import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ProviderAccountSettingsMigrationCandidateV1, ProviderAccountSettingsMigrationContextV1, ProviderContributionV1 } from '@happier-dev/protocol';
 
 type ProviderContributionEntry = Readonly<{ definition: ProviderContributionV1 }>;
 

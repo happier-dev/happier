@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { completeAccountServicePostAuth, resumeAccountServicePostAuth, supplyAccountServiceHomeMaterial } from './completeAccountServicePostAuth';
@@ -10,16 +11,22 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
 import { cancelPendingDirectoryHomeEnrollment, resumePendingDirectoryHomeEnrollment } from './enrollDirectoryHome';
 import * as activeServerSwitch from '@/sync/domains/server/activeServerSwitch';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 
 /** Non-secret binding to the Account credential that created the continuation. */
 const TEST_CREDENTIAL_TOKEN_DIGEST = 'sha256:test-account-credential';
 
+installDisconnectedServerSocketBoundary();
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/http/client')>(),
     createServerFetchAtEndpoint: () => request,
     serverFetch: (...args: unknown[]) => request(...args),
 }));
+
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
 
 const service = {
     endpointUrl: 'https://directory.test',
@@ -42,7 +49,10 @@ describe('exact Account post-auth continuation', () => {
         request.mockResolvedValue(new Response(JSON.stringify({ v: 1, homes: [], preferredHomeServerIdentityId: null })));
         await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'restricted-token' });
     });
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(async () => {
+        await disconnectActiveServerConnection();
+        vi.restoreAllMocks();
+    });
 
     it('rejects mismatched service custody before any request', async () => {
         expect(await completeAccountServicePostAuth({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service, session: session('srv_other'), intent: { kind: 'enter', target: { kind: 'automatic' } } }))

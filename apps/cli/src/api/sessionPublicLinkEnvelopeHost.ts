@@ -1,8 +1,6 @@
-import {
-  SessionPublicLinkCreateActionInputV1Schema,
-  generateStoredContentPublicShareMaterialV1,
-  sealPublicShareDataKeyV1,
-} from '@happier-dev/protocol';
+import { SessionPublicLinkCreateActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import { generateStoredContentPublicShareMaterialV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
+import { sealPublicShareDataKeyV1 } from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 
 import { getRandomBytes } from '@/api/encryption';
 import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';

@@ -1,15 +1,6 @@
-import {
-  DaemonPetImportAccountPackageRequestV1Schema,
-  DaemonPetImportLocalPackageRequestV1Schema,
-  DaemonPetImportRequestV1Schema,
-  PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-  type AccountPetCreateRequestV1,
-  type AccountPetCreateResponseV1,
-  type DaemonPetImportLocalPackageResponseV1,
-  type DaemonPetImportResponseV1,
-  type FeatureDecision,
-  type PetPackageValidationResultV1,
-} from '@happier-dev/protocol';
+import { DaemonPetImportAccountPackageRequestV1Schema, DaemonPetImportLocalPackageRequestV1Schema, DaemonPetImportRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
+import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { AccountPetCreateRequestV1, AccountPetCreateResponseV1, DaemonPetImportLocalPackageResponseV1, DaemonPetImportResponseV1, FeatureDecision, PetPackageValidationResultV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';

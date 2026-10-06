@@ -26,20 +26,22 @@ export type SessionSplitCanvasPersistenceSnapshot = Readonly<{
 }>;
 
 const id = z.string().trim().min(1);
+const StoredScopeSchema = EntityDragScopeV1Schema.strip();
+const StoredSessionAddressSchema = EntityDragSessionAddressV1Schema.strip();
 const SessionCanvasTabSchema = z.object({
-    id, scope: EntityDragScopeV1Schema, address: EntityDragSessionAddressV1Schema,
+    id, scope: StoredScopeSchema, address: StoredSessionAddressSchema,
     pinned: z.boolean(), preview: z.boolean(),
-}).strict();
-const GroupSchema = z.object({ id, tabIds: z.array(id).nonempty(), activeTabId: id, mru: z.array(id) }).strict();
-const PayloadSchema = z.object({ group: GroupSchema, tabs: z.record(id, SessionCanvasTabSchema) }).strict();
+});
+const GroupSchema = z.object({ id, tabIds: z.array(id).nonempty(), activeTabId: id, mru: z.array(id) });
+const PayloadSchema = z.object({ group: GroupSchema, tabs: z.record(id, SessionCanvasTabSchema) });
 const NodeSchema: z.ZodType<SplitCanvasNode<SessionSplitCanvasLeafPayload>> = z.lazy(() => z.union([
-    z.object({ id, kind: z.literal('leaf'), leafKind: z.literal('session'), payload: PayloadSchema }).strict(),
-    z.object({ id, kind: z.literal('split'), axis: z.enum(['row', 'column']), ratio: z.number().finite().min(0).max(1), first: NodeSchema, second: NodeSchema }).strict(),
+    z.object({ id, kind: z.literal('leaf'), leafKind: z.literal('session'), payload: PayloadSchema }),
+    z.object({ id, kind: z.literal('split'), axis: z.enum(['row', 'column']), ratio: z.number().finite().min(0).max(1), first: NodeSchema, second: NodeSchema }),
 ]));
 export const SessionSplitCanvasPersistenceSnapshotSchema: z.ZodType<SessionSplitCanvasPersistenceSnapshot> = z.object({
-    version: z.literal(1), scope: EntityDragScopeV1Schema, root: NodeSchema.nullable(),
+    version: z.literal(1), scope: StoredScopeSchema, root: NodeSchema.nullable(),
     focusedLeafId: id.nullable(), maximizedLeafId: id.nullable(),
-}).strict().superRefine((snapshot, context) => {
+}).superRefine((snapshot, context) => {
     const leaves = collectSplitCanvasLeaves(snapshot.root);
     const leafIds = new Set(leaves.map(leaf => leaf.id));
     const nodeIds = new Set<string>();
@@ -121,5 +123,5 @@ export function writePersistedSessionSplitCanvasSnapshot(input: Readonly<{
 }>): Pick<Settings, 'sessionSplitCanvasLayoutsV1'> {
     const key = input.scopeKey.trim();
     if (!key) return { sessionSplitCanvasLayoutsV1: input.settings.sessionSplitCanvasLayoutsV1 };
-    return { sessionSplitCanvasLayoutsV1: { ...input.settings.sessionSplitCanvasLayoutsV1, [key]: input.snapshot } };
+    return { sessionSplitCanvasLayoutsV1: { ...input.settings.sessionSplitCanvasLayoutsV1, [key]: SessionSplitCanvasPersistenceSnapshotSchema.parse(input.snapshot) } };
 }

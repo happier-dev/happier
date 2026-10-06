@@ -1,14 +1,8 @@
-import {
-    buildProviderAccountUsageRecordId,
-    compareConnectedServiceQuotaObservationRecency,
-    ConnectedServiceUsageSourceV1Schema,
-    mergeProviderAccountSubscription,
-    ProviderAccountUsageSnapshotV1Schema,
-    type ConnectedServiceUsageSourceV1,
-    type ProviderAccountUsageRecordKeyV1,
-    type ProviderAccountUsageRecordId,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
+import type { ConnectedServiceUsageSourceV1, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import {
     ProviderAccountUsageAdoptionV1Schema,
     type ProviderAccountUsageAdoptionV1,

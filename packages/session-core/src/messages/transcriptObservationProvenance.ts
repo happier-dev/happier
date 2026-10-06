@@ -1,10 +1,6 @@
-import {
-    isRecoveredHistoryTranscriptObservationProvenance,
-    MessageActionReferenceV1Schema,
-    type MessageActionReferenceV1,
-    type SessionMessageDeliveryResolutionV1,
-    type SessionTranscriptObservationProvenanceV1,
-} from '@happier-dev/protocol';
+import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { MessageActionReferenceV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
+import type { MessageActionReferenceV1, SessionMessageDeliveryResolutionV1, SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 import type { TranscriptAccountActorMetadata } from "./transcriptAccountActor.js";
 
 /** Server row presentation metadata, independent of decrypted transcript content. */

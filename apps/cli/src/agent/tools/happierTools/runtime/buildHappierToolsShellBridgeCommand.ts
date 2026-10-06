@@ -3,10 +3,8 @@ import {
   buildPosixShellCommand,
   buildPosixShellEnvironmentAssignments,
 } from '@happier-dev/agents/process/shellCommand';
-import {
-  parseHappierToolsShellBridgeCommand,
-  type HappierToolsShellBridgeCommand,
-} from '@happier-dev/protocol';
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
+import type { HappierToolsShellBridgeCommand } from '@happier-dev/protocol';
 import { resolveHappierToolsShellBridgeContextEnv } from './resolveHappierToolsShellBridgeContextEnv';
 
 /**

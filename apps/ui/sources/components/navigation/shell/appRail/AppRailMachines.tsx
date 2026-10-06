@@ -4,7 +4,7 @@ import { describeMachinePresenceCounts } from '@/components/machines/MachinePres
 import { useMachinePresenceCounts } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps } from '../sidebarFooter/SidebarFooterPopoverButton';
+import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarMachinesPopoverContent } from '../sidebarFooter/SidebarMachinesPopoverContent';
 import { APP_RAIL_ICON_GLYPH_SIZE_PX, APP_RAIL_ITEM_SIZE_PX } from './appRailMetrics';
 
@@ -17,7 +17,7 @@ const renderMachines = (content: SidebarFooterPopoverContentProps) => <SidebarMa
  * not need the person, and no machine problem that does (signed out, setup failed, too old to run
  * sessions) has a producer yet. The machine list mounts only in the open popover.
  */
-export const AppRailMachines = React.memo(function AppRailMachines() {
+export const AppRailMachines = React.memo(function AppRailMachines(props: Readonly<{ renderTrigger?: SidebarFooterPopoverTrigger }>) {
     const counts = useMachinePresenceCounts();
     const presence = describeMachinePresenceCounts(counts);
     const title = t('settings.machines');
@@ -30,6 +30,7 @@ export const AppRailMachines = React.memo(function AppRailMachines() {
             buttonSizePx={APP_RAIL_ITEM_SIZE_PX}
             iconSizePx={APP_RAIL_ICON_GLYPH_SIZE_PX}
             renderContent={renderMachines}
+            renderTrigger={props.renderTrigger}
         />
     );
 });

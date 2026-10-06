@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { JsonValue } from '@happier-dev/protocol';
+import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowReferenceScope, WorkflowValueReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import type { WorkflowResultContract, WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
@@ -21,8 +22,9 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
+import { workflowFieldTranslations } from '@/text/translations/workflowFieldTranslations';
 
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 type ItemReferenceField = Extract<WorkflowValueReference, { kind: 'item' }>['field'];
 type IterationReferenceField = Extract<WorkflowValueReference, { kind: 'iteration' }>['field'];
@@ -30,6 +32,18 @@ type IterationReferenceField = Extract<WorkflowValueReference, { kind: 'iteratio
 /** The canonical field vocabulary of each loop-scoped reference kind, in the schema's order. */
 const ITEM_REFERENCE_FIELDS: readonly ItemReferenceField[] = ['value', 'index', 'position', 'count'];
 const ITERATION_REFERENCE_FIELDS: readonly IterationReferenceField[] = ['index', 'position', 'count', 'stopReason'];
+
+/** The same human field name reads an Action row, a child input and a reference. */
+export function formatWorkflowFieldLabel(name: string, title?: string): string {
+    if (Object.hasOwn(workflowFieldTranslations.en, name)) {
+        return t(`workflows.page.fields.${name as keyof typeof workflowFieldTranslations.en}`);
+    }
+    // An extension's declared title is presentation metadata; preserve it.
+    // Undeclared bindings still need a readable label while staying repairable.
+    const label = (title ?? name).replace(/\s*\((?:json|string|number|boolean|object|array)\)\s*$/iu, '').trim()
+        .replace(/([a-z\d])([A-Z])/gu, '$1 $2').replace(/[_\-.]+/gu, ' ');
+    return label.length === 0 ? t('workflows.input.label') : label[0]!.toLocaleUpperCase() + label.slice(1);
+}
 
 function literalText(value: JsonValue): string {
     return typeof value === 'string' ? value : JSON.stringify(value);
@@ -68,22 +82,32 @@ function referenceKindLabel(kind: WorkflowValueReference['kind']): string {
  * headings and condition summaries share, so a reference is never worded two
  * ways.
  */
-export function formatWorkflowValueReference(draft: WorkflowEditorDraft, reference: WorkflowValueReference): string {
+export function formatWorkflowValueReference(draft: WorkflowEditorDraft, reference: WorkflowValueReference, fieldName?: string): string {
     const blockLabel = (blockId: string) => {
         const block = findWorkflowBlock(draft, blockId);
-        return block === null ? blockId : workflowBlockReferenceLabel(block);
+        return block === null ? t('workflows.contentUnavailable') : workflowBlockReferenceLabel(block);
     };
     const withPath = (label: string, path: readonly (string | number)[] | undefined) => (
-        path === undefined || path.length === 0 ? label : `${label} · ${path.join('.')}`
+        path === undefined || path.length === 0 ? label : `${label} · ${path.map(part => typeof part === 'number' ? String(part) : formatWorkflowFieldLabel(part)).join(' · ')}`
     );
     const producerLabel = (producer: Readonly<{ blockId: string; scope: WorkflowReferenceScope }>) => (
         producer.scope.kind === 'current' ? blockLabel(producer.blockId) : `${blockLabel(producer.blockId)} · ${scopeLabel(producer.scope)}`
     );
     switch (reference.kind) {
         case 'literal':
+            // Only a declared Action field gives a literal execution meaning.
+            // An arbitrary authored string or object must keep its own value.
+            if (fieldName === 'target' && reference.value !== null && typeof reference.value === 'object'
+                && !Array.isArray(reference.value) && Object.keys(reference.value).length === 1
+                && Reflect.get(reference.value, 'kind') === 'detached') return t('workflows.page.sections.aBackgroundRun');
+            if (fieldName === 'permissionMode' && typeof reference.value === 'string') {
+                const mode = parsePermissionIntentAlias(reference.value);
+                if (mode === 'read-only') return t('executionRuns.newRun.permissionModes.readOnly');
+                if (mode === 'default') return t('executionRuns.newRun.permissionModes.default');
+            }
             return formatWorkflowLiteralValue(reference.value);
         case 'input':
-            return t('workflows.input.workflowInput', { name: reference.name });
+            return t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) });
         case 'result':
             return withPath(t('workflows.input.previousResult', { block: producerLabel(reference.producer) }), reference.path);
         case 'loop_trailing_count':
@@ -124,7 +148,7 @@ function formatWorkflowLiteralValue(value: JsonValue): string {
     if (Array.isArray(value)) return value.length === 0 ? t('workflows.page.inspector.none') : value.map(formatWorkflowLiteralValue).join(', ');
     const entries = Object.entries(value);
     return entries.length === 0 ? t('workflows.page.inspector.none')
-        : entries.map(([name, nested]) => `${name}: ${formatWorkflowLiteralValue(nested)}`).join('; ');
+        : entries.map(([name, nested]) => `${formatWorkflowFieldLabel(name)}: ${formatWorkflowLiteralValue(nested)}`).join('; ');
 }
 
 /** The document's reference token, including in a loop/condition sentence. */
@@ -314,7 +338,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 <ReferenceSelect
                     testID={`${rowId}-input-name`}
                     label={t('workflows.input.inputNameGroup')}
-                    items={props.draft.inputs.map((input) => ({ id: input.name, testID: `${rowId}-input-name-${input.name}`, title: input.name }))}
+                    items={props.draft.inputs.map((input) => ({ id: input.name, testID: `${rowId}-input-name-${input.name}`, title: formatWorkflowFieldLabel(input.name) }))}
                     selectedId={inputName}
                     onSelect={(name) => props.onChange({ kind: 'input', name })}
                 />
@@ -342,7 +366,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
             {resultReference === undefined ? null : (
                 <TextInput
                     testID={`${rowId}-path`}
-                    style={workflowEditorStyles.inlineValue}
+                    style={[workflowEditorStyles.inlineValue, workflowEditorStyles.pathValue]}
                     value={resultReference.path.join('.')}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -359,16 +383,16 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
             {workspaceReference === undefined ? null : (
                 <ChoiceGroup label={t('workflows.input.workspaceFieldGroup')}>
                     {(['directory', 'checkoutRootPath'] as const).map((field) => (
-                        <Pressable
+                        <HappierPressable
                             key={field}
                             testID={`${rowId}-workspace-field-${field}`}
                             accessibilityRole="radio"
-                            accessibilityState={{ checked: workspaceReference.field === field }}
+                            checked={workspaceReference.field === field}
                             accessibilityLabel={field === 'directory'
                                 ? t('workflows.workspace.title')
                                 : t('workflows.workspace.projectCheckout')}
                             onPress={() => props.onChange({ ...workspaceReference, field })}
-                            style={workflowEditorStyles.actionTarget}
+                            style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={workspaceReference.field === field
                                 ? workflowEditorStyles.metaAction
@@ -376,47 +400,47 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                             >{field === 'directory'
                                 ? t('workflows.workspace.title')
                                 : t('workflows.workspace.projectCheckout')}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     ))}
                 </ChoiceGroup>
             )}
             {itemReference === undefined ? null : (
                 <ChoiceGroup label={t('workflows.input.itemFieldGroup')}>
                     {ITEM_REFERENCE_FIELDS.map((field) => (
-                        <Pressable
+                        <HappierPressable
                             key={field}
                             testID={`${rowId}-item-field-${field}`}
                             accessibilityRole="radio"
-                            accessibilityState={{ checked: itemReference.field === field }}
+                            checked={itemReference.field === field}
                             accessibilityLabel={t(`workflows.input.itemField.${field}`)}
                             onPress={() => props.onChange({ kind: 'item', field })}
-                            style={workflowEditorStyles.actionTarget}
+                            style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={itemReference.field === field
                                 ? workflowEditorStyles.metaAction
                                 : workflowEditorStyles.metaText}
                             >{t(`workflows.input.itemField.${field}`)}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     ))}
                 </ChoiceGroup>
             )}
             {iterationReference === undefined ? null : (
                 <ChoiceGroup label={t('workflows.input.iterationFieldGroup')}>
                     {ITERATION_REFERENCE_FIELDS.map((field) => (
-                        <Pressable
+                        <HappierPressable
                             key={field}
                             testID={`${rowId}-iteration-field-${field}`}
                             accessibilityRole="radio"
-                            accessibilityState={{ checked: iterationReference.field === field }}
+                            checked={iterationReference.field === field}
                             accessibilityLabel={t(`workflows.input.iterationField.${field}`)}
                             onPress={() => props.onChange({ kind: 'iteration', field })}
-                            style={workflowEditorStyles.actionTarget}
+                            style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                         >
                             <Text style={iterationReference.field === field
                                 ? workflowEditorStyles.metaAction
                                 : workflowEditorStyles.metaText}
                             >{t(`workflows.input.iterationField.${field}`)}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     ))}
                 </ChoiceGroup>
             )}
@@ -424,7 +448,7 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 <HappierPressable
                     accessibilityRole="button"
                     onPress={props.onRemove}
-                    style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={workflowEditorStyles.footAction}>{t('workflows.editor.remove')}</Text>
                 </HappierPressable>
@@ -448,9 +472,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
     const textResult = props.step.result === undefined || props.step.result.kind === 'text';
     return (
         <View>
-            {props.step.input.map((reference, index) => !editable ? (
-                <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} testID={`${id}-input-${index}`} />
-            ) : (
+            {!editable ? null : props.step.input.map((reference, index) => (
                 <WorkflowValueReferenceEditor
                     key={index}
                     reference={reference}
@@ -467,8 +489,12 @@ export function WorkflowStepDataEditor(props: Readonly<{
                     testIDPrefix={id}
                 />
             ))}
-            {/* One footer line (07 S7): what the step returns, then its quiet actions. */}
+            {/* One footer line (07 S7): what the step returns, then its quiet actions. A reading
+                document has no binding controls, so the step's inputs sit on that line as tokens. */}
             <View style={workflowEditorStyles.metaRow}>
+                {editable ? null : props.step.input.map((reference, index) => (
+                    <WorkflowValueReferenceToken key={index} draft={props.draft} reference={reference} testID={`${id}-input-${index}`} />
+                ))}
                 <Text testID={`${id}-returns`} style={workflowEditorStyles.groupSummary}>
                     {formatWorkflowResultSummary(props.step.result)}
                 </Text>
@@ -478,7 +504,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
                         accessibilityRole="button"
                         accessibilityLabel={t('workflows.page.blocks.addNamedResults')}
                         onPress={props.onAddNamedResults}
-                        style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={workflowEditorStyles.footAction}>{t('workflows.page.blocks.addNamedResults')}</Text>
                     </HappierPressable>
@@ -489,7 +515,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
                         accessibilityRole="button"
                         accessibilityLabel={t('workflows.inputs.addInput')}
                         onPress={() => props.onChangeInput([...props.step.input, { kind: 'literal', value: '' }])}
-                        style={(state) => [workflowEditorStyles.actionTarget, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={workflowEditorStyles.footAction}>{t('workflows.inputs.addInput')}</Text>
                     </HappierPressable>

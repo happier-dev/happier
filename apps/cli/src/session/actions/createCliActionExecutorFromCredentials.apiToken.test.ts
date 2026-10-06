@@ -60,7 +60,8 @@ vi.mock('@/api/machine/resolveCurrentAccountMachineTarget', () => ({
   resolveCurrentAccountMachineTarget,
 }));
 
-vi.mock('@/daemon/controlClient', () => ({
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
   requestDaemonSignedRootActionExecution,
 }));
 

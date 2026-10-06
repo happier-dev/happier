@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { readFile, rm, stat } from 'node:fs/promises';
 
-import { assertManifestPathsSafe, parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
+import { assertManifestPathsSafe } from '@happier-dev/protocol/voice/modelPacks/pathSafety';
+import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
+import type { ModelPackManifest } from '@happier-dev/protocol';
 import {
   assertManifestUrlsAllowed,
   assertModelPackUrlAllowed,

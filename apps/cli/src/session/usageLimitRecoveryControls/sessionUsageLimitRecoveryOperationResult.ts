@@ -1,11 +1,5 @@
-import {
-  normalizeSessionUsageLimitRecoveryOperationResultV1,
-  SessionUsageLimitRecoveryOperationResultV1Schema,
-  type ConnectedServiceUxDiagnosticV1,
-  type SessionUsageLimitRecoveryOperationResultErrorStatusV1,
-  type SessionUsageLimitRecoveryOperationResultOkStatusV1,
-  type SessionUsageLimitRecoveryOperationResultV1,
-} from '@happier-dev/protocol';
+import { normalizeSessionUsageLimitRecoveryOperationResultV1, SessionUsageLimitRecoveryOperationResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
+import type { ConnectedServiceUxDiagnosticV1, SessionUsageLimitRecoveryOperationResultErrorStatusV1, SessionUsageLimitRecoveryOperationResultOkStatusV1, SessionUsageLimitRecoveryOperationResultV1 } from '@happier-dev/protocol';
 
 type ResultMetadata = Record<string, unknown>;
 

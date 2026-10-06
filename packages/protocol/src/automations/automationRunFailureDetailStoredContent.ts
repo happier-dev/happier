@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 import {
@@ -46,7 +47,7 @@ export const AUTOMATION_RUN_FAILURE_DETAIL_MAX_ENCRYPTED_CIPHERTEXT_UTF8_BYTES_V
 
 /**
  * One private, Account-mode-correct Run terminal-detail carrier. The server
- * validates only this strict outer shape and purpose; a device with Account
+ * validates known outer fields and purpose on read; a device with Account
  * material alone opens its detail and verifies its Run correspondence.
  */
 export const AutomationRunFailureDetailStoredEnvelopeV1Schema = z.discriminatedUnion('t', [
@@ -139,7 +140,7 @@ export function validateAutomationRunFailureDetailStoredEnvelopeOuterForModeV1(
     envelope: unknown;
   }>,
 ): AutomationRunFailureDetailStoredContentOuterValidationV1 {
-  const envelope = AutomationRunFailureDetailStoredEnvelopeV1Schema.safeParse(params.envelope);
+  const envelope = createStoredReadSchema(AutomationRunFailureDetailStoredEnvelopeV1Schema).safeParse(params.envelope);
   if (!envelope.success) return { kind: 'contentInvalid' };
   if (
     (params.mode === 'plain' && envelope.data.t !== 'plain')
@@ -203,7 +204,7 @@ export function openAutomationRunFailureDetailStoredEnvelopeV1(params: Readonly<
     rawPayload = opened.value;
   }
 
-  const payload = AutomationRunFailureDetailStoredPayloadV1Schema.safeParse(rawPayload);
+  const payload = createStoredReadSchema(AutomationRunFailureDetailStoredPayloadV1Schema).safeParse(rawPayload);
   return payload.success
     ? {
         kind: 'available',
@@ -224,7 +225,7 @@ export function parseAutomationRunFailureDetailStoredEnvelopeV1(
     return null;
   }
   try {
-    const parsed = AutomationRunFailureDetailStoredEnvelopeV1Schema.safeParse(
+    const parsed = createStoredReadSchema(AutomationRunFailureDetailStoredEnvelopeV1Schema).safeParse(
       JSON.parse(serialized),
     );
     return parsed.success ? parsed.data : null;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +10,12 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
+import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
+import { Modal } from '@/modal';
+import { resolveNavigationOverflow, resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
 import { describeUpdatesEntry, UpdatesPopoverButton } from '@/components/updates/UpdatesPopoverButton';
 import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -19,7 +25,7 @@ import { useSharedUpdatesSummary } from '@/updates/useUpdatesSummary';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps } from '../sidebarFooter/SidebarFooterPopoverButton';
+import { SidebarFooterPopoverButton, type SidebarFooterPopoverContentProps, type SidebarFooterPopoverTrigger } from '../sidebarFooter/SidebarFooterPopoverButton';
 import { SidebarUsagePopoverContent, USAGE_POPOVER_WIDTH_PX } from '../sidebarFooter/SidebarUsagePopoverContent';
 import { AppRailAccount } from './AppRailAccount';
 import { AppRailMachines } from './AppRailMachines';
@@ -34,9 +40,11 @@ import { useConnectedAccountsNeedingSignInCount } from './useConnectedAccountsNe
 import { AppRailPeek } from './AppRailPeek';
 import {
     buildAppRailEntries,
+    buildAppRailPlacementItems,
     resolveAppRailEntryColumn,
-    splitAppRailOverflow,
     type AppRailEntry,
+    type AppRailEntries,
+    type AppRailPlacementItem,
 } from './appRailModel';
 import { useAppShellLocation } from './useAppShellLocation';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
@@ -67,41 +75,86 @@ const AppRailIcon = React.memo(function AppRailIcon(props: Readonly<{ name: Icon
  * while one exists, Settings and the person, whose Home/account popover opens from the avatar.
  */
 export const AppRail = React.memo(function AppRail() {
-    const styles = stylesheet;
     const { catalog, location } = useAppShellLocation();
-    const entries = React.useMemo(() => buildAppRailEntries(catalog), [catalog]);
+    const entries = React.useMemo(() => buildAppRailEntries(catalog, { includeHidden: true }), [catalog]);
+    const { preferences } = useNavigationSurfacePlacement('appRail');
+    const updatesVisible = describeUpdatesEntry(useSharedUpdatesSummary()) !== null;
     const activeId = location.railEntryId;
     const open = useActivateAppDestination();
 
-    // The plugin group takes whatever height the app's destinations and the bottom leave.
-    const [pluginSlots, setPluginSlots] = React.useState<number | null>(null);
-    const onPluginAreaLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const slots = Math.floor(event.nativeEvent.layout.height / APP_RAIL_ITEM_SLOT_PX);
-        setPluginSlots((current) => (current === slots ? current : slots));
+    const items = React.useMemo(() => buildAppRailPlacementItems(entries, updatesVisible), [entries, updatesVisible]);
+    const customize = React.useCallback(() => {
+        fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
+            Modal.show({ component: NavigationPlacementCustomizer,
+                props: { surfaceId: 'appRail', items, testID: 'app-rail-customizer' } });
+        }), { tag: 'AppRail.customize' });
+    }, [items]);
+    return <AppRailSurface entries={entries} activeId={activeId} onOpen={open} preferences={preferences}
+        updatesVisible={updatesVisible} onCustomize={customize} />;
+});
+
+/** The real rail composition, shared by the shell and its fixture preview. */
+export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly<{
+    entries: AppRailEntries;
+    activeId: string | null;
+    onOpen: (entry: AppRailEntry) => void;
+    preferences?: NavigationPlacementPreferences;
+    updatesVisible?: boolean;
+    onCustomize?: () => void;
+    /** Static previews replace only the effectful footer boundary, using the same rail composition. */
+    renderFooter?: (item: AppRailPlacementItem, renderTrigger?: SidebarFooterPopoverTrigger) => React.ReactNode;
+}>) {
+    const styles = stylesheet;
+    const { entries, activeId, onOpen: open } = props;
+
+    const [availableHeight, setAvailableHeight] = React.useState<number | null>(null);
+    const onRailLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = Math.max(0, event.nativeEvent.layout.height - RAIL_PADDING_TOP_PX - RAIL_PADDING_BOTTOM_PX);
+        setAvailableHeight(current => current === height ? current : height);
     }, []);
-    const plugins = splitAppRailOverflow(entries.plugins, pluginSlots);
+    const items = React.useMemo(() => buildAppRailPlacementItems(entries, props.updatesVisible === true), [entries, props.updatesVisible]);
+    const placements = resolveNavigationPlacements(items, props.preferences);
+    const top = placements.pinned.filter(item => item.group !== 'account');
+    const bottom = placements.pinned.filter(item => item.group === 'account');
+    // The anchored group has priority when space is short. Giving it the first top group's
+    // geometry avoids counting a divider between the footer and the top: only top groups divide.
+    const priority = [...bottom.map(item => ({ ...item, group: top[0]?.group ?? 'app' })), ...top];
+    const fitted = resolveNavigationOverflow(priority, placements.overflow, {
+        availableSize: availableHeight, itemSize: APP_RAIL_ITEM_SLOT_PX, separatorSize: RAIL_SEPARATOR_SIZE_PX,
+    });
+    const shownIds = new Set(fitted.shown.map(item => item.id));
+    const shownTop = top.filter(item => shownIds.has(item.id));
+    const shownBottom = bottom.filter(item => shownIds.has(item.id));
+    const overflowIds = new Set(fitted.overflow.map(item => item.id));
+    const overflow = placements.ordered.filter(item => overflowIds.has(item.id));
+    const renderFooter = props.renderFooter ?? ((item: AppRailPlacementItem, trigger?: SidebarFooterPopoverTrigger) =>
+        <AppRailFooterItem item={item} renderTrigger={trigger} />);
 
     return (
-        <View testID="app-rail" style={styles.rail}>
-            <View style={styles.group}>
-                {entries.app.map((entry) => (
-                    <AppRailItem key={entry.id} entry={entry} active={activeId === entry.id} onOpen={open} />
-                ))}
-            </View>
-            <View style={styles.separator} />
-            <View testID="app-rail-plugins" style={styles.pluginArea} onLayout={onPluginAreaLayout}>
-                {plugins.shown.map((entry) => (
-                    <AppRailItem key={entry.id} entry={entry} active={activeId === entry.id} onOpen={open} />
-                ))}
-                {plugins.overflow.length > 0 ? (
+        <View testID="app-rail" style={styles.rail} onLayout={onRailLayout}
+            {...(Platform.OS === 'web' ? { onContextMenu: (event: { preventDefault: () => void }) => { event.preventDefault(); props.onCustomize?.(); } } : null)}
+            >
+            <View testID="app-rail-destinations" style={styles.topArea}>
+                {shownTop.map((item, index) => <React.Fragment key={item.id}>
+                    {index > 0 && shownTop[index - 1]?.group !== item.group ? <View style={styles.separator} /> : null}
+                    {item.kind === 'destination' ? <AppRailItem entry={item.entry} active={activeId === item.id} onOpen={open}
+                        onCustomize={props.onCustomize} /> : null}
+                </React.Fragment>)}
+                {overflow.length > 0 ? (
                     <AppRailMore
-                        entries={plugins.overflow}
-                        active={plugins.overflow.some((entry) => entry.id === activeId)}
+                        entries={overflow}
+                        active={overflow.some((entry) => entry.id === activeId)}
                         onOpen={open}
+                        onCustomize={props.onCustomize}
+                        renderFooter={renderFooter}
                     />
                 ) : null}
             </View>
-            <AppRailBottom account={entries.account} activeId={activeId} onOpen={open} />
+            <View testID="app-rail-bottom" style={styles.group}>
+                {shownBottom.map(item => item.kind === 'destination'
+                    ? <AppRailItem key={item.id} entry={item.entry} active={activeId === item.id} onOpen={open} onCustomize={props.onCustomize} />
+                    : <View key={item.id} style={styles.itemSlot}>{renderFooter(item)}</View>)}
+            </View>
         </View>
     );
 });
@@ -110,6 +163,7 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
     entry: AppRailEntry;
     active: boolean;
     onOpen: (entry: AppRailEntry) => void;
+    onCustomize?: () => void;
 }>) {
     const styles = stylesheet;
     const { entry } = props;
@@ -132,6 +186,7 @@ const AppRailItem = React.memo(function AppRailItem(props: Readonly<{
             disabled={unavailable}
             icon={<AppRailIcon name={entry.icon} active={props.active} />}
             onPress={() => props.onOpen(entry)}
+            onLongPress={props.onCustomize}
         />
     );
     return (
@@ -164,24 +219,34 @@ const AppRailInboxBadge = React.memo(function AppRailInboxBadge(props: Readonly<
 });
 
 const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
-    entries: readonly AppRailEntry[];
+    entries: readonly AppRailPlacementItem[];
     active: boolean;
     onOpen: (entry: AppRailEntry) => void;
+    onCustomize?: () => void;
+    renderFooter: (item: AppRailPlacementItem, renderTrigger?: SidebarFooterPopoverTrigger) => React.ReactNode;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
+    // Keyboard selection and a row press invoke the same live popover trigger.
+    const footerActions = React.useRef(new Map<string, () => void>());
+    const registerFooterAction = React.useCallback((id: string, action: (() => void) | null) => {
+        if (action) footerActions.current.set(id, action);
+        else footerActions.current.delete(id);
+    }, []);
     const wrapItem = React.useCallback((item: Readonly<{ id: string }>, children: React.ReactNode) => {
         const entry = props.entries.find(candidate => candidate.id === item.id);
-        return <WorkspaceDestinationRow href={entry?.availability === 'available' && entry.activation === 'navigate'
-            ? entry.routePath : null}>{children}</WorkspaceDestinationRow>;
-    }, [props.entries]);
+        if (entry?.kind === 'footer') return props.renderFooter(entry, state => <AppRailFooterMenuRow
+            item={entry} trigger={state} registerAction={registerFooterAction} />);
+        return <WorkspaceDestinationRow href={entry?.kind === 'destination' && entry.entry.availability === 'available' && entry.entry.activation === 'navigate'
+            ? entry.entry.routePath : null}>{children}</WorkspaceDestinationRow>;
+    }, [props.entries, props.renderFooter, registerFooterAction]);
     const items = props.entries.map((entry): DropdownMenuItem => ({
         id: entry.id,
         testID: `app-rail-more:${entry.id}`,
         title: entry.title,
         icon: <Icon name={entry.icon} size={MENU_ROW_METRICS.iconGlyphSizePx} color={theme.colors.text.secondary} />,
-        disabled: entry.availability !== 'available',
+        disabled: entry.kind === 'destination' && entry.entry.availability !== 'available',
     }));
     return (
         <View style={styles.itemSlot}>
@@ -191,10 +256,15 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
                 onOpenChange={setOpen}
                 items={items}
                 wrapItem={wrapItem}
+                closeOnSelect={false}
+                footer={<>
+                    {props.onCustomize ? <ActionListSection separatorAbove actions={[{ id: 'customize', testID: 'app-rail-more.customize',
+                        label: t('navigationPlacement.customize'), onPress: () => { setOpen(false); props.onCustomize?.(); } }]} /> : null}
+                </>}
                 onSelect={(id) => {
-                    setOpen(false);
                     const entry = props.entries.find((candidate) => candidate.id === id);
-                    if (entry) props.onOpen(entry);
+                    if (entry?.kind === 'destination') { setOpen(false); props.onOpen(entry.entry); }
+                    else footerActions.current.get(id)?.();
                 }}
                 placement="right"
                 variant="slim"
@@ -212,6 +282,7 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
                         selected={props.active || open}
                         icon={<AppRailIcon name="dots-three" />}
                         onPress={toggle}
+                        onLongPress={props.onCustomize}
                     />
                 )}
             />
@@ -219,28 +290,51 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
     );
 });
 
-const AppRailBottom = React.memo(function AppRailBottom(props: Readonly<{
-    account: readonly AppRailEntry[];
-    activeId: string | null;
-    onOpen: (entry: AppRailEntry) => void;
+function AppRailFooterMenuRow(props: Readonly<{
+    item: AppRailPlacementItem;
+    trigger: Parameters<SidebarFooterPopoverTrigger>[0];
+    registerAction: (id: string, action: (() => void) | null) => void;
 }>) {
-    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const { id } = props.item;
+    const { onPress } = props.trigger;
+    React.useEffect(() => {
+        props.registerAction(id, onPress);
+        return () => props.registerAction(id, null);
+    }, [id, onPress, props.registerAction]);
+    return <SelectableRow testID={`app-rail-more:${id}`} title={props.item.title} variant="slim" presentation="menu"
+        onPress={onPress} selected={props.trigger.open} right={props.trigger.right}
+        left={<Icon name={props.item.icon} size={MENU_ROW_METRICS.iconGlyphSizePx} color={theme.colors.text.secondary} />} />;
+}
+
+const AppRailFooterItem = React.memo(function AppRailFooterItem(props: Readonly<{
+    item: AppRailPlacementItem;
+    renderTrigger?: SidebarFooterPopoverTrigger;
+}>) {
+    if (props.item.id === 'app-rail-usage') return <AppRailUsage renderTrigger={props.renderTrigger} />;
+    if (props.item.id === 'app-rail-machines') return <AppRailMachines renderTrigger={props.renderTrigger} />;
+    if (props.item.id === 'app-rail-updates') return <AppRailUpdates renderTrigger={props.renderTrigger} />;
+    if (props.item.id === 'app-rail-account') return <AppRailAccount renderTrigger={props.renderTrigger
+        ? state => props.renderTrigger?.({ onPress: state.activate, open: state.open }) : undefined} />;
+    return null;
+});
+
+const AppRailUsage = React.memo(function AppRailUsage(props: Readonly<{ renderTrigger?: SidebarFooterPopoverTrigger }>) {
     const router = useRouter();
-    const updatesSummary = useSharedUpdatesSummary();
-    const updatesCopy = describeUpdatesEntry(updatesSummary);
-    const updatesVisible = updatesCopy !== null;
     // The Usage popover previews connected-account limits where this Home reports them; the icon
     // itself is always there and otherwise opens the Usage page.
     const quotaMetersAvailable = useFeatureEnabled('connectedServices.quotas');
     // A red count only for accounts that need a new sign-in; low limits never badge (lab G2).
     const signInCount = useConnectedAccountsNeedingSignInCount();
+    const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
+        right: signInCount > 0 ? <TabBadge variant="count" tone="alert" value={signInCount} /> : undefined,
+    }) : undefined;
     const openUsage = React.useCallback(() => {
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
         if (result !== true) fireAndForget(result, { tag: 'AppRail.usage' });
     }, [router]);
     return (
-        <View testID="app-rail-bottom" style={styles.group}>
-            <WorkspaceDestinationRow href={SETTINGS_ROUTES.usage} style={styles.itemSlot}>
+            <WorkspaceDestinationRow href={SETTINGS_ROUTES.usage}>
                 {quotaMetersAvailable ? (
                     <SidebarFooterPopoverButton
                         testID="app-rail-usage"
@@ -252,10 +346,11 @@ const AppRailBottom = React.memo(function AppRailBottom(props: Readonly<{
                         popoverWidthPx={USAGE_POPOVER_WIDTH_PX}
                         hoverPreview
                         renderContent={renderUsage}
+                        renderTrigger={menuTrigger}
                     />
                 ) : (
                     // Without connected-account limits there is nothing to preview: the icon opens Usage.
-                    <IconButton
+                    menuTrigger ? menuTrigger({ onPress: openUsage, open: false }) : <IconButton
                         testID="app-rail-usage"
                         variant="plain"
                         size={APP_RAIL_ITEM_SIZE_PX}
@@ -266,18 +361,23 @@ const AppRailBottom = React.memo(function AppRailBottom(props: Readonly<{
                         onPress={openUsage}
                     />
                 )}
-                {signInCount > 0 ? (
+                {signInCount > 0 && !props.renderTrigger ? (
                     <AppRailBadge
                         testID="app-rail-usage-badge"
                         signal={{ kind: 'count', value: signInCount, tone: resolveAppRailBadgeTone({ source: 'signIn' }) }}
                     />
                 ) : null}
             </WorkspaceDestinationRow>
-            <View style={styles.itemSlot}>
-                <AppRailMachines />
-            </View>
-            {updatesVisible ? (
-                <View style={styles.itemSlot}>
+    );
+});
+
+const AppRailUpdates = React.memo(function AppRailUpdates(props: Readonly<{ renderTrigger?: SidebarFooterPopoverTrigger }>) {
+    const updatesSummary = useSharedUpdatesSummary();
+    const updatesCopy = describeUpdatesEntry(updatesSummary);
+    const menuTrigger: SidebarFooterPopoverTrigger | undefined = props.renderTrigger ? state => props.renderTrigger?.({ ...state,
+        right: updatesCopy?.count ? <TabBadge variant="count" tone={updatesCopy.warning ? 'alert' : 'neutral'} value={updatesCopy.count} /> : undefined,
+    }) : undefined;
+    return <>
                     <UpdatesPopoverButton
                         summary={updatesSummary}
                         variant="footer"
@@ -285,8 +385,9 @@ const AppRailBottom = React.memo(function AppRailBottom(props: Readonly<{
                         markSize={APP_RAIL_ICON_GLYPH_SIZE_PX}
                         hostDrawsCount
                         testID="app-rail-updates"
+                        renderTrigger={menuTrigger}
                     />
-                    {updatesCopy?.count ? (
+                    {updatesCopy?.count && !props.renderTrigger ? (
                         <AppRailBadge
                             testID="app-rail-updates-badge"
                             signal={{
@@ -296,36 +397,34 @@ const AppRailBottom = React.memo(function AppRailBottom(props: Readonly<{
                             }}
                         />
                     ) : null}
-                </View>
-            ) : null}
-            {props.account.map((entry) => (
-                <AppRailItem key={entry.id} entry={entry} active={props.activeId === entry.id} onOpen={props.onOpen} />
-            ))}
-            <View style={styles.itemSlot}>
-                <AppRailAccount />
-            </View>
-        </View>
-    );
+    </>;
 });
+
+const RAIL_PADDING_TOP_PX = 4;
+const RAIL_PADDING_BOTTOM_PX = 12;
+const RAIL_SEPARATOR_MARGIN_PX = 8;
+const RAIL_SEPARATOR_SIZE_PX = RAIL_SEPARATOR_MARGIN_PX * 2 + StyleSheet.hairlineWidth;
 
 const stylesheet = StyleSheet.create((theme) => ({
     rail: {
+        flex: 1,
         width: APP_RAIL_WIDTH_PX,
         flexShrink: 0,
         minHeight: 0,
         alignItems: 'center',
-        paddingTop: 4,
-        paddingBottom: 12,
+        paddingTop: RAIL_PADDING_TOP_PX,
+        paddingBottom: RAIL_PADDING_BOTTOM_PX,
         backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'chrome', true),
     },
     group: {
         alignItems: 'center',
+        flexShrink: 0,
     },
-    pluginArea: {
+    topArea: {
         flex: 1,
         minHeight: 0,
         alignItems: 'center',
-        overflow: 'hidden',
+        flexShrink: 0,
     },
     itemSlot: {
         width: APP_RAIL_WIDTH_PX,
@@ -336,7 +435,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     separator: {
         width: 24,
         height: StyleSheet.hairlineWidth,
-        marginVertical: 8,
+        marginVertical: RAIL_SEPARATOR_MARGIN_PX,
         backgroundColor: theme.colors.border.default,
     },
 }));

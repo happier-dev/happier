@@ -1,12 +1,7 @@
 /** @moduleRealm daemon */
-import {
-    ExternalAgentObservationLeafFactV1Schema,
-    PluginAgentExternalSessionLinkDataSchema,
-} from '@happier-dev/protocol/plugins/agents';
-import {
-    cloneStrictPluginJsonValue,
-    measureSerializedValidatedStrictPluginJsonUtf8Bytes,
-} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { ExternalAgentObservationLeafFactV1Schema } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
+import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
+import { cloneStrictPluginJsonValue, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { PluginDiagnosticData } from './diagnostics.js';

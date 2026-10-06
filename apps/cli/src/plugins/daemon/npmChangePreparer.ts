@@ -1,12 +1,9 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import {
-  type PluginSourceSpecV1,
-  type PluginUpdatePolicyV1,
-  pluginCompatibilityProjectionEqualV1,
-  readMarketplaceRegistryProfileRequirementV1,
-} from '@happier-dev/protocol';
+import type { PluginSourceSpecV1, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
+import { pluginCompatibilityProjectionEqualV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { readMarketplaceRegistryProfileRequirementV1 } from '@happier-dev/protocol/marketplace/marketplaceIndexV1';
 
 import {
   DEFAULT_PORTABLE_ARCHIVE_LIMITS,

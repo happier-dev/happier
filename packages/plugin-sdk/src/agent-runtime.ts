@@ -145,8 +145,5 @@ export type {
   AgentTranscriptSessionEventPublisher,
 } from './agentRuntime/index.js';
 
-export {
-  AgentExecutionRunEventSchema,
-  AgentRuntimeJsonValueSchema,
-  AgentSessionRuntimeEventSchema,
-} from '@happier-dev/protocol/runtime';
+export { AgentExecutionRunEventSchema } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
+export { AgentRuntimeJsonValueSchema, AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';

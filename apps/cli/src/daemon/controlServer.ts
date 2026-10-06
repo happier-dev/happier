@@ -11,7 +11,8 @@ import { configuration } from '@/configuration';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { waitForTerminalPresentUserPolicyRefresh, type TerminalPresentUserPolicyScope } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
 import { logger } from '@/ui/logger';
-import { getActionSpec, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { createDaemonControlAuthGuard } from './controlAuth';
 import { createDaemonControlRequestLifetime } from './controlRequestLifetime';
@@ -23,22 +24,19 @@ import {
   BrowserRuntimeActionControlResponseSchema,
 } from './browser/actions/controlTransport';
 import { getDaemonAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
-import {
-  DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema,
-  DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema,
-  DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema,
-  DaemonAgentInstallListRequestSchema, DaemonAgentInstallListResponseSchema,
-} from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema, DaemonAgentInstallListRequestSchema, DaemonAgentInstallListResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { isUnattestedPublicV1RunnerRolloutMutation } from './plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
-import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
-} from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import {
   CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
   CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
   CONNECTED_SERVICE_RUN_RELEASE_PATH,
+  CONNECTED_SERVICE_RUN_REJECTED_START_PATH,
+  ConnectedServiceRunRejectedStartRequestSchema,
+  ConnectedServiceRunRejectedStartResultSchema,
+  type ConnectedServiceRunRejectedStartHandler,
   ConnectedServiceRunMaterializeRequestSchema,
   ConnectedServiceRunReleaseRequestSchema,
   ConnectedServiceRunGenerationCurrentRequestSchema,
@@ -65,74 +63,29 @@ import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import {
-  SessionConnectedServiceAuthSwitchRpcParamsSchema,
-  createProviderErrorV1,
-  ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
-  ConnectedServiceProfileIdSchema,
-  ConnectedServiceUsageSourceV1Schema,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
-  ConnectedAccountAuthFailureRequestV1Schema,
-  ConnectedAccountQuotaFailureRequestV1Schema,
-  ConnectedAccountRequestAuthErrorResponseV1Schema,
-  ConnectedAccountRequestAuthFailureSuccessResponseV1Schema,
-  ConnectedAccountRequestAuthLookupRequestV1Schema,
-  ConnectedAccountRequestAuthLookupSuccessResponseV1Schema,
-  DaemonLocalServicePublicPreviewStatusRequestV1Schema,
-  DaemonSimulatorPreviewActionRequestV1Schema,
-  LocalServiceLauncherSnapshotV1Schema,
-  LocalServiceActionRequestV1Schema,
-  LocalServiceActionResultV1Schema,
-  LocalServicePreviewSnapshotV1Schema,
-  LocalServicePublicPreviewSnapshotV1Schema,
-  ProviderAccountUsageSnapshotV1Schema,
-  getConnectedAccountRequestAuthErrorHttpStatusV1,
-  RestartAllSessionRunnersRequestV1Schema,
-  RestartAllSessionRunnersResultV1Schema,
-  RestartSessionRunnerRequestV1Schema,
-  RestartSessionRunnerRequestV2Schema,
-  RestartSessionRunnerResultV1Schema,
-  SessionRunnerStatusGetRequestV1Schema,
-  SessionRunnerRuntimeStateV1Schema,
-  SessionRunnerRuntimeStatusV2Schema,
-  SessionCreationTerminalSpawnErrorDetailSchema,
-  SpawnSessionErrorCodeSchema,
-  SessionUsageLimitRecoveryResumePromptModeV1Schema,
-  SimulatorPreviewActionResultV1Schema,
-  SimulatorPreviewSnapshotV1Schema,
-  SshTunnelEnsureRequestSchema,
-  SshTunnelProbeRequestSchema,
-  SshTunnelReleaseRequestSchema,
-  SshTunnelStopRequestSchema,
-  StrictJsonValueSchema,
-  createUnavailableRuntimeActionExecutor,
-  type RuntimeActionExecute,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServiceId,
-  ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
-  type ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
-  type ConnectedServiceUsageSourceV1,
-  type ProviderAccountUsageSnapshotV1,
-  type RestartAllSessionRunnersRequestV1,
-  type RestartAllSessionRunnersResultV1,
-  type RestartSessionRunnerRequestV1,
-  type RestartSessionRunnerRequestV2,
-  type RestartSessionRunnerResultV1,
-  type SessionRunnerStatusGetRequestV1,
-  type SessionRunnerRuntimeStateV1,
-  type SessionRunnerRuntimeStatusV2,
-  type SessionCreationTerminalSpawnErrorDetail,
-  type SpawnSessionErrorCode,
-  type SpawnSessionErrorDetail,
-  type SessionMetadataPublisherPreconditionV1,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
+import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupIdSchema, ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, ConnectedAccountRequestAuthErrorResponseV1Schema, ConnectedAccountRequestAuthFailureSuccessResponseV1Schema, ConnectedAccountRequestAuthLookupRequestV1Schema, ConnectedAccountRequestAuthLookupSuccessResponseV1Schema, getConnectedAccountRequestAuthErrorHttpStatusV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { DaemonLocalServicePublicPreviewStatusRequestV1Schema, LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonSimulatorPreviewActionRequestV1Schema, SimulatorPreviewActionResultV1Schema, SimulatorPreviewSnapshotV1Schema } from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { LocalServicePreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { RestartAllSessionRunnersRequestV1Schema, RestartAllSessionRunnersResultV1Schema, RestartSessionRunnerRequestV1Schema, RestartSessionRunnerResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
+import { RestartSessionRunnerRequestV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
+import { SessionRunnerStatusGetRequestV1Schema, SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
+import { SessionRunnerRuntimeStatusV2Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2';
+import { SessionCreationTerminalSpawnErrorDetailSchema, SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
+import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { SshTunnelEnsureRequestSchema, SshTunnelProbeRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
+import type { RuntimeActionExecute, ConnectedServiceBindingsV2, ConnectedServiceId, ConnectedServiceQuotaRecoveryCreditConsumeRequestV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, RestartAllSessionRunnersRequestV1, RestartAllSessionRunnersResultV1, RestartSessionRunnerRequestV1, RestartSessionRunnerRequestV2, RestartSessionRunnerResultV1, SessionRunnerStatusGetRequestV1, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionCreationTerminalSpawnErrorDetail, SpawnSessionErrorCode, SpawnSessionErrorDetail, SessionMetadataPublisherPreconditionV1, SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import {
   ConnectedAccountRequestAuthError,
   type ConnectedAccountRequestAuthService,
@@ -699,6 +652,7 @@ export function createDaemonControlApp({
   connectedAccountRequestAuth,
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
+  recoverConnectedServicesRejectedStartForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   sshTunnels,
@@ -785,6 +739,7 @@ export function createDaemonControlApp({
    * When unset the materialize endpoint fails closed with 501.
    */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
+  recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /**
    * Unregisters the run from the canonical runtime registry and runs the retained materialization
@@ -2513,7 +2468,8 @@ export function createDaemonControlApp({
         401: authSchema401,
         403: z.object({
           ok: z.literal(false),
-          errorCode: z.literal(CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked),
+          errorCode: z.enum([CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked, CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.modelUnavailable]),
+          modelId: z.string().optional(),
           errorMessage: z.string().optional(),
         }),
         501: z.object({
@@ -2537,6 +2493,7 @@ export function createDaemonControlApp({
       return {
         ok: false as const,
         errorCode: result.errorCode,
+        ...('modelId' in result && result.modelId ? { modelId: result.modelId } : {}),
         ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
       };
     }
@@ -2549,6 +2506,19 @@ export function createDaemonControlApp({
         registration: result.registration,
       },
     };
+  });
+
+  typed.post(CONNECTED_SERVICE_RUN_REJECTED_START_PATH, {
+    schema: {
+      body: ConnectedServiceRunRejectedStartRequestSchema,
+      response: { 200: ConnectedServiceRunRejectedStartResultSchema, 401: authSchema401 },
+    },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => {
+    if (!recoverConnectedServicesRejectedStartForExecutionRun) {
+      return { ok: false as const, errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable };
+    }
+    return await recoverConnectedServicesRejectedStartForExecutionRun(request.body);
   });
 
   typed.post(CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH, {
@@ -3906,6 +3876,39 @@ export function createDaemonControlApp({
       stopSessions,
     });
 
+    if (stopSessions) {
+      let cleanupComplete = true;
+      for (const child of getChildren()) {
+        const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
+        const fallbackSessionId = Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
+        const id = sessionId || fallbackSessionId;
+        if (!id) {
+          cleanupComplete = false;
+          continue;
+        }
+        if (prepareStopSession) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await prepareStopSession(child);
+          } catch (error) {
+            logger.debug(`[CONTROL SERVER] Failed to prepare session ${id} for stop`, error);
+          }
+        }
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const result = await stopSession(id);
+          if (result.status !== 'stopped' && result.status !== 'not_found') {
+            cleanupComplete = false;
+            logger.debug(`[CONTROL SERVER] Session ${id} stop incomplete`, result);
+          }
+        } catch (error) {
+          cleanupComplete = false;
+          logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
+        }
+      }
+      if (!cleanupComplete) return { status: 'session_cleanup_incomplete' };
+    }
+
     // Give time for response to arrive
     setTimeout(() => {
       logger.debug('[CONTROL SERVER] Triggering daemon shutdown');
@@ -3920,31 +3923,6 @@ export function createDaemonControlApp({
 
       void (async () => {
         try {
-          if (stopSessions) {
-            const children = getChildren();
-            logger.debug(`[CONTROL SERVER] stopSessions requested: stopping ${children.length} tracked sessions`);
-            for (const child of children) {
-              const sessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
-              const fallbackSessionId =
-                Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
-              const id = sessionId || fallbackSessionId;
-              if (!id) continue;
-              if (prepareStopSession) {
-                try {
-                  // eslint-disable-next-line no-await-in-loop
-                  await prepareStopSession(child);
-                } catch (error) {
-                  logger.debug(`[CONTROL SERVER] Failed to prepare session ${id} for stop`, error);
-                }
-              }
-              try {
-                // eslint-disable-next-line no-await-in-loop
-                await stopSession(id);
-              } catch (error) {
-                logger.debug(`[CONTROL SERVER] Failed to stop session ${id}`, error);
-              }
-            }
-          }
           await runBeforeShutdown();
         } catch (error) {
           logger.debug('[CONTROL SERVER] stopSessions failed', error);
@@ -4004,6 +3982,7 @@ export function startDaemonControlServer({
   handleProviderAccountUsageAdoption,
   verifyRunMaterializeToken,
   materializeConnectedServicesForExecutionRun,
+  recoverConnectedServicesRejectedStartForExecutionRun,
   checkConnectedServicesGenerationForExecutionRun,
   releaseConnectedServicesForExecutionRun,
   requestSelfRestart,
@@ -4049,6 +4028,7 @@ export function startDaemonControlServer({
   verifyRunMaterializeToken?: (provided: string) => boolean;
   /** Execution-run connected-services materialization handler (see createDaemonControlApp). */
   materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
+  recoverConnectedServicesRejectedStartForExecutionRun?: ConnectedServiceRunRejectedStartHandler;
   /** Exact run-key current-generation admission check before provider Send/Steer. */
   checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
   /** Execution-run connected-services release handler (see createDaemonControlApp). */
@@ -4152,6 +4132,7 @@ export function startDaemonControlServer({
       connectedAccountRequestAuth,
       verifyRunMaterializeToken,
       materializeConnectedServicesForExecutionRun,
+      recoverConnectedServicesRejectedStartForExecutionRun,
       checkConnectedServicesGenerationForExecutionRun,
       releaseConnectedServicesForExecutionRun,
       sshTunnels,

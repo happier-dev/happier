@@ -1,9 +1,5 @@
-import {
-    PluginHostedWebRuntimeModeV1Schema,
-    PluginUiArtifactsManifestV2Schema,
-    type PluginHostedWebRuntimeModeV1,
-    type PluginUiArtifactsManifestV2,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginHostedWebRuntimeModeV1Schema, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
+import type { PluginHostedWebRuntimeModeV1, PluginUiArtifactsManifestV2 } from '@happier-dev/protocol/plugins/ui';
 
 export function defineHostedWebRuntimeMode<const TRuntimeMode extends PluginHostedWebRuntimeModeV1>(
     runtimeMode: TRuntimeMode,

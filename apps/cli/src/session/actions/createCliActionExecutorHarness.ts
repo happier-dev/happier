@@ -1,11 +1,9 @@
-import {
-  ApprovalRequestSchema,
-  createActionExecutor,
-  isActionEnabledByActionsSettings,
-  isApprovalRequiredByActionsSettings,
-  readSessionRolesV1,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 import { createActionSettingsProvider, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCliBrowserRuntimeActionExecutor } from '@/daemon/browser/actions/controlTransport';

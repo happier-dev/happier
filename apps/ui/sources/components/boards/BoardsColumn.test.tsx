@@ -9,6 +9,8 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { BoardsColumn } from './BoardsColumn';
+import { BoardScreen } from './BoardScreen';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 // Native and navigation adapters are external boundaries; the Board store and collection stay real.
 vi.mock('react-native', async () => {
@@ -36,17 +38,23 @@ const artifacts = boards.map(board => ({
 }));
 let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
 let credentials: AuthCredentials | null = null;
+let unreadableAlpha: 'malformed_json' | 'content_unavailable' | null = null;
 let previousStorageState = getStorage().getState();
 
 describe('BoardsColumn collection search', () => {
     beforeEach(async () => {
         previousStorageState = getStorage().getState();
+        unreadableAlpha = null;
         home = await serveActionHomes({
             homes: [{ key: 'boards', serverUrl: 'https://boards-column.test', accountId: 'owner' }],
             route: request => {
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (request.path === '/v1/artifacts') return Response.json(artifacts);
                 const artifact = artifacts.find(row => request.path === `/v1/artifacts/${row.id}`);
+                if (artifact?.id === 'alpha' && unreadableAlpha) return Response.json({ ...artifact,
+                    body: encodePlainArtifactStoredContent(unreadableAlpha === 'malformed_json'
+                        ? { body: '{ invalid Board JSON' } : { body: 42 }),
+                });
                 return artifact ? Response.json(artifact) : undefined;
             },
         });
@@ -92,5 +100,20 @@ describe('BoardsColumn collection search', () => {
         screen.changeTextByTestId('boards-column:search', '');
         await flushHookEffects();
         expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+    });
+
+    it.each(['malformed_json', 'content_unavailable'] as const)('opens a named unreadable Board state for %s and keeps the neighboring Board reachable', async failure => {
+        unreadableAlpha = failure;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <BoardsColumn /><BoardScreen boardId="alpha" />
+        </InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(screen.findHostByTestId('board-unreadable')).not.toBeNull();
+        expect(screen.findHostByTestId('board-not-found')).toBeNull();
+        expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+        const state = screen.tree.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'board-unreadable');
+        expect(state?.props.title).toContain('Alpha release');
+        expect(state?.props.action?.onPress).toBeTypeOf('function');
     });
 });

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { createPluginContributionIdentity } from '@happier-dev/protocol';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
     PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {

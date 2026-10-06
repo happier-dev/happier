@@ -65,6 +65,49 @@ test('a contended publication reuses its directory watch across fallback wakes a
   }
 });
 
+for (const mode of ['async', 'sync']) {
+  test(`workspace bundle ${mode} preserves the filesystem failure when acquired claim cleanup cannot rename`, () => {
+    // Rename permissions are an OS boundary; exercise real contention and cleanup beneath it.
+    const script = `
+      import assert from 'node:assert/strict';
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      import { join } from 'node:path';
+      import { tmpdir } from 'node:os';
+      const root = fs.mkdtempSync(join(tmpdir(), 'workspace-claim-cleanup-error-'));
+      const lockPath = join(root, 'publication.lock');
+      const claimPath = lockPath + '.priority-claim';
+      const denied = Object.assign(new Error('rename denied'), { code: 'EACCES', path: claimPath });
+      const nativeRename = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (from === claimPath) throw denied;
+        return nativeRename(from, to);
+      };
+      syncBuiltinESMExports();
+      const { withWorkspaceBundleLock, withWorkspaceBundleLockSync } = await import(${JSON.stringify(new URL('./workspaceBundleLock.mjs', import.meta.url).href)});
+      fs.writeFileSync(lockPath, JSON.stringify({ pid: 42, token: 'holder', createdAtMs: Date.now(), updatedAtMs: Date.now() }));
+      let published = false;
+      const options = {
+        lockPath, isRunningPidImpl: () => true,
+        onWait() { if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath); },
+      };
+      try {
+        const publish = () => { published = true; };
+        const run = () => ${mode === 'async' ? 'withWorkspaceBundleLock' : 'withWorkspaceBundleLockSync'}(publish, options);
+        ${mode === 'async' ? 'await assert.rejects(run, error => error === denied);' : 'assert.throws(run, error => error === denied);'}
+        assert.equal(published, false);
+        assert.equal(fs.existsSync(claimPath), true, 'failed cleanup must preserve the claimed file');
+        assert.equal(fs.existsSync(lockPath), false, 'cleanup failure must still release the acquired lock');
+      } finally {
+        fs.renameSync = nativeRename;
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  });
+}
+
 test('workspace publishers get a default contention budget sized for concurrent source-dev builds', () => {
   assert.ok(DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS >= 30 * 60_000);
 });
@@ -1898,7 +1941,9 @@ test('workspace bundle locks preserve a fresh workspace-visible heartbeat when p
   }
 });
 
-test('workspace bundle lock heartbeat survives a blocked owner event loop across PID namespaces', async () => {
+test('workspace bundle lock heartbeat survives a blocked owner event loop across PID namespaces', {
+  skip: process.platform !== 'linux',
+}, async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-bundle-lock-blocked-owner-'));
   try {
     const lockPath = join(tempRoot, 'workspace-bundling.lock');

@@ -3,7 +3,8 @@ import type {
     ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
-import { isConnectedServiceQuotaObservationFresh, readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 
 import { normalizeQuotaMeter, selectEffectiveQuotaMeter } from '../normalization';
 import type { ProviderOutcomeProofKind } from '../../recovery/providerOutcomeProof';

@@ -24,7 +24,8 @@ import type {
     HostSessionInteractionOptions,
 } from '@/agent/runtime/state/currentSessionUiTypes';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
-import { CurrentSessionPresentationAuthorIntentV1Schema, type InteractionTransientRequesterV1 } from '@happier-dev/protocol';
+import { CurrentSessionPresentationAuthorIntentV1Schema } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
+import type { InteractionTransientRequesterV1 } from '@happier-dev/protocol';
 import type { AgentInvocationTurnAdmissionWitness, PluginInvocationServicesSeed } from './types';
 import { isWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 
