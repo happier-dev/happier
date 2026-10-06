@@ -19,41 +19,12 @@ import type {
     PluginActionResultById,
     PluginInvocableActionId,
 } from '../actions/service.js';
-import {
-    CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1 as canonicalCurrentUiContextBoundedIncompletenessV1,
-    CURRENT_UI_CONTEXT_MAX_COMMANDS_V1 as canonicalCurrentUiContextMaxCommandsV1,
-    CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1 as canonicalCurrentUiContextMaxUtf8BytesV1,
-    PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 as canonicalPluginUiSubPathMaxUtf8BytesV1,
-    normalizePluginUiSubPathV1 as canonicalNormalizePluginUiSubPathV1,
-    COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1,
-    COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1 as canonicalComposerControlStateContentTypeV1,
-    MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1,
-    MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 as canonicalMaxComposerControlStateResourceBytesV1,
-    MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 as canonicalMaxComposerAttachmentDescriptionCodePointsV1,
-    MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 as canonicalMaxComposerAttachmentLabelCodePointsV1,
-    ComposerContentHandleV1Schema as canonicalComposerContentHandleV1Schema,
-    ComposerContentInspectRequestV1Schema as canonicalComposerContentInspectRequestV1Schema,
-    ComposerContentInspectWireResultV1Schema as canonicalComposerContentInspectWireResultV1Schema,
-    ComposerContentPickMediaRequestV1Schema as canonicalComposerContentPickMediaRequestV1Schema,
-    ComposerControlStateContentTypeV1Schema as canonicalComposerControlStateContentTypeV1Schema,
-    ComposerControlStateV1Schema as canonicalComposerControlStateV1Schema,
-    ComposerDecorationResultV1Schema as canonicalComposerDecorationResultV1Schema,
-    ComposerDecorationSetV1Schema as canonicalComposerDecorationSetV1Schema,
-    ComposerFocusResultV1Schema as canonicalComposerFocusResultV1Schema,
-    ComposerInputLockRequestV1Schema as canonicalComposerInputLockRequestV1Schema,
-    ComposerOperationV1Schema as canonicalComposerOperationV1Schema,
-    ComposerReadResultV1Schema as canonicalComposerReadResultV1Schema,
-    ComposerRefV1Schema as canonicalComposerRefV1Schema,
-    ComposerSurfaceInputV1Schema as canonicalComposerSurfaceInputV1Schema,
-    ComposerSnapshotV1Schema as canonicalComposerSnapshotV1Schema,
-    ComposerTransactionResultV1Schema as canonicalComposerTransactionResultV1Schema,
-    ComposerTransactionV1Schema as canonicalComposerTransactionV1Schema,
-    pluginUiTargetedContributionOperationKey as canonicalPluginUiTargetedContributionOperationKey,
-    selectPluginUiTargetedContributionOperationV1 as canonicalSelectPluginUiTargetedContributionOperationV1,
-    selectPluginUiTargetedContributionSurfaceV1 as canonicalSelectPluginUiTargetedContributionSurfaceV1,
-    selectPluginUiTargetedContributionV1 as canonicalSelectPluginUiTargetedContributionV1,
-    PluginUiPreparedReviewWorkspaceResultV1Schema as canonicalPluginUiPreparedReviewWorkspaceResultV1Schema,
-} from '@happier-dev/protocol/plugins/ui/client';
+import { CURRENT_UI_CONTEXT_BOUNDED_INCOMPLETENESS_V1 as canonicalCurrentUiContextBoundedIncompletenessV1, CURRENT_UI_CONTEXT_MAX_COMMANDS_V1 as canonicalCurrentUiContextMaxCommandsV1, CURRENT_UI_CONTEXT_MAX_UTF8_BYTES_V1 as canonicalCurrentUiContextMaxUtf8BytesV1 } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1 as canonicalPluginUiSubPathMaxUtf8BytesV1, normalizePluginUiSubPathV1 as canonicalNormalizePluginUiSubPathV1, pluginUiTargetedContributionOperationKey as canonicalPluginUiTargetedContributionOperationKey, selectPluginUiTargetedContributionOperationV1 as canonicalSelectPluginUiTargetedContributionOperationV1, selectPluginUiTargetedContributionSurfaceV1 as canonicalSelectPluginUiTargetedContributionSurfaceV1, selectPluginUiTargetedContributionV1 as canonicalSelectPluginUiTargetedContributionV1, PluginUiPreparedReviewWorkspaceResultV1Schema as canonicalPluginUiPreparedReviewWorkspaceResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { COMPOSER_MEDIA_CONTENT_CAPABILITY_V1 as canonicalComposerMediaContentCapabilityV1, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 as canonicalMaxComposerContentInspectBytesV1, ComposerContentHandleV1Schema as canonicalComposerContentHandleV1Schema, ComposerContentInspectRequestV1Schema as canonicalComposerContentInspectRequestV1Schema, ComposerContentInspectWireResultV1Schema as canonicalComposerContentInspectWireResultV1Schema, ComposerContentPickMediaRequestV1Schema as canonicalComposerContentPickMediaRequestV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
+import { COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1 as canonicalComposerControlStateContentTypeV1, MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 as canonicalMaxComposerControlStateResourceBytesV1, ComposerControlStateContentTypeV1Schema as canonicalComposerControlStateContentTypeV1Schema, ComposerControlStateV1Schema as canonicalComposerControlStateV1Schema, ComposerDecorationResultV1Schema as canonicalComposerDecorationResultV1Schema, ComposerDecorationSetV1Schema as canonicalComposerDecorationSetV1Schema, ComposerFocusResultV1Schema as canonicalComposerFocusResultV1Schema, ComposerInputLockRequestV1Schema as canonicalComposerInputLockRequestV1Schema, ComposerOperationV1Schema as canonicalComposerOperationV1Schema, ComposerReadResultV1Schema as canonicalComposerReadResultV1Schema, ComposerSurfaceInputV1Schema as canonicalComposerSurfaceInputV1Schema, ComposerSnapshotV1Schema as canonicalComposerSnapshotV1Schema, ComposerTransactionResultV1Schema as canonicalComposerTransactionResultV1Schema, ComposerTransactionV1Schema as canonicalComposerTransactionV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
+import { MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 as canonicalMaxComposerAttachmentDescriptionCodePointsV1, MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 as canonicalMaxComposerAttachmentLabelCodePointsV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { ComposerRefV1Schema as canonicalComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
 export const MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1: number =
     canonicalMaxComposerAttachmentDescriptionCodePointsV1;
 export const MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1: number =
@@ -520,9 +491,9 @@ export interface PluginUiHostApi {
      */
     executeAction<TAction extends PluginUiActionReference>(
         action: TAction,
-        input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>,
+        input?: NoInfer<PluginUiActionInputFor<TAction>>,
         options?: PluginUiActionExecutionOptions,
-    ): Promise<PluginUiActionResultFor<NoInfer<TAction>>>;
+    ): Promise<PluginUiActionResultFor<TAction>>;
     selectActionInput(
         request: SelectActionInputRequest,
         options?: PluginCancellationOptions,

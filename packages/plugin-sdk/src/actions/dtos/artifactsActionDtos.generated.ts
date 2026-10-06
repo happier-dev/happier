@@ -116,6 +116,24 @@ export type ArtifactsActionResultById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
+            provenance?: {
+                savedBy: {
+                    kind: 'person';
+                    accountId: string;
+                } | {
+                    kind: 'agent';
+                    accountId: string;
+                    sessionId?: string | undefined;
+                };
+                source?: {
+                    sessionId: string;
+                    machineId: string;
+                    path: string;
+                    sha: string;
+                    runId?: string | undefined;
+                } | undefined;
+                restoredFromBodyVersion?: number | undefined;
+            } | undefined;
         } | null;
         previewUrl?: string | undefined;
         previewError?: 'artifact_html_preview_unavailable' | undefined;
@@ -178,6 +196,13 @@ export type ArtifactsActionResultById = {
                     accountId: string;
                     sessionId?: string | undefined;
                 };
+                source?: {
+                    sessionId: string;
+                    machineId: string;
+                    path: string;
+                    sha: string;
+                    runId?: string | undefined;
+                } | undefined;
                 restoredFromBodyVersion?: number | undefined;
             } | undefined;
         }[];

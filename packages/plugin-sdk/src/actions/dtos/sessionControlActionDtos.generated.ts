@@ -106,8 +106,8 @@ export type SessionControlActionInputById = {
         armedAtMs?: number | undefined;
         runtimeAuthRecoveryAttemptId?: string | undefined;
     };
-    readonly "session.usageLimit.checkNow": SessionUsageLimitCheckNowRequestV1Input;
-    readonly "session.usageLimit.consumeResetCredit": SessionUsageLimitConsumeResetCreditRequestV1Input;
+    readonly "session.usageLimit.checkNow": SessionUsageLimitCheckNowRequestV1Input<true>;
+    readonly "session.usageLimit.consumeResetCredit": SessionUsageLimitConsumeResetCreditRequestV1Input<true>;
     readonly "session.vendor_plugin_catalog.list": {
         [x: string]: unknown;
         sessionId: string;

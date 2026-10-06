@@ -175,6 +175,52 @@ test('Action schema derivation admits imported declarations without unrelated am
   assert.ok(!inputs.has(ambient), 'unrelated ambient packages must not enter the Action derivation input identity');
 });
 
+test('Action families reuse unchanged compiler sources and refresh changed schema overlays and imports', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-shared-host-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), `export const ACTION_ID_FAMILIES_V1 = {
+    first: ['first.read'], repeated: ['first.read']
+  } as const;`);
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  const imported = resolve(actions, 'schema.ts');
+  writeFileSync(imported, "import { z } from 'zod'; export const Input = z.string();");
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `
+    import { z } from 'zod';
+    import { Input } from './schema.js';
+    export const ACTION_SPECS = [
+      { id: 'first.read', inputSchema: Input, outputSchema: z.number() },
+      { id: 'second.read', inputSchema: Input, outputSchema: z.boolean() },
+    ] as const;
+  `);
+  const derive = () => deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'repeated'] });
+  const initial = await derive();
+  const output = family => initial.outputs.get(resolve(actions, `${family}ActionDtos.ts`));
+  assert.match(output('first'), /"first.read": number/u);
+  assert.match(output('repeated'), /"first.read": number/u);
+  assert.doesNotMatch(output('repeated'), /"second.read"/u);
+  assert.ok(initial.metrics[1].sourceFilesReused > 0, 'unchanged family sources must reuse their parsed ASTs');
+  assert.equal(initial.metrics[1].sourceFilesParsed, 0, 'an identical overlay must not be parsed again');
+  writeFileSync(resolve(actions, 'actionIds.ts'), `export const ACTION_ID_FAMILIES_V1 = {
+    first: ['first.read'], repeated: ['first.read', 'second.read']
+  } as const;`);
+  const changed = await derive();
+  const expanded = changed.outputs.get(resolve(actions, 'repeatedActionDtos.ts'));
+  assert.match(expanded, /"first.read": number/u);
+  assert.match(expanded, /"second.read": boolean/u);
+  assert.ok(changed.metrics[1].sourceFilesParsed > 0, 'different schema overlays must be parsed afresh');
+  assert.ok(changed.metrics[1].sourceFilesReused > 0, 'changing an overlay must retain common declaration ASTs');
+  writeFileSync(imported, "import { z } from 'zod'; export const Input = z.boolean();");
+  const refreshed = await derive();
+  for (const text of refreshed.outputs.values()) {
+    assert.match(text, /"(?:first|second).read": boolean/u);
+    assert.doesNotMatch(text, /"(?:first|second).read": string/u);
+  }
+});
+
 test('versioned imported Action spec owners supply generated DTO schemas', async t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
   mkdirSync(cache, { recursive: true });

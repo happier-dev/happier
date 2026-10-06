@@ -4,13 +4,50 @@
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
 import type { PluginInvocableActionId } from '../actionTypeMap.generated.js';
 
-export type PluginJsonSchemaV2 = {
-    $schema?: 'http://json-schema.org/draft-07/schema#' | undefined;
+export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends true ? {
+    $schema?: "http://json-schema.org/draft-07/schema#" | undefined;
+    $ref?: string | undefined;
+    definitions?: Record<string, PluginJsonSchemaV2<true>> | undefined;
+    $defs?: Record<string, PluginJsonSchemaV2<true>> | undefined;
+    type?: "string" | "number" | "boolean" | "object" | "null" | "integer" | "array" | undefined;
+    format?: "date-time" | "time" | "date" | "duration" | "uri" | "uri-reference" | "uri-template" | "url" | "email" | "hostname" | "ipv4" | "ipv6" | "regex" | "uuid" | "json-pointer" | "relative-json-pointer" | undefined;
+    title?: string | undefined;
+    description?: string | undefined;
+    default?: (string | number | boolean | JsonValue[] | {
+        [key: string]: JsonValue;
+    } | null) | undefined;
+    enum?: JsonValue[] | undefined;
+    const?: (string | number | boolean | JsonValue[] | {
+        [key: string]: JsonValue;
+    } | null) | undefined;
+    properties?: Record<string, PluginJsonSchemaV2<true>> | undefined;
+    propertyNames?: PluginJsonSchemaV2<true> | undefined;
+    required?: string[] | undefined;
+    additionalProperties?: boolean | PluginJsonSchemaV2<true> | undefined;
+    items?: PluginJsonSchemaV2<true> | undefined;
+    minItems?: number | undefined;
+    maxItems?: number | undefined;
+    uniqueItems?: boolean | undefined;
+    minimum?: number | undefined;
+    maximum?: number | undefined;
+    exclusiveMinimum?: number | undefined;
+    exclusiveMaximum?: number | undefined;
+    minLength?: number | undefined;
+    maxLength?: number | undefined;
+    "x-happier-max-utf8-bytes"?: number | undefined;
+    "x-happier-max-serialized-utf8-bytes"?: number | undefined;
+    pattern?: string | undefined;
+    anyOf?: PluginJsonSchemaV2<true>[] | undefined;
+    oneOf?: PluginJsonSchemaV2<true>[] | undefined;
+    allOf?: PluginJsonSchemaV2<true>[] | undefined;
+    not?: PluginJsonSchemaV2<true> | undefined;
+} : {
+    $schema?: "http://json-schema.org/draft-07/schema#" | undefined;
     $ref?: string | undefined;
     definitions?: Record<string, PluginJsonSchemaV2> | undefined;
     $defs?: Record<string, PluginJsonSchemaV2> | undefined;
-    type?: 'string' | 'number' | 'boolean' | 'object' | 'null' | 'integer' | 'array' | undefined;
-    format?: 'date-time' | 'time' | 'date' | 'duration' | 'uri' | 'uri-reference' | 'uri-template' | 'url' | 'email' | 'hostname' | 'ipv4' | 'ipv6' | 'regex' | 'uuid' | 'json-pointer' | 'relative-json-pointer' | undefined;
+    type?: "string" | "number" | "boolean" | "object" | "null" | "integer" | "array" | undefined;
+    format?: "date-time" | "time" | "date" | "duration" | "uri" | "uri-reference" | "uri-template" | "url" | "email" | "hostname" | "ipv4" | "ipv6" | "regex" | "uuid" | "json-pointer" | "relative-json-pointer" | undefined;
     title?: string | undefined;
     description?: string | undefined;
     default?: PluginJsonValueV2 | undefined;
@@ -30,8 +67,8 @@ export type PluginJsonSchemaV2 = {
     exclusiveMaximum?: number | undefined;
     minLength?: number | undefined;
     maxLength?: number | undefined;
-    'x-happier-max-utf8-bytes'?: number | undefined;
-    'x-happier-max-serialized-utf8-bytes'?: number | undefined;
+    "x-happier-max-utf8-bytes"?: number | undefined;
+    "x-happier-max-serialized-utf8-bytes"?: number | undefined;
     pattern?: string | undefined;
     anyOf?: PluginJsonSchemaV2[] | undefined;
     oneOf?: PluginJsonSchemaV2[] | undefined;
@@ -56,21 +93,37 @@ export interface PluginAgentExternalSessionLinkDataObject {
     readonly [key: string]: PluginAgentExternalSessionLinkDataValue;
 }
 export type ActionUiPlacement = 'agent_input_chips' | 'browser_context' | 'session_header' | 'session_info' | 'session_action_menu' | 'pending_messages' | 'command_palette' | 'slash_command' | 'voice_panel' | 'run_list' | 'run_card';
-export type SessionUsageLimitCheckNowRequestV1Input = {
+export type SessionUsageLimitCheckNowRequestV1Input<Input extends boolean = false> = Input extends true ? {
     [x: string]: unknown;
     sessionId: string;
     agentId?: string | undefined;
-    operation?: 'check_now' | 'switch_account_now' | undefined;
-    resumePromptMode?: 'standard' | 'off' | 'custom' | undefined;
+    operation?: "check_now" | "switch_account_now" | undefined;
+    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+} & Readonly<{
+    provider?: string | undefined;
+}> : {
+    [x: string]: unknown;
+    sessionId: string;
+    agentId?: string | undefined;
+    operation?: "check_now" | "switch_account_now" | undefined;
+    resumePromptMode?: "standard" | "off" | "custom" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }>;
-export type SessionUsageLimitConsumeResetCreditRequestV1Input = {
+export type SessionUsageLimitConsumeResetCreditRequestV1Input<Input extends boolean = false> = Input extends true ? {
     [x: string]: unknown;
     sessionId: string;
     agentId?: string | undefined;
     issueFingerprint?: string | undefined;
-    resumePromptMode?: 'standard' | 'off' | 'custom' | undefined;
+    resumePromptMode?: "standard" | "off" | "custom" | undefined;
+} & Readonly<{
+    provider?: string | undefined;
+}> : {
+    [x: string]: unknown;
+    sessionId: string;
+    agentId?: string | undefined;
+    issueFingerprint?: string | undefined;
+    resumePromptMode?: "standard" | "off" | "custom" | undefined;
 } & Readonly<{
     provider?: string | undefined;
 }>;
@@ -579,54 +632,54 @@ export type PluginActionWorkflowAuthoredResultReferenceV1 = {
     path: (string | number)[];
     optional?: true | undefined;
 };
-export type PluginActionWorkflowValueReferenceV1 = {
-    kind: 'result';
+export type PluginActionWorkflowValueReferenceV1<Input extends boolean = false> = Input extends true ? {
+    kind: "result";
     producer: {
         blockId: string;
         scope: {
-            kind: 'current';
+            kind: "current";
         } | {
-            kind: 'previous_iteration';
+            kind: "previous_iteration";
             loopBlockId: string;
         } | {
-            kind: 'outer';
+            kind: "outer";
             levels: number;
         };
     };
     path: (string | number)[];
     optional?: true | undefined;
 } | Readonly<{
-    kind: 'literal';
+    kind: "literal";
     value: JsonValue;
 }> | Readonly<{
-    kind: 'input';
+    kind: "input";
     name: string;
 }> | {
-    kind: 'workspace';
+    kind: "workspace";
     producer: {
         blockId: string;
         scope: {
-            kind: 'current';
+            kind: "current";
         } | {
-            kind: 'previous_iteration';
+            kind: "previous_iteration";
             loopBlockId: string;
         } | {
-            kind: 'outer';
+            kind: "outer";
             levels: number;
         };
     };
-    field: 'directory' | 'checkoutRootPath';
+    field: "directory" | "checkoutRootPath";
 } | {
-    kind: 'loop_trailing_count';
+    kind: "loop_trailing_count";
     producer: {
         blockId: string;
         scope: {
-            kind: 'current';
+            kind: "current";
         } | {
-            kind: 'previous_iteration';
+            kind: "previous_iteration";
             loopBlockId: string;
         } | {
-            kind: 'outer';
+            kind: "outer";
             levels: number;
         };
     };
@@ -635,35 +688,120 @@ export type PluginActionWorkflowValueReferenceV1 = {
         readonly [key: string]: JsonValue;
     } | null;
 } | Readonly<{
-    kind: 'session_context';
+    kind: "session_context";
     recentTurns: number;
 }> | Readonly<{
-    kind: 'session_context_field';
-    field: 'usage.tokensUsed' | 'goal.tokenBudget';
+    kind: "session_context_field";
+    field: "usage.tokensUsed" | "goal.tokenBudget";
 }> | Readonly<{
-    kind: 'item';
-    field: 'value' | 'index' | 'position' | 'count';
+    kind: "item";
+    field: "value" | "index" | "position" | "count";
     path?: (string | number)[] | undefined;
 }> | Readonly<{
-    kind: 'iteration';
-    field: 'index' | 'position' | 'count' | 'stopReason';
+    kind: "iteration";
+    field: "index" | "position" | "count" | "stopReason";
+}> : {
+    kind: "result";
+    producer: {
+        blockId: string;
+        scope: {
+            kind: "current";
+        } | {
+            kind: "previous_iteration";
+            loopBlockId: string;
+        } | {
+            kind: "outer";
+            levels: number;
+        };
+    };
+    path: (string | number)[];
+    optional?: true | undefined;
+} | Readonly<{
+    kind: "literal";
+    value: JsonValue;
+}> | Readonly<{
+    kind: "input";
+    name: string;
+}> | {
+    kind: "workspace";
+    producer: {
+        blockId: string;
+        scope: {
+            kind: "current";
+        } | {
+            kind: "previous_iteration";
+            loopBlockId: string;
+        } | {
+            kind: "outer";
+            levels: number;
+        };
+    };
+    field: "directory" | "checkoutRootPath";
+} | {
+    kind: "loop_trailing_count";
+    producer: {
+        blockId: string;
+        scope: {
+            kind: "current";
+        } | {
+            kind: "previous_iteration";
+            loopBlockId: string;
+        } | {
+            kind: "outer";
+            levels: number;
+        };
+    };
+    path: (string | number)[];
+    equals: string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
+} | Readonly<{
+    kind: "session_context";
+    recentTurns: number;
+}> | Readonly<{
+    kind: "session_context_field";
+    field: "usage.tokensUsed" | "goal.tokenBudget";
+}> | Readonly<{
+    kind: "item";
+    field: "value" | "index" | "position" | "count";
+    path?: (string | number)[] | undefined;
+}> | Readonly<{
+    kind: "iteration";
+    field: "index" | "position" | "count" | "stopReason";
 }>;
-export type PluginActionWorkflowConditionV1 = Readonly<{
-    kind: 'exists';
+export type PluginActionWorkflowConditionV1<Input extends boolean = false> = Input extends true ? Readonly<{
+    kind: "exists";
+    value: PluginActionWorkflowValueReferenceV1<true>;
+}> | Readonly<{
+    kind: "compare";
+    operator: "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
+    left: PluginActionWorkflowValueReferenceV1<true>;
+    right: PluginActionWorkflowValueReferenceV1<true>;
+}> | Readonly<{
+    kind: "all";
+    conditions: readonly PluginActionWorkflowConditionV1<true>[];
+}> | Readonly<{
+    kind: "any";
+    conditions: readonly PluginActionWorkflowConditionV1<true>[];
+}> | Readonly<{
+    kind: "not";
+    condition: PluginActionWorkflowConditionV1<true>;
+}> : Readonly<{
+    kind: "exists";
     value: PluginActionWorkflowValueReferenceV1;
 }> | Readonly<{
-    kind: 'compare';
-    operator: 'eq' | 'neq' | 'lt' | 'lte' | 'gt' | 'gte';
+    kind: "compare";
+    operator: "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
     left: PluginActionWorkflowValueReferenceV1;
     right: PluginActionWorkflowValueReferenceV1;
 }> | Readonly<{
-    kind: 'all';
+    kind: "all";
     conditions: readonly PluginActionWorkflowConditionV1[];
 }> | Readonly<{
-    kind: 'any';
+    kind: "any";
     conditions: readonly PluginActionWorkflowConditionV1[];
 }> | Readonly<{
-    kind: 'not';
+    kind: "not";
     condition: PluginActionWorkflowConditionV1;
 }>;
 export type PluginActionWorkflowDefinitionV1 = {
@@ -935,8 +1073,8 @@ export type PluginActionWorkflowDefinitionV1 = {
         optional?: true | undefined;
     } | undefined;
 };
-export type PluginActionWorkflowBlockV1 = {
-    kind: 'step';
+export type PluginActionWorkflowBlockV1<Input extends boolean = false> = Input extends true ? {
+    kind: "step";
     id: string;
     document: {
         text: string;
@@ -955,29 +1093,29 @@ export type PluginActionWorkflowBlockV1 = {
                 localId: string;
             };
             key: string;
-            value: PluginJsonValueV2;
+            value: JsonValue;
             presentation: {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
-                tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
     };
-    input: PluginActionWorkflowValueReferenceV1[];
+    input: PluginActionWorkflowValueReferenceV1<true>[];
     result: {
-        kind: 'decision';
+        kind: "decision";
         decisions: string[];
     } | {
-        kind: 'text';
+        kind: "text";
     } | {
-        kind: 'json';
-        schema: PluginJsonSchemaV2;
+        kind: "json";
+        schema: PluginJsonSchemaV2<true>;
     };
     execution?: {
         agentTarget?: {
-            kind: 'agent';
+            kind: "agent";
             identity: {
                 pluginId: string;
                 localId: string;
@@ -1018,20 +1156,20 @@ export type PluginActionWorkflowBlockV1 = {
         connectedServices?: {
             v: 2;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: "native";
             } | {
-                source: 'connected';
-                selection: 'group';
+                source: "connected";
+                selection: "group";
                 groupId: string;
                 profileId?: string | undefined;
             } | {
-                source: 'connected';
-                selection: 'profile';
+                source: "connected";
+                selection: "profile";
                 profileId: string;
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'direct';
+                deliveryMode: "direct";
                 disclosedMember: {
                     service: {
                         pluginId: string;
@@ -1040,15 +1178,15 @@ export type PluginActionWorkflowBlockV1 = {
                     accountId: string;
                 };
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'brokered';
+                deliveryMode: "brokered";
                 disclosedMember?: undefined;
             }>;
         } | null | undefined;
-        transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1058,85 +1196,85 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                console?: 'visible' | 'hidden' | undefined;
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-        windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
             v: 1;
             agentId: string;
             agent: {
                 backendMode: string;
-                home?: 'user' | 'connectedService' | undefined;
+                home?: "user" | "connectedService" | undefined;
                 connectedServiceId?: string | undefined;
                 connectedServiceProfileId?: string | undefined;
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
         conversation?: {
-            kind: 'shared_run';
+            kind: "shared_run";
         } | {
-            kind: 'fresh';
+            kind: "fresh";
         } | {
-            kind: 'origin_session';
+            kind: "origin_session";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'existing_session';
+            kind: "existing_session";
             sessionId: string;
             machineId: string;
         } | undefined;
         workspace?: {
-            kind: 'inherit';
+            kind: "inherit";
         } | {
-            kind: 'project_checkout';
+            kind: "project_checkout";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'new_worktree';
+            kind: "new_worktree";
             source: {
-                kind: 'original';
+                kind: "original";
             } | {
-                kind: 'workflow';
+                kind: "workflow";
             } | {
-                kind: 'step';
+                kind: "step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
@@ -1146,7 +1284,7 @@ export type PluginActionWorkflowBlockV1 = {
             role: string;
         } | {
             agentTarget: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -1168,23 +1306,23 @@ export type PluginActionWorkflowBlockV1 = {
             effort?: string | undefined;
         } | undefined;
         executionTarget?: {
-            kind: 'session';
+            kind: "session";
         } | {
-            kind: 'detached_run';
+            kind: "detached_run";
         } | undefined;
     } | undefined;
     timeoutMs?: number | undefined;
     pauseForReview?: boolean | undefined;
-    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
 } | {
-    kind: 'action';
+    kind: "action";
     actionId: string;
-    input: Record<string, PluginActionWorkflowValueReferenceV1 | {
-        kind: 'origin_session_id';
+    input: Record<string, PluginActionWorkflowValueReferenceV1<true> | {
+        kind: "origin_session_id";
     } | {
-        kind: 'list';
-        items: (PluginActionWorkflowValueReferenceV1 | {
-            kind: 'origin_session_id';
+        kind: "list";
+        items: (PluginActionWorkflowValueReferenceV1<true> | {
+            kind: "origin_session_id";
         })[];
     }>;
     id: string;
@@ -1192,7 +1330,7 @@ export type PluginActionWorkflowBlockV1 = {
     pauseForReview?: boolean | undefined;
     execution?: {
         agentTarget?: {
-            kind: 'agent';
+            kind: "agent";
             identity: {
                 pluginId: string;
                 localId: string;
@@ -1233,20 +1371,20 @@ export type PluginActionWorkflowBlockV1 = {
         connectedServices?: {
             v: 2;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: "native";
             } | {
-                source: 'connected';
-                selection: 'group';
+                source: "connected";
+                selection: "group";
                 groupId: string;
                 profileId?: string | undefined;
             } | {
-                source: 'connected';
-                selection: 'profile';
+                source: "connected";
+                selection: "profile";
                 profileId: string;
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'direct';
+                deliveryMode: "direct";
                 disclosedMember: {
                     service: {
                         pluginId: string;
@@ -1255,15 +1393,15 @@ export type PluginActionWorkflowBlockV1 = {
                     accountId: string;
                 };
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'brokered';
+                deliveryMode: "brokered";
                 disclosedMember?: undefined;
             }>;
         } | null | undefined;
-        transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1273,85 +1411,85 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                console?: 'visible' | 'hidden' | undefined;
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-        windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
             v: 1;
             agentId: string;
             agent: {
                 backendMode: string;
-                home?: 'user' | 'connectedService' | undefined;
+                home?: "user" | "connectedService" | undefined;
                 connectedServiceId?: string | undefined;
                 connectedServiceProfileId?: string | undefined;
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
         conversation?: {
-            kind: 'shared_run';
+            kind: "shared_run";
         } | {
-            kind: 'fresh';
+            kind: "fresh";
         } | {
-            kind: 'origin_session';
+            kind: "origin_session";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'existing_session';
+            kind: "existing_session";
             sessionId: string;
             machineId: string;
         } | undefined;
         workspace?: {
-            kind: 'inherit';
+            kind: "inherit";
         } | {
-            kind: 'project_checkout';
+            kind: "project_checkout";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'new_worktree';
+            kind: "new_worktree";
             source: {
-                kind: 'original';
+                kind: "original";
             } | {
-                kind: 'workflow';
+                kind: "workflow";
             } | {
-                kind: 'step';
+                kind: "step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
@@ -1361,7 +1499,7 @@ export type PluginActionWorkflowBlockV1 = {
             role: string;
         } | {
             agentTarget: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -1383,20 +1521,20 @@ export type PluginActionWorkflowBlockV1 = {
             effort?: string | undefined;
         } | undefined;
         executionTarget?: {
-            kind: 'session';
+            kind: "session";
         } | {
-            kind: 'detached_run';
+            kind: "detached_run";
         } | undefined;
     } | undefined;
-    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
 } | {
-    kind: 'workflow';
+    kind: "workflow";
     workflowRef: string;
-    input: Record<string, PluginActionWorkflowValueReferenceV1>;
+    input: Record<string, PluginActionWorkflowValueReferenceV1<true>>;
     id: string;
     execution?: {
         agentTarget?: {
-            kind: 'agent';
+            kind: "agent";
             identity: {
                 pluginId: string;
                 localId: string;
@@ -1437,20 +1575,20 @@ export type PluginActionWorkflowBlockV1 = {
         connectedServices?: {
             v: 2;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: "native";
             } | {
-                source: 'connected';
-                selection: 'group';
+                source: "connected";
+                selection: "group";
                 groupId: string;
                 profileId?: string | undefined;
             } | {
-                source: 'connected';
-                selection: 'profile';
+                source: "connected";
+                selection: "profile";
                 profileId: string;
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'direct';
+                deliveryMode: "direct";
                 disclosedMember: {
                     service: {
                         pluginId: string;
@@ -1459,15 +1597,15 @@ export type PluginActionWorkflowBlockV1 = {
                     accountId: string;
                 };
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'brokered';
+                deliveryMode: "brokered";
                 disclosedMember?: undefined;
             }>;
         } | null | undefined;
-        transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1477,85 +1615,85 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                console?: 'visible' | 'hidden' | undefined;
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-        windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
             v: 1;
             agentId: string;
             agent: {
                 backendMode: string;
-                home?: 'user' | 'connectedService' | undefined;
+                home?: "user" | "connectedService" | undefined;
                 connectedServiceId?: string | undefined;
                 connectedServiceProfileId?: string | undefined;
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
         conversation?: {
-            kind: 'shared_run';
+            kind: "shared_run";
         } | {
-            kind: 'fresh';
+            kind: "fresh";
         } | {
-            kind: 'origin_session';
+            kind: "origin_session";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'existing_session';
+            kind: "existing_session";
             sessionId: string;
             machineId: string;
         } | undefined;
         workspace?: {
-            kind: 'inherit';
+            kind: "inherit";
         } | {
-            kind: 'project_checkout';
+            kind: "project_checkout";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'new_worktree';
+            kind: "new_worktree";
             source: {
-                kind: 'original';
+                kind: "original";
             } | {
-                kind: 'workflow';
+                kind: "workflow";
             } | {
-                kind: 'step';
+                kind: "step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
@@ -1565,7 +1703,7 @@ export type PluginActionWorkflowBlockV1 = {
             role: string;
         } | {
             agentTarget: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -1587,14 +1725,275 @@ export type PluginActionWorkflowBlockV1 = {
             effort?: string | undefined;
         } | undefined;
         executionTarget?: {
-            kind: 'session';
+            kind: "session";
         } | {
-            kind: 'detached_run';
+            kind: "detached_run";
         } | undefined;
     } | undefined;
-    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
 } | {
-    kind: 'wait';
+    kind: "wait";
+    document: {
+        text: string;
+        references: {
+            [x: string]: unknown;
+            kind: string;
+            ref: string;
+            token: string;
+            label?: string | undefined;
+        }[];
+        attachments: {
+            v: 1;
+            instanceId: string;
+            attachment: {
+                pluginId: string;
+                localId: string;
+            };
+            key: string;
+            value: JsonValue;
+            presentation: {
+                label: string;
+                typeLabel: string;
+                description?: string | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
+            };
+        }[];
+    };
+    id: string;
+    result?: {
+        kind: "decision";
+        decisions: string[];
+    } | {
+        kind: "text";
+    } | {
+        kind: "json";
+        schema: PluginJsonSchemaV2<true>;
+    } | undefined;
+    execution?: {
+        agentTarget?: {
+            kind: "agent";
+            identity: {
+                pluginId: string;
+                localId: string;
+            };
+        } | null | undefined;
+        modelSelection?: {
+            v: 1;
+            ref: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
+        } | null | undefined;
+        profileId?: string | null | undefined;
+        permissionMode?: string | null | undefined;
+        acpSessionModeId?: string | null | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | null | undefined;
+        mcpSelection?: {
+            forceIncludeServerIds: string[];
+            forceExcludeServerIds: string[];
+            v: 1;
+            managedServersEnabled: boolean;
+        } | null | undefined;
+        connectedServices?: {
+            v: 2;
+            bindingsByServiceId: Record<string, {
+                source: "native";
+            } | {
+                source: "connected";
+                selection: "group";
+                groupId: string;
+                profileId?: string | undefined;
+            } | {
+                source: "connected";
+                selection: "profile";
+                profileId: string;
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "direct";
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "brokered";
+                disclosedMember?: undefined;
+            }>;
+        } | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
+        terminal?: {
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+            tmux?: {
+                sessionName?: string | undefined;
+                isolated?: boolean | undefined;
+                tmpDir?: string | null | undefined;
+            } | undefined;
+            herdr?: {
+                sessionName?: string | undefined;
+            } | undefined;
+            windows?: {
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
+                windowName?: string | undefined;
+            } | undefined;
+        } | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+        windowsTerminalWindowName?: string | null | undefined;
+        runtimeDescriptorV1?: {
+            v: 1;
+            agentId: string;
+            agent: {
+                backendMode: string;
+                home?: "user" | "connectedService" | undefined;
+                connectedServiceId?: string | undefined;
+                connectedServiceProfileId?: string | undefined;
+                connectedServiceGroupId?: string | undefined;
+            };
+        } | null | undefined;
+        conversation?: {
+            kind: "shared_run";
+        } | {
+            kind: "fresh";
+        } | {
+            kind: "origin_session";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "existing_session";
+            sessionId: string;
+            machineId: string;
+        } | undefined;
+        workspace?: {
+            kind: "inherit";
+        } | {
+            kind: "project_checkout";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "new_worktree";
+            source: {
+                kind: "original";
+            } | {
+                kind: "workflow";
+            } | {
+                kind: "step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            };
+        } | undefined;
+        engine?: {
+            role: string;
+        } | {
+            agentTarget: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            };
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            effort?: string | undefined;
+        } | undefined;
+        executionTarget?: {
+            kind: "session";
+        } | {
+            kind: "detached_run";
+        } | undefined;
+    } | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+} | Readonly<{
+    kind: "parallel";
+    id: string;
+    branches: readonly Readonly<{
+        id: string;
+        blocks: readonly PluginActionWorkflowBlockV1<true>[];
+    }>[];
+    failurePolicy: "fail_stop" | "collect_outcomes";
+    maxConcurrent?: number | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+}> | Readonly<{
+    kind: "loop";
+    id: string;
+    body: readonly PluginActionWorkflowBlockV1<true>[];
+    repetition: PluginActionWorkflowRepetitionV1<true>;
+    onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+}> | Readonly<{
+    kind: "if";
+    id: string;
+    when: PluginActionWorkflowConditionV1<true>;
+    then: readonly PluginActionWorkflowBlockV1<true>[];
+    otherwise: readonly PluginActionWorkflowBlockV1<true>[];
+}> : {
+    kind: "step";
+    id: string;
     document: {
         text: string;
         references: {
@@ -1617,24 +2016,24 @@ export type PluginActionWorkflowBlockV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
-                tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
             };
         }[];
     };
-    id: string;
-    result?: {
-        kind: 'decision';
+    input: PluginActionWorkflowValueReferenceV1[];
+    result: {
+        kind: "decision";
         decisions: string[];
     } | {
-        kind: 'text';
+        kind: "text";
     } | {
-        kind: 'json';
+        kind: "json";
         schema: PluginJsonSchemaV2;
-    } | undefined;
+    };
     execution?: {
         agentTarget?: {
-            kind: 'agent';
+            kind: "agent";
             identity: {
                 pluginId: string;
                 localId: string;
@@ -1675,20 +2074,20 @@ export type PluginActionWorkflowBlockV1 = {
         connectedServices?: {
             v: 2;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: "native";
             } | {
-                source: 'connected';
-                selection: 'group';
+                source: "connected";
+                selection: "group";
                 groupId: string;
                 profileId?: string | undefined;
             } | {
-                source: 'connected';
-                selection: 'profile';
+                source: "connected";
+                selection: "profile";
                 profileId: string;
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'direct';
+                deliveryMode: "direct";
                 disclosedMember: {
                     service: {
                         pluginId: string;
@@ -1697,15 +2096,15 @@ export type PluginActionWorkflowBlockV1 = {
                     accountId: string;
                 };
             } | {
-                source: 'team_resource';
+                source: "team_resource";
                 resourceId: string;
-                deliveryMode: 'brokered';
+                deliveryMode: "brokered";
                 disclosedMember?: undefined;
             }>;
         } | null | undefined;
-        transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
         terminal?: {
-            mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
             tmux?: {
                 sessionName?: string | undefined;
                 isolated?: boolean | undefined;
@@ -1715,85 +2114,85 @@ export type PluginActionWorkflowBlockV1 = {
                 sessionName?: string | undefined;
             } | undefined;
             windows?: {
-                launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                console?: 'visible' | 'hidden' | undefined;
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
                 windowName?: string | undefined;
             } | undefined;
         } | null | undefined;
-        windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-        windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
         windowsTerminalWindowName?: string | null | undefined;
         runtimeDescriptorV1?: {
             v: 1;
             agentId: string;
             agent: {
                 backendMode: string;
-                home?: 'user' | 'connectedService' | undefined;
+                home?: "user" | "connectedService" | undefined;
                 connectedServiceId?: string | undefined;
                 connectedServiceProfileId?: string | undefined;
                 connectedServiceGroupId?: string | undefined;
             };
         } | null | undefined;
         conversation?: {
-            kind: 'shared_run';
+            kind: "shared_run";
         } | {
-            kind: 'fresh';
+            kind: "fresh";
         } | {
-            kind: 'origin_session';
+            kind: "origin_session";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'existing_session';
+            kind: "existing_session";
             sessionId: string;
             machineId: string;
         } | undefined;
         workspace?: {
-            kind: 'inherit';
+            kind: "inherit";
         } | {
-            kind: 'project_checkout';
+            kind: "project_checkout";
         } | {
-            kind: 'from_step';
+            kind: "from_step";
             producer: {
                 blockId: string;
                 scope: {
-                    kind: 'current';
+                    kind: "current";
                 } | {
-                    kind: 'previous_iteration';
+                    kind: "previous_iteration";
                     loopBlockId: string;
                 } | {
-                    kind: 'outer';
+                    kind: "outer";
                     levels: number;
                 };
             };
         } | {
-            kind: 'new_worktree';
+            kind: "new_worktree";
             source: {
-                kind: 'original';
+                kind: "original";
             } | {
-                kind: 'workflow';
+                kind: "workflow";
             } | {
-                kind: 'step';
+                kind: "step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
@@ -1803,7 +2202,7 @@ export type PluginActionWorkflowBlockV1 = {
             role: string;
         } | {
             agentTarget: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -1825,59 +2224,1194 @@ export type PluginActionWorkflowBlockV1 = {
             effort?: string | undefined;
         } | undefined;
         executionTarget?: {
-            kind: 'session';
+            kind: "session";
         } | {
-            kind: 'detached_run';
+            kind: "detached_run";
+        } | undefined;
+    } | undefined;
+    timeoutMs?: number | undefined;
+    pauseForReview?: boolean | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+} | {
+    kind: "action";
+    actionId: string;
+    input: Record<string, PluginActionWorkflowValueReferenceV1 | {
+        kind: "origin_session_id";
+    } | {
+        kind: "list";
+        items: (PluginActionWorkflowValueReferenceV1 | {
+            kind: "origin_session_id";
+        })[];
+    }>;
+    id: string;
+    timeoutMs?: number | undefined;
+    pauseForReview?: boolean | undefined;
+    execution?: {
+        agentTarget?: {
+            kind: "agent";
+            identity: {
+                pluginId: string;
+                localId: string;
+            };
+        } | null | undefined;
+        modelSelection?: {
+            v: 1;
+            ref: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
+        } | null | undefined;
+        profileId?: string | null | undefined;
+        permissionMode?: string | null | undefined;
+        acpSessionModeId?: string | null | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | null | undefined;
+        mcpSelection?: {
+            forceIncludeServerIds: string[];
+            forceExcludeServerIds: string[];
+            v: 1;
+            managedServersEnabled: boolean;
+        } | null | undefined;
+        connectedServices?: {
+            v: 2;
+            bindingsByServiceId: Record<string, {
+                source: "native";
+            } | {
+                source: "connected";
+                selection: "group";
+                groupId: string;
+                profileId?: string | undefined;
+            } | {
+                source: "connected";
+                selection: "profile";
+                profileId: string;
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "direct";
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "brokered";
+                disclosedMember?: undefined;
+            }>;
+        } | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
+        terminal?: {
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+            tmux?: {
+                sessionName?: string | undefined;
+                isolated?: boolean | undefined;
+                tmpDir?: string | null | undefined;
+            } | undefined;
+            herdr?: {
+                sessionName?: string | undefined;
+            } | undefined;
+            windows?: {
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
+                windowName?: string | undefined;
+            } | undefined;
+        } | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+        windowsTerminalWindowName?: string | null | undefined;
+        runtimeDescriptorV1?: {
+            v: 1;
+            agentId: string;
+            agent: {
+                backendMode: string;
+                home?: "user" | "connectedService" | undefined;
+                connectedServiceId?: string | undefined;
+                connectedServiceProfileId?: string | undefined;
+                connectedServiceGroupId?: string | undefined;
+            };
+        } | null | undefined;
+        conversation?: {
+            kind: "shared_run";
+        } | {
+            kind: "fresh";
+        } | {
+            kind: "origin_session";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "existing_session";
+            sessionId: string;
+            machineId: string;
+        } | undefined;
+        workspace?: {
+            kind: "inherit";
+        } | {
+            kind: "project_checkout";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "new_worktree";
+            source: {
+                kind: "original";
+            } | {
+                kind: "workflow";
+            } | {
+                kind: "step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            };
+        } | undefined;
+        engine?: {
+            role: string;
+        } | {
+            agentTarget: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            };
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            effort?: string | undefined;
+        } | undefined;
+        executionTarget?: {
+            kind: "session";
+        } | {
+            kind: "detached_run";
+        } | undefined;
+    } | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+} | {
+    kind: "workflow";
+    workflowRef: string;
+    input: Record<string, PluginActionWorkflowValueReferenceV1>;
+    id: string;
+    execution?: {
+        agentTarget?: {
+            kind: "agent";
+            identity: {
+                pluginId: string;
+                localId: string;
+            };
+        } | null | undefined;
+        modelSelection?: {
+            v: 1;
+            ref: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
+        } | null | undefined;
+        profileId?: string | null | undefined;
+        permissionMode?: string | null | undefined;
+        acpSessionModeId?: string | null | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | null | undefined;
+        mcpSelection?: {
+            forceIncludeServerIds: string[];
+            forceExcludeServerIds: string[];
+            v: 1;
+            managedServersEnabled: boolean;
+        } | null | undefined;
+        connectedServices?: {
+            v: 2;
+            bindingsByServiceId: Record<string, {
+                source: "native";
+            } | {
+                source: "connected";
+                selection: "group";
+                groupId: string;
+                profileId?: string | undefined;
+            } | {
+                source: "connected";
+                selection: "profile";
+                profileId: string;
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "direct";
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "brokered";
+                disclosedMember?: undefined;
+            }>;
+        } | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
+        terminal?: {
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+            tmux?: {
+                sessionName?: string | undefined;
+                isolated?: boolean | undefined;
+                tmpDir?: string | null | undefined;
+            } | undefined;
+            herdr?: {
+                sessionName?: string | undefined;
+            } | undefined;
+            windows?: {
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
+                windowName?: string | undefined;
+            } | undefined;
+        } | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+        windowsTerminalWindowName?: string | null | undefined;
+        runtimeDescriptorV1?: {
+            v: 1;
+            agentId: string;
+            agent: {
+                backendMode: string;
+                home?: "user" | "connectedService" | undefined;
+                connectedServiceId?: string | undefined;
+                connectedServiceProfileId?: string | undefined;
+                connectedServiceGroupId?: string | undefined;
+            };
+        } | null | undefined;
+        conversation?: {
+            kind: "shared_run";
+        } | {
+            kind: "fresh";
+        } | {
+            kind: "origin_session";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "existing_session";
+            sessionId: string;
+            machineId: string;
+        } | undefined;
+        workspace?: {
+            kind: "inherit";
+        } | {
+            kind: "project_checkout";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "new_worktree";
+            source: {
+                kind: "original";
+            } | {
+                kind: "workflow";
+            } | {
+                kind: "step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            };
+        } | undefined;
+        engine?: {
+            role: string;
+        } | {
+            agentTarget: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            };
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            effort?: string | undefined;
+        } | undefined;
+        executionTarget?: {
+            kind: "session";
+        } | {
+            kind: "detached_run";
+        } | undefined;
+    } | undefined;
+    onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
+} | {
+    kind: "wait";
+    document: {
+        text: string;
+        references: {
+            [x: string]: unknown;
+            kind: string;
+            ref: string;
+            token: string;
+            label?: string | undefined;
+        }[];
+        attachments: {
+            v: 1;
+            instanceId: string;
+            attachment: {
+                pluginId: string;
+                localId: string;
+            };
+            key: string;
+            value: PluginJsonValueV2;
+            presentation: {
+                label: string;
+                typeLabel: string;
+                description?: string | undefined;
+                icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
+            };
+        }[];
+    };
+    id: string;
+    result?: {
+        kind: "decision";
+        decisions: string[];
+    } | {
+        kind: "text";
+    } | {
+        kind: "json";
+        schema: PluginJsonSchemaV2;
+    } | undefined;
+    execution?: {
+        agentTarget?: {
+            kind: "agent";
+            identity: {
+                pluginId: string;
+                localId: string;
+            };
+        } | null | undefined;
+        modelSelection?: {
+            v: 1;
+            ref: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
+        } | null | undefined;
+        profileId?: string | null | undefined;
+        permissionMode?: string | null | undefined;
+        acpSessionModeId?: string | null | undefined;
+        sessionConfigOptionOverrides?: {
+            [x: string]: unknown;
+            v: 1;
+            updatedAt: number;
+            overrides: Record<string, {
+                [x: string]: unknown;
+                updatedAt: number;
+                value: string | number | boolean | null;
+            }>;
+        } | null | undefined;
+        mcpSelection?: {
+            forceIncludeServerIds: string[];
+            forceExcludeServerIds: string[];
+            v: 1;
+            managedServersEnabled: boolean;
+        } | null | undefined;
+        connectedServices?: {
+            v: 2;
+            bindingsByServiceId: Record<string, {
+                source: "native";
+            } | {
+                source: "connected";
+                selection: "group";
+                groupId: string;
+                profileId?: string | undefined;
+            } | {
+                source: "connected";
+                selection: "profile";
+                profileId: string;
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "direct";
+                disclosedMember: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                source: "team_resource";
+                resourceId: string;
+                deliveryMode: "brokered";
+                disclosedMember?: undefined;
+            }>;
+        } | null | undefined;
+        transcriptStorage?: "persisted" | "direct" | null | undefined;
+        terminal?: {
+            mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+            tmux?: {
+                sessionName?: string | undefined;
+                isolated?: boolean | undefined;
+                tmpDir?: string | null | undefined;
+            } | undefined;
+            herdr?: {
+                sessionName?: string | undefined;
+            } | undefined;
+            windows?: {
+                launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                console?: "visible" | "hidden" | undefined;
+                windowName?: string | undefined;
+            } | undefined;
+        } | null | undefined;
+        windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+        windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+        windowsTerminalWindowName?: string | null | undefined;
+        runtimeDescriptorV1?: {
+            v: 1;
+            agentId: string;
+            agent: {
+                backendMode: string;
+                home?: "user" | "connectedService" | undefined;
+                connectedServiceId?: string | undefined;
+                connectedServiceProfileId?: string | undefined;
+                connectedServiceGroupId?: string | undefined;
+            };
+        } | null | undefined;
+        conversation?: {
+            kind: "shared_run";
+        } | {
+            kind: "fresh";
+        } | {
+            kind: "origin_session";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "existing_session";
+            sessionId: string;
+            machineId: string;
+        } | undefined;
+        workspace?: {
+            kind: "inherit";
+        } | {
+            kind: "project_checkout";
+        } | {
+            kind: "from_step";
+            producer: {
+                blockId: string;
+                scope: {
+                    kind: "current";
+                } | {
+                    kind: "previous_iteration";
+                    loopBlockId: string;
+                } | {
+                    kind: "outer";
+                    levels: number;
+                };
+            };
+        } | {
+            kind: "new_worktree";
+            source: {
+                kind: "original";
+            } | {
+                kind: "workflow";
+            } | {
+                kind: "step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            };
+        } | undefined;
+        engine?: {
+            role: string;
+        } | {
+            agentTarget: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            };
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            effort?: string | undefined;
+        } | undefined;
+        executionTarget?: {
+            kind: "session";
+        } | {
+            kind: "detached_run";
         } | undefined;
     } | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
 } | Readonly<{
-    kind: 'parallel';
+    kind: "parallel";
     id: string;
     branches: readonly Readonly<{
         id: string;
         blocks: readonly PluginActionWorkflowBlockV1[];
     }>[];
-    failurePolicy: 'fail_stop' | 'collect_outcomes';
+    failurePolicy: "fail_stop" | "collect_outcomes";
     maxConcurrent?: number | undefined;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
 }> | Readonly<{
-    kind: 'loop';
+    kind: "loop";
     id: string;
     body: readonly PluginActionWorkflowBlockV1[];
     repetition: PluginActionWorkflowRepetitionV1;
     onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
 }> | Readonly<{
-    kind: 'if';
+    kind: "if";
     id: string;
     when: PluginActionWorkflowConditionV1;
     then: readonly PluginActionWorkflowBlockV1[];
     otherwise: readonly PluginActionWorkflowBlockV1[];
 }>;
-export type PluginActionWorkflowRepetitionV1 = Readonly<{
-    kind: 'count';
-    count: PluginActionWorkflowValueReferenceV1;
+export type PluginActionWorkflowRepetitionV1<Input extends boolean = false> = Input extends true ? Readonly<{
+    kind: "count";
+    count: PluginActionWorkflowValueReferenceV1<true>;
 }> | Readonly<{
-    kind: 'items';
-    items: PluginActionWorkflowValueReferenceV1;
-    execution: 'sequential' | 'parallel';
-    failurePolicy: 'fail_stop' | 'collect_outcomes';
+    kind: "items";
+    items: PluginActionWorkflowValueReferenceV1<true>;
+    execution: "sequential" | "parallel";
+    failurePolicy: "fail_stop" | "collect_outcomes";
     maxConcurrent?: number | undefined;
 }> | Readonly<{
-    kind: 'until';
+    kind: "until";
     maxIterations: number | {
-        kind: 'input';
+        kind: "input";
+        name: string;
+    };
+    stopWhen: PluginActionWorkflowConditionV1<true>;
+}> | Readonly<{
+    kind: "evaluate";
+    maxIterations: number | {
+        kind: "input";
+        name: string;
+    };
+    evaluator: {
+        kind: "step";
+        id: string;
+        document: {
+            text: string;
+            references: {
+                [x: string]: unknown;
+                kind: string;
+                ref: string;
+                token: string;
+                label?: string | undefined;
+            }[];
+            attachments: {
+                v: 1;
+                instanceId: string;
+                attachment: {
+                    pluginId: string;
+                    localId: string;
+                };
+                key: string;
+                value: JsonValue;
+                presentation: {
+                    label: string;
+                    typeLabel: string;
+                    description?: string | undefined;
+                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                    tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
+                };
+            }[];
+        };
+        input: PluginActionWorkflowValueReferenceV1<true>[];
+        result: {
+            kind: "decision";
+            decisions: string[];
+        } | {
+            kind: "text";
+        } | {
+            kind: "json";
+            schema: PluginJsonSchemaV2<true>;
+        };
+        execution?: {
+            agentTarget?: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | null | undefined;
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            profileId?: string | null | undefined;
+            permissionMode?: string | null | undefined;
+            acpSessionModeId?: string | null | undefined;
+            sessionConfigOptionOverrides?: {
+                [x: string]: unknown;
+                v: 1;
+                updatedAt: number;
+                overrides: Record<string, {
+                    [x: string]: unknown;
+                    updatedAt: number;
+                    value: string | number | boolean | null;
+                }>;
+            } | null | undefined;
+            mcpSelection?: {
+                forceIncludeServerIds: string[];
+                forceExcludeServerIds: string[];
+                v: 1;
+                managedServersEnabled: boolean;
+            } | null | undefined;
+            connectedServices?: {
+                v: 2;
+                bindingsByServiceId: Record<string, {
+                    source: "native";
+                } | {
+                    source: "connected";
+                    selection: "group";
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: "connected";
+                    selection: "profile";
+                    profileId: string;
+                } | {
+                    source: "team_resource";
+                    resourceId: string;
+                    deliveryMode: "direct";
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: "team_resource";
+                    resourceId: string;
+                    deliveryMode: "brokered";
+                    disclosedMember?: undefined;
+                }>;
+            } | null | undefined;
+            transcriptStorage?: "persisted" | "direct" | null | undefined;
+            terminal?: {
+                mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+                tmux?: {
+                    sessionName?: string | undefined;
+                    isolated?: boolean | undefined;
+                    tmpDir?: string | null | undefined;
+                } | undefined;
+                herdr?: {
+                    sessionName?: string | undefined;
+                } | undefined;
+                windows?: {
+                    launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                    console?: "visible" | "hidden" | undefined;
+                    windowName?: string | undefined;
+                } | undefined;
+            } | null | undefined;
+            windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+            windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+            windowsTerminalWindowName?: string | null | undefined;
+            runtimeDescriptorV1?: {
+                v: 1;
+                agentId: string;
+                agent: {
+                    backendMode: string;
+                    home?: "user" | "connectedService" | undefined;
+                    connectedServiceId?: string | undefined;
+                    connectedServiceProfileId?: string | undefined;
+                    connectedServiceGroupId?: string | undefined;
+                };
+            } | null | undefined;
+            conversation?: {
+                kind: "shared_run";
+            } | {
+                kind: "fresh";
+            } | {
+                kind: "origin_session";
+            } | {
+                kind: "from_step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            } | {
+                kind: "existing_session";
+                sessionId: string;
+                machineId: string;
+            } | undefined;
+            workspace?: {
+                kind: "inherit";
+            } | {
+                kind: "project_checkout";
+            } | {
+                kind: "from_step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            } | {
+                kind: "new_worktree";
+                source: {
+                    kind: "original";
+                } | {
+                    kind: "workflow";
+                } | {
+                    kind: "step";
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: "current";
+                        } | {
+                            kind: "previous_iteration";
+                            loopBlockId: string;
+                        } | {
+                            kind: "outer";
+                            levels: number;
+                        };
+                    };
+                };
+            } | undefined;
+            engine?: {
+                role: string;
+            } | {
+                agentTarget: {
+                    kind: "agent";
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                modelSelection?: {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                } | null | undefined;
+                effort?: string | undefined;
+            } | undefined;
+            executionTarget?: {
+                kind: "session";
+            } | {
+                kind: "detached_run";
+            } | undefined;
+        } | undefined;
+        timeoutMs?: number | undefined;
+        pauseForReview?: boolean | undefined;
+        onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    } | {
+        kind: "action";
+        actionId: string;
+        input: Record<string, PluginActionWorkflowValueReferenceV1<true> | {
+            kind: "origin_session_id";
+        } | {
+            kind: "list";
+            items: (PluginActionWorkflowValueReferenceV1<true> | {
+                kind: "origin_session_id";
+            })[];
+        }>;
+        id: string;
+        timeoutMs?: number | undefined;
+        pauseForReview?: boolean | undefined;
+        execution?: {
+            agentTarget?: {
+                kind: "agent";
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+            } | null | undefined;
+            modelSelection?: {
+                v: 1;
+                ref: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                updatedAt: number;
+            } | null | undefined;
+            profileId?: string | null | undefined;
+            permissionMode?: string | null | undefined;
+            acpSessionModeId?: string | null | undefined;
+            sessionConfigOptionOverrides?: {
+                [x: string]: unknown;
+                v: 1;
+                updatedAt: number;
+                overrides: Record<string, {
+                    [x: string]: unknown;
+                    updatedAt: number;
+                    value: string | number | boolean | null;
+                }>;
+            } | null | undefined;
+            mcpSelection?: {
+                forceIncludeServerIds: string[];
+                forceExcludeServerIds: string[];
+                v: 1;
+                managedServersEnabled: boolean;
+            } | null | undefined;
+            connectedServices?: {
+                v: 2;
+                bindingsByServiceId: Record<string, {
+                    source: "native";
+                } | {
+                    source: "connected";
+                    selection: "group";
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: "connected";
+                    selection: "profile";
+                    profileId: string;
+                } | {
+                    source: "team_resource";
+                    resourceId: string;
+                    deliveryMode: "direct";
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: "team_resource";
+                    resourceId: string;
+                    deliveryMode: "brokered";
+                    disclosedMember?: undefined;
+                }>;
+            } | null | undefined;
+            transcriptStorage?: "persisted" | "direct" | null | undefined;
+            terminal?: {
+                mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
+                tmux?: {
+                    sessionName?: string | undefined;
+                    isolated?: boolean | undefined;
+                    tmpDir?: string | null | undefined;
+                } | undefined;
+                herdr?: {
+                    sessionName?: string | undefined;
+                } | undefined;
+                windows?: {
+                    launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                    console?: "visible" | "hidden" | undefined;
+                    windowName?: string | undefined;
+                } | undefined;
+            } | null | undefined;
+            windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+            windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
+            windowsTerminalWindowName?: string | null | undefined;
+            runtimeDescriptorV1?: {
+                v: 1;
+                agentId: string;
+                agent: {
+                    backendMode: string;
+                    home?: "user" | "connectedService" | undefined;
+                    connectedServiceId?: string | undefined;
+                    connectedServiceProfileId?: string | undefined;
+                    connectedServiceGroupId?: string | undefined;
+                };
+            } | null | undefined;
+            conversation?: {
+                kind: "shared_run";
+            } | {
+                kind: "fresh";
+            } | {
+                kind: "origin_session";
+            } | {
+                kind: "from_step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            } | {
+                kind: "existing_session";
+                sessionId: string;
+                machineId: string;
+            } | undefined;
+            workspace?: {
+                kind: "inherit";
+            } | {
+                kind: "project_checkout";
+            } | {
+                kind: "from_step";
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: "current";
+                    } | {
+                        kind: "previous_iteration";
+                        loopBlockId: string;
+                    } | {
+                        kind: "outer";
+                        levels: number;
+                    };
+                };
+            } | {
+                kind: "new_worktree";
+                source: {
+                    kind: "original";
+                } | {
+                    kind: "workflow";
+                } | {
+                    kind: "step";
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: "current";
+                        } | {
+                            kind: "previous_iteration";
+                            loopBlockId: string;
+                        } | {
+                            kind: "outer";
+                            levels: number;
+                        };
+                    };
+                };
+            } | undefined;
+            engine?: {
+                role: string;
+            } | {
+                agentTarget: {
+                    kind: "agent";
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                modelSelection?: {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                } | null | undefined;
+                effort?: string | undefined;
+            } | undefined;
+            executionTarget?: {
+                kind: "session";
+            } | {
+                kind: "detached_run";
+            } | undefined;
+        } | undefined;
+        onlyWhen?: PluginActionWorkflowConditionV1<true> | undefined;
+    };
+    history: "all" | "none" | "latest";
+}> : Readonly<{
+    kind: "count";
+    count: PluginActionWorkflowValueReferenceV1;
+}> | Readonly<{
+    kind: "items";
+    items: PluginActionWorkflowValueReferenceV1;
+    execution: "sequential" | "parallel";
+    failurePolicy: "fail_stop" | "collect_outcomes";
+    maxConcurrent?: number | undefined;
+}> | Readonly<{
+    kind: "until";
+    maxIterations: number | {
+        kind: "input";
         name: string;
     };
     stopWhen: PluginActionWorkflowConditionV1;
 }> | Readonly<{
-    kind: 'evaluate';
+    kind: "evaluate";
     maxIterations: number | {
-        kind: 'input';
+        kind: "input";
         name: string;
     };
     evaluator: {
-        kind: 'step';
+        kind: "step";
         id: string;
         document: {
             text: string;
@@ -1901,24 +3435,24 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
-                    tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
+                    icon?: "error" | "check" | "file" | "external" | "search" | "settings" | "action" | "terminal" | "browser" | "copy" | "globe" | "info" | "preview" | "refresh" | "warning" | "add" | "back" | "close" | "forward" | "more" | "change-open" | "change-complete" | "issue" | "bug" | "pin" | "conversations" | "waveform" | "desktop" | "pause" | "failure" | "unavailable" | "denied" | undefined;
+                    tone?: "success" | "danger" | "info" | "warning" | "neutral" | undefined;
                 };
             }[];
         };
         input: PluginActionWorkflowValueReferenceV1[];
         result: {
-            kind: 'decision';
+            kind: "decision";
             decisions: string[];
         } | {
-            kind: 'text';
+            kind: "text";
         } | {
-            kind: 'json';
+            kind: "json";
             schema: PluginJsonSchemaV2;
         };
         execution?: {
             agentTarget?: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -1959,20 +3493,20 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
             connectedServices?: {
                 v: 2;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: "native";
                 } | {
-                    source: 'connected';
-                    selection: 'group';
+                    source: "connected";
+                    selection: "group";
                     groupId: string;
                     profileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    selection: 'profile';
+                    source: "connected";
+                    selection: "profile";
                     profileId: string;
                 } | {
-                    source: 'team_resource';
+                    source: "team_resource";
                     resourceId: string;
-                    deliveryMode: 'direct';
+                    deliveryMode: "direct";
                     disclosedMember: {
                         service: {
                             pluginId: string;
@@ -1981,15 +3515,15 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                         accountId: string;
                     };
                 } | {
-                    source: 'team_resource';
+                    source: "team_resource";
                     resourceId: string;
-                    deliveryMode: 'brokered';
+                    deliveryMode: "brokered";
                     disclosedMember?: undefined;
                 }>;
             } | null | undefined;
-            transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+            transcriptStorage?: "persisted" | "direct" | null | undefined;
             terminal?: {
-                mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
                 tmux?: {
                     sessionName?: string | undefined;
                     isolated?: boolean | undefined;
@@ -1999,85 +3533,85 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     sessionName?: string | undefined;
                 } | undefined;
                 windows?: {
-                    launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                    console?: 'visible' | 'hidden' | undefined;
+                    launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                    console?: "visible" | "hidden" | undefined;
                     windowName?: string | undefined;
                 } | undefined;
             } | null | undefined;
-            windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-            windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+            windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+            windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
             windowsTerminalWindowName?: string | null | undefined;
             runtimeDescriptorV1?: {
                 v: 1;
                 agentId: string;
                 agent: {
                     backendMode: string;
-                    home?: 'user' | 'connectedService' | undefined;
+                    home?: "user" | "connectedService" | undefined;
                     connectedServiceId?: string | undefined;
                     connectedServiceProfileId?: string | undefined;
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
             conversation?: {
-                kind: 'shared_run';
+                kind: "shared_run";
             } | {
-                kind: 'fresh';
+                kind: "fresh";
             } | {
-                kind: 'origin_session';
+                kind: "origin_session";
             } | {
-                kind: 'from_step';
+                kind: "from_step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
             } | {
-                kind: 'existing_session';
+                kind: "existing_session";
                 sessionId: string;
                 machineId: string;
             } | undefined;
             workspace?: {
-                kind: 'inherit';
+                kind: "inherit";
             } | {
-                kind: 'project_checkout';
+                kind: "project_checkout";
             } | {
-                kind: 'from_step';
+                kind: "from_step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
             } | {
-                kind: 'new_worktree';
+                kind: "new_worktree";
                 source: {
-                    kind: 'original';
+                    kind: "original";
                 } | {
-                    kind: 'workflow';
+                    kind: "workflow";
                 } | {
-                    kind: 'step';
+                    kind: "step";
                     producer: {
                         blockId: string;
                         scope: {
-                            kind: 'current';
+                            kind: "current";
                         } | {
-                            kind: 'previous_iteration';
+                            kind: "previous_iteration";
                             loopBlockId: string;
                         } | {
-                            kind: 'outer';
+                            kind: "outer";
                             levels: number;
                         };
                     };
@@ -2087,7 +3621,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                 role: string;
             } | {
                 agentTarget: {
-                    kind: 'agent';
+                    kind: "agent";
                     identity: {
                         pluginId: string;
                         localId: string;
@@ -2109,23 +3643,23 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                 effort?: string | undefined;
             } | undefined;
             executionTarget?: {
-                kind: 'session';
+                kind: "session";
             } | {
-                kind: 'detached_run';
+                kind: "detached_run";
             } | undefined;
         } | undefined;
         timeoutMs?: number | undefined;
         pauseForReview?: boolean | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
     } | {
-        kind: 'action';
+        kind: "action";
         actionId: string;
         input: Record<string, PluginActionWorkflowValueReferenceV1 | {
-            kind: 'origin_session_id';
+            kind: "origin_session_id";
         } | {
-            kind: 'list';
+            kind: "list";
             items: (PluginActionWorkflowValueReferenceV1 | {
-                kind: 'origin_session_id';
+                kind: "origin_session_id";
             })[];
         }>;
         id: string;
@@ -2133,7 +3667,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
         pauseForReview?: boolean | undefined;
         execution?: {
             agentTarget?: {
-                kind: 'agent';
+                kind: "agent";
                 identity: {
                     pluginId: string;
                     localId: string;
@@ -2174,20 +3708,20 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
             connectedServices?: {
                 v: 2;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: "native";
                 } | {
-                    source: 'connected';
-                    selection: 'group';
+                    source: "connected";
+                    selection: "group";
                     groupId: string;
                     profileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    selection: 'profile';
+                    source: "connected";
+                    selection: "profile";
                     profileId: string;
                 } | {
-                    source: 'team_resource';
+                    source: "team_resource";
                     resourceId: string;
-                    deliveryMode: 'direct';
+                    deliveryMode: "direct";
                     disclosedMember: {
                         service: {
                             pluginId: string;
@@ -2196,15 +3730,15 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                         accountId: string;
                     };
                 } | {
-                    source: 'team_resource';
+                    source: "team_resource";
                     resourceId: string;
-                    deliveryMode: 'brokered';
+                    deliveryMode: "brokered";
                     disclosedMember?: undefined;
                 }>;
             } | null | undefined;
-            transcriptStorage?: 'persisted' | 'direct' | null | undefined;
+            transcriptStorage?: "persisted" | "direct" | null | undefined;
             terminal?: {
-                mode?: 'tmux' | 'integrated' | 'plain' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                mode?: "tmux" | "integrated" | "plain" | "zellij" | "herdr" | "windows_terminal" | "windows_console" | undefined;
                 tmux?: {
                     sessionName?: string | undefined;
                     isolated?: boolean | undefined;
@@ -2214,85 +3748,85 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                     sessionName?: string | undefined;
                 } | undefined;
                 windows?: {
-                    launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
-                    console?: 'visible' | 'hidden' | undefined;
+                    launchMode?: "windows_terminal" | "hidden" | "console" | undefined;
+                    console?: "visible" | "hidden" | undefined;
                     windowName?: string | undefined;
                 } | undefined;
             } | null | undefined;
-            windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
-            windowsRemoteSessionConsole?: 'visible' | 'hidden' | null | undefined;
+            windowsRemoteSessionLaunchMode?: "windows_terminal" | "hidden" | "console" | null | undefined;
+            windowsRemoteSessionConsole?: "visible" | "hidden" | null | undefined;
             windowsTerminalWindowName?: string | null | undefined;
             runtimeDescriptorV1?: {
                 v: 1;
                 agentId: string;
                 agent: {
                     backendMode: string;
-                    home?: 'user' | 'connectedService' | undefined;
+                    home?: "user" | "connectedService" | undefined;
                     connectedServiceId?: string | undefined;
                     connectedServiceProfileId?: string | undefined;
                     connectedServiceGroupId?: string | undefined;
                 };
             } | null | undefined;
             conversation?: {
-                kind: 'shared_run';
+                kind: "shared_run";
             } | {
-                kind: 'fresh';
+                kind: "fresh";
             } | {
-                kind: 'origin_session';
+                kind: "origin_session";
             } | {
-                kind: 'from_step';
+                kind: "from_step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
             } | {
-                kind: 'existing_session';
+                kind: "existing_session";
                 sessionId: string;
                 machineId: string;
             } | undefined;
             workspace?: {
-                kind: 'inherit';
+                kind: "inherit";
             } | {
-                kind: 'project_checkout';
+                kind: "project_checkout";
             } | {
-                kind: 'from_step';
+                kind: "from_step";
                 producer: {
                     blockId: string;
                     scope: {
-                        kind: 'current';
+                        kind: "current";
                     } | {
-                        kind: 'previous_iteration';
+                        kind: "previous_iteration";
                         loopBlockId: string;
                     } | {
-                        kind: 'outer';
+                        kind: "outer";
                         levels: number;
                     };
                 };
             } | {
-                kind: 'new_worktree';
+                kind: "new_worktree";
                 source: {
-                    kind: 'original';
+                    kind: "original";
                 } | {
-                    kind: 'workflow';
+                    kind: "workflow";
                 } | {
-                    kind: 'step';
+                    kind: "step";
                     producer: {
                         blockId: string;
                         scope: {
-                            kind: 'current';
+                            kind: "current";
                         } | {
-                            kind: 'previous_iteration';
+                            kind: "previous_iteration";
                             loopBlockId: string;
                         } | {
-                            kind: 'outer';
+                            kind: "outer";
                             levels: number;
                         };
                     };
@@ -2302,7 +3836,7 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                 role: string;
             } | {
                 agentTarget: {
-                    kind: 'agent';
+                    kind: "agent";
                     identity: {
                         pluginId: string;
                         localId: string;
@@ -2324,14 +3858,14 @@ export type PluginActionWorkflowRepetitionV1 = Readonly<{
                 effort?: string | undefined;
             } | undefined;
             executionTarget?: {
-                kind: 'session';
+                kind: "session";
             } | {
-                kind: 'detached_run';
+                kind: "detached_run";
             } | undefined;
         } | undefined;
         onlyWhen?: PluginActionWorkflowConditionV1 | undefined;
     };
-    history: 'all' | 'none' | 'latest';
+    history: "all" | "none" | "latest";
 }>;
 export type PluginActionWorkflowPortableRuntimeDescriptorV1 = {
     v: 1;
@@ -2640,7 +4174,7 @@ export type PluginActionWorkflowStepV1 = {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -2889,7 +4423,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -3546,7 +5080,7 @@ export type PluginActionWorkflowIngressBlockV1 = string | {
                 label: string;
                 typeLabel: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         }[];
@@ -3940,6 +5474,14 @@ export type EntityDragItemV1 = Readonly<{
     };
     href: string;
 }> | Readonly<{
+    kind: 'navigation-item';
+    scope: {
+        serverId: string;
+        accountId: string;
+    };
+    surfaceId: string;
+    itemId: string;
+}> | Readonly<{
     kind: 'repository-file';
     scope: {
         serverId: string;
@@ -4239,7 +5781,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
 }> | Readonly<{
     kind: 'stack';
     direction?: 'vertical' | 'horizontal' | undefined;
-    gap?: 'medium' | 'small' | 'large' | undefined;
+    gap?: 'small' | 'medium' | 'large' | undefined;
     children: readonly PluginDeclarativeNodeV2[];
 }> | Readonly<{
     kind: 'group';
@@ -4357,7 +5899,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -4389,7 +5931,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -4415,7 +5957,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -4433,7 +5975,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 } | {
     kind: 'section';
     children: ({
@@ -4450,7 +5992,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4468,7 +6010,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -4494,7 +6036,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -4512,7 +6054,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -4529,7 +6071,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -4547,7 +6089,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -4591,7 +6133,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | undefined;
 } | {
     kind: 'metadata';
@@ -4673,7 +6215,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -4705,7 +6247,7 @@ export type PluginDeclarativeNodeV2 = PluginDeclarativeDataNodeV1 | Readonly<{
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -4960,7 +6502,7 @@ export type EntityDragScopeV1 = {
     readonly serverId: string;
     readonly accountId: string;
 };
-export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'widget-area-instance' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
+export type EntityDragKindV1 = 'session' | 'session-folder' | 'session-workspace' | 'workspace-tab' | 'destination' | 'navigation-item' | 'repository-file' | 'session-board-item' | 'work-board-item' | 'work-board-widget' | 'widget-area-instance' | 'companion-item' | 'home-section' | 'pool-member' | 'pending-input' | 'todo' | `plugin:${string}/${string}`;
 export type EntityDropAdmissionV1 = Readonly<{
     status: 'allowed';
     effect: {
@@ -4970,6 +6512,7 @@ export type EntityDropAdmissionV1 = Readonly<{
             verb: string;
             target: string;
             consequence?: string | undefined;
+            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
         };
     };
 }> | Readonly<{
@@ -4982,6 +6525,7 @@ export type EntityDropAdmissionV1 = Readonly<{
         verb: string;
         target: string;
         consequence?: string | undefined;
+        glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
     } | undefined;
 }>;
 export type EntityDropEffectV1 = {
@@ -4991,12 +6535,14 @@ export type EntityDropEffectV1 = {
         verb: string;
         target: string;
         consequence?: string | undefined;
+        glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
     };
 };
 export type EntityDropPreviewV1 = {
     readonly verb: string;
     readonly target: string;
     readonly consequence?: string | undefined;
+    readonly glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
 };
 export type EntityDropReasonV1 = {
     readonly code: string;
@@ -5138,6 +6684,7 @@ export type PluginUiUpdateEntityDragDropResultV1 = {
                     verb: string;
                     target: string;
                     consequence?: string | undefined;
+                    glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
                 };
             };
         } | {
@@ -5150,6 +6697,7 @@ export type PluginUiUpdateEntityDragDropResultV1 = {
                 verb: string;
                 target: string;
                 consequence?: string | undefined;
+                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
             } | undefined;
         };
         destination?: JsonValue | undefined;
@@ -5176,6 +6724,7 @@ export type PluginUiEntityDragDropStateV1 = {
                 verb: string;
                 target: string;
                 consequence?: string | undefined;
+                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
             };
         };
     } | {
@@ -5188,6 +6737,7 @@ export type PluginUiEntityDragDropStateV1 = {
             verb: string;
             target: string;
             consequence?: string | undefined;
+            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
         } | undefined;
     } | null;
     outcome: {
@@ -5216,6 +6766,7 @@ export type PluginUiEntityDragDropStateV1 = {
                     verb: string;
                     target: string;
                     consequence?: string | undefined;
+                    glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
                 };
             };
         } | {
@@ -5228,6 +6779,7 @@ export type PluginUiEntityDragDropStateV1 = {
                 verb: string;
                 target: string;
                 consequence?: string | undefined;
+                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
             } | undefined;
         };
         destination?: JsonValue | undefined;
@@ -5246,6 +6798,7 @@ export type PluginUiEntityDropDestinationV1 = {
                 verb: string;
                 target: string;
                 consequence?: string | undefined;
+                glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
             };
         };
     } | {
@@ -5258,6 +6811,7 @@ export type PluginUiEntityDropDestinationV1 = {
             verb: string;
             target: string;
             consequence?: string | undefined;
+            glyph?: 'split' | 'copy' | 'add' | 'nest' | 'above' | 'below' | 'folder' | 'topLevel' | 'open' | 'tab' | 'goTo' | 'splitVertical' | 'here' | 'attach' | 'upload' | 'move' | 'board' | 'refused' | undefined;
         } | undefined;
     };
     destination?: JsonValue | undefined;
@@ -6235,7 +7789,7 @@ export type SessionAudienceSelectionV1 = Readonly<{
     groupId: string;
 }>;
 export type PluginUiToneV1 = 'success' | 'danger' | 'info' | 'warning' | 'neutral' | 'accent';
-export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied';
+export type PluginUiIconTokenV1 = 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied';
 export type PluginDeclarativeControlV2 = {
     kind: 'text';
     settingId: string;
@@ -6323,7 +7877,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             };
         };
@@ -6355,7 +7909,7 @@ export type PluginDeclarativeComposerApplyEffectV1 = {
             presentation?: {
                 label: string;
                 description?: string | undefined;
-                icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                 tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
             } | undefined;
         };
@@ -6426,7 +7980,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 };
             };
@@ -6458,7 +8012,7 @@ export type PluginDeclarativeActionNodeV2 = {
                 presentation?: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                     tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                 } | undefined;
             };
@@ -6485,7 +8039,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -6503,7 +8057,7 @@ export type PluginDeclarativeRowNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceReferenceV1 = {
     point: {
@@ -6535,7 +8089,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6553,7 +8107,7 @@ export type PluginDeclarativeListNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | {
         kind: 'section';
         children: ({
@@ -6570,7 +8124,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
             tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
             action?: string | {
                 pluginId: string;
@@ -6588,7 +8142,7 @@ export type PluginDeclarativeListNodeV2 = {
                 key: string;
                 fallback: string;
             } | undefined;
-            icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+            icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         })[];
         title?: string | {
             key: string;
@@ -6620,7 +8174,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
         tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
         action?: string | {
             pluginId: string;
@@ -6638,7 +8192,7 @@ export type PluginDeclarativeSectionNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     })[];
     title?: string | {
         key: string;
@@ -6663,7 +8217,7 @@ export type PluginDeclarativeItemNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     tone?: 'success' | 'default' | 'danger' | 'warning' | 'muted' | undefined;
     action?: string | {
         pluginId: string;
@@ -6682,7 +8236,7 @@ export type PluginDeclarativeStateNodeV2 = {
         key: string;
         fallback: string;
     } | undefined;
-    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
 };
 export type PluginDeclarativeTargetedSurfaceNodeV2 = {
     kind: 'targetedSurface';
@@ -6713,7 +8267,7 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
             key: string;
             fallback: string;
         } | undefined;
-        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     } | undefined;
 };
 export type PluginDeclarativeMetadataNodeV2 = {
@@ -6797,7 +8351,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     };
                 };
@@ -6829,7 +8383,7 @@ export type PluginDeclarativeActionPanelNodeV2 = {
                     presentation?: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
                     } | undefined;
                 };
@@ -6929,7 +8483,7 @@ export type ComposerContentMimeTypeV1 = 'image/png' | 'image/jpeg' | 'image/webp
 export type ComposerAttachmentAuthorPresentationV1 = {
     readonly label: string;
     readonly description?: string | undefined;
-    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+    readonly icon?: 'error' | 'check' | 'file' | 'external' | 'search' | 'settings' | 'action' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
     readonly tone?: 'success' | 'danger' | 'info' | 'warning' | 'neutral' | undefined;
 };
 export type PluginLocalizedStringV2 = string | {

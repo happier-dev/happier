@@ -592,7 +592,7 @@ export type SessionLifecycleActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                 };
@@ -926,7 +926,7 @@ export type SessionLifecycleActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'action' | 'file' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
+                        icon?: 'error' | 'check' | 'action' | 'file' | 'external' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | undefined;
                         tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
                     };
                     content?: {
@@ -1019,7 +1019,7 @@ export type SessionLifecycleActionInputById = {
                             side?: 'before' | 'after' | undefined;
                             lineHash?: `lh1:${string}` | undefined;
                         };
-                        status: 'missing' | 'exact' | 'hash' | 'context' | 'ambiguous' | 'stale' | 'unsupported';
+                        status: 'exact' | 'missing' | 'hash' | 'context' | 'ambiguous' | 'stale' | 'unsupported';
                         confidence: number;
                         id?: string | undefined;
                         resolvedAnchor?: {
@@ -1465,7 +1465,7 @@ export type SessionLifecycleActionInputById = {
                         workspaceWrites?: 'allow' | 'deny' | undefined;
                         secondOpinion?: 'off' | 'encouraged' | undefined;
                     })[] | undefined;
-                    blocks: readonly PluginActionWorkflowBlockV1[];
+                    blocks: readonly PluginActionWorkflowBlockV1<true>[];
                     finalOutput?: {
                         kind: 'result';
                         producer: {

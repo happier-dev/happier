@@ -433,7 +433,7 @@ export type ScmDiffSummaryActionResultById = {
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
             turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-            contentConfidence?: 'unavailable' | 'exact' | undefined;
+            contentConfidence?: 'exact' | 'unavailable' | undefined;
             attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
         };
     } | {
@@ -450,7 +450,7 @@ export type ScmDiffSummaryActionResultById = {
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
             turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-            contentConfidence?: 'unavailable' | 'exact' | undefined;
+            contentConfidence?: 'exact' | 'unavailable' | undefined;
             attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
         };
         comparison?: {
@@ -834,7 +834,7 @@ export type ScmDiffSummaryActionResultById = {
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
             turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-            contentConfidence?: 'unavailable' | 'exact' | undefined;
+            contentConfidence?: 'exact' | 'unavailable' | undefined;
             attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
         } | undefined;
         cost?: {
@@ -917,7 +917,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -1301,7 +1301,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -1422,7 +1422,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -1806,7 +1806,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -1927,7 +1927,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -2311,7 +2311,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -2432,7 +2432,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -2816,7 +2816,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -2937,7 +2937,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -3321,7 +3321,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -3480,7 +3480,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -3864,7 +3864,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -3985,7 +3985,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -4369,7 +4369,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -4490,7 +4490,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -4874,7 +4874,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -5010,7 +5010,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -5394,7 +5394,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -5515,7 +5515,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -5899,7 +5899,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {
@@ -6020,7 +6020,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 };
                 comparison?: {
@@ -6404,7 +6404,7 @@ export type ScmDiffSummaryActionResultById = {
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
                     turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'unavailable' | 'exact' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
                     attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
                 } | undefined;
                 cost?: {

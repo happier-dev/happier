@@ -4,6 +4,7 @@ type WorkflowAddTarget = NonNullable<PluginActionInputById['workflow.trigger.add
 type WorkflowUpdateTarget = NonNullable<PluginActionInputById['workflow.trigger.update']['patch']['target']>;
 type SessionAddTarget = PluginActionInputById['session.trigger.add']['target'];
 type SessionUpdateTarget = NonNullable<PluginActionInputById['session.trigger.update']['patch']['target']>;
+type SessionBirthTarget = NonNullable<PluginActionInputById['session.spawn_new']['initialTriggers']>[number]['target'];
 
 const inline = {
   kind: 'inline',
@@ -17,7 +18,8 @@ const workflowAdd: WorkflowAddTarget = inline;
 const workflowUpdate: WorkflowUpdateTarget = inline;
 const sessionAdd: SessionAddTarget = inline;
 const sessionUpdate: SessionUpdateTarget = inline;
-void [workflowAdd, workflowUpdate, sessionAdd, sessionUpdate];
+const sessionBirth: SessionBirthTarget = inline;
+void [workflowAdd, workflowUpdate, sessionAdd, sessionUpdate, sessionBirth];
 
 declare const run: PluginActionResultById['workflow.run.get'];
 // Recovery needs the accepted authored source, not its materialized execution definition.
@@ -35,4 +37,6 @@ const invalidWorkflowUpdate: WorkflowUpdateTarget = invalid;
 const invalidSessionAdd: SessionAddTarget = invalid;
 // @ts-expect-error inline Session trigger update rejects an unknown block kind
 const invalidSessionUpdate: SessionUpdateTarget = invalid;
-void [invalidWorkflowAdd, invalidWorkflowUpdate, invalidSessionAdd, invalidSessionUpdate];
+// @ts-expect-error inline Session birth trigger rejects an unknown block kind
+const invalidSessionBirth: SessionBirthTarget = invalid;
+void [invalidWorkflowAdd, invalidWorkflowUpdate, invalidSessionAdd, invalidSessionUpdate, invalidSessionBirth];
