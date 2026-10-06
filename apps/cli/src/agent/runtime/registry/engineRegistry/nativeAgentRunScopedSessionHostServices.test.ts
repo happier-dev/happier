@@ -1,12 +1,61 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { createNativeAgentExecutionRunHostServices } from './nativeAgentSessionHostServiceOwners';
+import { createAgentNativeHomeReadService } from '@/agent/runtime/nativeHomeFileService';
 
 describe('createNativeAgentExecutionRunHostServices', () => {
+    it('reads native auth and settles a Run-scoped daemon refresh without Session custody', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-run-auth-'));
+        const controller = new AbortController();
+        // Synthetic bytes at the filesystem boundary; no user credential is opened.
+        await writeFile(join(root, 'auth.json'), '{"account":"run-member"}');
+        const daemonRequests: unknown[] = [];
+        const services = createNativeAgentExecutionRunHostServices({
+            signal: controller.signal,
+            executionRunId: 'detached-run',
+            directory: root,
+            machineId: 'machine-1',
+            accountSettings: null,
+            runtimeRegistry: null,
+            pluginId: 'happier.agent.codex',
+            agentId: 'codex',
+            happyHomeDir: root,
+            nativeHome: createAgentNativeHomeReadService({ root, declaredFileIds: ['auth.json'] })!,
+            // The daemon transport is the system boundary; normalization remains real.
+            refreshRuntimeAuthViaDaemon: async (request) => {
+                daemonRequests.push(request);
+                return { status: 'refreshed', result: { accessToken: 'synthetic-fresh', chatgptAccountId: 'run-member' } };
+            },
+        });
+        try {
+            const files = await services.nativeHome!.readFiles(['auth.json']);
+            expect(new TextDecoder().decode(files['auth.json'])).toBe('{"account":"run-member"}');
+            await expect(services.nativeHome!.readFiles(['undeclared.json'])).rejects.toThrow('credential_file_undeclared');
+            await expect(services.auth!.services.refreshRuntimeAuth({
+                serviceId: 'openai-codex',
+                selection: { kind: 'profile', profileId: 'run-member' },
+                expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+                refreshAttemptId: 'attempt-run',
+            })).resolves.toEqual({ status: 'refreshed', result: { accessToken: 'synthetic-fresh', chatgptAccountId: 'run-member' } });
+            expect(daemonRequests).toEqual([expect.objectContaining({
+                refreshAttemptId: 'attempt-run',
+                selection: { kind: 'profile', profileId: 'run-member', serviceId: 'happier.agent.codex/openai-codex' },
+            })]);
+            expect(daemonRequests[0]).not.toHaveProperty('sessionId');
+            controller.abort();
+            await expect(services.auth!.services.refreshRuntimeAuth({ serviceId: 'openai-codex' })).rejects.toThrow();
+            await expect(services.nativeHome!.readFiles(['auth.json'])).rejects.toThrow();
+        } finally {
+            controller.abort();
+            await services.dispose();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('exposes only scope-neutral services and never projects a Run as a Session', async () => {
         const previous = process.env.HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED;
         const controller = new AbortController();
