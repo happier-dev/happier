@@ -98,7 +98,7 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     // would name something none of those ecosystems calls it.
     'secrets.catalog.kinds.token',
 ]);
-// French is the only locale that needs per-(locale, key) exemptions: it shares a large amount of
+// Locale-specific exemptions name exact keys: French shares a large amount of
 // vocabulary with English, so a literal match is frequently the correct French rather than a gap.
 // Three groups, no accidents:
 //   product, provider and preset nouns (Happier, React Native, tmux, GitHub CLI, model ids),
@@ -114,6 +114,9 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // "password" is the ordinary Italian word for it; "parola d'ordine" is not
     // what anyone types into a credential form.
     it: new Set([
+        // Widget/Board cognates and the product surface Home.
+        'boards.widgets.kind',
+        'widgetDefinition.placedOnHome',
         // Widgets (Appearance) and the surfaces a widget sits on: the word these locales use.
         'widgetFrame.surfaceHome',
         // Boards (INT §5.1): the ordinary words these locales use (Board, Canvas, Offline, Online, Workflow, Session(s), Machine(s), Name, Layout).
@@ -143,6 +146,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     ]),
     // "Offline" is the ordinary word in Polish and Portuguese UI copy too.
     pl: new Set([
+        // Agent is the ordinary localized noun for an executable coding Agent.
+        'settingsPlugins.surfaces.kinds.agent',
         // Boards (INT §5.1): the ordinary words these locales use (Board, Canvas, Offline, Online, Workflow, Session(s), Machine(s), Name, Layout).
         'workStatus.buckets.offline',
         'boards.card.machine.online',
@@ -162,6 +167,10 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsSourceControl.page.generator.agentTitle',
     ]),
     pt: new Set([
+        // Widget/Board nouns used unchanged in Portuguese.
+        'widgetAdd.areaProjectTitle',
+        'boards.widgets.group',
+        'boards.widgets.kind',
         // Widgets (Appearance) and the surfaces a widget sits on: the word these locales use.
         'widgetFrame.appearanceTitle',
         // Boards (INT §5.1): the ordinary words these locales use (Board, Canvas, Offline, Online, Workflow, Session(s), Machine(s), Name, Layout).
@@ -185,6 +194,15 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     fr: new Set([
+        // French cognates for coding Agents and the conversations browser.
+        'settingsPlugins.surfaces.kinds.agent',
+        'externalSessions.browseConversations',
+        // Widget/Board cognates and ordinary French nouns.
+        'widgetAdd.areaProjectTitle',
+        'boards.widgets.group',
+        'boards.widgets.kind',
+        'sessionBoard.item.provenance.note',
+        'sessionBoard.companion.summary.untitled',
         // Widgets (Appearance) and the surfaces a widget sits on: the word these locales use.
         'widgetFrame.appearanceTitle',
         // Boards (INT §5.1): the ordinary words these locales use (Board, Canvas, Offline, Online, Workflow, Session(s), Machine(s), Name, Layout).
@@ -551,6 +569,14 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // German noun is spelled. A key here is a decision, not a gap — translating one would make
     // the UI read worse, not better.
     de: new Set([
+        // Agent is the ordinary localized noun for an executable coding Agent.
+        'settingsPlugins.surfaces.kinds.agent',
+        // Widget/Board cognates and the product surface Home.
+        'widgetAdd.areaProjectTitle',
+        'boards.widgets.group',
+        'boards.widgets.kind',
+        'widgetDefinition.placedOnHome',
+        'widgetDefinition.name',
         // Widgets (Appearance) and the surfaces a widget sits on: the word these locales use.
         'widgetFrame.appearanceTitle',
         'widgetFrame.surfaceBoard',
@@ -970,6 +996,10 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     ]),
     // "Personal" is spelled the same in Spanish and Catalan ("Keep it: Personal | Shared").
     es: new Set([
+        // Widget/Board nouns used unchanged in Spanish.
+        'widgetAdd.areaProjectTitle',
+        'boards.widgets.group',
+        'boards.widgets.kind',
         // Widgets (Appearance) and the surfaces a widget sits on: the word these locales use.
         'widgetFrame.appearanceTitle',
         // Folder-less sessions: the ordinary word in this locale.
@@ -993,6 +1023,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     ca: new Set([
+        // Agent is the ordinary localized noun for an executable coding Agent.
+        'settingsPlugins.surfaces.kinds.agent',
         // "Context" is also the Catalan noun.
         'agentInput.context.badgeLabel',
         // Boards (INT §5.1): the ordinary words these locales use (Board, Canvas, Offline, Online, Workflow, Session(s), Machine(s), Name, Layout).
@@ -1689,7 +1721,7 @@ describe('i18n integrity', () => {
         const untranslated = Object.values(auditTranslations({ en, locales }))
             .flatMap((report) => report.untranslatedStrings)
             .filter((entry) => entry.key.startsWith('secrets.catalog.'))
-            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key));
+            .filter((entry) => !IGNORED_UNTRANSLATED_KEYS.has(entry.key) && !IGNORED_UNTRANSLATED_KEYS_BY_LOCALE[entry.locale]?.has(entry.key));
         expect(untranslated).toEqual([]);
     });
 

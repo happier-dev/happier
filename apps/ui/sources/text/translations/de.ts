@@ -10,6 +10,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -661,6 +662,7 @@ export const de: TranslationStructure = {
     connectedServicesSetup: connectedServicesSetupTranslations.de,
     homeWidgets: homeWidgetTranslations.de,
     widgetFrame: widgetFrameTranslations.de,
+    navigationPlacement: navigationPlacementTranslations.de,
     inputPicker: inputPickerTranslations.de,
     widgetAdd: widgetAddTranslations.de,
     widgetDefinition: widgetDefinitionTranslations.de,
@@ -3438,6 +3440,19 @@ export const de: TranslationStructure = {
             invalidGroup: 'Diese Kontogruppe ist ungültig. Prüf ihre Einstellungen und versuch es noch einmal.',
             requestFailedWithStatus: ({ status }: { status: number }) => `Die Anfrage zum verbundenen Dienst ist fehlgeschlagen (${status}). Aktualisiere und versuch es noch einmal.`,
             generic: 'Die Aktion zum verbundenen Dienst ist fehlgeschlagen. Aktualisiere und versuch es noch einmal.',
+            accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+            accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+            accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+            accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+            accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+            accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+            accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+            accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+            accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+            accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+            accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+            accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
         },
         diagnostics: {
             title: {
@@ -10744,6 +10759,8 @@ settingsSession: {
 	              attentionPromotionModeGlobalSubtitle: 'Einen Bereich für Aufmerksamkeit über allem anderen zeigen',
 	              attentionPromotionModeWithinGroupsTitle: 'An den Anfang der aktuellen Gruppe',
 	              attentionPromotionModeWithinGroupsSubtitle: 'Sessions in ihrem Ordner oder Workspace lassen',
+	              reminderAutoClearOnOpenTitle: "Erinnerungen beim Öffnen löschen",
+	              reminderAutoClearOnOpenSubtitle: "Deaktivieren, um fällige Erinnerungen manuell zu entfernen. Zukünftige Erinnerungen bleiben geplant.",
 	              attentionStandingDefaultTitle: 'Sessions in „Braucht Aufmerksamkeit“ behalten',
 	              attentionStandingDefaultEnabledSubtitle: 'Jede Session bleibt, bis du sie entfernst',
 	              attentionStandingDefaultDisabledSubtitle: 'Sessions einzeln behalten',
@@ -10900,21 +10917,21 @@ settingsSession: {
           },
           providerUsageGauge: {
               title: 'Provider-Nutzung',
-              footer: 'Steuert die Kontingentanzeige neben dem Composer, wenn verlässliche Provider-Nutzungsdaten vorliegen. Hefte ein Nutzungsfenster an einem verbundenen Konto an, um es als zusätzliche Anzeige zu zeigen.',
+              footer: "Wähle Composer-Anzeigen für alle Konten. Sie berücksichtigen die ausgewählten Nutzungslimits jedes Pools. Favoriten ergänzen Anzeigen für das aktive Konto.",
               visibilityTitle: 'Nutzungsanzeige des Providers zeigen',
               labelsTitle: 'Beschriftungen zeigen',
               labelsSubtitle: 'Benennt die Kontext- und Nutzungsanzeigen neben dem Composer.',
               visibilityEnabledSubtitle: 'Das verbleibende Provider-Kontingent neben dem Composer zeigen, wenn verfügbar.',
               visibilityHiddenSubtitle: 'Das Provider-Kontingent im Composer ausblenden.',
-              windowTitle: 'Anzeigefenster',
+              windowTitle: "Zeitfenster der Anzeigen",
               windowMostConstrainedTitle: 'Am stärksten begrenzt',
               windowMostConstrainedSubtitle: 'Das verlässliche Kontingentfenster mit dem geringsten Rest zeigen.',
               windowDailyTitle: 'Täglich',
               windowDailySubtitle: 'Das tägliche Kontingentfenster bevorzugen.',
               windowWeeklyTitle: 'Wöchentlich',
               windowWeeklySubtitle: 'Das wöchentliche Kontingentfenster bevorzugen.',
-              windowSessionTitle: 'Session',
-              windowSessionSubtitle: 'Das Kontingentfenster der aktuellen Session bevorzugen.',
+              windowSessionTitle: "Kurzes Zeitfenster",
+              windowSessionSubtitle: "Kurze Kontingentfenster anzeigen, zum Beispiel fünf Stunden.",
               windowPrimaryTitle: 'Primär',
               windowPrimarySubtitle: 'Das primäre Kontingentfenster des Providers bevorzugen.',
               windowSecondaryTitle: 'Sekundär',
@@ -11490,7 +11507,7 @@ settingsSession: {
             byo: "Mein ElevenLabs-Konto",
             byoSubtitle: 'Deinen eigenen ElevenLabs-API-Key und -Agent nutzen',
             openaiRealtime: 'OpenAI Realtime',
-            openaiRealtimeSubtitle: 'Einen gespeicherten API-Key oder ein ausdrücklich gewähltes OpenAI-Konto nutzen',
+            openaiRealtimeSubtitle: 'Nutzt dein OpenAI-Konto oder deinen API-Schlüssel',
             grokRealtime: "Grok Voice",
             grokRealtimeSubtitle: "Nutzt deinen xAI-API-Schlüssel",
         },

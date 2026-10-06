@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -882,6 +883,7 @@ export const fr: TranslationStructure = {
     connectedServicesSetup: connectedServicesSetupTranslations.fr,
     homeWidgets: homeWidgetTranslations.fr,
     widgetFrame: widgetFrameTranslations.fr,
+    navigationPlacement: navigationPlacementTranslations.fr,
     inputPicker: inputPickerTranslations.fr,
     widgetAdd: widgetAddTranslations.fr,
     widgetDefinition: widgetDefinitionTranslations.fr,
@@ -3630,6 +3632,19 @@ export const fr: TranslationStructure = {
       invalidGroup: 'Ce groupe de comptes est invalide. Vérifie ses réglages et réessaie.',
       requestFailedWithStatus: ({ status }: { status: number }) => `La requête du service connecté a échoué (${status}). Actualise et réessaie.`,
       generic: 'L’action du service connecté a échoué. Actualise et réessaie.',
+      accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+      accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+      accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+      accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+      accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+      accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+      accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+      accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+      accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+      accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+      accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+      accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     },
     diagnostics: {
       title: {
@@ -10681,6 +10696,8 @@ settingsSession: {
 	          attentionPromotionModeGlobalSubtitle: 'Affiche une section « attention » au-dessus du reste',
 	          attentionPromotionModeWithinGroupsTitle: 'Déplacer en haut du groupe actuel',
 	          attentionPromotionModeWithinGroupsSubtitle: 'Garde les sessions dans leur dossier ou workspace',
+	              reminderAutoClearOnOpenTitle: "Effacer les rappels à l’ouverture",
+	              reminderAutoClearOnOpenSubtitle: "Désactive pour retirer manuellement les rappels arrivés à échéance. Les rappels futurs restent programmés.",
 	          attentionStandingDefaultTitle: 'Garder les sessions dans Nécessite ton attention',
 	          attentionStandingDefaultEnabledSubtitle: 'Chaque session y reste jusqu’à ce que tu la retires',
 	          attentionStandingDefaultDisabledSubtitle: 'Garde les sessions une par une',
@@ -10842,14 +10859,14 @@ settingsSession: {
       providerUsageGauge: {
         title: "Usage du provider",
         footer:
-          "Contrôle la jauge de quota affichée à côté du composer quand l’usage du provider est fiable. Épinglez une fenêtre d’usage sur un compte connecté pour l’afficher comme jauge supplémentaire.",
+          "Choisissez les jauges du composeur pour tous les comptes. Elles respectent les limites sélectionnées dans chaque pool. Les favoris ajoutent des jauges pour le compte actif.",
         visibilityTitle: "Afficher la jauge d’usage du provider",
         labelsTitle: "Afficher les libellés",
         labelsSubtitle: "Nomme les jauges de contexte et d’usage à côté du composer.",
         visibilityEnabledSubtitle:
           "Affiche le quota restant du provider à côté du composer quand il est disponible.",
         visibilityHiddenSubtitle: "Masque le quota du provider près du composer.",
-        windowTitle: "Fenêtre de la jauge",
+        windowTitle: "Fenêtres des jauges",
         windowMostConstrainedTitle: "La plus contrainte",
         windowMostConstrainedSubtitle:
           "Affiche la fenêtre de quota fiable où il reste le moins de quota.",
@@ -10857,8 +10874,8 @@ settingsSession: {
         windowDailySubtitle: "Préfère la fenêtre de quota quotidienne.",
         windowWeeklyTitle: "Hebdomadaire",
         windowWeeklySubtitle: "Préfère la fenêtre de quota hebdomadaire.",
-        windowSessionTitle: "Séance",
-        windowSessionSubtitle: "Préfère la fenêtre de quota de la session en cours.",
+        windowSessionTitle: "Fenêtre courte",
+        windowSessionSubtitle: "Afficher les fenêtres courtes, comme une limite de cinq heures.",
         windowPrimaryTitle: "Principale",
         windowPrimarySubtitle: "Préfère la fenêtre de quota principale du provider.",
         windowSecondaryTitle: "Secondaire",
@@ -11440,7 +11457,7 @@ settingsSession: {
       byo: "Mon compte ElevenLabs",
       byoSubtitle: "Utiliser ta propre clé API et ton agent ElevenLabs",
       openaiRealtime: "OpenAI Realtime",
-      openaiRealtimeSubtitle: "Utiliser une clé API enregistrée ou un compte OpenAI explicitement sélectionné",
+      openaiRealtimeSubtitle: "Utilise votre compte OpenAI ou votre clé API",
       grokRealtime: "Grok Voice",
       grokRealtimeSubtitle: "Utilise votre clé API xAI",
     },

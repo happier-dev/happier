@@ -96,6 +96,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -3559,6 +3560,19 @@ const enConnectedServices = {
             invalidGroup: 'This account group is invalid. Review its settings and try again.',
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: 'The connected-service action failed. Refresh and try again.',
+            accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+            accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+            accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+            accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+            accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+            accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+            accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+            accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+            accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+            accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+            accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+            accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+            accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
         },
         diagnostics: {
             title: {
@@ -11063,6 +11077,8 @@ const enSettingsSession = {
 	              attentionPromotionModeGlobalSubtitle: 'Show one attention section above the rest',
 	              attentionPromotionModeWithinGroupsTitle: 'Move to top of current group',
 	              attentionPromotionModeWithinGroupsSubtitle: 'Keep sessions in their folder or workspace',
+	              reminderAutoClearOnOpenTitle: "Clear reminders on open",
+	              reminderAutoClearOnOpenSubtitle: "Turn off to remove due reminders manually. Future reminders stay scheduled.",
 	              attentionStandingDefaultTitle: 'Keep sessions in Needs attention',
 	              attentionStandingDefaultEnabledSubtitle: 'Every session stays until you remove it',
 	              attentionStandingDefaultDisabledSubtitle: 'Keep sessions one at a time',
@@ -11219,21 +11235,21 @@ const enSettingsSession = {
           },
           providerUsageGauge: {
               title: 'Provider usage',
-              footer: 'Controls the quota gauge shown beside the composer when reliable provider usage is available. Pin a usage window on a connected account to show it as an extra gauge.',
+              footer: "Choose composer gauges for all accounts. Gauges respect each pool’s selected usage limits. Account favorites add extra gauges for the active account.",
               visibilityTitle: 'Show provider usage gauge',
               labelsTitle: 'Show labels',
               labelsSubtitle: 'Name the context and usage gauges beside the composer.',
               visibilityEnabledSubtitle: 'Show remaining provider quota next to the composer when available.',
               visibilityHiddenSubtitle: 'Hide provider quota from the composer.',
-              windowTitle: 'Gauge window',
+              windowTitle: "Gauge windows",
               windowMostConstrainedTitle: 'Most constrained',
               windowMostConstrainedSubtitle: 'Show the reliable quota window with the least remaining quota.',
               windowDailyTitle: 'Daily',
               windowDailySubtitle: 'Prefer the daily quota window.',
               windowWeeklyTitle: 'Weekly',
               windowWeeklySubtitle: 'Prefer the weekly quota window.',
-              windowSessionTitle: 'Session',
-              windowSessionSubtitle: 'Prefer the current session quota window.',
+              windowSessionTitle: "Short window",
+              windowSessionSubtitle: "Show short quota windows, such as a five-hour allowance.",
               windowPrimaryTitle: 'Primary',
               windowPrimarySubtitle: 'Prefer the provider primary quota window.',
               windowSecondaryTitle: 'Secondary',
@@ -11811,7 +11827,7 @@ const enSettingsVoice = {
             byo: "My ElevenLabs account",
             byoSubtitle: 'Use your own ElevenLabs API key and agent',
             openaiRealtime: 'OpenAI Realtime',
-            openaiRealtimeSubtitle: 'Use a saved API key or an explicitly selected OpenAI account',
+            openaiRealtimeSubtitle: 'Uses your OpenAI account or API key',
             grokRealtime: "Grok Voice",
             grokRealtimeSubtitle: "Uses your xAI API key",
         },
@@ -15868,6 +15884,7 @@ export const en: TranslationStructure = {
     connectedServicesSetup: enConnectedServicesSetup,
     homeWidgets: enHomeWidgets,
     widgetFrame: enWidgetFrame,
+    navigationPlacement: navigationPlacementTranslations.en,
     inputPicker: enInputPicker,
     widgetAdd: enWidgetAdd,
     widgetDefinition: enWidgetDefinition,
@@ -16116,6 +16133,7 @@ type EnglishNamespaces0 = {
     readonly connectedServicesSetup: typeof enConnectedServicesSetup;
     readonly homeWidgets: typeof enHomeWidgets;
     readonly widgetFrame: typeof enWidgetFrame;
+    readonly navigationPlacement: typeof navigationPlacementTranslations.en;
     readonly inputPicker: typeof enInputPicker;
     readonly widgetAdd: typeof enWidgetAdd;
     readonly widgetDefinition: typeof enWidgetDefinition;

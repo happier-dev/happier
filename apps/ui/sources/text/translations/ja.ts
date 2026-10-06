@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -1020,6 +1021,7 @@ export const ja: TranslationStructure = {
     connectedServicesSetup: connectedServicesSetupTranslations.ja,
     homeWidgets: homeWidgetTranslations.ja,
     widgetFrame: widgetFrameTranslations.ja,
+    navigationPlacement: navigationPlacementTranslations.ja,
     inputPicker: inputPickerTranslations.ja,
     widgetAdd: widgetAddTranslations.ja,
     widgetDefinition: widgetDefinitionTranslations.ja,
@@ -4110,6 +4112,19 @@ localTailscale: {
       invalidGroup: 'このアカウントグループは無効です。設定を確認して再試行してください。',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '接続サービスの操作に失敗しました。更新して再試行してください。',
+      accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+      accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+      accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+      accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+      accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+      accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+      accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+      accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+      accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+      accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+      accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+      accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     },
     diagnostics: {
       title: {
@@ -11128,6 +11143,8 @@ settingsSession: {
 	        attentionPromotionModeGlobalSubtitle: 'ほかのセッションより上に確認セクションを表示します',
 	        attentionPromotionModeWithinGroupsTitle: '現在のグループの上部へ移動',
 	        attentionPromotionModeWithinGroupsSubtitle: 'フォルダーまたはワークスペース内に維持します',
+	        reminderAutoClearOnOpenTitle: "開いたときにリマインダーを解除",
+	        reminderAutoClearOnOpenSubtitle: "オフにすると期限を迎えたリマインダーを手動で解除します。今後のリマインダーは予約されたままです。",
 	        attentionStandingDefaultTitle: 'セッションを「確認が必要」に残す',
 	        attentionStandingDefaultEnabledSubtitle: 'すべてのセッションが、外すまでここに残ります',
 	        attentionStandingDefaultDisabledSubtitle: 'セッションを1件ずつ残す',
@@ -11289,7 +11306,7 @@ settingsSession: {
       providerUsageGauge: {
         title: "プロバイダー使用量",
         footer:
-          "信頼できるプロバイダー使用量があるとき、入力欄の横に表示するクォータゲージを設定します。接続済みアカウントで使用量の期間をピン留めすると、追加のゲージとして表示されます。",
+          "すべてのアカウントの入力欄に表示するゲージを選択します。各プールで選択された使用制限が適用されます。お気に入りは現在のアカウントにゲージを追加します。",
         visibilityTitle: "プロバイダー使用量ゲージを表示",
         labelsTitle: "ラベルを表示",
         labelsSubtitle: "入力欄の横にあるコンテキストと使用量のゲージに名前を付けます。",
@@ -11304,8 +11321,8 @@ settingsSession: {
         windowDailySubtitle: "日次クォータ期間を優先します。",
         windowWeeklyTitle: "週次",
         windowWeeklySubtitle: "週次クォータ期間を優先します。",
-        windowSessionTitle: "セッション",
-        windowSessionSubtitle: "現在のセッションのクォータ期間を優先します。",
+        windowSessionTitle: "短い期間",
+        windowSessionSubtitle: "5時間の上限など、短い期間の使用制限を表示します。",
         windowPrimaryTitle: "プライマリ",
         windowPrimarySubtitle: "プロバイダーのプライマリクォータ期間を優先します。",
         windowSecondaryTitle: "セカンダリ",
@@ -11848,7 +11865,7 @@ settingsSession: {
       byo: "自分のElevenLabsアカウント",
       byoSubtitle: "自分のElevenLabs APIキーとエージェントを使用",
       openaiRealtime: "OpenAI Realtime",
-      openaiRealtimeSubtitle: "保存済みのAPIキー、または明示的に選択したOpenAIアカウントを使用",
+      openaiRealtimeSubtitle: "OpenAIアカウントまたはAPIキーを使用",
       grokRealtime: "Grok Voice",
       grokRealtimeSubtitle: "xAIのAPIキーを使用します",
     },

@@ -119,6 +119,7 @@ import { homeWidgetTranslations } from './homeWidgetTranslations';
 import { widgetAddTranslations } from './widgetAddTranslations';
 import { widgetDefinitionTranslations } from './widgetDefinitionTranslations';
 import { widgetFrameTranslations } from './widgetFrameTranslations';
+import { navigationPlacementTranslations } from './navigationPlacementTranslations';
 import { inputPickerTranslations } from './inputPickerTranslations';
 import { widgetGlanceTranslations } from './widgetGlanceTranslations';
 import { voicePresenceTranslations } from './voicePresenceTranslations';
@@ -867,6 +868,7 @@ export const ru: TranslationStructure = {
     connectedServicesSetup: connectedServicesSetupTranslations.ru,
     homeWidgets: homeWidgetTranslations.ru,
     widgetFrame: widgetFrameTranslations.ru,
+    navigationPlacement: navigationPlacementTranslations.ru,
     inputPicker: inputPickerTranslations.ru,
     widgetAdd: widgetAddTranslations.ru,
     widgetDefinition: widgetDefinitionTranslations.ru,
@@ -3516,6 +3518,19 @@ export const ru: TranslationStructure = {
       invalidGroup: 'Эта группа аккаунтов недействительна. Проверьте настройки и повторите попытку.',
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',
+      accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
+      accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
+      accountServiceUnavailable: 'This connection action is unavailable on the selected machine. Check the service and plugin settings there, then refresh this page.',
+      accountOperationUnsupported: 'Happier could not verify support for this connection action. Check that the Home, machine and service plugin are up to date, then refresh this page.',
+      accountConfigurationRequired: 'This service needs more account settings before it can connect. Complete the required fields and continue.',
+      accountConfigurationChanged: 'The account or its settings changed before this action completed. Refresh this page, review the current settings and continue from there.',
+      accountStateUncertain: 'Happier could not confirm how this action finished. Refresh this page and check the current account and connection state before starting another attempt.',
+      accountAuthenticationRestartRequired: 'This connection step is no longer active. Start it again and use the new sign-in link or code when prompted.',
+      accountOperationBusy: 'Another connected-account operation is still finishing. Wait for it to finish, then refresh this page before continuing.',
+      accountAuthenticationRejected: 'The service could not accept this sign-in. Check the account details and start the connection again.',
+      accountIdentityMismatch: 'This sign-in or action refers to a different account or service. Return to the intended account and connect it again.',
+      accountAccessUnavailable: 'This account cannot be used in the current context. Check the selected account, service and access permissions before continuing.',
+      accountSaveUnavailable: 'Happier could not save or read the account state. Check the Home connection, then refresh this page and review the account before continuing.',
     },
     diagnostics: {
       title: {
@@ -10683,6 +10698,8 @@ settingsSession: {
 	        attentionPromotionModeGlobalSubtitle: 'Показывать одну секцию внимания выше остальных',
 	        attentionPromotionModeWithinGroupsTitle: 'Перемещать вверх текущей группы',
 	        attentionPromotionModeWithinGroupsSubtitle: 'Оставлять сессии в их папке или рабочей области',
+	        reminderAutoClearOnOpenTitle: "Убирать напоминания при открытии",
+	        reminderAutoClearOnOpenSubtitle: "Отключите, чтобы убирать наступившие напоминания вручную. Будущие остаются запланированными.",
 	        attentionStandingDefaultTitle: 'Оставлять сессии в «Требует внимания»',
 	        attentionStandingDefaultEnabledSubtitle: 'Каждая сессия остаётся, пока вы её не уберёте',
 	        attentionStandingDefaultDisabledSubtitle: 'Оставляйте сессии по одной',
@@ -10844,14 +10861,14 @@ settingsSession: {
       providerUsageGauge: {
         title: "Использование провайдера",
         footer:
-          "Управляет индикатором квоты рядом с полем ввода, когда доступны надёжные данные использования провайдера. Закрепите окно использования в подключённом аккаунте, чтобы показывать его как дополнительный индикатор.",
+          "Выберите индикаторы редактора для всех аккаунтов. Они учитывают лимиты использования, выбранные в каждом пуле. Избранные лимиты добавляют индикаторы активного аккаунта.",
         visibilityTitle: "Показывать индикатор использования провайдера",
         labelsTitle: "Показывать подписи",
         labelsSubtitle: "Подписывает индикаторы контекста и использования рядом с полем ввода.",
         visibilityEnabledSubtitle:
           "Показывать оставшуюся квоту провайдера рядом с полем ввода, когда она доступна.",
         visibilityHiddenSubtitle: "Скрыть квоту провайдера рядом с полем ввода.",
-        windowTitle: "Окно индикатора",
+        windowTitle: "Периоды индикаторов",
         windowMostConstrainedTitle: "Самое ограниченное",
         windowMostConstrainedSubtitle:
           "Показывать надёжное окно квоты с наименьшим остатком.",
@@ -10859,8 +10876,8 @@ settingsSession: {
         windowDailySubtitle: "Предпочитать дневное окно квоты.",
         windowWeeklyTitle: "Недельное",
         windowWeeklySubtitle: "Предпочитать недельное окно квоты.",
-        windowSessionTitle: "Сессия",
-        windowSessionSubtitle: "Предпочитать окно квоты текущей сессии.",
+        windowSessionTitle: "Короткий период",
+        windowSessionSubtitle: "Показывать короткие периоды квоты, например пять часов.",
         windowPrimaryTitle: "Основное",
         windowPrimarySubtitle: "Предпочитать основное окно квоты провайдера.",
         windowSecondaryTitle: "Дополнительное",
@@ -11406,7 +11423,7 @@ settingsSession: {
       byo: "Мой аккаунт ElevenLabs",
       byoSubtitle: "Использовать свой API-ключ и агента ElevenLabs",
       openaiRealtime: "OpenAI Realtime",
-      openaiRealtimeSubtitle: "Использовать сохранённый API-ключ или явно выбранный аккаунт OpenAI",
+      openaiRealtimeSubtitle: "Использует ваш аккаунт OpenAI или API-ключ",
       grokRealtime: "Grok Voice",
       grokRealtimeSubtitle: "Использует ваш API-ключ xAI",
     },
