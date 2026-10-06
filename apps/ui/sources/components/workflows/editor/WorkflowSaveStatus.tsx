@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
 import { Text } from '@/components/ui/text/Text';
@@ -12,7 +13,6 @@ import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
-import { workflowPressFeedbackStyle } from './workflowEditorStyles';
 
 export type WorkflowSaveConflict = Readonly<{
     currentDraft: WorkflowEditorDraft | null;
@@ -140,7 +140,7 @@ function StatusAction(props: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={props.label}
             onPress={props.onPress}
-            style={(state) => [styles.action, workflowPressFeedbackStyle(state, theme.colors.border.focus)]}
+            style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
             <Text style={styles.actionLabel}>{props.label}</Text>
             {props.keyHint === undefined ? null : <Text style={styles.keyHint}>{props.keyHint}</Text>}

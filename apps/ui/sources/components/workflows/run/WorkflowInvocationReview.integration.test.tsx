@@ -504,13 +504,13 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         expect(routerMock.spies.push).toHaveBeenCalledWith({ pathname: '/workflows/runs/[runId]', params: { runId: h.planRunId } });
         expect(admissions()).toHaveLength(1);
     });
-    it('reopens the exact admitted Plan after a lost Machine admission response without starting it again', async () => {
+    it('reconciles the exact admitted Plan after a lost Machine admission response without starting it again', async () => {
         const h = await harness({ plan: true, planProposal: true });
         machineRpc.mockImplementation(async request => {
             const targeted = TargetedActionRpcRequestV1Schema.parse(request.payload);
             const input = WorkflowRunStartRequestV1Schema.parse(targeted.input);
             expect(input.runId).toBe(h.planRunId);
-            h.boundary.admittedPlan = true;
+            h.admitPlan(input);
             throw new Error('admission_response_lost_after_commit');
         });
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-plan-run'), h.screen.getTextContent()).not.toBeNull());
@@ -518,24 +518,23 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-run-inputs-run')).not.toBeNull());
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(admissions()).toHaveLength(1));
-        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
-        expect(h.readProgress().review?.decision).toBeUndefined();
-        expect(h.onSettled).not.toHaveBeenCalled();
-        await h.reopen();
-        await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-open-plan-run')).not.toBeNull());
-        await h.screen.pressByTestIdAsync('workflow-review-open-plan-run');
-        expect(h.onOpenRun).toHaveBeenCalledWith(h.planRunId);
-        await h.screen.pressByTestIdAsync('workflow-review-use');
-        await vi.waitFor(() => expect(h.onSettled).toHaveBeenCalled());
+        await vi.waitFor(() => expect(h.rows.get(heldId)?.index.lifecycle).toBe('completed'));
+        expect(routerMock.spies.push).toHaveBeenCalledWith({ pathname: '/workflows/runs/[runId]', params: { runId: h.planRunId } });
         expect(h.readProgress().review?.decision).toEqual({ kind: 'use_result', requestedFromContentRevision: '7',
             followUp: { kind: 'run_started', runId: h.planRunId } });
         expect(admissions()).toHaveLength(1);
     });
     it.each(['open', 'run', 'run-loss', 'use'] as const)('discloses an earlier admitted proposal after response loss and publication, then %s', async choice => {
         const h = await harness({ plan: true, planProposal: true });
+        const proposalB = WorkflowDefinitionV1Schema.parse({ ...h.proposal, blocks: [{ ...h.proposal.blocks[0],
+            document: { text: 'Implement the new proposal B', references: [], attachments: [] } }] });
+        const valueB = StrictJsonValueSchema.parse({ document: 'Updated plan B', proposal: proposalB });
         machineRpc.mockImplementation(async request => {
             const input = WorkflowRunStartRequestV1Schema.parse(TargetedActionRpcRequestV1Schema.parse(request.payload).input);
             h.admitPlan(input);
+            // Publication races the lost reply: reconciliation must not attach
+            // proposal A's admitted Run to the now-current proposal B.
+            await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7', value: valueB });
             throw new Error('admission_response_lost_after_commit');
         });
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-plan-run')).not.toBeNull());
@@ -544,10 +543,6 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(admissions()).toHaveLength(1));
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
-        const proposalB = WorkflowDefinitionV1Schema.parse({ ...h.proposal, blocks: [{ ...h.proposal.blocks[0],
-            document: { text: 'Implement the new proposal B', references: [], attachments: [] } }] });
-        const valueB = StrictJsonValueSchema.parse({ document: 'Updated plan B', proposal: proposalB });
-        await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7', value: valueB });
         await h.reopen();
         await h.screen.pressByTestIdAsync('workflow-review-show-newer');
         await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-earlier-plan-run'), h.screen.getTextContent()).not.toBeNull());
@@ -575,16 +570,6 @@ describe('Review through the real Account Action owner and HTTP storage boundary
             await h.screen.pressByTestIdAsync('workflow-review-plan-run');
             await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-run-inputs-run')).not.toBeNull());
             await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
-            if (choice === 'run-loss') {
-                await vi.waitFor(() => expect(admissions()).toHaveLength(2));
-                await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
-                expect(h.readProgress().review?.decision).toBeUndefined();
-                await h.reopen();
-                await vi.waitFor(() => expect(h.screen.findHostByTestId('workflow-review-open-plan-run')).not.toBeNull());
-                await h.screen.pressByTestIdAsync('workflow-review-open-plan-run');
-                expect(h.onOpenRun).toHaveBeenLastCalledWith(newRunId);
-                await h.screen.pressByTestIdAsync('workflow-review-use');
-            }
             await vi.waitFor(() => expect(h.rows.get(heldId)?.index.lifecycle).toBe('completed'));
             expect(h.readProgress().result).toEqual(valueB);
             expect(h.readProgress().review?.decision).toEqual({ kind: 'use_result', requestedFromContentRevision: '8',

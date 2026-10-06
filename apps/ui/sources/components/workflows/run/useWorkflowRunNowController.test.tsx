@@ -5,6 +5,8 @@ import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import type { WorkflowRunNowRequest } from './useWorkflowRunNowController';
 
@@ -108,6 +110,56 @@ describe('useWorkflowRunNowController', () => {
         expect(hook.getCurrent().stateFor(RUN_ID)).toBe('idle');
     });
 
+    it('owns an ordinary start identity until admission settles, then permits a new explicit start', async () => {
+        const reply = createDeferred<unknown>();
+        executeMock.mockImplementation(async (_action: string, input: { runId: string }) =>
+            input.runId === RUN_ID ? admitted('created') : reply.promise);
+        const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+        const hook = await renderHook(() => useWorkflowRunNowController());
+        let first!: Promise<unknown>;
+        await act(async () => { first = hook.getCurrent().runNow({ source }); });
+        const firstId = executeMock.mock.calls[0]?.[1].runId;
+        expect(firstId).toBeTypeOf('string');
+        expect(hook.getCurrent().pendingRunId).toBe(firstId);
+        await act(async () => { expect(await hook.getCurrent().runNow({ source })).toBeNull(); });
+        expect(executeMock).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            reply.resolve({ ok: true, result: { admission: 'created', run: createWorkflowRunSummaryFixture({ id: firstId, origin: { kind: 'direct' } }) } });
+            await first;
+        });
+        expect(hook.getCurrent().pendingRunId).toBeNull();
+        executeMock.mockImplementation(async (_action: string, input: { runId: string }) => ({ ok: true,
+            result: { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId, origin: { kind: 'direct' } }) } }));
+        await act(async () => { await hook.getCurrent().runNow({ source }); });
+        expect(executeMock.mock.calls[1]?.[1].runId).not.toBe(firstId);
+    });
+
+    it('releases its owned identity after a confirmed refusal without affecting explicit recovery IDs', async () => {
+        executeMock.mockResolvedValue({ ok: false, errorCode: 'target_unavailable', error: 'Confirmed not sent' });
+        const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+        const hook = await renderHook(() => useWorkflowRunNowController());
+        await act(async () => { await hook.getCurrent().runNow({ source }); });
+        const refusedId = executeMock.mock.calls[0]?.[1].runId;
+        expect(hook.getCurrent().pendingRunId).toBeNull();
+        await act(async () => { await hook.getCurrent().runNow({ source }); });
+        expect(executeMock.mock.calls[1]?.[1].runId).not.toBe(refusedId);
+        await act(async () => { await hook.getCurrent().runNow({ runId: RUN_ID, source }); });
+        expect(executeMock.mock.lastCall?.[1].runId).toBe(RUN_ID);
+    });
+
+    it('keeps a known refusal for the composer instead of interrupting with an alert', async () => {
+        executeMock.mockResolvedValue({ ok: false, errorCode: 'target_unavailable', error: 'Confirmed not sent' });
+        const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
+        const hook = await renderHook(() => useWorkflowRunNowController());
+        await act(async () => { await hook.getCurrent().runNow({ source, refusal: 'inline' }); });
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(hook.getCurrent().refusal?.message).toBe('workflows.problem.targetUnavailable');
+        // A new press is a new attempt: the previous reason does not outlive it.
+        executeMock.mockResolvedValue(admitted('created'));
+        await act(async () => { await hook.getCurrent().runNow({ runId: RUN_ID, source, refusal: 'inline' }); });
+        expect(hook.getCurrent().refusal).toBeNull();
+    });
+
     it('stamps the selected project into host context rather than Action input', async () => {
         executeMock.mockResolvedValueOnce(admitted('created'));
         const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
@@ -139,29 +191,31 @@ describe('useWorkflowRunNowController', () => {
         }));
     });
 
-    it('reuses the caller-allocated runId after a lost response and treats an existing admission as the same Run', async () => {
-        executeMock.mockRejectedValueOnce(new Error('response lost'));
-        executeMock.mockResolvedValueOnce(admitted('existing'));
+    it('retires an unresolved admission observer when its Account changes', async () => {
+        vi.useFakeTimers();
+        executeMock.mockRejectedValueOnce(new WorkflowActionError({ message: 'response lost', rawCode: 'workflow_outcome_unresolved' }));
+        executeMock.mockResolvedValue({ ok: false, errorCode: 'run_not_found', error: 'run_not_found' });
         const { useWorkflowRunNowController } = await import('./useWorkflowRunNowController');
         const hook = await renderHook(() => useWorkflowRunNowController());
-
+        let pending!: Promise<unknown>;
         await act(async () => {
-            expect(await hook.getCurrent().runNow({ runId: RUN_ID, source })).toBeNull();
+            pending = hook.getCurrent().runNow({ source });
         });
-        expect(hook.getCurrent().stateFor(RUN_ID)).toBe('idle');
-
-        let recovered: { run: { id: string }; admission: string } | null = null;
-        await act(async () => {
-            recovered = await hook.getCurrent().runNow({ runId: RUN_ID, source });
-        });
-
-        expect(recovered!.admission).toBe('existing');
-        expect(recovered!.run.id).toBe(RUN_ID);
-        // Recovery re-sends the identical admission, so the server settles the
-        // same Run instead of this client creating a second one.
+        const runId = executeMock.mock.calls[0]?.[1].runId;
+        expect(hook.getCurrent().pendingRunId).toBe(runId);
+        expect(hook.getCurrent().stateFor(runId)).toBe('reconciling');
         expect(executeMock).toHaveBeenCalledTimes(2);
-        expect(executeMock.mock.calls[1]?.[1]).toEqual(executeMock.mock.calls[0]?.[1]);
-        expect(Object.keys(storage.getState().workflowRunsById)).toEqual([RUN_ID]);
+        await act(async () => {
+            vi.advanceTimersByTime(60_000);
+            publishHomeAccountChange('server-a', ['workflow-run:another-run']);
+        });
+        expect(executeMock).toHaveBeenCalledTimes(2);
+        await act(async () => { setAccountScope({ serverId: 'server-b', accountId: 'account-b' }); await pending; });
+        expect(hook.getCurrent().pendingRunId).toBeNull();
+        publishHomeAccountChange('server-a', [`workflow-run:${runId}`]);
+        expect(executeMock).toHaveBeenCalledTimes(2);
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+        expect(storage.getState().workflowRunsById[runId]).toBeUndefined();
     });
 
     it('does not dispatch twice while one admission is still in flight', async () => {

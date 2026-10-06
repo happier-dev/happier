@@ -77,6 +77,23 @@ async function renderGroup(branchesUseSeparateConversations: boolean) {
 }
 
 describe('WorkflowGroupEditor conversation disclosure', () => {
+    it('names document containers by their kind and loop mode, with ordinal kept separate', async () => {
+        const { WorkflowGroupEditor } = await import('./WorkflowGroupEditor');
+        const { WorkflowLoopEditor } = await import('./WorkflowLoopEditor');
+        const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
+        const group = parallelBlock();
+        const loop: Extract<WorkflowBlock, { kind: 'loop' }> = { kind: 'loop', id: 'opaque-loop', body: [],
+            repetition: { kind: 'until', maxIterations: 3, stopWhen: { kind: 'exists', value: { kind: 'literal', value: true } } } };
+        const draft = createWorkflowEditorDraft({ draftId: 'container-labels', name: 'Review', blocks: [group, loop] });
+        const screen = await renderScreen(<>
+            <WorkflowGroupEditor block={group} ordinal={1} actions={[]} onSelect={() => {}}
+                renderBranch={() => null} testIDPrefix="editor" />
+            <WorkflowLoopEditor draft={draft} block={loop} ordinal={2} actions={[]} onSelect={() => {}}
+                renderBody={() => null} testIDPrefix="editor" />
+        </>);
+        expect(screen.findByTestId('editor-parallel-p1-label')?.props.accessibilityLabel).toBe('workflows.editor.addParallel');
+        expect(screen.findByTestId('editor-loop-opaque-loop-label')?.props.accessibilityLabel).toBe('workflows.loop.modeUntil');
+    });
     it('states the shared conversation under the shared default instead of claiming separation', async () => {
         const screen = await renderGroup(false);
 

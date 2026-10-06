@@ -175,7 +175,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         : plan ? t('workflows.review.planTitle') : valid ? t('workflows.review.title') : t('workflows.review.noValue');
     const updateText = (text: string) => props.onChangeDraft({ text, contentRevision: revision });
     const showNewer = () => {
-        if (blocked) return;
+        if (props.pending === true) return;
         setReading({ value: props.progress.result, revision: props.contentRevision });
         props.onChangeDraft(undefined);
         setKeptNewerRevision(null);
@@ -256,7 +256,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     <RoundButton testID={`${prefix}-use-newer`} title={t('workflows.review.useNewer')} size="small"
                         display="inverted" disabled={blocked} onPress={showNewer} />
                 </> : <RoundButton testID={`${prefix}-show-newer`} title={t('workflows.review.showNewer')} size="small"
-                    display="secondary" disabled={blocked} onPress={showNewer} />}</View>
+                    display="secondary" disabled={props.pending === true} onPress={showNewer} />}</View>
             </SectionContentRow> : null}
             {readiness === 'generate' ? <SectionContentRow testID={`${prefix}-generation-requested`}>
                 <Text accessibilityLiveRegion="polite">{t('workflows.review.generationRequested')}</Text>

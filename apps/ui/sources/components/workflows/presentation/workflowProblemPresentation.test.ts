@@ -25,6 +25,14 @@ function actionError(rawCode: string | null, message = 'server-internal reason')
  * never reach a person as prose the server chose or as the identifier itself.
  */
 describe('workflowProblemPresentation', () => {
+    it('explains unavailable header content from the typed owner reason', () => {
+        const error = new WorkflowActionError({ rawCode: 'content_unavailable', message: 'private implementation text',
+            failure: { ok: false, errorCode: 'content_unavailable', error: 'workflow_definition_content_unavailable',
+                details: { reason: 'invalid_header' } } });
+        expect(resolveWorkflowProblemPresentation(error)).toMatchObject({
+            code: 'content_unavailable', title: 'common.unavailable', message: 'workflows.contentReasons.invalidHeader', repair: 'none',
+        });
+    });
     it('maps every closed operation code to localized copy rather than the code or the server sentence', () => {
         for (const code of WORKFLOW_OPERATION_ERROR_CODES_V1) {
             const presentation = resolveWorkflowProblemPresentation(actionError(code));
@@ -33,7 +41,7 @@ describe('workflowProblemPresentation', () => {
             expect(presentation.message).toMatch(/^workflows\./);
             expect(presentation.message).not.toContain(code);
             expect(presentation.message).not.toContain('server-internal reason');
-            expect(presentation.title).toMatch(/^workflows\./);
+            expect(presentation.title).not.toContain(code);
         }
     });
 

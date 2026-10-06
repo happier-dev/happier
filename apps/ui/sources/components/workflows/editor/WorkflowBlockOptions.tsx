@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import {
     readSessionAuthoringAgentTargetValue,
@@ -20,7 +21,6 @@ import {
     resolveWorkflowIssueBlockId,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
@@ -52,7 +52,7 @@ import { formatWorkflowLoopSentence, WorkflowLoopOptions } from './WorkflowLoopE
 import { formatWorkflowResultSummary } from './WorkflowStepDataEditor';
 import { WorkflowStepInspector, WorkflowStepTimeoutField } from './WorkflowStepInspector';
 import { useWorkflowStepFieldControlRenderer } from './workflowStepFieldControls';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 import { NO_DISCLOSURE, WorkflowInspectorGroup } from './workflowInspectorGroup';
 import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 
@@ -113,7 +113,7 @@ function HeaderAction(props: Readonly<{ label: string; onPress: () => void; test
             style={(state) => [
                 props.trailing === true ? styles.trailing : null,
                 workflowEditorStyles.actionTarget,
-                workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
             ]}
         >
             <Text style={workflowEditorStyles.metaAction}>{props.label}</Text>
@@ -122,7 +122,7 @@ function HeaderAction(props: Readonly<{ label: string; onPress: () => void; test
 }
 
 function blockTitle(block: WorkflowBlock): string {
-    return block.kind === 'step' ? (workflowStepPromptLabel(block) ?? block.id) : workflowBlockReferenceLabel(block);
+    return workflowBlockReferenceLabel(block);
 }
 
 /** An Agent step differs from the workflow when it sets anything of its own. */

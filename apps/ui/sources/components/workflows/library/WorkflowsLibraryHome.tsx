@@ -54,6 +54,7 @@ import { WorkflowBuiltinsSection } from './WorkflowBuiltinsSection';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 
 /** A library longer than this gets its search field (the collection columns' shared convention). */
 const SEARCH_THRESHOLD = 8;
@@ -66,7 +67,7 @@ type LibraryRow = Readonly<{
     definition: WorkflowLibraryDefinition;
 }> | Readonly<{ key: string; group: 'fromPlugins'; plugin: WorkflowPluginSourceV1 }>;
 
-const rowTitle = (row: LibraryRow) => row.group === 'fromPlugins' ? row.plugin.title : row.definition.metadata.title;
+const rowTitle = (row: LibraryRow) => row.group === 'fromPlugins' ? row.plugin.title : formatWorkflowDefinitionLibraryTitle(row.definition);
 
 type LibraryRowCommands = Readonly<{
     /** Opens the exact run the summary names as needing you, at its first actionable item. */
@@ -309,7 +310,9 @@ function useLibraryAnatomy(summaries: ReadonlyMap<string, WorkflowLibraryRunSumm
                 ...(Number.isFinite(createdAt) ? [t('workflows.destination.lastRun', { age: formatRelativeTimeShort(createdAt, Date.now()) })] : []),
             ].join(' · ');
         },
-        reason: (row) => row.group === 'fromPlugins' ? t('workflows.plugins.readOnly') : null,
+        reason: (row) => row.group === 'fromPlugins' ? t('workflows.plugins.readOnly')
+            : row.definition.contentStatus === 'unavailable'
+                ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null,
         accessibilityLabel: rowTitle,
         testID: (row) => `workflows-home:row:${row.key}`,
         columnTitles: { title: t('workflows.title') },
@@ -321,6 +324,7 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
     const commands = React.useContext(LibraryRowCommandsContext);
     const { theme } = useUnistyles();
     const owned = row.group === 'library';
+    const unavailable = row.group !== 'fromPlugins' && row.definition.contentStatus === 'unavailable';
     const summary = row.group === 'fromPlugins' ? undefined : commands?.summaries?.get(row.definition.definitionId);
     const needsYouRunId = summary?.needsYouRunId ?? null;
     return {
@@ -346,7 +350,7 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
         ),
         secondaryActionAccessibilityLabel: t('workflows.destination.rowMenu.accessibility'),
         secondaryActions: [
-            { id: 'run', label: t('workflows.destination.rowMenu.runNow') },
+            { id: 'run', label: t('workflows.destination.rowMenu.runNow'), disabled: unavailable },
             ...(owned ? [{ id: 'share', label: t('workflows.destination.rowMenu.share') }] : []),
             ...(row.group === 'fromPlugins' ? [] : [{ id: 'export', label: t('workflows.exportJson') }]),
             ...(owned ? [{ id: 'delete', label: t('common.delete') }] : []),
@@ -358,7 +362,7 @@ function useLibraryRowActions(row: LibraryRow): CollectionRowActions {
                 return;
             }
             const definitionId = row.definition.definitionId;
-            if (id === 'run') commands.run(definitionId);
+            if (id === 'run' && !unavailable) commands.run(definitionId);
             else if (id === 'share') commands.share(row.definition);
             else if (id === 'export') commands.exportJson(definitionId);
             else if (id === 'delete') commands.remove(definitionId);
@@ -377,7 +381,7 @@ function useLibraryRowCommands(summaries: ReadonlyMap<string, WorkflowLibraryRun
         run: (definitionId) => router.push({ pathname: '/workflows/[id]', params: { id: definitionId, intent: 'run' } } as never),
         exportJson: (definitionId) => { void exportDefinition(definitionId); },
         share: (definition) => showDocumentShareSheet({
-            kind: 'workflow-definition.v1', artifactId: definition.definitionId, name: definition.metadata.title,
+            kind: 'workflow-definition.v1', artifactId: definition.definitionId, name: formatWorkflowDefinitionLibraryTitle(definition),
             subtitle: `${t('workflows.page.chromeTitle')} · ${definition.contentStatus === 'available'
                 ? t('workflows.examples.stepCount', { count: definition.stepCount }) : t('common.unavailable')}`,
             linkPath: createWorkflowDefinitionRoute(definition.definitionId),
@@ -473,19 +477,19 @@ const styles = StyleSheet.create((theme) => ({
     rowAccessory: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: theme.margins.md,
     },
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: theme.margins.sm,
     },
     importLine: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 4,
-        paddingBottom: 24,
+        gap: theme.margins.xs,
+        paddingBottom: theme.margins.xl,
     },
     importPrompt: {
         ...Typography.default(),

@@ -112,18 +112,23 @@ export function useWorkflowAnnouncements(params: Readonly<{
    */
   const baselineObservedRef = React.useRef(false);
   const resolveLabelRef = React.useRef(params.resolveBlockLabel);
-  resolveLabelRef.current = params.resolveBlockLabel;
+  const resolveBlockLabel = params.resolveBlockLabel;
   const enabled = params.enabled ?? true;
   const state = params.state;
 
   React.useEffect(() => {
     const previous = previousRef.current;
+    const previousLabel = resolveLabelRef.current;
     const hadBaseline = baselineObservedRef.current;
     previousRef.current = state;
+    resolveLabelRef.current = resolveBlockLabel;
     baselineObservedRef.current = true;
     if (!hadBaseline || !enabled) return;
     const announcement = selectWorkflowAnnouncement(previous, state);
     if (announcement === null) return;
-    announceAccessibilityMessage(formatWorkflowAnnouncement(announcement, resolveLabelRef.current));
-  }, [enabled, state]);
+    // Removal resolves against the last committed document, where the block
+    // still exists. All other transitions read the current canonical labels.
+    announceAccessibilityMessage(formatWorkflowAnnouncement(announcement,
+      announcement.kind === 'removed' ? previousLabel : resolveBlockLabel));
+  }, [enabled, state, resolveBlockLabel]);
 }

@@ -18,8 +18,8 @@ const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
  *
  * One owner so the outcome region, the invocation outline and the selected
  * invocation detail read as one object rather than three surfaces that happen
- * to sit on the same screen. Every value comes from existing theme tokens; this
- * module introduces no palette, font or spacing system of its own.
+ * to sit on the same screen. Colors, type and spacing use shared tokens; widths
+ * describe the outline/inspector layout rather than a separate design system.
  */
 export const workflowRunStyles = StyleSheet.create((theme) => ({
     scroll: {
@@ -105,6 +105,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         minHeight: MINIMUM_TARGET_SIZE,
         justifyContent: 'center',
     },
+    focusTarget: {
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
     /**
      * Contact feedback for the controls this body owns directly.
      *
@@ -168,7 +172,7 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     attentionText: {
         flex: 1,
         minWidth: 0,
-        gap: 2,
+        gap: theme.margins.xs,
     },
     attentionLabel: {
         ...Typography.rowTitle(),

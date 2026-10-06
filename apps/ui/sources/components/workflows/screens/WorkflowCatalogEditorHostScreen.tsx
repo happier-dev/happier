@@ -5,7 +5,6 @@ import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type J
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
-import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope, useAllMachines, useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { exportWorkflowDefinition } from '@/sync/domains/workflows/workflowInterchange';
@@ -19,7 +18,7 @@ import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workf
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { formatWorkflowWhereSummary, WorkflowProjectTargetControl } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
-import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
+import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
 import { useWorkflowRunComposerModal } from '../run/useWorkflowRunComposerModal';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
 import { resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
@@ -31,18 +30,15 @@ import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 
 /** A read-only catalog source, read through the same paged library owner as every picker. */
 export function WorkflowPluginEditorHostScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
-    const library = useWorkflowDefinitionLibrary();
+    const catalog = useWorkflowPluginSource(props.workflow);
     const scope = useActiveServerAccountScope();
     const router = useRouter();
-    const plugin = library.pluginWorkflows.find((entry) => entry.workflow === props.workflow);
-    React.useEffect(() => {
-        if (plugin === undefined && library.status === 'loaded' && library.hasMore && !library.loadingMore && !library.loadMoreFailed) library.loadMore();
-    }, [plugin, library.status, library.hasMore, library.loadingMore, library.loadMoreFailed, library.loadMore]);
-    if (plugin === undefined) {
-        if (library.status === 'failed' || library.loadMoreFailed) return <SurfaceStateCard kind="error"
+    const plugin = catalog.source;
+    if (plugin === null) {
+        if (catalog.status === 'failed') return <SurfaceStateCard kind="error"
             title={t('workflows.loadFailedTitle')} reason={t('workflows.loadFailedBody')}
-            action={{ label: t('workflows.retry'), onPress: library.loadMoreFailed ? library.loadMore : library.retry }} />;
-        if (library.status !== 'loaded' || library.hasMore) return <SurfaceStateCard kind="loading" title={t('workflows.editor.loadingTitle')} />;
+            action={{ label: t('workflows.retry'), onPress: catalog.retry }} />;
+        if (catalog.status !== 'missing') return <SurfaceStateCard kind="loading" title={t('workflows.editor.loadingTitle')} />;
         return <WorkflowMissingDefinitionState onOpenCollection={() => router.replace('/workflows' as never)} />;
     }
     return <CatalogDefinition key={`${scope?.serverId}/${scope?.accountId}/${plugin.workflow}/${plugin.version}`}
@@ -81,7 +77,6 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const [open, setOpen] = React.useState(props.intent === 'run' && !sessionBound);
     const [values, setValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>({});
     const [rawTextValues, setRawTextValues] = React.useState<Readonly<Record<string, string>>>({});
-    const runId = React.useRef<string | null>(null);
     // Run now anchors its composer under itself, as in the editor (convo-N7).
     const runAnchorRef = React.useRef<View | null>(null);
     const runNow = useWorkflowRunNowController();
@@ -102,14 +97,13 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     };
     const admit = async (inputs: Readonly<Record<string, JsonValue>> | undefined, roleOverrides?: readonly RoleOverrideV1[]) => {
         if (!isCurrent() || sessionBound || target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0) return;
-        runId.current ??= randomUUID();
-        const accepted = await runNow.runNow({ runId: runId.current,
+        const accepted = await runNow.runNow({
             source: catalogSource,
             metadata: { title: plugin.title }, ...(inputs === undefined ? {} : { inputs: { ...inputs } }),
-            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project: target, isInvocationCurrent: isCurrent });
+            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project: target, isInvocationCurrent: isCurrent,
+            refusal: 'inline' });
         if (accepted !== null && isCurrent()) {
             setOpen(false);
-            runId.current = null;
             router.push(createWorkflowRunRoute(accepted.run.id) as never);
         }
     };
@@ -126,8 +120,10 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             renderContent: <WorkflowProjectTargetControl target={target} machines={machines} onChange={setTarget}
                 machineName={machine ? getMachineDisplayName(machine) : null} testIDPrefix={`${prefix}:run`} />,
         }), controlId: 'path' }],
-        onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => setOpen(false),
-        pending: runNow.stateFor(runId.current ?? '') === 'submitting',
+        onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
+        pending: runNow.isPending(runNow.pendingRunId ?? ''),
+        startProblem: runNow.refusal?.message ?? null,
+        reconciling: runNow.stateFor(runNow.pendingRunId ?? '') === 'reconciling',
         startDisabled: target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0,
     } });
     const exportSource = async () => {
@@ -146,7 +142,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
             view={view} onChangeView={setView}
             {...(sessionBound && builtin !== null
                 ? { runNowAction: <WorkflowBuiltinSessionButton entry={builtin} testID={`${prefix}-run-now`} /> }
-                : { onRunNow: () => { runId.current = null; setOpen(true); }, runNowAnchorRef: runAnchorRef })}
+                : { onRunNow: () => setOpen(true), runNowAnchorRef: runAnchorRef })}
             onDuplicate={duplicate} onExportJson={() => { void exportSource(); }}
             menuActions={[{ id: 'export', title: t('workflows.exportJson'), onSelect: () => { void exportSource(); } }]}
             description={plugin.description}

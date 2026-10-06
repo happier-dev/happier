@@ -7,6 +7,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import type { ExecutionRunIntent } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { t, tLoose } from '@/text';
 
 import { SESSION_STARTABLE_BUILTIN_WORKFLOWS } from './useSessionBuiltinWorkflowStart';
@@ -114,12 +115,15 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
         }));
         // Last-known rows stay while the owner refreshes or after a failed refresh.
         for (const definition of workflowLibrary.definitions) {
-            const description = definition.metadata.description?.trim();
+            const description = definition.contentStatus === 'unavailable'
+                ? formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason)
+                : definition.metadata.description?.trim();
             workflowItems.push({
                 id: `${WORKFLOW_ITEM_PREFIX}${definition.definitionId}`,
                 testID: `session-agents-launch:workflow:${definition.definitionId}`,
                 category: librarySection,
-                title: definition.metadata.title,
+                title: formatWorkflowDefinitionLibraryTitle(definition),
+                disabled: definition.contentStatus === 'unavailable',
                 ...(description ? { subtitle: description } : {}),
                 icon: workflowIcon,
             });
@@ -215,6 +219,7 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
         if (itemId.startsWith(WORKFLOW_ITEM_PREFIX)) {
             // FIN's run entry: the saved workflow's page opens on its Run, which asks its inputs.
             const definitionId = itemId.slice(WORKFLOW_ITEM_PREFIX.length);
+            if (!workflowLibrary.definitions.some((entry) => entry.definitionId === definitionId && entry.contentStatus === 'available')) return;
             router.push({ pathname: '/workflows/[id]', params: { id: definitionId, intent: 'run' } } as never);
             return;
         }

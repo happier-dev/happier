@@ -1,9 +1,25 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+
+const execute = vi.hoisted(() => vi.fn());
+// The Action transport and applied network identity are boundaries; the library and exact reader stay real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
+vi.mock('@/sync/runtime/orchestration/connectionManager', async (original) => ({
+    ...await original<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
+    getAppliedActiveServerSnapshot: () => getActiveServerSnapshot(), isAppliedActiveServerRuntimeAvailable: () => true,
+}));
+afterEach(async () => {
+    standardCleanup();
+    (await import('../library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
+    (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
+    execute.mockReset();
+});
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -81,7 +97,9 @@ describe('Run a workflow trigger inputs', () => {
     it('keeps JSON drafts distinct from string values and preserves an explicit false input on reopen', async ({ onTestFinished }) => {
         // Plugin definition content is Account-scoped; this fixture must establish its disclosure scope.
         const previousScope = getStorage().getState().profileScope;
-        getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+        const runtime = await import('@/sync/domains/server/serverRuntime');
+        const server = await runtime.upsertAndActivateServer({ serverUrl: 'http://trigger-inputs.test', name: 'Trigger inputs' });
+        getStorage().setState({ profileScope: { serverId: server.id, accountId: 'account-a' } });
         onTestFinished(async () => { await act(async () => { getStorage().setState({ profileScope: previousScope }); }); });
         const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [
             { name: 'payload', valueType: 'json', required: true },
@@ -90,11 +108,15 @@ describe('Run a workflow trigger inputs', () => {
             input: [], result: { kind: 'text' } }] });
         const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const ref = 'plugin:example.workflows/review';
+        execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [
+            { workflow: ref, pluginId: 'example.workflows', version: '1.0.0', title: 'Review', definition },
+        ] } });
         const screen = await renderScreen(<TriggerPopover testID="json-trigger" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1"
             initial={{ when: { kind: 'turnEnds' }, enabled: true,
                 then: { kind: 'runWorkflow', ref, inputs: { payload: 'Saved JSON string', announce: false } } }}
-            workflowOptions={[{ ref, title: 'Review', definition }]} onSubmit={submit} />);
+            workflowOptions={[{ ref, title: 'Review' }]} onSubmit={submit} />);
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
         expect(screen.findByTestId('json-trigger-input-payload')?.props.value).toBe('"Saved JSON string"');
         await act(async () => { screen.changeTextByTestId('json-trigger-input-payload', '{"unfinished":'); });
         expect(screen.findByTestId('json-trigger-input-payload')?.props.value).toBe('{"unfinished":');

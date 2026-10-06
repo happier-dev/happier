@@ -1,6 +1,6 @@
 import {
     AccountEncryptionMigrateAutomationsDirectiveSchema,
-    AutomationStoredContentEnvelopeV1Schema,
+    AutomationStoredContentEnvelopeV1ReadSchema,
     AutomationOccurrenceEvidenceV1Schema,
     AutomationOccurrenceKeyV1Schema,
     convertWorkflowRunAccountEncryptionV1,
@@ -43,7 +43,7 @@ export function isAccountEncryptionMigrationAutomationContentPlain(
 ): boolean {
     const triggersPlain = inventory.templates.every(row => row.triggerDefinitionEnvelopes.every(trigger => {
         try {
-            const envelope = AutomationStoredContentEnvelopeV1Schema.safeParse(JSON.parse(trigger.envelope));
+            const envelope = AutomationStoredContentEnvelopeV1ReadSchema.safeParse(JSON.parse(trigger.envelope));
             return envelope.success && envelope.data.t === 'plain';
         } catch { return false; }
     }));
@@ -177,7 +177,7 @@ export async function buildAccountEncryptionMigrationAutomations(params: Readonl
     const sourceMaterial = snapshot(params.fromMode, params.sourceCredentials, params.sourceEncryption);
     const targetMaterial = snapshot(params.toMode, params.targetCredentials, params.targetEncryption);
     const open = (serialized: string, kind: AccountScopedBlobKind): unknown => {
-        const envelope = AutomationStoredContentEnvelopeV1Schema.parse(JSON.parse(serialized));
+    const envelope = AutomationStoredContentEnvelopeV1ReadSchema.parse(JSON.parse(serialized));
         if (params.fromMode === 'plain') {
             if (envelope.t !== 'plain') throw new Error('automation_stored_content_unavailable');
             return envelope.v;

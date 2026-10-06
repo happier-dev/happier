@@ -32,10 +32,12 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    const { workflowFieldTranslations } = await import('@/text/translations/workflowFieldTranslations');
     return createTextModuleMock({
-        translate: (key: string, params?: Record<string, unknown>) => (
-            params ? `${key}:${JSON.stringify(params)}` : key
-        ),
+        translate: (key: string, params?: Record<string, unknown>) => {
+            const field = Object.entries(workflowFieldTranslations.en).find(([name]) => key === `workflows.page.fields.${name}`);
+            return field?.[1] ?? (params ? `${key}:${JSON.stringify(params)}` : key);
+        },
     });
 });
 
@@ -81,6 +83,27 @@ function selectTrigger(root: ReactTestInstance, testID: string): ReactTestInstan
 }
 
 describe('WorkflowStepDataEditor field selects', () => {
+    it('reads human input and result field names without leaking wire keys or clipped prompt titles', () => {
+        const producer = stepBlock('opaque-producer', []);
+        const draft = createWorkflowEditorDraft({ draftId: 'human-references', name: 'Review', blocks: [producer] });
+        expect(formatWorkflowValueReference(draft, { kind: 'input', name: 'sessionId' })).not.toContain('sessionId');
+        expect(formatWorkflowValueReference(draft, { kind: 'result', producer: { blockId: producer.id, scope: { kind: 'current' } }, path: ['expectedServerRevision'] }))
+            .not.toContain('expectedServerRevision');
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: { sessionId: 'bound session' } })).not.toContain('sessionId');
+    });
+    it('reads declared execution values as words without rewriting arbitrary authored strings', () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'execution-values', name: 'Plan' });
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: { kind: 'detached' } }, 'target'))
+            .toBe('workflows.page.sections.aBackgroundRun');
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: 'read_only' }, 'permissionMode'))
+            .toBe('executionRuns.newRun.permissionModes.readOnly');
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: 'read_only' }))
+            .toBe('“read_only”');
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: 'custom permission' }, 'permissionMode'))
+            .toBe('“custom permission”');
+        expect(formatWorkflowValueReference(draft, { kind: 'literal', value: { kind: 'detached', note: 'Keep this' } }, 'target'))
+            .toContain('Keep this');
+    });
     it('reads every reference kind without a wire-object fallback and labels unavailable values', () => {
         const draft = createWorkflowEditorDraft({ draftId: 'references', name: 'Review' });
         const producer = { blockId: draft.blocks[0]!.id, scope: { kind: 'outer', levels: 1 } } as const;
@@ -164,7 +187,7 @@ describe('WorkflowStepDataEditor field selects', () => {
 
         const select = fieldSelect(screen.root, 'editor-step-step-a-input-0-producer');
         expect(select.props.items).toEqual([
-            expect.objectContaining({ id: 'producer-a:current', title: 'producer-a', subtitle: 'workflows.input.scopeCurrent' }),
+            expect.objectContaining({ id: 'producer-a:current', title: 'workflows.editor.addStep', subtitle: 'workflows.input.scopeCurrent' }),
         ]);
         expect(select.props.selectedId).toBe('producer-a:current');
     });

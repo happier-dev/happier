@@ -94,7 +94,8 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
         serverId={props.targetServerId} onRun={(inputs, roleOverrides) => { void submit(inputs, roleOverrides); }} onCancel={remove}
         startDisabled={!props.selectedMachineId || !props.selectedPath || props.isCreating
             || !targetIsCurrent || workflowDecision?.state !== 'enabled'}
-        pending={runNow.stateFor(pendingRunId.current ?? '') === 'submitting'}
+        pending={runNow.isPending(pendingRunId.current ?? '')}
+        reconciling={runNow.stateFor(pendingRunId.current ?? '') === 'reconciling'}
         authoringControls={{ machineName: props.machineName, machinePopover: props.machinePopover,
             currentPath: props.selectedPath, folderChipState: props.folderChipState,
             onRemoveFolder: props.onRemoveFolder, pathPopover: props.pathPopover }}

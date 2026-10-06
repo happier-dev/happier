@@ -58,9 +58,11 @@ async function mount(extra: Partial<WorkflowReviewCardProps> = {}) {
     function Host() {
         const [draft, onChangeDraft] = React.useState<{ text: string; contentRevision: string }>();
         const [publication, setPublication] = React.useState({ progress: extra.progress ?? progress(), revision: extra.contentRevision ?? '7' });
+        const [reading, onChangeReading] = React.useState(() => extra.reading
+            ?? { value: publication.progress.result, revision: publication.revision });
         publish = (value, revision) => setPublication({ progress: value, revision });
         return <ModalProvider><WorkflowReviewCard contract={contract} waitForYou={false}
-            draft={draft} onChangeDraft={onChangeDraft} onComplete={onComplete}
+            draft={draft} onChangeDraft={onChangeDraft} reading={reading} onChangeReading={onChangeReading} onComplete={onComplete}
             testIDPrefix="review" {...extra} progress={publication.progress} contentRevision={publication.revision} /></ModalProvider>;
     }
     return { screen: await renderScreen(<Host />), onComplete,
@@ -130,13 +132,39 @@ describe('WorkflowReviewCard', () => {
         await screen.pressByTestIdAsync('review-use');
         expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7' });
     });
-    it('lets a read-only reviewer inspect and copy the full value without enabling decisions', async () => {
-        const { screen, onComplete } = await mount({ readOnly: true });
+    it('lets a read-only reviewer explicitly inspect newer publications without enabling decisions', async () => {
+        const onDiscuss = vi.fn();
+        const onEditPlan = vi.fn(async () => {});
+        const onRunPlan = vi.fn(async () => {});
+        const { screen, onComplete, publish } = await mount({ readOnly: true, onDiscuss, onEditPlan, onRunPlan });
         await screen.pressByTestIdAsync('review-show-full');
+        const full = screen.findByTestId('review-full-value');
+        const newer = { summary: 'Updated publication', approved: true, retained: { exact: [3, 4] } };
+        await publish(progress({ result: newer }), '8');
+        expect(screen.getTextContent()).toContain('Published');
+        expect(screen.getTextContent()).not.toContain(newer.summary);
         await screen.pressByTestIdAsync('review-full-copy');
         expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(JSON.stringify(progress().result, null, 2));
-        expect(screen.findByTestId('review-use')).toBeNull();
+        expect(screen.findByTestId('review-show-newer')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('review-show-newer');
+        expect(screen.getTextContent()).toContain(newer.summary);
+        expect(screen.findByTestId('review-newer')).toBeNull();
+        // An already-open inspection stays on its selected bytes until opened again.
+        expect(screen.findByTestId('review-full-value')).toBe(full);
+        await screen.pressByTestIdAsync('review-full-copy');
+        expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(JSON.stringify(progress().result, null, 2));
+        await screen.pressByTestIdAsync('review-copy');
+        expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(JSON.stringify(newer, null, 2));
+        await screen.pressByTestIdAsync('review-show-full');
+        await screen.pressByTestIdAsync('review-full-copy');
+        expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(JSON.stringify(newer, null, 2));
+        for (const action of ['use', 'edit', 'generate', 'discuss', 'plan-run', 'plan-edit']) {
+            expect(screen.findByTestId(`review-${action}`)).toBeNull();
+        }
         expect(onComplete).not.toHaveBeenCalled();
+        expect(onDiscuss).not.toHaveBeenCalled();
+        expect(onEditPlan).not.toHaveBeenCalled();
+        expect(onRunPlan).not.toHaveBeenCalled();
     });
     it('uses the exact shown edited value while preserving fields outside the simple form', async () => {
         const { screen, onComplete } = await mount();

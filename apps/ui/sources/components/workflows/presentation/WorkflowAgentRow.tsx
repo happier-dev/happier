@@ -1,5 +1,9 @@
+import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
@@ -115,19 +119,22 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
 
     if (hasDetail) {
         return (
-            <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: isExpanded }}
-                onPress={toggleExpanded}
-                style={[styles.row, isExpanded ? styles.rowExpanded : null]}
-                testID={props.testID}
-                hitSlop={6}
-            >
-                {content}
+            <View style={[styles.row, isExpanded ? styles.rowExpanded : null]}>
+                <HappierPressable
+                    accessibilityRole="button"
+                    accessibilityLabel={props.title}
+                    expanded={isExpanded}
+                    onPress={toggleExpanded}
+                    style={(state) => [styles.rowTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                    testID={props.testID}
+                >
+                    {content}
+                </HappierPressable>
                 {isExpanded && expandedDetail ? (
                     <WorkflowAgentDetail text={expandedDetail} detailTestID={detailTestID} messageId={props.messageId} findBlockId={`${prefix}-detail`} />
                 ) : null}
-            </Pressable>
+            </View>
         );
     }
 
@@ -141,19 +148,24 @@ WorkflowAgentRow.displayName = 'WorkflowAgentRow';
 
 const styles = StyleSheet.create((theme) => ({
     row: {
-        gap: 6,
-        minHeight: 40,
-        paddingVertical: 6,
-        paddingHorizontal: 2,
-        borderRadius: 8,
+        gap: theme.margins.xs,
+        paddingVertical: theme.margins.xs,
+        paddingHorizontal: theme.margins.xs,
+        borderRadius: theme.borderRadius.md,
     },
     rowExpanded: {
         backgroundColor: theme.colors.surface.base,
     },
+    rowTarget: {
+        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS),
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
     mainRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        gap: 8,
+        gap: theme.margins.sm,
     },
     iconColumn: {
         width: 18,
@@ -162,18 +174,18 @@ const styles = StyleSheet.create((theme) => ({
     },
     body: {
         flex: 1,
-        gap: 2,
+        gap: theme.margins.xs,
     },
     title: {
-        fontSize: 13,
+        ...Typography.rowTitle(),
         color: theme.colors.text.primary,
     },
     metrics: {
-        fontSize: 11,
+        ...Typography.timestamp(),
         color: theme.colors.text.secondary,
     },
     preview: {
-        fontSize: 12,
+        ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
     },
 }));

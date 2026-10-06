@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { Modal } from '@/modal';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
@@ -61,6 +61,30 @@ function serve(set: ReturnType<typeof fixture>) {
 function writes() { return transport.mock.calls.filter(([id]) => id === 'workflow.trigger.update').map(([, input]) => input); }
 
 describe('Account trigger editing', () => {
+    it('reserves no blank status slot around retained rows, and states a failed refresh under them', async () => {
+        const set = fixture();
+        storage.getState().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set });
+        const read = createDeferred<unknown>();
+        transport.mockImplementation(async (action: string) => action === 'workflow.trigger.list' ? read.promise
+            : { ok: true, result: { definitions: [], nextCursor: null } });
+        const screen = await renderScreen(<AccountTriggersSection />);
+        // Refreshing retained rows says nothing: no reserved line, no status above the rows.
+        expect(screen.findByTestId('account-triggers-read-slot')).toBeNull();
+        expect(screen.findByTestId('account-triggers-read')).toBeNull();
+        expect(screen.findByTestId('workflows-column:trigger:digest')).not.toBeNull();
+        await act(async () => read.resolve({ ok: false, errorCode: 'unavailable', error: 'Down' }));
+        expect(screen.findByTestId('workflows-column:trigger:digest')).not.toBeNull();
+        const text = screen.getTextContent();
+        expect(text.indexOf('workflows.triggers.section.loadFailed')).toBeGreaterThan(text.indexOf('Morning digest'));
+    });
+    it('reads a column trigger as "{when}" over what it runs, led by its event glyph', async () => {
+        serve(fixture());
+        const screen = await renderScreen(<AccountTriggersSection />);
+        const text = screen.getTextContent();
+        expect(text.indexOf('workflows.triggers.summary.everyDayAt(time=09:00)')).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('workflows.triggers.summary.everyDayAt(time=09:00)')).toBeLessThan(text.indexOf('Morning digest'));
+        expect(screen.findAll((node) => node.props.name === 'clock').length).toBeGreaterThan(0);
+    });
     it('enables an off set through one selected-trigger Action instead of first enabling every schedule', async () => {
         const set = { ...fixture(false, [trigger('t1'), trigger('t2', 19)]), enabled: false }; serve(set);
         const screen = await renderScreen(<AccountTriggersSection />);

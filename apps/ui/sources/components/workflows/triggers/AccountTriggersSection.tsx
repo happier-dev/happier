@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { HAPPIER_FRESHNESS_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { TriggerTargetV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
@@ -112,16 +113,18 @@ function AccountTriggersContent(props: Readonly<{ first?: boolean }>) {
                 count={rows.length}
                 {...(props.first ? { first: true } : {})}
             />
-            {status === 'ready' ? null : rows.length > 0 ? (
-                <SurfaceFreshnessLine testID="account-triggers-read" busy={status === 'loading'}
-                    tone={status === 'failed' ? 'warning' : 'neutral'}
-                    reason={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
-                    {...(status === 'failed' ? { action: { label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
-            ) : (
-                <SurfaceStateCard testID="account-triggers-read" size="line" kind={status === 'failed' ? 'error' : 'loading'}
-                    title={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
-                    {...(status === 'failed' ? { action: { testID: 'account-triggers-read-retry', label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
-            )}
+            <View testID="account-triggers-read-slot" style={{ minHeight: HAPPIER_FRESHNESS_LINE_METRICS.minHeightPx }}>
+                {status === 'ready' ? null : rows.length > 0 ? (
+                    <SurfaceFreshnessLine testID="account-triggers-read" busy={status === 'loading'}
+                        tone={status === 'failed' ? 'warning' : 'neutral'}
+                        reason={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
+                        {...(status === 'failed' ? { action: { label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
+                ) : (
+                    <SurfaceStateCard testID="account-triggers-read" size="line" kind={status === 'failed' ? 'error' : 'loading'}
+                        title={status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading')}
+                        {...(status === 'failed' ? { action: { testID: 'account-triggers-read-retry', label: t('workflows.triggers.popover.tryAgain'), onPress: refresh } } : {})} />
+                )}
+            </View>
             {rows.map((row) => (
                 <AccountTriggerRowView
                     key={`${row.automationId}:${row.triggerId ?? 'manual'}`}

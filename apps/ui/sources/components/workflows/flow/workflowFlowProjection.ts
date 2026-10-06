@@ -1,5 +1,6 @@
 import type {
   WorkflowBlock,
+  WorkflowResultContract,
   WorkflowDefinitionV1,
   WorkflowMaxIterationsV1,
   WorkflowRepetition,
@@ -7,8 +8,7 @@ import type {
 import type { WorkflowInvocationLifecycleV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
-import { findWorkflowActionSpec } from '@/components/workflows/presentation/workflowActionCatalog';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { buildHappierWorkMap, type HappierWorkMap, type HappierWorkMapPlaced } from '@happier-dev/plugin-ui/presentation';
 
 /**
@@ -82,6 +82,10 @@ export type WorkflowFlowNodeDeclaration = Readonly<{
   observed: boolean;
   /** Authoritative observed state; distinct from managed invocation lifecycle. */
   observedStatus?: SessionWorkflowAgentStatusV1;
+  /** The named results this step declares, in authored order (its title, else its name). */
+  returns?: readonly string[];
+  /** This block produces the workflow's final output. */
+  finalOutput?: boolean;
 }>;
 
 /** A Flow node placed on the Work map: `depth`, 1-based rail `ordinal`, `childNodeIds`. */
@@ -103,15 +107,16 @@ function declareFlowNode(node: WorkflowFlowNodeInput): WorkflowFlowNodeDeclarati
   return { ...node, open: { kind: 'workflow-step', nodeId: node.nodeId } };
 }
 
-function labelForBlock(block: WorkflowBlock, fallback: string): string {
-  if (block.kind === 'step' || block.kind === 'wait') return workflowStepPromptLabel(block) ?? fallback;
-  if (block.kind === 'action') return findWorkflowActionSpec(block.actionId)?.title ?? fallback;
-  return fallback;
-}
-
 /** Child definitions may reuse ids; the call path, not the invocation occurrence, identifies a node. */
 export function resolveWorkflowFlowScopedNodeId(blockId: string, workflowPath: readonly string[] = []): string {
   return workflowPath.length === 0 ? blockId : JSON.stringify([...workflowPath, blockId]);
+}
+
+/** A declared result's named fields, as the person reads them. Text and decision results name none. */
+function declaredResultFields(result: WorkflowResultContract | undefined): readonly string[] | undefined {
+  if (result?.kind !== 'json' || result.schema.type !== 'object' || !result.schema.properties) return undefined;
+  const fields = Object.entries(result.schema.properties).map(([name, field]) => field?.title ?? name);
+  return fields.length > 0 ? fields : undefined;
 }
 
 function summarizeRepetition(repetition: WorkflowRepetition): WorkflowFlowRepetitionSummary {
@@ -140,10 +145,21 @@ function summarizeRepetition(repetition: WorkflowRepetition): WorkflowFlowRepeti
 export function projectWorkflowFlow(
   definition: WorkflowDefinitionV1,
   frozenChildren: Readonly<Record<string, WorkflowDefinitionV1>> = {},
+  /** Catalog-authored presentation; never inferred from prompt text or persisted in the definition. */
+  blockLabels: Readonly<Record<string, string>> = {},
 ): WorkflowFlowProjection {
   const declarations: WorkflowFlowNodeDeclaration[] = [];
   const pushNode = (node: WorkflowFlowNodeInput): void => {
     declarations.push(declareFlowNode(node));
+  };
+  const finalOutputBlockId = definition.finalOutput?.producer.blockId ?? null;
+  const resultFacts = (block: WorkflowBlock, workflowPath: readonly string[]) => {
+    const returns = block.kind === 'step' || block.kind === 'wait' ? declaredResultFields(block.result) : undefined;
+    return {
+      ...(returns === undefined ? {} : { returns }),
+      // Only the root definition's own producer is this Run's final output.
+      ...(workflowPath.length === 0 && block.id === finalOutputBlockId ? { finalOutput: true } : {}),
+    };
   };
 
   const visitList = (
@@ -153,8 +169,7 @@ export function projectWorkflowFlow(
     childEditTarget: WorkflowFlowEditTarget | null = null,
     refs: readonly string[] = [],
   ): void => {
-    list.forEach((block, index) => {
-      const ordinal = index + 1;
+    list.forEach((block) => {
       const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
       const editTarget = childEditTarget ?? { kind: 'block' as const, blockId: block.id };
       switch (block.kind) {
@@ -166,10 +181,10 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: block.kind,
             editTarget,
-            label: labelForBlock(block, t(block.kind === 'action' ? 'workflows.page.blocks.menuAction'
-              : block.kind === 'wait' ? 'workflows.page.blocks.menuWait' : 'workflows.page.blocks.menuRun')),
+            label: blockLabels[nodeId] ?? workflowBlockReferenceLabel(block),
             parentNodeId,
             observed: false,
+            ...resultFacts(block, workflowPath),
           });
           if (block.kind === 'workflow') {
             const child = frozenChildren[block.workflowRef];
@@ -186,9 +201,10 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'step',
             editTarget: childEditTarget ?? { kind: 'prompt', blockId: block.id },
-            label: labelForBlock(block, t('workflows.editor.unnamedStep', { position: ordinal })),
+            label: blockLabels[nodeId] ?? workflowBlockReferenceLabel(block),
             parentNodeId,
             observed: false,
+            ...resultFacts(block, workflowPath),
           });
           break;
         case 'parallel': {
@@ -227,7 +243,7 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'loop',
             editTarget,
-            label: `${t('workflows.editor.unnamedLoop')} ${ordinal}`,
+            label: workflowBlockReferenceLabel(block),
             parentNodeId,
             repetition: summarizeRepetition(block.repetition),
             ...(block.repetition.kind === 'items'
@@ -248,7 +264,7 @@ export function projectWorkflowFlow(
               blockId: evaluator.id,
               kind: 'evaluator',
               editTarget: childEditTarget ?? { kind: evaluator.kind === 'step' ? 'prompt' : 'block', blockId: evaluator.id },
-              label: labelForBlock(evaluator, t('workflows.editor.evaluator')),
+              label: t('workflows.editor.evaluator'),
               parentNodeId: nodeId,
               observed: false,
             });
@@ -261,7 +277,7 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'if',
             editTarget,
-            label: `${t('workflows.editor.unnamedIf')} ${ordinal}`,
+            label: workflowBlockReferenceLabel(block),
             parentNodeId,
             observed: false,
           });

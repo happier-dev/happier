@@ -263,34 +263,16 @@ describe('Workflow inputs through real Action option resolution', () => {
         const chip = composer.findByType(AgentInput).props.extraActionChips.find((entry: { controlId?: string }) => entry.controlId === 'workflowInputs');
         const { ModalProvider } = await import('@/modal');
         const productionPanel = await renderScreen(<ModalProvider>{chip.collapsedContentPopover.renderContent}</ModalProvider>);
-        let stage = 'browse';
-        let paint = '';
-        onTestFinished(() => { if (stage !== 'done') console.error('picker diagnostic', stage, paint); });
         await flushHookEffects();
-        await waitForHomeGovernance(() => {
-            paint = productionPanel.getTextContent();
-            expect(productionPanel.findAllByType('Pressable').find((node) =>
-                (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField')?.props.disabled).toBe(false);
-        });
+        await waitForHomeGovernance(() => expect(productionPanel.findAllByType('Pressable').find((node) =>
+            (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField')?.props.disabled).toBe(false));
         const productionBrowse = productionPanel.findAllByType('Pressable').find((node) =>
             (node.props.accessibilityLabel ?? node.props['aria-label']) === 'inputPicker.browseField');
-        const { HappierInputPickerProvider } = await import('@happier-dev/plugin-ui/presentation');
-        const pickerAttempt = vi.spyOn(productionPanel.findByType(HappierInputPickerProvider).props.port, 'pick');
         const { act } = await import('react-test-renderer');
         // Opening returns the terminal settlement promise. Do not await that before
         // the person can interact with the mounted modal.
         await act(async () => { productionBrowse!.props.onPress(); });
-        stage = 'native';
-        await Promise.race([
-            waitForHomeGovernance(() => {
-                paint = productionPanel.getTextContent();
-                expect(nativeBoundary.context).toBeDefined();
-            }),
-            pickerAttempt.mock.results[0]!.value.then((result: unknown) => {
-                throw new Error(`Picker settled before native mount: ${JSON.stringify(result)}; aborted=${pickerAttempt.mock.calls[0]![0].signal.aborted}`);
-            }),
-        ]);
-        stage = 'control';
+        await waitForHomeGovernance(() => expect(nativeBoundary.context).toBeDefined());
         expect(nativeBoundary.context?.launchInput).toEqual({ inputType: repositoryInputTypeRef, semantic: 'repository',
             ...(pickerOnly ? {} : { options: [{ value: review, label: 'Review assistant' }] }) });
         const pickerContext = nativeBoundary.context!;
@@ -302,7 +284,6 @@ describe('Workflow inputs through real Action option resolution', () => {
         expect(nativeControl()?.props.disabled).not.toBe(true);
         expect(nativeBoundary.context?.signal.aborted).toBe(false);
         await choose(nativeControl());
-        stage = 'settlement';
         expect(productionPanel.findAllByType(PluginSurfaceHost)).toHaveLength(0);
         if (pickerOnly) expect(onChangeValues).not.toHaveBeenCalled();
         else await waitForHomeGovernance(() => expect(onChangeValues).toHaveBeenCalledWith({ repository: review }));
@@ -315,7 +296,6 @@ describe('Workflow inputs through real Action option resolution', () => {
                 input: { consumer: { kind: 'workflow', workflow }, fieldPath: 'repository', draftInput: { machineId: machine.id } } } }));
         expect(rpc.machine.mock.calls.filter(([request]) => request.method === 'action.options.resolve')
             .every(([request]) => request.payload.input.optionsSourceId === undefined)).toBe(true);
-        stage = 'done';
     });
 
     it('coalesces demanded reads, ignores free text, retains options during refresh, and cancels on last release', async () => {

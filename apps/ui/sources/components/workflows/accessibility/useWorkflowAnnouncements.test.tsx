@@ -60,6 +60,15 @@ async function renderAnnouncements(initial: WorkflowAnnouncementState, enabled =
 }
 
 describe('useWorkflowAnnouncements', () => {
+    it('announces a removed block using its last committed human label', async () => {
+        const { useWorkflowAnnouncements } = await import('./useWorkflowAnnouncements');
+        const hook = await renderHook(useWorkflowAnnouncements, { initialProps: {
+            state: state({ blockIds: ['action-1'] }),
+            resolveBlockLabel: (id: string) => id === 'action-1' ? 'Notify me' : id,
+        } });
+        await hook.rerender({ state: state(), resolveBlockLabel: (id: string) => id });
+        expect(announcements.messages).toEqual(['workflows.a11y.removed:{"block":"Notify me","total":0}']);
+    });
     it('says nothing about the state it arrives at', async () => {
         // Three blocks and a finished Run are what this surface *is*, not
         // something that just happened while the reader was listening.

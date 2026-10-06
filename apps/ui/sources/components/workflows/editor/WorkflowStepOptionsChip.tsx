@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import {
@@ -13,7 +13,7 @@ import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 type StepOptionsChipProps = Readonly<{
     /** "Workflow defaults", or what this step changes ("Fresh · Reviews before continuing"). */
@@ -131,7 +131,7 @@ export function WorkflowStepOptionsFootChip(props: StepOptionsChipProps): React.
                     workflowEditorStyles.actionTarget,
                     styles.footChip,
                     props.changed ? styles.chipChanged : null,
-                    workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                    state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                 ]}
             >
                 <Icon name="sliders-horizontal" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={theme.colors.text.secondary} />

@@ -1,6 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { WorkflowAuthoredResultReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
@@ -36,6 +38,7 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
     onChange: (value: WorkflowAuthoredResultReference | null) => void;
     testIDPrefix: string;
 }>): React.ReactElement {
+    const { theme } = useUnistyles();
     const options = React.useMemo(() => listWorkflowFinalOutputOptions(props.draft), [props.draft]);
     const selected = props.draft.finalOutput;
     return (
@@ -47,34 +50,34 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                 accessibilityRole="radiogroup"
                 accessibilityLabel={t('workflows.finalOutput.title')}
             >
-                <Pressable
+                <HappierPressable
                     testID={`${props.testIDPrefix}-final-output-clear`}
                     accessibilityRole="radio"
-                    accessibilityState={{ selected: selected === undefined }}
+                    checked={selected === undefined}
                     onPress={() => props.onChange(null)}
-                    style={workflowEditorStyles.actionTarget}
+                    style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                 >
                     <Text style={selected === undefined ? styles.selected : styles.option}>
                         {t('workflows.finalOutput.none')}
                     </Text>
-                </Pressable>
+                </HappierPressable>
                 {options.map((option) => (
-                    <Pressable
+                    <HappierPressable
                         key={option.blockId}
                         testID={`${props.testIDPrefix}-final-output-option-${option.blockId}`}
                         accessibilityRole="radio"
-                        accessibilityState={{ selected: selected?.producer.blockId === option.blockId }}
+                        checked={selected?.producer.blockId === option.blockId}
                         onPress={() => props.onChange({
                             kind: 'result',
                             producer: { blockId: option.blockId, scope: { kind: 'current' } },
                             path: selected?.producer.blockId === option.blockId ? selected.path : [],
                         })}
-                        style={workflowEditorStyles.actionTarget}
+                        style={(state) => [workflowEditorStyles.actionTarget, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={selected?.producer.blockId === option.blockId ? styles.selected : styles.option}>
                             {option.label}
                         </Text>
-                    </Pressable>
+                    </HappierPressable>
                 ))}
             </View>
             {selected === undefined ? null : (

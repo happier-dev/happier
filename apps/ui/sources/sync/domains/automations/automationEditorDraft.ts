@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import {
     AutomationStoredDefinitionExecutionRecipeV1Schema,
+    AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
     AutomationStoredWorkflowDefinitionRecipeV2Schema,
+    AutomationStoredWorkflowDefinitionRecipeV2ReadSchema,
     AutomationSourceSelectorIdV1Schema,
     type AutomationAssignmentInput,
     type AutomationDefinitionDetail,
@@ -207,7 +209,7 @@ export function automationEditorDraftFromDetail(
     detail: AutomationDefinitionDetail,
     triggerDefinitions: ReadonlyMap<string, AutomationEditorTriggerDefinitionSeed>,
 ): AutomationEditorDraft | null {
-    const executionRecipe = AutomationEditorExecutionRecipeSchema.safeParse(detail.executionRecipe);
+    const executionRecipe = z.union([AutomationStoredDefinitionExecutionRecipeV1ReadSchema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema]).safeParse(detail.executionRecipe);
     if (!executionRecipe.success || executionRecipe.data.templateVersion !== detail.templateVersion) return null;
     const triggers: AutomationEditorTriggerDraft[] = [];
     for (const trigger of detail.triggers) {

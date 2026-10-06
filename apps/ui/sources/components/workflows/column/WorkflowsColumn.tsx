@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierPressable, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 import { useGlobalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SessionsList } from '@/components/sessions/shell/SessionsList';
@@ -20,6 +22,7 @@ import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/wor
 import { useSocketStatus } from '@/sync/domains/state/storage';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t, tLoose } from '@/text';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
 import { splitLibraryDefinitions } from './workflowsColumnModel';
@@ -104,7 +107,8 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
             layout="line" title={t('workflows.destination.libraryEmpty')} lineDensity="compact" lineRowStyle={collectionListStyles.row} /> : null}
         {split.library.map((definition) => <CollectionNavigationRow key={definition.definitionId}
             href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:library:${definition.definitionId}`}
-            title={definition.metadata.title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
+            title={formatWorkflowDefinitionLibraryTitle(definition)} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
+            {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
             onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />)}
         <AccountTriggersSection />
         {split.sharedWithYou.length > 0 ? <>
@@ -112,7 +116,8 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                 count={split.sharedWithYou.length} />
             {split.sharedWithYou.map((definition) => <CollectionNavigationRow key={definition.definitionId}
                 href={`/workflows/${encodeURIComponent(definition.definitionId)}`} testID={`workflows-column:shared:${definition.definitionId}`}
-                title={definition.metadata.title} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
+                title={formatWorkflowDefinitionLibraryTitle(definition)} icon={<Icon name="tree-structure" />} selected={selectedDefinitionId === definition.definitionId}
+                {...(definition.contentStatus === 'unavailable' ? { subtitle: formatWorkflowDefinitionContentUnavailableReason(definition.contentUnavailableReason) } : {})}
                 onPress={() => router.push(`/workflows/${encodeURIComponent(definition.definitionId)}` as never)} />)}
         </> : null}
         <ColumnBuiltins selectedDefinitionId={selectedDefinitionId} />
@@ -147,7 +152,10 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null }>
 }
 
 function ColumnGroupLink(props: Readonly<{ testID: string; label: string; onPress: () => void }>) {
-    return <HappierPressable testID={props.testID} accessibilityRole="link" accessibilityLabel={props.label} onPress={props.onPress} style={styles.groupLink}>
+    const { theme } = useUnistyles();
+    return <HappierPressable testID={props.testID} accessibilityRole="link" accessibilityLabel={props.label} onPress={props.onPress}
+        style={(state) => [styles.groupLink, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+            focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
         <Text style={styles.groupLinkText}>{props.label}</Text>
     </HappierPressable>;
 }
@@ -172,9 +180,10 @@ const styles = StyleSheet.create((theme) => ({
     views: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
     definitionsList: { backgroundColor: 'transparent' },
     freshness: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset, paddingBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop },
-    groupLink: { borderRadius: 4 },
+    groupLink: { borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: 'transparent',
+        minHeight: resolveMinimumInteractiveTargetSize(Platform.OS), justifyContent: 'center', alignSelf: 'flex-start' },
     groupLinkText: { ...Typography.default(HAPPIER_COLLECTION_LIST_TEXT.groupCount.weight), fontSize: HAPPIER_COLLECTION_LIST_TEXT.groupCount.fontSize, lineHeight: HAPPIER_COLLECTION_LIST_TEXT.groupCount.lineHeight, color: theme.colors.text.secondary },
-    stateLine: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset, paddingVertical: 6, gap: 4, alignItems: 'flex-start' },
+    stateLine: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset, paddingVertical: theme.margins.xs, gap: theme.margins.xs, alignItems: 'flex-start' },
     stateLineText: { ...Typography.default(HAPPIER_COLLECTION_LIST_TEXT.rowTitle.weight), fontSize: HAPPIER_COLLECTION_LIST_TEXT.rowTitle.fontSize, lineHeight: HAPPIER_COLLECTION_LIST_TEXT.rowTitle.lineHeight, color: theme.colors.text.secondary },
     skeletonRow: { minHeight: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap, paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset },
 }));

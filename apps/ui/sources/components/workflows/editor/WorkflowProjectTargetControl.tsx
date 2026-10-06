@@ -1,8 +1,9 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 
@@ -35,7 +36,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { resolveDefaultDirectoryForMachine } from '@/utils/sessions/machineDefaultDirectory';
 import { useStableRecentPathsResolver } from '@/utils/sessions/useStableRecentPathsForMachine';
 
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * Where a workflow runs: one exact Machine, its project folder and the checkout
@@ -265,7 +266,7 @@ function WhereField(props: Readonly<{
                 testID={`${props.testIDPrefix}-machine-row`}
                 title={props.title}
                 {...(props.subtitle === undefined ? {} : { subtitle: props.subtitle, subtitleLines: 0 })}
-                accessoryLayout="adaptive"
+                accessoryLayout="stacked"
                 showChevron={false}
                 selected={false}
                 {...(editable ? {
@@ -410,7 +411,7 @@ function EditableProjectTarget(props: Readonly<{
                         style={(state) => [
                             workflowEditorStyles.actionTarget,
                             styles.control,
-                            workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                            state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         ]}
                     >
                         <Text numberOfLines={1} style={styles.value}>{directoryLabel}</Text>
@@ -484,7 +485,7 @@ function ProjectCheckoutPicker(props: Readonly<{
                     style={(state) => [
                         workflowEditorStyles.actionTarget,
                         styles.control,
-                        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                     ]}
                 >
                     <Text numberOfLines={1} style={styles.value}>{picker.selectedLabel}</Text>

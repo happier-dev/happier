@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -124,6 +125,50 @@ afterEach(async () => {
 });
 
 describe('WorkflowsColumn', () => {
+    it('shows the reason for unavailable own and shared definitions beside readable neighbors', async () => {
+        answerLists();
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'
+            ? Promise.resolve({ ok: true, result: { definitions: [
+                { kind: 'workflow-definition.v1', definitionId: 'missing-title', metadata: null, revision: null,
+                    contentStatus: 'unavailable', contentUnavailableReason: 'invalid_header', stepCount: null,
+                    ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null },
+                { kind: 'workflow-definition.v1', definitionId: 'shared-bad-body', metadata: { title: 'Shared recipe' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    contentStatus: 'unavailable', contentUnavailableReason: 'invalid_body', stepCount: null,
+                    ownerAccountId: 'other-account', access: 'view', triggers: [], nextRunAt: null },
+                { kind: 'workflow-definition.v1', definitionId: 'readable', metadata: { title: 'Readable recipe' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    contentStatus: 'available', stepCount: 1, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null },
+            ] } }) : answer(actionId, input));
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const { t } = await import('@/text');
+        for (const [testID, reason] of [['workflows-column:library:missing-title', 'workflows.contentReasons.invalidHeader'],
+            ['workflows-column:shared:shared-bad-body', 'workflows.contentReasons.invalidBody']] as const) {
+            const row = screen.findHostByTestId(testID);
+            expect(row).not.toBeNull();
+            expect(row!.findAll(node => typeof node.props.children === 'string').map(node => node.props.children).join('\n')).toContain(t(reason));
+        }
+        expect(screen.findHostByTestId('workflows-column:library:readable')).not.toBeNull();
+    });
+    it('makes a failed-library retry visibly keyboard focusable without changing its link role', async () => {
+        answerLists();
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'
+            ? Promise.resolve({ ok: false, error: 'unavailable', errorCode: 'unavailable' }) : answer(actionId, input));
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        const target = () => screen.tree.findHostByTestId('workflows-column:library:failed:retry')!;
+        const flattened = () => StyleSheet.flatten(typeof target().props.style === 'function'
+            ? target().props.style({ pressed: false }) : target().props.style);
+        expect(target().props.role ?? target().props.accessibilityRole).toBe('link');
+        const restingBorder = flattened()?.borderColor;
+        await act(async () => { target().props.onFocus({ target: { matches: () => true } }); });
+        expect(flattened()?.borderColor).toBeTruthy();
+        expect(flattened()?.borderColor).not.toBe(restingBorder);
+        await screen.pressByTestIdAsync('workflows-column:library:failed:retry');
+        expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list').length).toBeGreaterThan(1);
+    });
+
     it('uses the shared starter and attention predicate for a Board Runs filter', async () => {
         answerLists();
         const serverId = storage.getState().profileScope!.serverId;

@@ -5,11 +5,11 @@ import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefiniti
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import type { WorkflowReferenceOption } from './workflowReferenceOptions';
+import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
 
 /** Accessible definition content, shared by child bindings and trigger inputs. Saved/shared
  * references always use Get: list metadata is not content-disclosure authority. */
-export function useWorkflowReferenceDefinition(ref: string | null, options: readonly WorkflowReferenceOption[], libraryEnabled = true): Readonly<{
+export function useWorkflowReferenceDefinition(ref: string | null, libraryEnabled = true): Readonly<{
     definition: WorkflowDefinitionV1 | null;
     status: 'idle' | 'loading' | 'failed' | 'ready';
     retry: () => void;
@@ -17,6 +17,7 @@ export function useWorkflowReferenceDefinition(ref: string | null, options: read
     const scope = useActiveServerAccountScope();
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;
     const reference = parseWorkflowDefinitionRefV1(ref);
+    const plugin = useWorkflowPluginSource(reference?.kind === 'plugin' ? ref : null, libraryEnabled);
     const artifactId = reference?.kind === 'artifact' ? reference.artifactId : null;
     const [attempt, setAttempt] = React.useState(0);
     const [read, setRead] = React.useState<Readonly<{
@@ -47,8 +48,8 @@ export function useWorkflowReferenceDefinition(ref: string | null, options: read
     }
     if (!libraryEnabled || scopeKey === null) return { definition: null, status: 'failed', retry };
     if (reference?.kind === 'plugin') {
-        const definition = options.find((option) => option.ref === ref)?.definition ?? null;
-        return { definition, status: definition === null ? 'failed' : 'ready', retry };
+        return { definition: plugin.source?.definition ?? null,
+            status: plugin.status === 'ready' ? 'ready' : plugin.status === 'loading' ? 'loading' : 'failed', retry: plugin.retry };
     }
     if (reference === null) return { definition: null, status: 'failed', retry };
     const current = read?.ref === artifactId && read.scopeKey === scopeKey && read.lifetime.isCurrent() ? read : null;

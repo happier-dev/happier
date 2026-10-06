@@ -18,19 +18,15 @@ import { withWorkflowAuthoringEngine, withWorkflowAuthoringEngineFields } from '
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import {
     collectWorkflowBlockIds,
-    createWorkflowBlock,
-    createWorkflowLeafBlock,
     createWorkflowParallelBranch,
-    insertWorkflowBlock,
     moveWorkflowBlock,
     removeWorkflowBlock,
-    resolvePreviousResultInputForInsertion,
     setWorkflowStepExecutionField,
     updateWorkflowBlock,
     type WorkflowBlockListRef,
     type WorkflowBlockRemoval,
 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { resolveSelectionAfterRemoval, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { insertWorkflowEditorBlock, resolveSelectionAfterRemoval, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
 
 import { WorkflowAddBlockMenu, type WorkflowAddBlockRequest } from './WorkflowAddBlockMenu';
@@ -44,7 +40,7 @@ import { WorkflowLoopEditor } from './WorkflowLoopEditor';
 import { WorkflowStepEditor } from './WorkflowStepEditor';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import type { WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
-import { formatWorkflowConditionSentence } from './WorkflowConditionEditor';
+import { formatWorkflowConditionLead, formatWorkflowConditionSentence, WorkflowConditionArmLines } from './WorkflowConditionEditor';
 import { WorkflowContainerSummary } from './WorkflowContainerSummary';
 import { WorkflowReferenceSentence } from './WorkflowStepDataEditor';
 import { collectWorkflowConditionValueReferences } from '@happier-dev/protocol/workflows/workflowReferenceV1';
@@ -129,25 +125,6 @@ export type WorkflowBlockListEditorProps = Readonly<{
     testIDPrefix?: string;
 }>;
 
-function describeBlock(block: WorkflowBlock, ordinal: number): string {
-    switch (block.kind) {
-        case 'step':
-            return t('workflows.editor.unnamedStep', { position: ordinal });
-        case 'parallel':
-            return t('workflows.editor.unnamedParallel');
-        case 'loop':
-            return t('workflows.editor.unnamedLoop');
-        case 'if':
-            return t('workflows.editor.unnamedIf');
-        case 'action':
-            return t('workflows.page.blocks.menuAction');
-        case 'workflow':
-            return t('workflows.page.blocks.menuRun');
-        case 'wait':
-            return t('workflows.page.blocks.waitTitle');
-    }
-}
-
 export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): React.ReactElement {
     const {
         draft, list, blocks, depth, selectedBlockId, validation,
@@ -188,29 +165,9 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
     ]);
 
     const addBlock = React.useCallback((request: WorkflowAddBlockRequest, afterBlockId?: string) => {
-        const takenIds = collectWorkflowBlockIds(draft);
-        const created = request.kind === 'action' || request.kind === 'workflow' || request.kind === 'wait'
-            ? createWorkflowLeafBlock(request, takenIds)
-            : createWorkflowBlock(request.kind, takenIds);
-        // A step added after another step reads that step's result unless the
-        // author changes it, which is what "Analyze → Implement" means without
-        // an output schema. The default belongs to the insertion point, so the
-        // factory stays context-free and nested scopes resolve their own
-        // previous producer.
-        const previousResult = created.kind !== 'step'
-            ? null
-            : resolvePreviousResultInputForInsertion(draft, {
-                list,
-                ...(afterBlockId === undefined ? {} : { afterBlockId }),
-            });
-        const block: WorkflowBlock = previousResult === null || created.kind !== 'step'
-            ? created
-            : { ...created, input: [previousResult] };
-        onChange(insertWorkflowBlock(draft, {
-            list,
-            block,
-            ...(afterBlockId === undefined ? {} : { afterBlockId }),
-        }));
+        const insertion = insertWorkflowEditorBlock(draft, { request, list, ...(afterBlockId === undefined ? {} : { afterBlockId }) });
+        const { block } = insertion;
+        onChange(insertion.draft);
         onSelect(block.id);
         // Only a composer-bearing step has a prompt to focus.
         if (block.kind === 'step' || block.kind === 'wait') requestPromptFocus?.(block.id);
@@ -286,7 +243,11 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
             accessibilityLabel={scopeLabel}
             style={depth === 0 ? workflowEditorStyles.blockList : workflowEditorStyles.nestedList}
         >
-            {depth === 0 && props.presentation?.note !== undefined ? props.presentation.note : null}
+            {depth === 0 && props.presentation?.note !== undefined
+                ? typeof props.presentation.note === 'string' || typeof props.presentation.note === 'number'
+                    ? <Text style={workflowEditorStyles.metaText}>{props.presentation.note}</Text>
+                    : props.presentation.note
+                : null}
             {blocks.map((block, index) => {
                 const ordinal = index + 1;
                 const selected = selectedBlockId === block.id;
@@ -316,6 +277,9 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                 ]}
                             />
                         )}
+                        {/* The block and its condition line, one column beside the rail: a
+                            sibling here must never take width from the block's card. */}
+                        <View style={workflowEditorStyles.blockColumn}>
                         {block.kind === 'step' ? (
                             <WorkflowStepEditor
                                 draft={draft}
@@ -544,7 +508,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                             <View testID={`${testIDPrefix}-if-${block.id}`} style={workflowEditorStyles.blockBody}>
                                 <WorkflowBlockHeading
                                     ordinal={ordinal}
-                                    displayName={`${describeBlock(block, ordinal)} ${ordinal}`}
+                                    displayName={workflowBlockReferenceLabel(block)}
                                     actions={actions}
                                     accessory={slots?.state}
                                     onSelect={() => onSelect(block.id)}
@@ -556,7 +520,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                         condition: formatWorkflowConditionSentence(draft, block.when),
                                     })}
                                     sentenceContent={<WorkflowReferenceSentence draft={draft}
-                                        sentence={t('workflows.page.inspector.ifSentence', { condition: formatWorkflowConditionSentence(draft, block.when) })}
+                                        sentence={t('workflows.page.inspector.ifSentence', { condition: formatWorkflowConditionLead(draft, block.when) })}
                                         references={collectWorkflowConditionValueReferences(block.when)} />}
                                     {...(editable ? {
                                         onOpenOptions: (anchorRef: React.RefObject<View | null>) => onCustomize(block.id, anchorRef),
@@ -564,6 +528,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     optionsLabel={t('workflows.page.inspector.options')}
                                     testID={`${testIDPrefix}-if-${block.id}-summary`}
                                 />
+                                <WorkflowConditionArmLines draft={draft} condition={block.when} testID={`${testIDPrefix}-if-${block.id}-summary-arms`} />
                                 <Text style={workflowEditorStyles.branchLabel}>
                                     {t('workflows.editor.ifTrue')}
                                 </Text>
@@ -574,6 +539,8 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     depth={depth + 1}
                                     scopeLabel={t('workflows.editor.ifTrue')}
                                 />
+                                {/* A reading document has nothing to add to an empty Otherwise, so it is not shown. */}
+                                {!editable && block.otherwise.length === 0 ? null : <>
                                 <Text style={workflowEditorStyles.branchLabel}>
                                     {t('workflows.editor.otherwise')}
                                 </Text>
@@ -584,6 +551,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                     depth={depth + 1}
                                     scopeLabel={t('workflows.editor.otherwise')}
                                 />
+                                </>}
                             </View>
                         ) : null}
 
@@ -597,6 +565,7 @@ export function WorkflowBlockListEditor(props: WorkflowBlockListEditorProps): Re
                                 })}
                             </Text>
                         ) : null}
+                        </View>
                         {props.highlightedBlockIds?.includes(block.id) ? <WorkflowAgentChangeTint blockId={block.id} /> : null}
                     </View>
                     {/* The gap after a block (not after the last; the end row adds there):

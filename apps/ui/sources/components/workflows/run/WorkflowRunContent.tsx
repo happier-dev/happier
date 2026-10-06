@@ -630,10 +630,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      */
     const primaryAction: 'outcome' | 'resume' | 'run_again' | null =
         terminalOutcome?.kind === 'open_result' || terminalOutcome?.kind === 'see_failures'
+            || terminalOutcome?.kind === 'result_absent'
             ? 'outcome'
             : props.run.availability.resumeBoundary && props.onResume !== undefined
                 ? 'resume'
-                : props.onRunAgain !== undefined
+                : props.run.state !== 'succeeded' && props.onRunAgain !== undefined
                     ? 'run_again'
                     : null;
 
@@ -792,6 +793,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {/* The status is said once, as the first words of this line (07 §3). */}
                 <Text testID={`${testIDPrefix}-outcome`} style={styles.outcomeSentence}>
                     {outcomeLine}
+                    {terminalOutcome?.kind === 'result_absent' ? ` ${t('workflows.finalOutput.none')}` : ''}
                 </Text>
                 {/* Contact loss is all that is known; resume choices come from
                     the recovery owner once the current state is. */}
@@ -806,20 +808,27 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 )}
                 {/* One final-output row: either the selected result, or its
                     explicit absence once the Run has settled. Never both. */}
-                {terminalOutcome?.kind === 'result_absent' ? (
-                    <Text testID={`${testIDPrefix}-result-absent`} style={styles.metric}>
-                        {t('workflows.finalOutput.none')}
-                    </Text>
-                ) : props.resultLabel === null || props.resultLabel === undefined ? null : (
+                {props.resultLabel === null || props.resultLabel === undefined ? null : (
                     <Text testID={`${testIDPrefix}-result`} style={styles.metric}>{props.resultLabel}</Text>
                 )}
 
                 {terminalOutcome?.kind === 'open_result'
                     || terminalOutcome?.kind === 'see_failures'
+                    || terminalOutcome?.kind === 'result_absent'
                     || (props.run.availability.resumeBoundary && props.onResume !== undefined)
                     || props.onRunAgain !== undefined
                     || (sourceSessionId !== null && props.onOpenSession !== undefined) ? (
                     <View style={styles.actions}>
+                        {terminalOutcome?.kind === 'result_absent' ? (
+                            <ToolbarButton
+                                testID={`${testIDPrefix}-inspect-steps`}
+                                onPress={() => props.onChangeView('steps')}
+                                style={styles.actionTarget}
+                                label={t('workflows.run.inspectSteps')}
+                                tone="primary"
+                                size="md"
+                            />
+                        ) : null}
                         {terminalOutcome?.kind === 'open_result' ? (
                             <ToolbarButton
                                 testID={`${testIDPrefix}-open-result`}
@@ -994,19 +1003,20 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     activeTabId={props.view}
                     onSelectTab={props.onChangeView}
                 />
-                <ToolbarButton testID={`${testIDPrefix}-show-current-work`}
+                {isTerminalWorkflowRunState(props.run.state) ? null : <ToolbarButton testID={`${testIDPrefix}-show-current-work`}
                     label={t('workflows.run.showCurrentWork')} size="md" style={styles.actionTarget}
                     disabled={currentWork === null}
-                    onPress={(event) => { if (currentWork !== null) selectInvocation(currentWork.id, event); }} />
+                    onPress={(event) => { if (currentWork !== null) selectInvocation(currentWork.id, event); }} />}
                 {props.sourceAction ? <ToolbarButton
                     testID={`${testIDPrefix}-${props.sourceAction.kind}-workflow`}
                     label={props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow')}
                     size="md" style={styles.actionTarget} onPress={props.sourceAction.onPress}
-                /> : props.hasSource !== true && props.onSaveAsWorkflow ? <ToolbarButton
-                    testID={`${testIDPrefix}-save-as-workflow`} label={t('workflows.run.saveAsWorkflow')}
-                    size="md" style={styles.actionTarget} onPress={props.onSaveAsWorkflow}
-                    disabled={props.saveAsWorkflowPending === true} busy={props.saveAsWorkflowPending === true}
-                /> : null}
+                /> : props.hasSource !== true && props.onSaveAsWorkflow ? <HappierPressable
+                    testID={`${testIDPrefix}-save-as-workflow`} accessibilityRole="button"
+                    style={({ pressed }) => [styles.actionTarget, pressed ? styles.pressed : null]}
+                    onPress={props.onSaveAsWorkflow} disabled={props.saveAsWorkflowPending === true}
+                    busy={props.saveAsWorkflowPending === true}
+                ><Text style={styles.action}>{t('workflows.run.saveAsWorkflow')}</Text></HappierPressable> : null}
             </View>
         </View>
     );

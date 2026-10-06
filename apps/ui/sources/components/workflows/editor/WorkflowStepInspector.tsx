@@ -1,6 +1,7 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -26,10 +27,10 @@ import {
     resolveWorkflowStepFieldInheritance,
 } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { workflowStepPromptLabel } from '@happier-dev/protocol/workflows';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 
 import { WorkflowNumberField } from './WorkflowNumberField';
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /**
  * The selected step's settings, shown in the wide inspector or the phone
@@ -166,7 +167,7 @@ export function WorkflowStepInspector(props: Readonly<{
     return (
         <View testID={testIDPrefix} style={styles.root}>
             <Text style={styles.scopeLabel}>
-                {workflowStepPromptLabel(props.step) ?? props.step.id}
+                {workflowBlockReferenceLabel(props.step)}
             </Text>
 
             {props.onChangeTimeout === undefined ? null : (
@@ -209,8 +210,8 @@ export function WorkflowStepInspector(props: Readonly<{
                                 style={inheritance === 'inherited' ? styles.inheritedBadge : styles.overrideBadge}
                             >
                                 {inheritance === 'inherited'
-                                    ? t('workflows.a11y.inherited')
-                                    : t('workflows.a11y.overridden')}
+                                    ? t('workflows.page.blocks.workflowDefaults')
+                                    : t('workflows.page.changedForStep')}
                             </Text>
                             {inheritance === 'override' ? (
                                 <HappierPressable
@@ -221,7 +222,7 @@ export function WorkflowStepInspector(props: Readonly<{
                                         ? props.onResetEngine?.() : props.onResetField(field)}
                                     style={(state) => [
                                         workflowEditorStyles.actionTarget,
-                                        workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                                        state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                                     ]}
                                 >
                                     <Text style={styles.resetAction}>

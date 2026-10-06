@@ -1,7 +1,8 @@
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
 import {
     WORKFLOW_COMPARE_OPERATORS,
@@ -15,7 +16,7 @@ import { Text } from '@/components/ui/text/Text';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { workflowEditorStyles, workflowPressFeedbackStyle } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 import { formatWorkflowValueReference, WorkflowReferenceSentence, WorkflowValueReferenceEditor } from './WorkflowStepDataEditor';
 
 const DEFAULT_CONDITION: WorkflowCondition = { kind: 'exists', value: { kind: 'literal', value: true } };
@@ -69,6 +70,40 @@ export function formatWorkflowConditionSentence(draft: WorkflowEditorDraft, cond
 }
 
 /**
+ * A condition as the lead of a container sentence: a compound condition's own words ("any of these
+ * holds:"), whose arms then read as {@link WorkflowConditionArmLines}; any other condition whole.
+ * A heading never runs into a paragraph of tokens (E1), and the words are the sentence's own.
+ */
+export function formatWorkflowConditionLead(draft: WorkflowEditorDraft, condition: WorkflowCondition): string {
+    if (condition.kind !== 'all' && condition.kind !== 'any') return formatWorkflowConditionSentence(draft, condition);
+    return `${condition.kind === 'all' ? t('workflows.page.inspector.conditionAll') : t('workflows.page.inspector.conditionAny')}:`;
+}
+
+/** A compound condition's arms, one quiet line each, nested compounds indented beneath their lead. */
+export function WorkflowConditionArmLines(props: Readonly<{
+    draft: WorkflowEditorDraft;
+    condition: WorkflowCondition;
+    testID?: string;
+}>): React.ReactElement | null {
+    const { condition } = props;
+    if (condition.kind !== 'all' && condition.kind !== 'any') return null;
+    return (
+        <View testID={props.testID} style={workflowEditorStyles.conditionArms}>
+            {condition.conditions.map((arm, index) => (
+                <React.Fragment key={index}>
+                    <Text style={workflowEditorStyles.groupSummary}>
+                        <WorkflowReferenceSentence draft={props.draft}
+                            sentence={formatWorkflowConditionLead(props.draft, arm)}
+                            references={arm.kind === 'all' || arm.kind === 'any' ? [] : collectWorkflowConditionValueReferences(arm)} />
+                    </Text>
+                    <WorkflowConditionArmLines draft={props.draft} condition={arm} />
+                </React.Fragment>
+            ))}
+        </View>
+    );
+}
+
+/**
  * One choice among more than four short options — a field select (04 §5.2's
  * control table), never a row of radio text.
  */
@@ -112,7 +147,7 @@ function ConditionAction(props: Readonly<{
             onPress={props.onPress}
             style={(state) => [
                 workflowEditorStyles.actionTarget,
-                workflowPressFeedbackStyle(state, theme.colors.border.focus),
+                state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
             ]}
         >
             <Text style={workflowEditorStyles.metaAction}>{props.label}</Text>
