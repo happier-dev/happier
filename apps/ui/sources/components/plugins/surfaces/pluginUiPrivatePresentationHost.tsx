@@ -69,6 +69,8 @@ import type { DetailsPaneSlotBinding } from '@/components/appShell/panes/details
 import type { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeaderSlot';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { useSetting } from '@/sync/domains/state/storage';
+import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
+import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
     useInstalledPluginBrandPresentation,
     type InstalledPluginBrandPresentation,
@@ -424,6 +426,7 @@ const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = createPluginUiPrivatePresentati
 
 export type PluginUiPrivatePresentationHost = Readonly<
     typeof PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS & {
+        createScrollActivityTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
         /** The host's real type-role styles for same-realm plugin text. */
         typography: ReturnType<typeof readPluginUiHostTypography>;
         /** The host's configuration-page colour roles, when the mount supplies its theme. */
@@ -465,6 +468,7 @@ export type PluginUiPrivatePresentationHost = Readonly<
         focusTarget?(target: unknown): boolean;
     }
 >;
+
 
 type FocusablePresentationTarget = Readonly<{
     focus?: (options?: Readonly<{ preventScroll?: boolean }>) => void;
@@ -584,6 +588,7 @@ export function createPluginUiPrivatePresentationHost(
         : undefined;
     return Object.freeze({
         ...presentationRenderers,
+        createScrollActivityTracker: createScrollViewNearViewportTracker,
         ...(options?.renderDragSource === undefined ? {} : { renderDragSource: options.renderDragSource }),
         ...(options?.renderDropTarget === undefined ? {} : { renderDropTarget: options.renderDropTarget }),
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),

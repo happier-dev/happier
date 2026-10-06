@@ -15,7 +15,7 @@ import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCred
 import { Modal } from '@/modal';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { useActiveServerAccountScope, useSettingMutable, useSettings } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useSettingMutable, useSettingsSelector } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
@@ -37,7 +37,12 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
     const activeAccountScope = useActiveServerAccountScope();
     const index = useConnectedServicesIndex({ agents: 'load' });
     const { agentEntries, qualifiedAccounts, qualifiedGroups } = index;
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+        connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+    }));
     const applySettings = useApplySettings();
     const setDefaultAuthSettings = React.useCallback((next: ConnectedServicesAgentDefaultAuthWrite) => {
         applySettings(next);

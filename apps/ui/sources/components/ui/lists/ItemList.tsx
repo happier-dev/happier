@@ -9,6 +9,8 @@ import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/Keybo
 import { ListPresentationProvider, PageColumnProvider, type ListPresentation } from './listPresentation';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 
 const BASE_CONTENT_PADDING_BOTTOM = Platform.select({ ios: 34, default: 16 }) ?? 16;
 
@@ -90,7 +92,8 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         ? styles.pageBackground
         : styles.groupedBackground;
 
-    const { onScroll, ...restScrollViewProps } = scrollViewProps;
+    const { onScroll, onLayout, onContentSizeChange, ...restScrollViewProps } = scrollViewProps;
+    const tracker = React.useMemo(() => createScrollViewNearViewportTracker(internalRef, scrollViewProps.horizontal === true), [scrollViewProps.horizontal]);
 
     const wheelScrollHandlers = useScrollViewWheelScrollTo(internalRef, {
         enabled: installWebModalWheelFix,
@@ -119,8 +122,13 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
             ? scrollViewProps.showsVerticalScrollIndicator
             : true,
         contentInsetAdjustmentBehavior: (isIOS && !isWeb) ? 'automatic' as const : undefined,
-        onScroll: installWebModalWheelFix ? wheelScrollHandlers.onScroll : onScroll,
         ...restScrollViewProps,
+        onScroll: (event: Parameters<NonNullable<ScrollViewProps['onScroll']>>[0]) => {
+            tracker.onScroll(event);
+            (installWebModalWheelFix ? wheelScrollHandlers.onScroll : onScroll)?.(event);
+        },
+        onLayout: (event: Parameters<NonNullable<ScrollViewProps['onLayout']>>[0]) => { tracker.onLayout(event); onLayout?.(event); },
+        onContentSizeChange: (width: number, height: number) => { tracker.onContentSizeChange(width, height); onContentSizeChange?.(width, height); },
         ...(installWebModalWheelFix
             ? ({ onWheel: wheelScrollHandlers.onWheel } as any)
             : (rawOnWheel ? ({ onWheel: rawOnWheel } as any) : {})),
@@ -135,7 +143,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         <PopoverScrollSourceProvider scrollSourceRef={internalRef}>
             <ListPresentationProvider value={presentation}>
                 <PageColumnProvider value={pageColumn}>
-                    {scrollContent}
+                    <PluginUiScrollActivityProvider tracker={tracker}>{scrollContent}</PluginUiScrollActivityProvider>
                 </PageColumnProvider>
             </ListPresentationProvider>
         </PopoverScrollSourceProvider>

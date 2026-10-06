@@ -62,7 +62,7 @@ import type {
   HappierCollectionMotionValue,
 } from '../presentation/collection/collectionMotion.js';
 import { resolveHappierCollectionTrackStyle } from '../presentation/collection/collectionMotion.js';
-import { useHappierCollection } from '../presentation/collection/useCollection.js';
+import { useHappierCollection, type HappierCollectionModel } from '../presentation/collection/useCollection.js';
 import type { HappierCollectionGrouping } from '../presentation/collection/collectionModel.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import { Collection, type CollectionAnatomy, type CollectionProps } from './Collection.js';
@@ -224,6 +224,7 @@ type HarnessOptions = Readonly<{
   detailHeader?: (key: string) => Readonly<{ title: string; subtitle?: string; actions?: React.ReactNode }>;
   useRowActions?: CollectionProps<Entry>['useRowActions'];
   selection?: CollectionProps<Entry>['selection'];
+  modelSelection?: (model: HappierCollectionModel<Entry>) => CollectionProps<Entry>['selection'];
   search?: CollectionProps<Entry>['search'];
   renderDetail?: CollectionProps<Entry>['renderDetail'];
 }>;
@@ -238,6 +239,7 @@ function Harness(props: HarnessProps): ReactElement {
     openKey: props.openKey,
     onOpenChange: props.onOpenChange,
     expandable: true,
+    ...(props.modelSelection === undefined ? {} : { selection: 'multiple' as const }),
   });
   return (
     <Collection
@@ -248,7 +250,8 @@ function Harness(props: HarnessProps): ReactElement {
       boardLayout={props.boardLayout}
       detail={props.detail ?? 'auto'}
       {...(props.useRowActions === undefined ? {} : { useRowActions: props.useRowActions })}
-      {...(props.selection === undefined ? {} : { selection: props.selection })}
+      {...(props.modelSelection === undefined ? (props.selection === undefined ? {} : { selection: props.selection })
+        : { selection: props.modelSelection(model) })}
       {...(props.search === undefined ? {} : { search: props.search })}
       {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
       {...(props.groupAction === undefined ? {} : { groupAction: props.groupAction })}
@@ -333,6 +336,22 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it.each(['model', 'author'] as const)('keeps hidden retained selections but excludes present retained rows with the %s store', async (owner) => {
+    let store = createListMultiSelectionStore({ scopeKey: 'entries', visibleOrderedKeys: [] });
+    const selection = () => ({ multiple: { store, isItemSelectable: (item: Entry) => item.id !== 'b', retainedSelectionKeys: ['b', 'hidden'] } });
+    const view = mount({ detail: 'none', ...(owner === 'author' ? { selection: selection() } : {
+      modelSelection: (model) => { store = model.selectionStore!; return selection(); },
+    }) });
+    try {
+      view.measure(1440);
+      act(() => { store.setSelectedKeys(['a', 'b', 'hidden']); });
+      expect([...store.getSnapshot().selectedKeys]).toEqual(['a', 'hidden']);
+      expect([...store.getSnapshot().eligibleKeys]).toEqual(['a', 'c', 'hidden']);
+      await view.update({ items: [...entries] });
+      expect([...store.getSnapshot().selectedKeys]).toEqual(['a', 'hidden']);
+      expect(store.getSnapshot().visibleOrderedKeys).toEqual(['a', 'c']);
+    } finally { view.unmount(); }
+  });
   it('restores the list viewport after visiting a different presentation', async () => {
     const view = mount({ presentation: 'list', detail: 'none' });
     view.measure(1440);

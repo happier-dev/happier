@@ -1,26 +1,31 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
-import { createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { createActionExecutor, StrictJsonValueSchema, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
+import { createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     createWidgetActionInputResolverV1, createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1,
-    type WidgetInstanceV1, type WidgetSurfaceRefV1,
+    buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema, WIDGET_SURFACE_ARTIFACT_KIND_V1,
+    type WidgetAreaLayoutV1, type WidgetInstanceV1, type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { PluginHostApiProvider, PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiResourceStore, PluginHostApiProvider, PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
-import { WidgetSurface } from '@happier-dev/plugin-ui';
+import { ScrollArea, WidgetSurface } from '@happier-dev/plugin-ui';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { createPluginUiPrivatePresentationHost } from '@/components/plugins/surfaces/pluginUiPrivatePresentationHost';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { WidgetSetupStep } from '@/components/widgets/add/WidgetSetupStep';
+import type { WidgetSetup, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 
 import { DeclarativePluginSurface } from '@/components/plugins/surfaces/DeclarativePluginSurface';
@@ -33,6 +38,11 @@ import { SessionSurfaceEntityDragHandle } from '@/components/sessions/board/Sess
 import { storage } from '@/sync/domains/state/storage';
 import { projectWidgetEntityMovementResult, readWidgetEntityMovementAdmission } from '@/sync/ops/actions/widgetEntityMovement';
 import type { WidgetAreaPort } from './useWidgetAreaLayout';
+import { createLayoutArtifactHttpBoundary, createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+
+installDisconnectedServerSocketBoundary();
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -41,7 +51,8 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // The signed-in viewer is the area's Account: a widget never reads for another viewer.
-const viewer = vi.hoisted(() => Object.freeze({ serverId: 'home', accountId: 'viewer' }));
+const viewer = vi.hoisted(() => ({ serverId: 'home', accountId: 'viewer' }));
+const widgetDemand = vi.hoisted(() => ({ active: new Set<string>(), reads: [] as string[], opens: 0, releases: 0 }));
 vi.mock('@/sync/domains/state/storage', async importOriginal => (await import('@/dev/testkit/mocks/storage')).createPartialStorageModuleMock(importOriginal, {
     useActiveServerAccountScope: () => viewer,
 }));
@@ -52,9 +63,26 @@ vi.mock('@react-navigation/native', async () => ({
 // The plugin surface host is the plugin runtime boundary: past it the widget runs its own code. This
 // stand-in shows the input the host admitted for it, so a page/pin binding is observable.
 vi.mock('@/components/plugins/surfaces', () => ({
-    PluginInlineSurfaceHost: (props: { placement: { binding: { surface: { localId: string } } }; launchInput?: Readonly<Record<string, unknown>> }) => (
-        `widget:${props.placement.binding.surface.localId} repository:${String(props.launchInput?.repository)};`
-    ),
+    PluginInlineSurfaceHost: (props: { placement: { binding: { surface: { localId: string } } }; launchInput?: Readonly<Record<string, unknown>> }) => {
+        const identity = String(props.launchInput?.repository);
+        React.useEffect(() => {
+            // Plugin execution is a system boundary. Its mounted consumer uses the real Resource
+            // lifecycle; only the external read/watch transport is controlled by this fixture.
+            const store = createPluginUiResourceStore({ pluginId: 'acme.ci', client: {
+                readResource: async () => {
+                    widgetDemand.reads.push(identity);
+                    return { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytes: new TextEncoder().encode('{}') };
+                },
+                watchResource: async () => {
+                    widgetDemand.active.add(identity); widgetDemand.opens++;
+                    return { dispose: () => { widgetDemand.active.delete(identity); widgetDemand.releases++; } };
+                },
+            } });
+            const unsubscribe = store.getEntry('checks').subscribe(() => {}, true);
+            return () => { unsubscribe(); store.dispose(); };
+        }, [identity]);
+        return `widget:${props.placement.binding.surface.localId} repository:${identity};`;
+    },
 }));
 // Popover positioning/portal and modal placement are platform overlay boundaries; their content renders.
 vi.mock('@/components/ui/popover', async (importOriginal) => ({
@@ -88,10 +116,7 @@ const pin: WidgetInstanceV1 = { v: 1, id: 'pin', definition: { kind: 'installed'
  */
 function createArea() {
     const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
-    const transport = { ...boundary.transport, read: async (id: string) => {
-        const row = await boundary.transport.read(id);
-        return row ? { ...row, ownerAccountId: scope.accountId } : null;
-    } };
+    const transport = boundary.forAccount(scope.accountId);
     const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
     const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
     const widgetInputs = createWidgetActionInputResolverV1({
@@ -99,10 +124,10 @@ function createArea() {
         readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
-    const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs } as ActionExecutorDeps);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs }));
     const hostPort = createPluginWidgetAreaHostPortV1({ scope, pluginId: 'acme.prs', pageId: 'overview', declarations, isCurrent: () => true,
         execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
-    // The mounted Host API's area method: the same port the native, declarative and hosted bridges reach.
+    // The mounted Host API's area method: the same port the native and declarative bindings reach.
     // A narrow boundary fixture: only the method this surface calls exists.
     const hostApi = {
         widgetArea: (request: unknown, options?: { signal?: AbortSignal }) => hostPort.execute(request, options?.signal),
@@ -118,14 +143,14 @@ const presentationHost = createPluginUiPrivatePresentationHost({ displayName: 'P
     renderWidgetArea: input => <PluginPageWidgetArea {...input} surfaceName="PRs & Issues" />,
 });
 
-function page(hostApi: PluginUiHostApi, repository: unknown) {
+function page(hostApi: PluginUiHostApi, repository: unknown, content?: React.ReactNode) {
     return (
         <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
             interactionEnabled: true, machineId: 'machine-1', serverId: scope.serverId, platform: 'web',
             clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
             <PluginHostApiProvider hostApi={hostApi}>
                 <PluginUiHostPresentationScope environment={environment} presentationHost={presentationHost}>
-                    <WidgetSurface area="pinned" context={{ repository: repository as string }} testID="prs.pinned" />
+                    {content ?? <WidgetSurface area="pinned" context={{ repository: repository as string }} testID="prs.pinned" />}
                 </PluginUiHostPresentationScope>
             </PluginHostApiProvider>
         </AppShellPluginUiProjectionValueProvider>
@@ -165,7 +190,7 @@ function projectMovementFixture() {
         readDescriptor: async () => ({ inputs: { fields }, inputSchema }), readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
-    const deps: ActionExecutorDeps = { widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs };
+    const deps = createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs });
     const executor = createActionExecutor(deps);
     const context = { surface: 'ui' as const, bypassApprovals: true, serverId: scope.serverId, expectedAccountId: scope.accountId };
     const bind = (projectId: string) => {
@@ -177,7 +202,10 @@ function projectMovementFixture() {
             },
             movement: {
                 readAdmission: (source, destination, signal) => readWidgetEntityMovementAdmission(deps, source, destination, { ...context, signal }),
-                execute: async effect => projectWidgetEntityMovementResult(await executor.execute(effect.actionId, effect.input, context), effect),
+                execute: async effect => {
+                    if (effect.actionId !== 'widgets.instance.move') throw new Error('fixture movement only admits the canonical widget move Action');
+                    return projectWidgetEntityMovementResult(await executor.execute(effect.actionId, effect.input, context), effect);
+                },
             },
         };
         return { surface: ref, port, store: createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }) };
@@ -186,6 +214,176 @@ function projectMovementFixture() {
 }
 
 describe('a plugin page widget area', () => {
+    it.each(['approvalPending', 'refused'] as const)('keeps the real area %s acknowledgement truthful through add and input editing', async kind => {
+        const area = createArea();
+        await area.store.apply({ kind: 'add', instance: pin });
+        // The mounted plugin Host API is the transport boundary; the area write/read owner and setup adapters remain real.
+        const hostApi: PluginUiHostApi = { ...area.hostApi, widgetArea: async (raw, options) => {
+            const request = PluginUiWidgetAreaRequestV1Schema.parse(raw);
+            const actionId = request.operation.actionId;
+            if (actionId === 'widgets.instance.add' || actionId === 'widgets.instance.inputs.set') {
+                return PluginUiWidgetAreaResultV1Schema.parse(kind === 'approvalPending'
+                    ? { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-area', actionId } }
+                    : { ok: false, errorCode: 'permission_denied', error: 'permission_denied' });
+            }
+            return area.hostApi.widgetArea(raw, options);
+        } };
+        const screen = await renderScreen(page(hostApi, 'happier'));
+        await flushHookEffects({ cycles: 4 });
+        await act(async () => { screen.pressByTestId('prs.pinned.add'); });
+        await flushHookEffects({ cycles: 3 });
+        await act(async () => { screen.pressByTestId('prs.pinned.addPopover.entry.plugin-acme.ci/checks'); });
+        await flushHookEffects({ cycles: 4 });
+        expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
+        expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
+        expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+        await runAction(screen, 'pin', 'editInputs');
+        const setup: WidgetSetup = screen.root.findByType(WidgetSetupStep).props.setup;
+        let result: WidgetSetupSubmitResult | undefined;
+        await act(async () => { result = await setup.submit({ bindings: { repository: { kind: 'value', value: 'edited' } } }); });
+        expect(result).toEqual(kind === 'approvalPending' ? { ok: true, approvalPending: true } : { ok: false, message: 'widgetAdd.saveFailed' });
+        expect((await area.store.read()).instances.map(entry => entry.instance)).toEqual([pin]);
+    });
+    it.each(['plugin', 'declarative', 'project'] as const)('releases offscreen %s widget demand, retains geometry and resumes on scroll reentry', async kind => {
+        widgetDemand.active.clear(); widgetDemand.reads = []; widgetDemand.opens = 0; widgetDemand.releases = 0;
+        const plugin = createArea();
+        const project = projectMovementFixture().first;
+        const store = kind === 'project' ? project.store : plugin.store;
+        await store.apply({ kind: 'add', instance: follow });
+        await store.apply({ kind: 'add', instance: pin });
+        let scrollY = 0;
+        const contentNode = { getBoundingClientRect: () => ({ left: 0, top: -scrollY, width: 800, height: 6000 }) };
+        const areaId = kind === 'plugin' ? 'prs.pinned' : kind === 'project' ? 'project-scroll' : 'plugin-declarative-widget-area:root.children[0]';
+        const model = PluginDeclarativeProjectedModelV1Schema.parse({
+            identity: { pluginId: 'acme.prs', localId: 'overview', qualifiedId: 'acme.prs/overview', occurrenceId: 'prs-1' }, visible: true, requiredHostMethods: [],
+            declarativeInventory: { actions: [], destinations: [], settings: [], uiQueries: [], dragSources: [], dropTargets: [] },
+            root: { kind: 'stack', path: 'root', order: 0, children: [
+                { kind: 'widgetArea', path: 'root.children[0]', order: 1, area: 'pinned', context: { repository: 'happier' } },
+            ] },
+        });
+        const scroller = kind === 'plugin'
+            ? <ScrollArea testID="area-scroll"><WidgetSurface area="pinned" context={{ repository: 'happier' }} testID={areaId} /></ScrollArea>
+            : kind === 'declarative' ? <DeclarativePluginSurface pluginId="acme.prs" model={model} environment={environment} interactionEnabled daemonInteractionEnabled
+                dispatchAction={async () => null} actionAvailable={false} openSurface={async () => null} openSurfaceAvailable={false} authorityGeneration={1}
+                renderWidgetArea={createDeclarativeWidgetAreaRender({ dispatch: async (request, options) => StrictJsonValueSchema.parse(await plugin.hostApi.widgetArea(request as never, options)), surfaceName: 'PRs & Issues' })} />
+            : <ItemList testID="area-scroll"><ProjectWidgetArea projectName="Project" port={project.port}
+                context={{ slots: { repository: { label: 'Repository', value: { value: 'happier', label: 'happier' } } } }} testID={areaId} /></ItemList>;
+        const screen = await renderScreen(page(plugin.hostApi, 'happier', scroller), { createNodeMock: element => {
+            const props = element.props;
+            const id = props && typeof props === 'object' && 'testID' in props ? props.testID : undefined;
+            if (id === 'area-scroll' || element.type === 'ScrollView') return { getInnerViewNode: () => contentNode };
+            if (id === `${areaId}.widget.follow` || id === `${areaId}.widget.pin`) {
+                const top = id.endsWith('.pin') ? 4000 : 200;
+                return { getBoundingClientRect: () => ({ left: 0, top: top - scrollY, width: 400, height: 260 }) };
+            }
+            return null;
+        } });
+        const scroll = kind === 'declarative' ? screen.root.findByType('ScrollView') : screen.findHostByTestId('area-scroll')!;
+        await act(async () => { scroll.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 600 } } }); });
+        await flushHookEffects({ cycles: 4 });
+        expect(widgetDemand.active).toEqual(new Set(['happier']));
+        expect(widgetDemand.opens).toBe(1);
+        expect(new Set(widgetDemand.reads)).toEqual(new Set(['happier']));
+        const firstReads = widgetDemand.reads.length;
+        await act(async () => { screen.findHostByTestId(`${areaId}.widget.follow.bodyHeight`)!.props.onLayout({ nativeEvent: { layout: { height: 220 } } }); });
+        await act(async () => {
+            scrollY = 4000;
+            scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollY } } });
+        });
+        await flushHookEffects({ cycles: 4 });
+        expect(widgetDemand.active).toEqual(new Set(['website']));
+        expect(widgetDemand.releases).toBe(1);
+        expect(new Set(widgetDemand.reads.slice(firstReads))).toEqual(new Set(['website']));
+        const secondReads = widgetDemand.reads.length;
+        expect(screen.findHostByTestId(`${areaId}.widget.follow.deferred`)!.props.style).toEqual({ minHeight: 220 });
+        await act(async () => {
+            scrollY = 0;
+            scroll.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollY } } });
+        });
+        await flushHookEffects({ cycles: 4 });
+        expect(widgetDemand.active).toEqual(new Set(['happier']));
+        expect(widgetDemand.opens).toBe(3);
+        expect(new Set(widgetDemand.reads.slice(secondReads))).toEqual(new Set(['happier']));
+        expect(widgetDemand.releases).toBe(2);
+    });
+    it('moves a context-following widget between declared page areas through default admission and release with the current admitted page context', async () => {
+        await import('@/sync/syncEngine');
+        const previous = storage.getState();
+        const fallback = createHomeHubArtifactHttpBoundary('viewer');
+        const areas = new Map<string, ReturnType<typeof createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>>>();
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://page-widget-movement.test', accountId: 'viewer', request: (input, init) => {
+            const path = new URL(String(input)).pathname;
+            const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
+            const id = path === '/v1/artifacts' && body && typeof body === 'object' ? Reflect.get(body, 'id') : path.split('/').at(-1);
+            return (typeof id === 'string' ? areas.get(id) : undefined)?.request(input, init) ?? fallback.request(input, init);
+        } });
+        const restoreLoader = await installRealActionExecutorModuleLoader();
+        viewer.serverId = connection.home.id;
+        try {
+            const currentScope = { ...viewer };
+            const bind = (name: string, instances: WidgetAreaLayoutV1['instances']) => {
+                const ref: WidgetSurfaceRefV1 = { ...currentScope, owner: { kind: 'pluginArea', pluginId: 'acme.prs', pageId: 'overview', area: name } };
+                const http = createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>('viewer', { artifactId: buildWidgetSurfaceArtifactIdV1(ref),
+                    kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: { v: 1, surface: ref, instances: [] }, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value) });
+                http.seed({ v: 1, surface: ref, instances });
+                areas.set(http.artifactId, http);
+                return http;
+            };
+            const first = bind('pinned', [{ instance: follow }]);
+            const second = bind('secondary', []);
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const executor = createDefaultActionExecutor();
+            const hostPort = createPluginWidgetAreaHostPortV1({ scope: currentScope, pluginId: 'acme.prs', pageId: 'overview',
+                declarations: [declarations[0]!, { ...declarations[0]!, name: 'secondary' }], isCurrent: () => true,
+                execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', expectedAccountId: 'viewer', bypassApprovals: true }) });
+            const hostApi = {
+                widgetArea: (request: unknown, options?: { signal?: AbortSignal }) => hostPort.execute(request, options?.signal),
+                readResource: async () => { throw new Error('the page reads no Resource here'); },
+            } as unknown as PluginUiHostApi;
+            const pagePresentation = createPluginUiPrivatePresentationHost({ displayName: 'PRs & Issues' }, {
+                renderWidgetArea: input => <PluginPageWidgetArea {...input} surfaceName={input.title ?? 'PRs & Issues'} />,
+            });
+            const pages = (repository: string | number) => (
+                <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
+                    interactionEnabled: true, machineId: 'machine-1', serverId: currentScope.serverId, platform: 'web',
+                    clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+                    <PluginHostApiProvider hostApi={hostApi}><PluginUiHostPresentationScope environment={environment} presentationHost={pagePresentation}>
+                        <WidgetSurface area="pinned" context={{ repository: 'happier' }} testID="page-a" title="Page A" />
+                        <WidgetSurface area="secondary" context={{ repository }} testID="page-b" title="Page B" />
+                    </PluginUiHostPresentationScope></PluginHostApiProvider>
+                </AppShellPluginUiProjectionValueProvider>
+            );
+            const screen = await renderScreen(pages('website'));
+            await flushHookEffects({ cycles: 4 });
+            const drag = screen.root.findByType(SessionSurfaceEntityDragHandle).props.drag;
+            let carry: ReturnType<typeof drag.runtime.begin>;
+            await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+            await flushHookEffects({ cycles: 4 });
+            const destination = () => drag.runtime.getDestinations(drag.sourceId).find((entry: { group?: string }) => entry.group === 'Page B');
+            expect(destination()?.admission, JSON.stringify(destination()?.admission)).toMatchObject({ status: 'allowed' });
+            await act(async () => { carry?.choose(destination()!.targetId, destination()!.destination); screen.update(pages(42)); });
+            await flushHookEffects({ cycles: 4 });
+            expect(screen.findByTestId('page-b.unavailable')).not.toBeNull();
+            await act(async () => { expect((await carry?.release())?.status).not.toBe('applied'); });
+            expect(first.layout().instances.map(entry => entry.instance)).toEqual([follow]);
+            expect(second.layout().instances).toEqual([]);
+            await act(async () => { screen.update(pages('website')); });
+            await flushHookEffects({ cycles: 4 });
+            await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+            await flushHookEffects({ cycles: 4 });
+            expect(destination()?.admission).toMatchObject({ status: 'allowed' });
+            await act(async () => { carry?.choose(destination()!.targetId, destination()!.destination); screen.update(pages('current-repository')); });
+            await flushHookEffects({ cycles: 4 });
+            expect(destination()?.admission).toMatchObject({ status: 'allowed' });
+            await act(async () => { expect((await carry?.release())?.status).toBe('applied'); });
+            await flushHookEffects({ cycles: 4 });
+            expect(first.layout().instances).toEqual([]);
+            expect(second.layout().instances.map(entry => entry.instance)).toEqual([follow]);
+            expect(screen.getTextContent()).toContain('widget:checks repository:current-repository;');
+        } finally {
+            standardCleanup(); restoreLoader(); await connection.dispose(); viewer.serverId = scope.serverId; storage.setState(previous, true);
+        }
+    });
     it('revalidates the Project-aside anchor against publication during a carry and cancellation never writes', async () => {
         const fixture = projectMovementFixture();
         const tail = { ...pin, id: 'tail' };
@@ -314,7 +512,15 @@ describe('a plugin page widget area', () => {
         const screen = await renderScreen(page(area.hostApi, 'happier'));
         await flushHookEffects({ cycles: 4 });
         await runAction(screen, 'pin', 'width-full');
-        await runAction(screen, 'pin', 'moveUp');
+        // Movement from the ⋯ is one Move… (the Organize chooser; its carry through real default
+        // admission is the cross-area case above) and no step that does nothing.
+        const menuIds = menuOf(screen, 'pin').props.actions.map((entry: { id: string }) => entry.id);
+        expect(menuIds).toContain('moveTo');
+        expect(menuIds).not.toContain('moveUp');
+        expect(menuIds).not.toContain('moveDown');
+        expect(menuIds.at(-1)).toBe('remove');
+        await act(async () => { await area.store.apply({ kind: 'move', instanceId: 'pin', toIndex: 0 }); });
+        await flushHookEffects({ cycles: 4 });
         expect((await area.store.read()).instances).toEqual([{ instance: pin, width: 'full' }, { instance: follow, width: 'half' }]);
         standardCleanup();
 

@@ -15,10 +15,8 @@ import {
   type RefObject,
 } from 'react';
 import {
-  FlatList,
   I18nManager,
   Platform,
-  SectionList,
   View,
   type SectionListData as ReactNativeSectionListData,
 } from 'react-native';
@@ -83,11 +81,14 @@ import { HappierDisclosure, resolveHappierDisclosureFrameStyle } from '../presen
 import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useHappierUiAccessibility } from '../environment/context.js';
+import {
+  CollectionVirtualizerContext,
+  type CollectionVirtualizer,
+  type CollectionVirtualizerHandle,
+} from '../presentation/collection/collectionVirtualizer.js';
+import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
-// React Native defines values <=16 as unthrottled. Anchor preservation needs
-// the latest platform scroll offset before the content-size transition.
-const LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS = 16;
 
 type ListBaseProps = Readonly<{
   /** Names the collection for assistive technology. */
@@ -268,6 +269,8 @@ type VirtualizedListSectionMetadata = Readonly<{
 type VirtualizedListSectionData<Item> = ReactNativeSectionListData<Item, VirtualizedListSectionMetadata>;
 
 type VirtualizedListSharedProps<Item> = Readonly<{
+  /** Replace platform rendering only; List keeps selection, focus and viewport custody. */
+  virtualizer?: CollectionVirtualizer;
   /** Stable identity is mandatory for inserts/reorders and virtualized state retention. */
   keyForItem: (item: Item, index: number) => string;
   /**
@@ -952,8 +955,13 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const tabStopIndexRef = useRef(tabStopIndex);
   tabStopIndexRef.current = tabStopIndex;
 
-  const listRef = useRef<FlatList<Item> | null>(null);
-  const sectionListRef = useRef<SectionList<Item, VirtualizedListSectionMetadata> | null>(null);
+  const inheritedVirtualizer = useContext(CollectionVirtualizerContext);
+  const hostVirtualizer = useOptionalPluginUiPresentationHost()?.collectionVirtualizer;
+  const virtualizer = props.virtualizer ?? inheritedVirtualizer ?? hostVirtualizer ?? NATIVE_COLLECTION_VIRTUALIZER;
+  const virtualizerHandle = useRef<CollectionVirtualizerHandle | null>(null);
+  const onVirtualizerHandle = useCallback((handle: CollectionVirtualizerHandle | null) => {
+    virtualizerHandle.current = handle;
+  }, []);
   const previousRowKeysRef = useRef<readonly string[]>([]);
   const previousInsertAnchorRef = useRef<Readonly<{
     anchorKey: string;
@@ -1005,10 +1013,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     props.preserveVisibleContentPositionOnPrepend,
     rowKeys,
   ]);
-  const onCollectionScroll = useCallback((event: Readonly<{
-    nativeEvent?: Readonly<{ contentOffset?: Readonly<{ y?: unknown }> }>;
-  }>) => {
-    const offset = event.nativeEvent?.contentOffset?.y;
+  const onCollectionScroll = useCallback((offset: number) => {
     if (typeof offset !== 'number' || !Number.isFinite(offset)) return;
     scrollOffsetRef.current = offset;
     const observed = collectionScrollOffsetRef.current;
@@ -1021,12 +1026,8 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (pending === null || height <= pending.contentHeight) return;
     const offset = pending.offset + height - pending.contentHeight;
     scrollOffsetRef.current = offset;
-    if (visibleSections !== undefined) {
-      sectionListRef.current?.getScrollResponder()?.scrollTo({ y: offset, animated: false });
-      return;
-    }
-    listRef.current?.scrollToOffset({ offset, animated: false });
-  }, [visibleSections]);
+    virtualizerHandle.current?.scrollToOffset(offset);
+  }, []);
   const observeContentMetrics = props.preserveVisibleContentPositionOnInsert !== undefined
     || (props.preserveVisibleContentPositionOnPrepend === true && Platform.OS === 'web')
     || collectionControl?.scroll !== undefined;
@@ -1039,11 +1040,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     scrollOffsetRef.current = offset;
     const observed = collectionScrollOffsetRef.current;
     if (observed !== null) observed.current = offset;
-    if (visibleSections !== undefined) {
-      sectionListRef.current?.getScrollResponder()?.scrollTo({ y: offset, animated: false });
-      return;
-    }
-    listRef.current?.scrollToOffset({ offset, animated: false });
+    virtualizerHandle.current?.scrollToOffset(offset);
     // Only a new request scrolls; the sections changing under the same request do not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionScrollRequest]);
@@ -1073,21 +1070,19 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (row.sectionKey !== null) {
       // A section virtualizer has no whole-list index: a cell is addressed by
       // its section and its position inside that section.
-      sectionListRef.current?.scrollToLocation({
+      virtualizerHandle.current?.reveal({
         sectionIndex: row.sectionIndex,
-        itemIndex: row.index,
-        animated: false,
-        viewPosition: 0.5,
+        index: row.index,
       });
       return;
     }
-    const list = listRef.current;
+    const list = virtualizerHandle.current;
     if (list === null) return;
     // Home and End land far outside the measured window, where `scrollToIndex`
     // has no frame to target; both ends are always reachable by offset.
-    if (rowIndex === 0) list.scrollToOffset({ offset: 0, animated: false });
-    else if (rowIndex === rows.length - 1) list.scrollToEnd({ animated: false });
-    else list.scrollToIndex({ index: rowIndex, animated: false, viewPosition: 0.5 });
+    if (rowIndex === 0) list.scrollToOffset(0);
+    else if (rowIndex === rows.length - 1) list.scrollToEnd();
+    else list.reveal({ index: rowIndex });
   };
   /**
    * Ask for physical focus on one logical row.
@@ -1338,6 +1333,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const sectionHeaderAction = collectionControl?.sectionHeaderAction;
   // A page-sized collection whose rows scroll with the page: every row mounts, and the list does not scroll.
   const pageScroll = collectionControl?.pageScroll === true;
+  const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
 
   const renderSectionHeader = useCallback(({ section }: Readonly<{ section: VirtualizedListSectionData<Item> }>) => {
     const header = (
@@ -1370,6 +1366,16 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       })
     : undefined, [focusedKey, multiSnapshot.version, multiStore, selectedKey, selectionEnabled]);
 
+  const renderVirtualizedItem = useCallback((item: Item, index: number, sectionIndex: number | null) => {
+    if (sectionIndex === null) return renderFlatRow({ item, index });
+    const section = virtualizedSections[sectionIndex];
+    return section === undefined ? null : renderSectionRow({ item, index, section });
+  }, [renderFlatRow, renderSectionRow, virtualizedSections]);
+  const renderVirtualizedSectionHeader = useCallback((sectionIndex: number) => {
+    const section = virtualizedSections[sectionIndex];
+    return section === undefined ? null : renderSectionHeader({ section });
+  }, [renderSectionHeader, virtualizedSections]);
+
   // A page-sized collection is not virtualized: the same headers and rows, every one mounted, in the same
   // collection element, scrolling with the page around it (no reveal is needed: every row is on the page).
   const collection = pageScroll ? (
@@ -1385,103 +1391,51 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       style={[props.style, densityStyle, props.contentContainerStyle]}
     >
       {virtualizedSections !== undefined && visibleSections !== undefined
-        ? virtualizedSections.map((section) => (
-            <Fragment key={section.key}>
-              {renderSectionHeader({ section })}
-              {section.data.map((item, index) => (
-                <Fragment key={encodeHappierSectionRowCellKey(keyForItem(item, index))}>
-                  {renderSectionRow({ item, index, section })}
-                </Fragment>
-              ))}
-            </Fragment>
-          ))
+        ? virtualizedSections.map((section) => {
+            const sectionRows = section.data.map((item, index) => (
+              <Fragment key={encodeHappierSectionRowCellKey(keyForItem(item, index))}>
+                {renderSectionRow({ item, index, section })}
+              </Fragment>
+            ));
+            return (
+              <Fragment key={section.key}>
+                {renderSectionHeader({ section })}
+                {pageSheet === undefined ? sectionRows : (
+                  // The rows' own hairlines divide them; the sheet only draws its ground and edge. One plain
+                  // child keeps the sheet from re-keying the rows it would otherwise flatten.
+                  <HappierPageSheet colors={pageSheet.colors} rowDividers={false}><View>{sectionRows}</View></HappierPageSheet>
+                )}
+              </Fragment>
+            );
+          })
         : (visibleItems ?? []).map((item, index) => (
             <Fragment key={keyForItem(item, index)}>{renderFlatRow({ item, index })}</Fragment>
           ))}
       {collectionEndContent}
     </View>
-  ) : visibleSections !== undefined ? (
-    <SectionList
-      ref={sectionListRef}
-      sections={virtualizedSections}
-      keyExtractor={(item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index))}
-      accessibilityRole={selectionEnabled ? undefined : 'list'}
-      // @ts-expect-error React Native's role union omits RNW's standard listbox role.
-      role={collectionRole}
-      aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
-      aria-multiselectable={collectionMultiSelectable}
-      accessibilityCollection={nativeCollection}
-      accessibilityLabel={props.accessibilityLabel}
-      testID={props.testID}
-      style={props.style}
-      contentContainerStyle={[densityStyle, props.contentContainerStyle]}
-      keyboardShouldPersistTaps="handled"
-      stickySectionHeadersEnabled
-      extraData={extraData}
-      ListFooterComponent={collectionEndContent}
-      renderItem={renderSectionRow}
-      renderSectionHeader={renderSectionHeader}
-      maintainVisibleContentPosition={props.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
-        ? { minIndexForVisible: 0 }
-        : undefined}
-      onScroll={observeContentMetrics
-        ? onCollectionScroll
-        : undefined}
-      scrollEventThrottle={observeContentMetrics ? LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS : undefined}
-      onContentSizeChange={observeContentMetrics
-        ? onCollectionContentSizeChange
-        : undefined}
-      onScrollToIndexFailed={(info) => {
-        // Same rule as the flat arm: approach an unmeasured cell by the
-        // measured average and let the pending focus resolve when the row
-        // mounts. A section list moves its own scroll responder rather than
-        // exposing a whole-list offset method.
-        sectionListRef.current?.getScrollResponder()?.scrollTo({
-          y: info.averageItemLength * info.index,
-          animated: false,
-        });
-      }}
-    />
-  ) : (
-    <FlatList
-      ref={listRef}
-      data={visibleItems}
-      keyExtractor={keyForItem}
-      accessibilityRole={selectionEnabled ? undefined : 'list'}
-      // @ts-expect-error React Native's role union omits RNW's standard listbox role.
-      role={collectionRole}
-      aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
-      aria-multiselectable={collectionMultiSelectable}
-      accessibilityCollection={nativeCollection}
-      accessibilityLabel={props.accessibilityLabel}
-      testID={props.testID}
-      style={props.style}
-      contentContainerStyle={[densityStyle, props.contentContainerStyle]}
-      keyboardShouldPersistTaps="handled"
-      extraData={extraData}
-      ListFooterComponent={collectionEndContent}
-      renderItem={renderFlatRow}
-      maintainVisibleContentPosition={props.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
-        ? { minIndexForVisible: 0 }
-        : undefined}
-      onScroll={observeContentMetrics
-        ? onCollectionScroll
-        : undefined}
-      scrollEventThrottle={observeContentMetrics ? LIST_ANCHOR_SCROLL_EVENT_THROTTLE_MS : undefined}
-      onContentSizeChange={observeContentMetrics
-        ? onCollectionContentSizeChange
-        : undefined}
-      onScrollToIndexFailed={(info) => {
-        // Without a fixed row height the virtualizer cannot land on a row it has
-        // never measured. Approach it by the measured average; the pending focus
-        // resolves once the row mounts.
-        listRef.current?.scrollToOffset({
-          offset: info.averageItemLength * info.index,
-          animated: false,
-        });
-      }}
-    />
-  );
+  ) : virtualizer.render({
+    ...(visibleSections === undefined
+      ? { kind: 'flat', items: visibleItems ?? [] } as const
+      : { kind: 'sections', sections: virtualizedSections, renderSectionHeader: renderVirtualizedSectionHeader } as const),
+    keyForItem: visibleSections === undefined ? keyForItem
+      : (item, index) => encodeHappierSectionRowCellKey(keyForItem(item, index)),
+    renderItem: renderVirtualizedItem,
+    onHandle: onVirtualizerHandle,
+    accessibilityRole: selectionEnabled ? undefined : 'list',
+    role: collectionRole,
+    rowCount: collectionRole === 'grid' ? collectionRowCount : undefined,
+    multiSelectable: collectionMultiSelectable,
+    nativeCollection,
+    accessibilityLabel: props.accessibilityLabel,
+    testID: props.testID,
+    style: props.style,
+    contentContainerStyle: [densityStyle, props.contentContainerStyle],
+    extraData,
+    endContent: collectionEndContent,
+    preserveVisibleContentPositionOnPrepend: props.preserveVisibleContentPositionOnPrepend,
+    onScroll: observeContentMetrics ? onCollectionScroll : undefined,
+    onContentSizeChange: observeContentMetrics ? onCollectionContentSizeChange : undefined,
+  });
 
   // One box around the collection and its chrome. It is unconditional so that
   // gaining or losing chrome never changes the React tree shape around the

@@ -1,6 +1,9 @@
 import * as React from 'react';
 import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { Dimensions } from 'react-native';
+import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { measureInWindow } from '@/components/ui/popover/measure';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 
 /**
  * Which widget bodies a scrolling host builds: the one near-viewport rule shared by the Session
@@ -129,10 +132,30 @@ export function createNearViewportTracker(input: Readonly<{
  * item a scroll host has never placed waits for that first layout rather than mounting and
  * immediately unmounting far below the fold.
  */
-export function useIsNearViewport(tracker: NearViewportTracker, span: NearViewportSpan | null): boolean {
+const subscribeWithoutScrollHost = () => () => {};
+
+/** Plugin pages and Project ItemLists attach the incumbent policy to their physical content. */
+export function createScrollViewNearViewportTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker {
+    const tracker = createNearViewportTracker({
+        quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
+        initialViewportHeight: Dimensions.get('window')[horizontal ? 'width' : 'height'],
+        axis: horizontal ? 'x' : 'y',
+        readContentNode: () => {
+            const node = scrollRef.current;
+            if (!node || typeof node !== 'object') return null;
+            // Native getInnerViewNode returns a numeric handle; measure the host ref itself.
+            if ('getInnerViewRef' in node && typeof node.getInnerViewRef === 'function') return node.getInnerViewRef();
+            if ('getInnerViewNode' in node && typeof node.getInnerViewNode === 'function') return node.getInnerViewNode();
+            return null;
+        },
+    });
+    return { ...tracker, onScroll: event => tracker.onScroll(event as NativeSyntheticEvent<NativeScrollEvent>) };
+}
+
+export function useIsNearViewport(tracker: NearViewportTracker | null, span: NearViewportSpan | null): boolean {
     const read = React.useCallback(
-        () => span !== null && isSpanNearViewport(tracker.getWindow(), span),
+        () => tracker === null || (span !== null && isSpanNearViewport(tracker.getWindow(), span)),
         [span, tracker],
     );
-    return React.useSyncExternalStore(tracker.subscribe, read, read);
+    return React.useSyncExternalStore(tracker?.subscribe ?? subscribeWithoutScrollHost, read, read);
 }
