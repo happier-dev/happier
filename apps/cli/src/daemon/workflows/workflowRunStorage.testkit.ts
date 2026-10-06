@@ -1,16 +1,9 @@
-import {
-  WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1,
-  WorkflowRunInvocationIndexV1Schema,
-  type WorkflowInvocationLifecycleV1,
-  type WorkflowRunInvocationIndexV1,
-  type WorkflowRunOriginV1,
-  type WorkflowRunStateV1,
-  type WorkflowRunSummaryV1,
-} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
-import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows';
+import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 
 /**
  * In-memory stand-in for the server's opaque Workflow Run storage owner.
@@ -209,6 +202,9 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         return { kind: 'existing', run: summary() };
       }
       case 'accepted-snapshot.resolve': {
+        // The server only accepts snapshot materialization before root initialization.
+        // Reclaims must read the admitted bytes, never submit another candidate.
+        if (checkpointEnvelope !== null) throw storageError('currentness_conflict');
         if (operation.expectedRevision !== revision) throw storageError('currentness_conflict');
         const disposition = acceptedEnvelope === null ? 'created' : 'existing';
         if (acceptedEnvelope === null) {

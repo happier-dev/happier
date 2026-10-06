@@ -5,11 +5,8 @@ import {
   buildAutomationSessionInputAdmissionV1,
   deriveAutomationSessionInputLocalIdV1,
 } from '@/session/services/sessionInputAdmissionIdentity';
-import {
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  type MentionRefV1,
-  type SessionInputAdmissionResultV1,
-} from '@happier-dev/protocol';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import type { MentionRefV1, SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
 
 /**
  * Automation is a non-interactive producer. It delegates the complete

@@ -1,12 +1,8 @@
 import { z } from 'zod';
-import {
-  AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS,
-  AutomationTemplatePayloadV1Schema,
-  openAutomationTemplateStoredV1,
-  readAutomationTemplateStoredEnvelopeV1,
-  type SessionAuthoringCheckoutCreationDraftV1,
-  type AutomationTemplateRetainedSessionV1,
-} from '@happier-dev/protocol';
+import { AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
+import { AutomationTemplatePayloadV1Schema } from '@happier-dev/protocol/automations/automationTemplatePayloadV1';
+import { openAutomationTemplateStoredV1, readAutomationTemplateStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
+import type { SessionAuthoringCheckoutCreationDraftV1, AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol';
 
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {

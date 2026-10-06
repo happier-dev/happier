@@ -1,47 +1,18 @@
-import {
-  classifyWorkflowHoldV1,
-  classifyWorkflowReviewEntryV1,
-  freezeWorkflowLoopLimitsV1,
-  deriveWorkflowReplacementId,
-  sameStrictJsonValue,
-  resolveWorkflowInvocationStructureV1,
-  resolveWorkflowRetainedConversationAttemptV1,
-  type WorkflowAuthoredInputV1,
-  type WorkflowAuthoredProducerRef,
-  type WorkflowBlock,
-  type WorkflowAcceptedAuthorizationV1,
-  type WorkflowCheckpointEnvelopeV1,
-  type WorkflowDefinitionV1,
-  type WorkflowMaterializedLeafV1,
-  type WorkflowFinalResultV1,
-  type WorkflowInvocationLifecycleV1,
-  type WorkflowRunInvocationIndexV1,
-  type WorkflowContainerProgressV1,
-  type WorkflowContainerResultSelectorV1,
-  type WorkflowInvocationFrameV1,
-  type WorkflowLoopSourceSelectionV1,
-  type WorkflowLoopOutcomeV1,
-  type WorkflowRunExecutionTargetV1,
-  type WorkflowProgressEnvelopeV1,
-  type WorkflowUsageV1,
-  type WorkflowStep,
-  type WorkflowWaitLeafV1,
-  type WorkflowActionLeafV1,
-  type WorkflowNestedLeafV1,
-  type WorkflowStepExecutionSelection,
-  type WorkflowValueReference,
-  type WorkflowWorkspaceDescriptorV1,
-  type WorkflowWorkspaceProgressV1,
-  type WorkflowWorkspaceResolutionV1,
-} from '@happier-dev/protocol/workflows';
+import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { freezeWorkflowLoopLimitsV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
+import type { WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowBlock, WorkflowAcceptedAuthorizationV1, WorkflowCheckpointEnvelopeV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1, WorkflowFinalResultV1, WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowContainerProgressV1, WorkflowContainerResultSelectorV1, WorkflowInvocationFrameV1, WorkflowLoopSourceSelectionV1, WorkflowLoopOutcomeV1, WorkflowRunExecutionTargetV1, WorkflowProgressEnvelopeV1, WorkflowUsageV1, WorkflowStep, WorkflowWaitLeafV1, WorkflowActionLeafV1, WorkflowNestedLeafV1, WorkflowStepExecutionSelection, WorkflowValueReference, WorkflowWorkspaceDescriptorV1, WorkflowWorkspaceProgressV1, WorkflowWorkspaceResolutionV1 } from '@happier-dev/protocol/workflows';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import { prepareActionCompletionV1, resumeActionCompletionV1, type createActionExecutor, type ActionExecutorContext,
-  type ActionCompletionRun, type ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
+import { prepareActionCompletionV1, resumeActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import type { createActionExecutor, ActionExecutorContext, ActionCompletionRun, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema } from '@happier-dev/protocol/actions';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
-import { decodeExecutionRunResultObservation, type ExecutionRunResultDecodeResult } from '@happier-dev/protocol/execution/runs/resultContract';
+import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
+import type { ExecutionRunResultDecodeResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { isAuthoritativeAutomationRunCancellation } from '@/daemon/automation/automationRunCancellation';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 

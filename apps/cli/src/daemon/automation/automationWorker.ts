@@ -31,7 +31,7 @@ import type {
   SessionServerStartDispatchResultV1,
   SessionServerStartIngressRequestV1,
 } from '@happier-dev/protocol';
-import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol';
+import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { invalidateActiveAutomationRun } from './automationRunInvalidation';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';

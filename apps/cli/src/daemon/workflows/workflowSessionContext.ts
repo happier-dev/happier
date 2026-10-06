@@ -1,18 +1,12 @@
 import axios from 'axios';
-import {
-  readSessionWorkStateV1FromMetadata,
-  readSessionWorkStatePrimaryItemV1,
-  SessionTurnInitiatorV1Schema,
-  UsageAnalyticsQueryRequestSchema,
-  UsageAnalyticsQueryResponseSchema,
-  type UsageAnalyticsQueryRequest,
-} from '@happier-dev/protocol';
-import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions';
-import {
-  WorkflowSessionContextGoalV1Schema,
-  WorkflowSessionContextV1Schema,
-  type WorkflowSessionContextV1,
-} from '@happier-dev/protocol/workflows';
+import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { readSessionWorkStatePrimaryItemV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
+import { SessionTurnInitiatorV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol';
+import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
+import { WorkflowSessionContextGoalV1Schema, WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/workflowSessionContextV1';
+import type { WorkflowSessionContextV1 } from '@happier-dev/protocol/workflows';
 import type { StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getSessionTranscript } from '@/session/services/getSessionTranscript';

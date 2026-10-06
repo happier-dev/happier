@@ -7,14 +7,9 @@ import type {
   AutomationRunLifecycleOccurrenceEvidenceV1,
   AutomationV3WorkerExecutionDispatchOutcome,
 } from '@happier-dev/protocol';
-import {
-  AutomationV3WorkerClaimResponseSchema,
-  AutomationV3WorkerAssignmentsResponseSchema,
-  AutomationV3WorkerStartResponseSchema,
-  PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
-  AutomationExecutionRunLifecycleSourcesResponseSchema,
-  AutomationExecutionRunLifecycleReportResponseSchema,
-} from '@happier-dev/protocol';
+import { AutomationV3WorkerClaimResponseSchema, AutomationV3WorkerAssignmentsResponseSchema, AutomationV3WorkerStartResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { AutomationExecutionRunLifecycleSourcesResponseSchema, AutomationExecutionRunLifecycleReportResponseSchema } from '@happier-dev/protocol/automations/automationRunLifecycle';
 
 import { configuration } from '@/configuration';
 import {
@@ -105,6 +100,9 @@ function toWorkerClaimResponse(response: AutomationV3WorkerClaimResponse): Autom
         }),
         recipeKind: response.run.recipeKind,
       executionInputEnvelope: response.run.executionInputEnvelope,
+      ...(response.run.workflowAcceptedSnapshotEnvelope === undefined ? {} : {
+        workflowAcceptedSnapshotEnvelope: response.run.workflowAcceptedSnapshotEnvelope,
+      }),
       ...(response.run.automationEvidenceEnvelope !== undefined
         ? { automationEvidenceEnvelope: response.run.automationEvidenceEnvelope }
         : {}),

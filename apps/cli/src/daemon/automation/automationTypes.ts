@@ -17,6 +17,8 @@ export type AutomationV3ClaimedRun = Readonly<{
   /** Null is a retained pre-recipe Run and must fail closed in the worker. */
   executionInputEnvelope: string | null;
   automationEvidenceEnvelope?: string | null;
+  /** Present only after the Run's one-time accepted-snapshot materialization. */
+  workflowAcceptedSnapshotEnvelope?: string;
   /** Immutable Run-owned cause consumed with the frozen execution recipe. */
   cause: AutomationRunCause;
   /** Host-stamped firing cause depth, carried by the frozen server receipt. */

@@ -1,13 +1,6 @@
-import {
-  selectWorkflowLexicalScope,
-  resolveWorkflowInvocationStructureV1,
-  type WorkflowAuthoredProducerRef,
-  type WorkflowScopeFrameV1,
-  type WorkflowInvocationBindingRowV1,
-  type WorkflowInvocationBindingParamsV1,
-  type WorkflowStep,
-  type WorkflowDefinitionV1,
-} from '@happier-dev/protocol/workflows';
+import { selectWorkflowLexicalScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { resolveWorkflowInvocationStructureV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
+import type { WorkflowAuthoredProducerRef, WorkflowScopeFrameV1, WorkflowInvocationBindingRowV1, WorkflowInvocationBindingParamsV1, WorkflowStep, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowCoordinatorInvocation, WorkflowCoordinatorStore } from './coordinator';
 import { WorkflowInputResolutionError } from './input';
 export type WorkflowScopeFrame = WorkflowScopeFrameV1;
