@@ -19,7 +19,7 @@ export type ActionOperationDetailRecovery =
     | Readonly<{ kind: 'handoff'; actions: readonly string[] }>;
 
 export type ActionOperationDetailProjection = Readonly<{
-    kind: 'fork' | 'spawn' | 'handoff' | 'plugin';
+    kind: 'fork' | 'spawn' | 'handoff' | 'external' | 'plugin';
     fields: readonly ActionOperationDetailField[];
     resultSummary: readonly ActionOperationDetailSummaryRow[];
     errorSummary: readonly ActionOperationDetailSummaryRow[];
@@ -219,10 +219,21 @@ function projectPlugin(snapshot: ActionOperationSnapshot): Omit<ActionOperationD
     };
 }
 
+function projectExternal(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {
+    return {
+        ...EMPTY_DETAIL,
+        kind: 'external',
+        fields: snapshot.progress?.label ? [{ id: 'phase', value: snapshot.progress.label }] : [],
+        nextAction: snapshot.scope.sessionId ? { kind: 'open_session', sessionId: snapshot.scope.sessionId } : null,
+    };
+}
+
 const DETAIL_PROJECTORS_BY_ACTION_ID: Readonly<Record<string, DetailProjector>> = Object.freeze({
     'session.fork': projectFork,
     'session.spawn_new': projectSpawn,
     'session.handoff': projectHandoff,
+    'sessions.external.materialize.start': projectExternal,
+    'sessions.external.takeover.start': projectExternal,
 });
 
 export function projectActionOperationDetail(
@@ -235,6 +246,6 @@ export function projectActionOperationDetail(
     return {
         ...detail,
         errorSummary: detail.errorSummary.length > 0 ? detail.errorSummary : summarizeError(snapshot),
-        canCancel: active && snapshot.cancellation === 'supported',
+        canCancel: active && snapshot.cancellation === 'supported' && observation === 'available',
     };
 }

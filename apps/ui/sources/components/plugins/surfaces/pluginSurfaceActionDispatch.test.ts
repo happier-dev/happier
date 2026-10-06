@@ -650,6 +650,73 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
 }
 
 describe('plugin-surface action branch selection', () => {
+    it.each(['Ask-first', 'default', 'waived'] as const)(
+        'evaluates a nested host Action independently of its admitted parent: %s',
+        async (policy) => {
+            const settings = normalizeActionsSettingsV1({
+                v: 1,
+                ...(policy === 'Ask-first' ? { actions: { 'teams.members.remove': { approvalRequiredSurfaces: ['plugin'] } } } : {}),
+                ...(policy === 'waived' ? { approvalWaivedSurfaces: { 'teams.members.remove': ['plugin'] } } : {}),
+            });
+            const effects: unknown[] = [];
+            const approvals: ApprovalRequest[] = [];
+            const deps = {
+                isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+                // Home transport and Artifact persistence are the system boundaries.
+                homeDomainAction: async (request) => { effects.push(request); return { status: 'removed', membershipId: 'member-1' }; },
+                approvalsCreate: async ({ request }) => { approvals.push(ApprovalRequestV2Schema.parse(request)); return { artifactId: 'child-approval' }; },
+            } satisfies Partial<ActionExecutorDeps>;
+            const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
+            const activation = createClientActionActivation({
+                surfaces: ['mcp'],
+                handler: async (_input, context) => await context.ui.executeAction('teams.members.remove', {
+                    v: 1, teamId: 'team-1', membershipId: 'member-1',
+                }),
+            });
+            await activation.composition.unload();
+            try {
+                await activation.composition.reconcile([activation.activation]);
+                const result = await dispatchPluginSurfaceAction({
+                    action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, invocationSurface: 'mcp',
+                    resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
+                    hostAction: { execute: executor.execute, context: {
+                        serverId: 'home-1', runtimeAccountId: 'account-1', actionRequestId: 'parent-request',
+                        executionRunTargetMachineId: 'machine-1', authority: 'account_automation', bypassApprovals: true,
+                    } },
+                });
+                if (policy === 'waived') {
+                    expect(result).toMatchObject({ ok: true, result: { status: 'removed', membershipId: 'member-1' } });
+                    expect(effects).toHaveLength(1);
+                    expect(approvals).toEqual([]);
+                } else {
+                    expect(effects).toEqual([]);
+                    // A bare client registration has no durable source custody.
+                    // Ordinary approval must refuse it, never borrow the parent's bypass.
+                    expect(result).toMatchObject({ ok: false, reason: 'approval_origin_unavailable' });
+                    expect(approvals).toEqual([]);
+                    const admittedChild = await dispatchPluginSurfaceAction({
+                        callerPluginId: CALLER_PLUGIN_ID,
+                        callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                        action: 'teams.members.remove',
+                        input: { v: 1, teamId: 'team-1', membershipId: 'member-1' },
+                        invocation: { kind: 'clientPluginAction', clientActionBinding: {
+                            pluginId: CALLER_PLUGIN_ID, contributionLocalId: activation.action.id,
+                            occurrenceId: activation.action.occurrenceId!,
+                        } },
+                        hostAction: { execute: executor.execute, context: {
+                            serverId: 'home-1', runtimeAccountId: 'account-1', actionRequestId: 'child-request',
+                            executionRunTargetMachineId: 'machine-1', authority: 'account_automation', bypassApprovals: true,
+                        } },
+                    });
+                    expect(admittedChild).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'child-approval' } });
+                    expect(effects).toEqual([]);
+                    expect(approvals).toMatchObject([{ actionId: 'teams.members.remove', executionOriginV1: {
+                        authority: 'account_automation', surface: 'plugin', caller: { kind: 'plugin', pluginId: CALLER_PLUGIN_ID },
+                    } }]);
+                }
+            } finally { await activation.composition.unload(); }
+        },
+    );
     it.each(['same input', 'changed input'] as const)('executes independent physical drops with %s separately while exact request replay stays once', async (variation) => {
         const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'publish-drop' };
         const projected = PluginProjectedActionV2Schema.parse({

@@ -193,6 +193,22 @@ describe('withDefaultActionExecuteContext', () => {
         expect(rpc.machine).not.toHaveBeenCalled();
     });
 
+    it('scopes admitted continuation bypass to its exact parent, not another Action prepared by that executor', async () => {
+        const serverId = await addHome();
+        const { createDefaultActionExecutor } = await loadExecutor();
+        const executor = createDefaultActionExecutor({ admittedClientActionId: 'ui.find' });
+        const prepared = await executor.prepare('review.start', {
+            sessionId: 'session-1', engineIds: ['codex'], instructions: 'Review this change.',
+        }, { serverId, surface: 'ui', authority: 'account_automation', bypassApprovals: true, actionRequestId: 'child-review' });
+        expect(prepared).toMatchObject({ kind: 'settled', result: {
+            ok: true, result: { kind: 'approval_request_created' },
+        } });
+        const artifactId = createdArtifactId(prepared.kind === 'settled' ? prepared.result : null);
+        expect(storedApproval(serverId, artifactId).request).toMatchObject({
+            actionId: 'review.start', executionOriginV1: { authority: 'account_automation', requestId: 'child-review' },
+        });
+    });
+
     it('keeps composer ingress effects inside the invocation Home and Account, not the active input scope', async () => {
         await addHome();
         const otherServerId = await harness.addHome({

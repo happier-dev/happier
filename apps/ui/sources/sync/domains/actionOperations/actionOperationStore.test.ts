@@ -555,4 +555,16 @@ describe('action operation store', () => {
             hasAttention: false,
         });
     });
+    it('accepts a newer settled receipt refinement without reviving the lifecycle', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const cancelled = operation({ actionId: 'sessions.external.materialize.start', state: 'cancelled', startedAt: 100, settledAt: 150,
+            revision: 4, progress: { kind: 'phase', phase: 'staging', label: 'Cancelled' } });
+        merge(store, [cancelled]);
+        merge(store, [{ ...cancelled, revision: 5, settledAt: 160, progress: { kind: 'phase', phase: 'staging', label: 'Discarded' } }]);
+        expect(selectors.selectAll(store.getSnapshot())[0]!.snapshot.progress?.label).toBe('Discarded');
+        merge(store, [{ ...cancelled, revision: 6, state: 'running', settledAt: undefined }]);
+        expect(selectors.selectAll(store.getSnapshot())[0]!.snapshot.state).toBe('cancelled');
+    });
+
 });
