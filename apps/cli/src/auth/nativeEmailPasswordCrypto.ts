@@ -1,22 +1,11 @@
-import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
+import sodiumModule from './passwordSodium.cjs';
 
-import {
-  PasswordEnvelopeKdfV1Schema,
-  PasswordWrappedRecoverySecretV1Schema,
-  PASSWORD_ENVELOPE_KDF_SALT_BYTES_V1,
-  PASSWORD_ENVELOPE_NONCE_BYTES_V1,
-  PASSWORD_ENVELOPE_WRITER_PROFILE_V1,
-  acceptPasswordTextV1,
-  createPasswordEnvelopeAadV1,
-  decodePasswordCredentialFieldV1,
-  deriveAccountMachineKeyFromRecoverySecret,
-  encodePasswordCredentialFieldV1,
-  signAccountContentKeyBindingV1,
-  type PasswordEnvelopeKdfV1,
-  type PasswordWrappedRecoverySecretV1,
-} from '@happier-dev/protocol';
+import { PasswordEnvelopeKdfV1Schema, PasswordWrappedRecoverySecretV1Schema, PASSWORD_ENVELOPE_KDF_SALT_BYTES_V1, PASSWORD_ENVELOPE_NONCE_BYTES_V1, PASSWORD_ENVELOPE_WRITER_PROFILE_V1, acceptPasswordTextV1, createPasswordEnvelopeAadV1, decodePasswordCredentialFieldV1, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import type { PasswordEnvelopeKdfV1, PasswordWrappedRecoverySecretV1 } from '@happier-dev/protocol';
 
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 import { deriveKey } from '@/utils/deriveKey';
@@ -34,8 +23,6 @@ type PasswordSodium = Readonly<{
     algorithm: number,
   ) => Uint8Array;
 }>;
-
-const sodiumModule: unknown = createRequire(import.meta.url)('libsodium-wrappers-sumo');
 
 async function loadPasswordSodium(): Promise<PasswordSodium> {
   if (
