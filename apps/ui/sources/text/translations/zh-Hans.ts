@@ -1,3 +1,4 @@
+import type { TranslationStructure } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -805,7 +806,7 @@ function plural({
   return count === 1 ? singular : plural;
 }
 
-export const zhHans = {
+export const zhHans: TranslationStructure = {
     homeDeviceApproval: homeDeviceApprovalTranslations['zh-Hans'],
     settingsOverview: settingsOverviewTranslations['zh-Hans'],
     homeSetup: homeSetupTranslations['zh-Hans'],

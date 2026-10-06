@@ -1,3 +1,4 @@
+import type { TranslationStructure } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -822,7 +823,7 @@ function plural({
  * Russian translations for the Happier app
  * Must match the exact structure of the English translations
  */
-export const ru = {
+export const ru: TranslationStructure = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ru,
     settingsOverview: settingsOverviewTranslations.ru,
     homeSetup: homeSetupTranslations.ru,

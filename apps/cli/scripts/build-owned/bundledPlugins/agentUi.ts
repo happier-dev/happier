@@ -569,6 +569,14 @@ export function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBeha
 }
 
 export function renderBundledPluginTranslationsTs(translations: JsonObject): string {
+  const localeTypes = Object.entries(translations).sort(([a], [b]) => a.localeCompare(b)).map(([locale, bundle]) => {
+    const keys = Object.keys(readRequiredRecord(bundle, `translations.${locale}`)).sort((a, b) => a.localeCompare(b));
+    return [
+      `    ${renderTsStringLiteral(locale)}: Readonly<{`,
+      ...keys.map((key) => `        ${renderTsStringLiteral(key)}: string;`),
+      '    }>;',
+    ].join('\n');
+  });
   return [
     '/**',
     ' * GENERATED FILE CONTRACT (G5-bundled-plugin-translations)',
@@ -577,7 +585,11 @@ export function renderBundledPluginTranslationsTs(translations: JsonObject): str
     ' * - `apps/cli/scripts/build-owned/generateBundledPluginEntries.ts`',
     ' */',
     '',
-    `export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze(${renderJsonLiteral(translations)} as const);`,
+    'type BundledPluginTranslations = Readonly<{',
+    ...localeTypes,
+    '}>;',
+    '',
+    `export const BUNDLED_PLUGIN_TRANSLATIONS: BundledPluginTranslations = Object.freeze(${renderJsonLiteral(translations)} as const);`,
     '',
     'type KeysOfUnion<T> = T extends T ? keyof T : never;',
     'type BundledPluginTranslationBundle = (typeof BUNDLED_PLUGIN_TRANSLATIONS)[keyof typeof BUNDLED_PLUGIN_TRANSLATIONS];',

@@ -1,3 +1,4 @@
+import type { TranslationStructure } from '../_types';
 import { promptPickerTranslations } from './promptPickerTranslations';
 import { pendingNavigationTranslations } from './pendingNavigationTranslations';
 import { fileContentSearchTranslations } from './fileContentSearchTranslations';
@@ -790,7 +791,7 @@ const settingsSessionHandoffTranslationExtensions = {
   },
 } as const;
 
-export const ja = {
+export const ja: TranslationStructure = {
     homeDeviceApproval: homeDeviceApprovalTranslations.ja,
     settingsOverview: settingsOverviewTranslations.ja,
     homeSetup: homeSetupTranslations.ja,
