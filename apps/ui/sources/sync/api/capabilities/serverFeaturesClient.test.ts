@@ -1441,6 +1441,7 @@ describe('serverFeaturesClient', () => {
             endpointUrl: 'https://home.example.test',
         });
 
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(10);
         expect(requestSignal).toBeDefined();
         await expect(impatient).resolves.toEqual({ status: 'error', reason: 'timeout' });
@@ -1457,7 +1458,7 @@ describe('serverFeaturesClient', () => {
         expect(featuresFetchMock).toHaveBeenCalledOnce();
     });
 
-    it('lets a cancelled endpoint waiter leave the shared observation available to another caller', async () => {
+    it.each(['endpoint', 'focused'] as const)('lets a cancelled %s waiter leave the shared observation available to another caller', async (projection) => {
         useFrozenServerFeaturesClock();
         let requestSignal: AbortSignal | null | undefined;
         featuresFetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
@@ -1465,13 +1466,20 @@ describe('serverFeaturesClient', () => {
             await new Promise<void>((resolve) => setTimeout(resolve, 1_500));
             return createResponse(200, createValidFeaturesPayload());
         });
-        const { probeServerFeaturesAtUrl, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        const { probeServerFeaturesAtUrl, getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
         resetServerFeaturesClientForTests();
+        const probe = (signal?: AbortSignal) => projection === 'endpoint'
+            ? probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test', signal })
+            : getServerFeaturesSnapshot({ force: true, signal });
         const controller = new AbortController();
-        const cancelled = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test', signal: controller.signal });
-        const patient = probeServerFeaturesAtUrl({ endpointUrl: 'https://home.example.test' });
+        let cancellationResult: unknown;
+        const cancelled = probe(controller.signal).then((snapshot) => { cancellationResult = snapshot; return snapshot; });
+        const patient = probe();
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(100);
         controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(cancellationResult).toEqual({ status: 'error', reason: 'network' });
         await expect(cancelled).resolves.toEqual({ status: 'error', reason: 'network' });
         expect(requestSignal).toBeDefined();
         expect(requestSignal?.aborted).toBe(false);
@@ -1496,6 +1504,7 @@ describe('serverFeaturesClient', () => {
             settled = true;
             return snapshot;
         });
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(59_999);
         expect(settled).toBe(false);
         expect(requestSignal?.aborted).toBe(false);

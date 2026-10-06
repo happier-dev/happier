@@ -4,6 +4,11 @@ import { encodeBase64 } from '@/encryption/base64';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
+const tokenStorageMock = vi.hoisted(() => ({
+    getCredentials: vi.fn(async () => null),
+    getCredentialsForServerUrl: vi.fn(async () => null),
+    invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
+}));
 const activeSnapshotMock = vi.hoisted(() => vi.fn(() => ({
     serverId: 'focused-home',
     serverUrl: 'https://focused.example.test',
@@ -19,11 +24,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerHomeCarrier: () => null,
 }));
 vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentials: vi.fn(async () => null),
-        getCredentialsForServerUrl: vi.fn(async () => null),
-        invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-    },
+    TokenStorage: tokenStorageMock,
 }));
 // The address-trust decision can ask the person; this lean endpoint suite keeps
 // the modal surface out of its graph.
@@ -55,6 +56,12 @@ function keyChallengeV2Capabilities(serverIdentityId: string) {
 afterEach(() => {
     vi.useRealTimers();
     runtimeFetchMock.mockReset();
+    tokenStorageMock.getCredentials.mockReset();
+    tokenStorageMock.getCredentials.mockResolvedValue(null);
+    tokenStorageMock.getCredentialsForServerUrl.mockReset();
+    tokenStorageMock.getCredentialsForServerUrl.mockResolvedValue(null);
+    tokenStorageMock.invalidateCredentialsTokenForServerUrl.mockReset();
+    tokenStorageMock.invalidateCredentialsTokenForServerUrl.mockResolvedValue(false);
     activeSnapshotMock.mockReset();
     activeSnapshotMock.mockReturnValue({
         serverId: 'focused-home',
@@ -93,6 +100,7 @@ describe('explicit endpoint authentication foundations', () => {
             settled = true;
             return error;
         });
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(800);
         expect(settled).toBe(false);
         expect(paths).toEqual(['/v1/features']);
@@ -103,7 +111,7 @@ describe('explicit endpoint authentication foundations', () => {
 
     it('waits for slow features when focused key login requires an Account-bound challenge', async () => {
         const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
-        const profile = upsertServerProfile({ serverUrl: 'https://focused.example.test', name: 'Focused' });
+        const profile = upsertServerProfile({ serverUrl: 'https://slow-focused.example.test', name: 'Focused' });
         activeSnapshotMock.mockReturnValue({
             serverId: profile.id, serverUrl: profile.serverUrl, generation: 1, kind: 'custom',
         });
@@ -118,7 +126,7 @@ describe('explicit endpoint authentication foundations', () => {
             if (url.endsWith('/v1/auth/challenge')) return jsonResponse({
                 challengeId: 'focused-challenge', nonce: 'nonce',
                 issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
-                audience: { origin: 'https://focused.example.test', serverIdentityId: 'srv_slow_focused' },
+                audience: { origin: 'https://slow-focused.example.test', serverIdentityId: 'srv_slow_focused' },
             });
             if (url.endsWith('/v1/auth')) return jsonResponse({ token: 'focused-token' });
             throw new Error(`Unexpected request: ${url}`);
@@ -126,6 +134,7 @@ describe('explicit endpoint authentication foundations', () => {
         let settled = false;
         const result = authGetToken(new Uint8Array(32).fill(7), { expectedAccountId: 'expected-account' })
             .then((token) => { settled = true; return token; }, (error: unknown) => { settled = true; return error; });
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(800);
         expect(settled).toBe(false);
         await vi.advanceTimersByTimeAsync(700);
@@ -151,8 +160,15 @@ describe('explicit endpoint authentication foundations', () => {
             }
             throw new Error(`Unexpected request: ${url}`);
         });
-        const result = authGetToken(new Uint8Array(32).fill(7));
+        let settled = false;
+        const result = authGetToken(new Uint8Array(32).fill(7)).then((token) => {
+            settled = true;
+            return token;
+        }, (error: unknown) => { settled = true; return error; });
+        await vi.dynamicImportSettled();
         await vi.advanceTimersByTimeAsync(800);
+        await vi.dynamicImportSettled();
+        expect(settled).toBe(true);
         await expect(result).resolves.toBe('fallback-token');
         expect(featureReturned).toBe(false);
         expect(featureSignal).toBeDefined();
