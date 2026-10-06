@@ -21,6 +21,31 @@ Happier separates issue evidence transport, triage routing, deep diagnosis, GitH
 
 The maintainer CLI deliberately does not own an `issue triage` reviewer, prompt generator, classifier, or coding-agent assignment command. Skills are the diagnosis doctrine; maintainer tooling is bounded evidence and reproduction transport.
 
+### ghops credentials on a Mac execution host (0.3 development)
+
+The stack installs a per-user macOS LaunchAgent for the ghops credential broker
+during `hstack dev-vm setup` and `hstack dev-vm activate`. On an already configured
+Mac, `hstack dev-vm recovery enable` installs or updates and immediately loads the
+broker; `hstack dev-vm recovery disable` unloads it and removes its plist alongside
+login recovery. Recovery itself still waits until the next login to reconcile the VM.
+
+The broker runs in the Mac user's GUI login session, independently of foreground
+Stack commands, SSH connections and VM restarts. It reads the `happier/ghops`
+Keychain entry for `happier-bot` on each request. Tokens are not stored in the plist,
+environment or logs. Guest `yarn ghops` uses the configured `mac-host` SSH target to
+reach user-only sockets under `/tmp/happier-ghops-brokers-<uid>`. Broker startup
+connect-tests same-user socket files and removes only refused or missing endpoints;
+live sockets, symlinks and ordinary files are preserved. Normal signal shutdown
+removes its own socket.
+
+`hstack doctor` reports broker installation, launchd loading and socket liveness
+(through `mac-host` when run in the guest). `hstack dev-vm doctor` and
+`hstack dev-vm recovery status` provide host-side diagnostics. If no broker is
+available, run `hstack dev-vm recovery enable` on the Mac while that user is logged
+in. A successful socket probe establishes transport availability; verify Keychain
+access and bot identity separately with `yarn ghops auth status` and
+`yarn ghops api user --jq .login` in the guest.
+
 ## Interactive workflow
 
 For one issue, invoke `happier-issue-diagnose`. For a corpus or several issues, invoke `happier-issue-triage`.

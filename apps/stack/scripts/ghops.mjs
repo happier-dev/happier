@@ -134,7 +134,7 @@ async function readMacHostBotToken(repoRoot) {
   });
   if (result.error || result.status !== 0) {
     throw new Error(
-      `mac-host credential broker is unavailable or failed for stack '${stackName}'; restart the Stack from its Mac execution host.`,
+      `mac-host credential broker is unavailable or failed for stack '${stackName}'; run \`hstack dev-vm recovery enable\` on the Mac to (re)install its login-session LaunchAgent.`,
     );
   }
 

@@ -5,7 +5,7 @@ description: Read and mutate GitHub as the isolated Happier bot through `yarn gh
 
 # Happier GitHub Ops (bot `gh` wrapper)
 
-This repo provides `yarn ghops` as the canonical isolated transport for GitHub API/UI reads and mutations as the bot, plus an explicit bot-authenticated branch-push capability. Ordinary commits and pushes still use the current machine's configured Git identity, remote, and credentials; `ghops git push` is an authorization-gated exception, never the default. `ghops` **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace receives that same credential from the short-lived execution-host broker through its active `mac-host` target while keeping repository work on the authoritative Linux checkout. The broker exposes only this fixed credential over a user-only Unix socket and never places the token in the guest environment or on disk.
+This repo provides `yarn ghops` as the canonical isolated transport for GitHub API/UI reads and mutations as the bot, plus an explicit bot-authenticated branch-push capability. Ordinary commits and pushes still use the current machine's configured Git identity, remote, and credentials; `ghops git push` is an authorization-gated exception, never the default. `ghops` **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace receives that same credential from the stack-managed login-session execution-host broker through its configured `mac-host` target while keeping repository work on the authoritative Linux checkout. The broker exposes only this fixed credential over a user-only Unix socket and never places the token in the guest environment or on disk.
 
 ## Prerequisites
 
@@ -128,7 +128,7 @@ Remove only the stored Keychain credential:
 yarn ghops auth clear
 ```
 
-On non-macOS platforms outside an active managed execution-host session, continue providing `HAPPIER_GITHUB_BOT_TOKEN`. Keychain lifecycle commands remain macOS-only; the broker resolves credentials for ordinary operations but does not remotely mutate Keychain state. If `ghops` reports that the broker is unavailable, restart the Stack command from its Mac execution host so the new delegated session owns a fresh broker.
+On non-macOS platforms without a configured `mac-host` target, continue providing `HAPPIER_GITHUB_BOT_TOKEN`. Keychain lifecycle commands remain macOS-only; the broker resolves credentials for ordinary operations but does not remotely mutate Keychain state. If `ghops` reports that the broker is unavailable, run `hstack dev-vm recovery enable` on the Mac to install or update and load its per-user LaunchAgent. The broker stays available across foreground Stack exits and VM restarts while the Mac user is logged in. See [ghops credential ownership](../../../docs/issue-triage.md#ghops-credentials-on-a-mac-execution-host-03-development).
 
 ## Commit, GitHub, and push identities
 
