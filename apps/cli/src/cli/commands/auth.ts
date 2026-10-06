@@ -29,13 +29,14 @@ function readSafeHttpStatus(value: unknown): number | undefined {
 function projectSafeAuthError(error: unknown): SafeAuthErrorDiagnostic {
   const errorRecord = isRecord(error) ? error : null;
   const responseRecord = errorRecord && isRecord(errorRecord.response) ? errorRecord.response : null;
-  const name = error instanceof Error && error.name.length > 0 && error.name.length <= 64
-    ? error.name
+  const name = typeof errorRecord?.name === 'string' && errorRecord.name.length > 0 && errorRecord.name.length <= 64
+    ? errorRecord.name
     : 'Error';
-  const message = error instanceof Error && error.message.length > 0
-    ? error.message.slice(0, 2_048)
-    : 'Unknown error';
   const code = readSafeErrorCode(errorRecord?.code);
+  const message = typeof errorRecord?.message === 'string' && errorRecord.message.trim().length > 0
+    && errorRecord.message !== 'Unknown error'
+    ? errorRecord.message.slice(0, 2_048)
+    : code !== undefined ? String(code) : 'Unknown error';
   const status = readSafeHttpStatus(errorRecord?.status)
     ?? readSafeHttpStatus(responseRecord?.status);
   return {
@@ -122,12 +123,13 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
     await handleAuthCommand(context.args.slice(1), context.signal);
   } catch (error) {
     const { errorFrame } = await import('@happier-dev/cli-common/output');
-    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
+    const diagnostic = projectSafeAuthError(error);
+    console.error(errorFrame('Error:', [diagnostic.message]));
     if (process.env.DEBUG) {
       // Error objects from HTTP clients retain request bodies, response bodies,
       // headers, and config. Project only bounded actionable fields at the CLI
       // boundary so pairing and credential material cannot reach diagnostics.
-      console.error(projectSafeAuthError(error));
+      console.error(diagnostic);
     }
     process.exit(1);
   }
