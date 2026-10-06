@@ -78,6 +78,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
 import { db, isPrismaErrorCode } from "@/storage/db";
+import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { readSessionScopedSocketBinding, resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
@@ -317,8 +318,8 @@ export function startSocket(app: Fastify) {
             : { mode: "memory" },
     });
 
-    function rejectSocket(params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) {
-        const err: any = new Error(params.error);
+    function rejectSocket(params: { statusCode: number; error: string; message?: string; provider?: string; data?: Record<string, unknown> }) {
+        const err: Error & { data?: Record<string, unknown> } = new Error(params.message ?? params.error);
         err.data = {
             error: params.error,
             statusCode: params.statusCode,
@@ -461,7 +462,7 @@ export function startSocket(app: Fastify) {
             });
         };
 
-        const rejectHandshake = (params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) => {
+        const rejectHandshake = (params: { statusCode: number; error: string; message?: string; provider?: string; data?: Record<string, unknown> }) => {
             recordSocketAuthHandshake({
                 clientType,
                 transport: handshakeTransport,
@@ -717,7 +718,8 @@ export function startSocket(app: Fastify) {
                 },
                 "Socket authentication handshake failed unexpectedly",
             );
-            return rejectHandshake({ statusCode: 503, error: "upstream_error" });
+            const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);
+            return rejectHandshake({ statusCode: 503, ...(schemaMismatch ?? { error: "upstream_error" }) });
         }
     });
 
@@ -901,6 +903,7 @@ export function startSocket(app: Fastify) {
             releaseSessionHumanPresenceHoldAfterFinalCurrentness(socket);
         } catch (error) {
             await rejectPostConnectAdmission();
+            const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);
             log(
                 {
                     module: "websocket-auth-admission",
@@ -909,8 +912,9 @@ export function startSocket(app: Fastify) {
                     sessionId,
                     machineId,
                     err: error,
+                    ...(schemaMismatch ? { errorCode: schemaMismatch.error } : {}),
                 },
-                "Post-connect Socket authentication admission failed unexpectedly",
+                schemaMismatch?.message ?? "Post-connect Socket authentication admission failed unexpectedly",
             );
             return;
         }

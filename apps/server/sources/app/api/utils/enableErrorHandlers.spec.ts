@@ -10,6 +10,56 @@ import { enableErrorHandlers } from './enableErrorHandlers';
 import { InactiveAccountError } from '@/app/auth/accountStatus';
 
 describe('enableErrorHandlers', () => {
+    it.each(['P2021', 'P2022'])('reports %s as an actionable shared QA schema mismatch', async (code) => {
+        const envSnapshot = snapshotEnv();
+        applyEnvValues({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test' });
+        const app = Fastify({ logger: false });
+        app.setSerializerCompiler(serializerCompiler);
+        const typed = app.withTypeProvider<ZodTypeProvider>();
+        enableErrorHandlers(typed as Parameters<typeof enableErrorHandlers>[0]);
+        typed.get('/shared-schema-query', {
+            schema: { response: { 500: z.object({ error: z.literal('Internal Server Error') }) } },
+        }, async () => {
+            // The database is the boundary; the real HTTP handler receives its error unchanged.
+            throw Object.assign(new Error('missing schema fixture'), { code });
+        });
+        try {
+            const response = await app.inject({ method: 'GET', url: '/shared-schema-query' });
+            expect(response.statusCode).toBe(500);
+            expect(response.json()).toMatchObject({ error: 'shared_qa_schema_mismatch', statusCode: 500 });
+            expect(response.json().message).toMatch(/QA snapshot.*current shared dev schema.*reload a newer snapshot/i);
+        } finally {
+            await app.close();
+            restoreEnv(envSnapshot);
+        }
+    });
+
+    it.each([
+        { marker: undefined, code: 'P2021' },
+        { marker: '   ', code: 'P2022' },
+        { marker: 'dev-test', code: 'P2024' },
+    ])('keeps an ordinary database failure opaque (%j)', async ({ marker, code }) => {
+        const envSnapshot = snapshotEnv();
+        applyEnvValues({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: marker });
+        const app = Fastify({ logger: false });
+        enableErrorHandlers(app as Parameters<typeof enableErrorHandlers>[0]);
+        app.get('/ordinary-db-query', async () => {
+            throw Object.assign(new Error('private database detail'), { code });
+        });
+        try {
+            const response = await app.inject({ method: 'GET', url: '/ordinary-db-query' });
+            expect(response.statusCode).toBe(500);
+            expect(response.json()).toEqual({
+                error: 'Internal Server Error',
+                message: 'An unexpected error occurred',
+                statusCode: 500,
+            });
+        } finally {
+            await app.close();
+            restoreEnv(envSnapshot);
+        }
+    });
+
     it('keeps an effect-time Account lifecycle rejection opaque to an issued credential', async () => {
         const app = Fastify();
         enableErrorHandlers(app as Parameters<typeof enableErrorHandlers>[0]);
