@@ -1,8 +1,6 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
-import {
-  createWorkflowAccountRunActionOwner,
-  type WorkflowAccountRunActionDeps,
-} from '@happier-dev/protocol';
+import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 

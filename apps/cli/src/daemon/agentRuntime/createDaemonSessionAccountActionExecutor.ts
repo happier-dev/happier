@@ -1,11 +1,7 @@
-import {
-  getActionSpec,
-  RoleActionInputSchemasV1,
-  AgentStartSessionCallerV1Schema,
-  readAgentStartCallerWorkDepthV1,
-  type createActionExecutor,
-  type ActionExecuteResult,
-} from '@happier-dev/protocol';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { AgentStartSessionCallerV1Schema, readAgentStartCallerWorkDepthV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import type { createActionExecutor, ActionExecuteResult } from '@happier-dev/protocol';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
@@ -23,8 +19,9 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
   }>): Promise<ActionExecuteResult> => {
     if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!await authority.isCurrent()) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-    if (getActionSpec(operation.actionId).executionPlacement !== 'account'
-      && getActionSpec(operation.actionId).executionPlacement !== 'client'
+    const executionPlacement = resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input);
+    if (executionPlacement !== 'account'
+      && executionPlacement !== 'client'
       && !(Object.hasOwn(RoleActionInputSchemasV1, operation.actionId) && operation.actionId.startsWith('session.'))) {
       return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     }

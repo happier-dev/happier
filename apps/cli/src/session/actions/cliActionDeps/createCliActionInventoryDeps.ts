@@ -1,18 +1,14 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import {
-  AccountProfileResponseSchema,
-  buildQualifiedPluginContributionKey,
-  SessionMcpSelectionV1Schema,
-  convertBackendTargetRefV2ToV1,
-  isLegacyConfiguredAcpFlavorCarrier,
-  readBackendTargetRefV2,
-  type AccountProfile,
-  type ActionExecutorDeps,
-  type BackendTargetRefV2,
-} from '@happier-dev/protocol';
+import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import type { AccountProfile, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
 import axios from 'axios';
-import { DaemonProviderModelProjectionResponseV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
+import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { connectedServiceProfileKey, legacyCustomAcpCompat } from '@happier-dev/agents';
 
 import { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/resolveAccountSettingsHttpBaseUrl';

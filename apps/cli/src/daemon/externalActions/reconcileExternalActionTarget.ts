@@ -1,10 +1,5 @@
-import {
-  getActionSpec,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ExternalActionTargetV1,
-  type SignedRootActionId,
-} from '@happier-dev/protocol/actions';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId } from '@happier-dev/protocol/actions';
 
 /**
  * The external ingress has one deliberately bounded selector vocabulary. It
@@ -13,7 +8,7 @@ import {
  * New selector-shaped Action input must extend this owner and its architecture
  * test rather than gaining a route-local exception.
  */
-const NESTED_SESSION_SELECTOR_ACTION_IDS = new Set<SignedRootActionId>([
+const NESTED_SESSION_SELECTOR_ACTION_IDS = new Set<ActionId>([
   'session.continue_with_replay',
 ]);
 
@@ -30,7 +25,7 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 function readSessionSelectorIds(
-  actionId: SignedRootActionId,
+  actionId: ActionId,
   input: Readonly<Record<string, unknown>>,
 ): readonly string[] {
   const selectors = [
@@ -52,7 +47,7 @@ function readMachineSelectorIds(input: Readonly<Record<string, unknown>>): reado
 }
 
 function isTitleOnlySessionOpen(
-  actionId: SignedRootActionId,
+  actionId: ActionId,
   input: Readonly<Record<string, unknown>>,
   sessionSelectorIds: readonly string[],
 ): boolean {
@@ -89,7 +84,7 @@ export type ExternalActionTargetReconciliation =
  * different daemon or Session than the verified route target.
  */
 export function reconcileExternalActionTarget(input: Readonly<{
-  actionId: SignedRootActionId;
+  actionId: ActionId;
   rawInput: unknown;
   target: ExternalActionTargetV1 | undefined;
   currentMachineId: string;
@@ -129,16 +124,17 @@ export function reconcileExternalActionTarget(input: Readonly<{
   }
 
   const isExecutionRun = input.actionId.startsWith('execution.run.');
-  const canDeriveSessionTarget = spec.executionPlacement === 'session' || spec.executionPlacement === 'client' || isExecutionRun;
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, parsed.data);
+  const canDeriveSessionTarget = executionPlacement === 'session' || executionPlacement === 'client' || isExecutionRun;
   // `action.invoke` is machine-placed so account- and machine-scoped
   // contributions can run without a Session. Its nested plugin input is never
   // a routing selector, but an explicit envelope Session target is already
   // host-owned route metadata and may establish the invocation context.
   const isContributedActionInvocation = input.actionId === 'action.invoke';
-  const bindsEnvelopeSession = isContributedActionInvocation || spec.executionPlacement === 'client' || input.actionId.startsWith('computer.');
+  const bindsEnvelopeSession = isContributedActionInvocation || executionPlacement === 'client' || input.actionId.startsWith('computer.');
   const sessionSelectorId = distinctSessionSelectorIds[0] ?? null;
 
-  if (spec.executionPlacement === 'machine') {
+  if (executionPlacement === 'machine') {
     const machineSelectorIds = readMachineSelectorIds(parsedInput);
     if (machineSelectorIds.some((machineId) => machineId !== input.currentMachineId)) {
       return { kind: 'rejected', execution: targetNotLocal() };
@@ -174,7 +170,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
     };
   }
 
-  if (spec.executionPlacement === 'session') {
+  if (executionPlacement === 'session') {
     return { kind: 'rejected', execution: targetRequired() };
   }
 
@@ -184,4 +180,28 @@ export function reconcileExternalActionTarget(input: Readonly<{
     context: {},
     executionRunRequiresMachineTarget: isExecutionRun,
   };
+}
+
+/** Caller-side Machine selection uses the same parsed selector/locality owner as daemon ingress. */
+export function resolveExternalActionMachineTarget(input: Readonly<{
+  actionId: ActionId;
+  rawInput: unknown;
+  target?: ExternalActionTargetV1;
+  fallbackMachineId?: string | null;
+  /** Authenticated Session ownership, when the semantic Action addresses a linked Session. */
+  ownerMachineId?: string | null;
+}>): Readonly<{ kind: 'ready'; machineId: string }> | Readonly<{ kind: 'rejected'; execution: ActionExecuteResult }> {
+  const parsed = getActionSpec(input.actionId).inputSchema.safeParse(input.rawInput);
+  if (!parsed.success) return { kind: 'rejected', execution: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } };
+  const machineIds = readMachineSelectorIds(asRecord(parsed.data) ?? {});
+  const explicitMachineId = input.target?.kind === 'machine' ? input.target.machineId : null;
+  const distinctMachineIds = new Set([...machineIds, ...(explicitMachineId ? [explicitMachineId] : [])]);
+  if (distinctMachineIds.size > 1) return { kind: 'rejected', execution: targetNotLocal() };
+  const machineId = input.ownerMachineId ?? machineIds[0] ?? explicitMachineId ?? readNonEmptyString(input.fallbackMachineId);
+  if (!machineId) return { kind: 'rejected', execution: targetRequired() };
+  if (explicitMachineId && explicitMachineId !== machineId) return { kind: 'rejected', execution: targetNotLocal() };
+  const reconciliation = reconcileExternalActionTarget({
+    actionId: input.actionId, rawInput: parsed.data, target: input.target, currentMachineId: machineId,
+  });
+  return reconciliation.kind === 'rejected' ? reconciliation : { kind: 'ready', machineId };
 }

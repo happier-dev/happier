@@ -1,22 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import {
-  createAccountRoleActionExecutorV1,
-  RoleActionInputSchemasV1,
-  readSessionRolesV1,
-  writeSessionRoleIdV1ToMetadata,
-  writeSessionRoleConfigurationV1ToMetadata,
-  SessionRoleConfigurationV1Schema,
-  resolveRoleSelectionV1,
-  snapshotSessionRolesAtSpawnV1,
-  type ActionExecutorDeps,
-  type PluginRoleContributionV1,
-  type RoleArtifactV1,
-  type RoleInstructionsOverrideV1,
-  type RolesV1,
-  type SessionRoleConfigurationV1,
-  readSessionWorkspaceWritesV1,
-  type ActionExecutorContext,
-} from '@happier-dev/protocol';
+import { createAccountRoleActionExecutorV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
+import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { readSessionRolesV1, writeSessionRoleIdV1ToMetadata, writeSessionRoleConfigurationV1ToMetadata, SessionRoleConfigurationV1Schema, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { resolveRoleSelectionV1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import type { ActionExecutorDeps, PluginRoleContributionV1, RoleArtifactV1, RoleInstructionsOverrideV1, RolesV1, SessionRoleConfigurationV1, ActionExecutorContext } from '@happier-dev/protocol';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';

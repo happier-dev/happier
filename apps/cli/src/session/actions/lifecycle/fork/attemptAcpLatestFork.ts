@@ -7,7 +7,8 @@ import { createConnectedServiceForkLaunchContext } from '@/session/fork/connecte
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import type { ForkResultV1 } from '@happier-dev/agents';
-import { readNonBlankOpaqueIdentifier, readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
 import { prepareManagedForkDirectory } from './prepareManagedForkDirectory';
 

@@ -1,10 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { readProviderSessionIdSessionState } from '@happier-dev/agents';
-import {
-    readRuntimeDescriptorV1FromMetadata,
-    SessionTurnProviderCheckpointV1Schema,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';

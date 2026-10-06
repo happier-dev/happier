@@ -1,5 +1,5 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, WidgetAreaMutationErrorV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, WidgetAreaMutationErrorV1 } from '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 
 /** Headless Actions use the same personal Artifact writer as mounted pages. */

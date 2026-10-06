@@ -79,6 +79,17 @@ describe('createDaemonExternalActionTargetResolver', () => {
 
   afterEach(() => { vi.restoreAllMocks(); });
 
+  it('requires daemon locality for a Companion client read while retaining remote Account reads', async () => {
+    const target = { kind: 'session' as const, sessionId: session('machine-elsewhere').id };
+    mocks.fetchSessionById.mockResolvedValue(session('machine-elsewhere'));
+    const resolver = createDaemonExternalActionTargetResolver({ credentials: TOKEN_ONLY_CREDENTIALS });
+    const surface = { serverId: 'home', accountId: 'account-1', owner: { kind: 'companion' as const, sessionId: target.sessionId } };
+    await expect(resolver({ actionId: 'widgets.instance.inputs.get', target, currentMachineId: 'machine-local',
+      actionInput: { ref: { surface, instanceId: 'checks' } } })).resolves.toBeNull();
+    await expect(resolver({ actionId: 'widgets.instance.inputs.get', target, currentMachineId: 'machine-local',
+      actionInput: { ref: { surface: { ...surface, owner: { kind: 'home' } }, instanceId: 'checks' } } })).resolves.toEqual(target);
+  });
+
   it('keeps a local Session caller approval current for an Account effect on a led remote Session', async () => {
     mocks.fetchSessionById.mockResolvedValue({ ...session('machine-elsewhere'), id: 'led-remote' });
     mocks.fetchAccountMachineReplacements.mockResolvedValue([]);

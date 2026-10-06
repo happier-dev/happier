@@ -3,8 +3,8 @@ import type { StoredCredentials } from '@/persistence';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { StopSessionResultSchema } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import type { ForkLifecycleRawSession, ForkStopSession } from './forkLifecycleTypes';
 

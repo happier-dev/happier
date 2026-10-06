@@ -11,23 +11,19 @@ import {
     normalizeSpawnNonce,
 } from '@/session/shared/spawnNonce';
 import { logger } from '@/ui/logger';
-import {
-    AcpConfigOptionOverridesV1Schema,
-    AgentSessionStartupInstructionsV1Schema,
-    SessionModelSelectionV1Schema,
-    SessionCreationCorrespondenceV1Schema,
-    sessionCreationCorrespondenceMatchesV1,
-    SessionCreationTagV1Schema,
-    SessionInitialAccessDraftV1Schema,
-    SessionSpawnNewInputV2Schema,
-    RuntimeDescriptorV1Schema,
-    buildBackendTargetKeyV2,
-    SessionMcpSelectionV1Schema,
-    SpawnSessionExecutionAuthorizationSchema,
-    findSpawnConfigOptionAliasConflicts,
-    mergeSpawnConfigOptionAliases,
-    type SpawnConfigOptionValue,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionCreationCorrespondenceV1Schema, sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
+import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import type { SpawnConfigOptionValue } from '@happier-dev/protocol';
 
 import type {
     SessionLifecycleActionHandler,

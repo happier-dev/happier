@@ -1,13 +1,6 @@
-import {
-  ACTION_IDS,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ActionId,
-  type ActionCaller,
-  type ActionExecutorDeps,
-  type WorkflowRunStartedByV1,
-  resolveWorkflowRunStartedByForActionCallerV1,
-} from '@happier-dev/protocol';
+import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecuteResult, ActionExecutorContext, ActionId, ActionCaller, ActionExecutorDeps, WorkflowRunStartedByV1 } from '@happier-dev/protocol';
+import { resolveWorkflowRunStartedByForActionCallerV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 
 import { requestDaemonPluginActionExecution } from '@/daemon/controlClient';
 import type { PluginActionExecutionAttempt } from '@/plugins/runtime/invocation/actions/executeContributedAction';

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
-import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol';
+import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import type { ArtifactSavedByV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
@@ -52,10 +53,12 @@ export async function publishArtifactFromWorkspaceFile(params: Readonly<{
   store: ReturnType<typeof createAccountArtifactStore>;
   caller: ArtifactWorkspaceCaller;
   input: Readonly<{ path: string; title?: string; mime?: string; kind?: string }>;
+  savedBy?: ArtifactSavedByV1;
   signal?: AbortSignal;
 }>) {
   const file = await readArtifactWorkspaceFile({ caller: params.caller, path: params.input.path, signal: params.signal });
   return params.store.create({ ...prepareArtifactWorkspaceFileV1({ caller: params.caller, input: params.input,
     file: { ...file, sha: createHash('sha256').update(file.bytes).digest('hex') } }),
+    savedBy: params.savedBy,
     ...(params.signal ? { signal: params.signal } : {}) });
 }

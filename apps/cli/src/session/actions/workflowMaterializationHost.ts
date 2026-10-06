@@ -1,18 +1,9 @@
-import {
-  DaemonContributionRegistryProjectionDescribeResponseSchema,
-  DaemonPluginActionSchemasReadResponseSchema,
-  buildMachineAgentsDetectRequest,
-  buildMachineAgentInventoryDescriptors,
-  buildBackendTargetKeyV2,
-  projectMachineAgentsDetectResponse,
-  loadAiLaunchProfileArtifacts,
-  readAiLaunchProfileCollection,
-  type AiLaunchProfile,
-  type ResolveRoleSelectionV1Input,
-  type AccountSettings,
-  type materializeWorkflowAcceptedSnapshotV1,
-} from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryDescriptors, projectMachineAgentsDetectResponse } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
+import type { AiLaunchProfile, ResolveRoleSelectionV1Input, AccountSettings, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';

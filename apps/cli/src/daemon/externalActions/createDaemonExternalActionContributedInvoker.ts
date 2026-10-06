@@ -1,16 +1,9 @@
-import {
-  isApiTokenGrantTargetMemberV1,
-  type ApiTokenGrantV1,
-  buildQualifiedPluginContributionKey,
-  type ApprovalRequestV2,
-  type TargetActionApprovalRequestV1,
-} from '@happier-dev/protocol';
-import {
-  parseQualifiedPluginActionId,
-  signExternalActionApprovalInputV1,
-  type ActionExecuteResult,
-  type ActionExecutorDeps,
-} from '@happier-dev/protocol/actions';
+import { isApiTokenGrantTargetMemberV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { ApiTokenGrantV1, ApprovalRequestV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';

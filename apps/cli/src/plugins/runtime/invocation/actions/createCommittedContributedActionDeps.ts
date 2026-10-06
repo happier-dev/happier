@@ -1,5 +1,8 @@
-import { buildQualifiedPluginContributionKey, type ActionDefinitionV1 } from '@happier-dev/protocol';
-import { formatQualifiedPluginActionId, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ActionDefinitionV1 } from '@happier-dev/protocol';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
@@ -171,6 +174,19 @@ export function createCommittedContributedActionDefinitionLister(input: Readonly
     } finally {
       void lease.release().catch(() => input.onLeaseReleaseError?.());
     }
+  };
+}
+
+/** Re-read the same current, policy-filtered catalog used by discovery. */
+export function createCommittedContributedActionSchemaReader(
+  listDefinitions: NonNullable<ActionExecutorDeps['listContributedActionDefinitions']>,
+): NonNullable<ActionExecutorDeps['readContributedActionSchemas']> {
+  return async (actionId, signal) => {
+    signal?.throwIfAborted();
+    const definition = ActionDefinitionV1Schema.safeParse(listDefinitions().find(action => action.id === actionId));
+    if (!definition.success) return null;
+    return { inputSchema: definition.data.inputSchema,
+      ...(definition.data.outputSchema === undefined ? {} : { outputSchema: definition.data.outputSchema }) };
   };
 }
 

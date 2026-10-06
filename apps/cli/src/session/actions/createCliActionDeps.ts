@@ -1,161 +1,102 @@
 import { homedir } from 'node:os';
-import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1, TodoSessionLinkInputV1Schema, projectTodoSessionLinkFailureV1 } from '@happier-dev/protocol';
+import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
+import { applyTodoSessionLinkV1, TodoSessionLinkErrorV1, TodoSessionLinkInputV1Schema, projectTodoSessionLinkFailureV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 import { createCliAccountKvJsonTransport } from '@/api/client/accountKvJsonTransport';
 import { readCliWidgetCatalogProjectionV1, cliWidgetCatalogEntryV1 } from './widgetCatalogProjection';
 import { createCliWidgetInputActionDepsV1 } from './widgetInputActionDeps';
 import { createCliWidgetAreaActionDepsV1 } from './widgetAreaActionDeps';
 import { createCliWidgetDefinitionActionDepsV1 } from './widgetDefinitionActionDeps';
-import { BUILTIN_WIDGET_DESCRIPTORS_V1, countWidgetInstancesV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetActionSurfacePortV1 } from '@happier-dev/protocol/widgets';
-import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
-import { SessionWorkerPublishInputV1Schema, workerDeliverablesBelongToSessionV1, type SessionWorkerPublishInputV1 } from '@happier-dev/protocol';
-import { SessionAwarenessProjectionV1Schema, projectSessionAwarenessV1, waitForSessionAwarenessV1 } from '@happier-dev/protocol';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, countWidgetInstancesV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
+import { readWidgetActionSurfacePortV1 } from '@happier-dev/protocol/widgets/executeWidgetInstanceActionV1';
+import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
+import { SessionWorkerPublishInputV1Schema, workerDeliverablesBelongToSessionV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import type { SessionWorkerPublishInputV1 } from '@happier-dev/protocol';
+import { SessionAwarenessProjectionV1Schema } from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { waitForSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/waitV1';
 import { openSessionEventSource } from '@/session/transport/socket/sessionSocketAgentState';
 import { createCliConnectedServiceAction } from './connectedServiceActionDeps';
 import { randomUUID } from 'node:crypto';
-import {
-  admitScmRemotePolicy, admitScmCommitPolicy, admitScmCommitUndoLast, ScmBackendDescribeResponseSchema,
-  ScmRemoteRequestSchema, ScmCommitCreateRequestSchema, type ScmCapabilities,
-  ScmPullRequestOpenOrReuseResponseSchema,
-} from '@happier-dev/protocol/scm';
+import { admitScmRemotePolicy } from '@happier-dev/protocol/scm/remotePolicy';
+import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/protocol/scm/capabilities';
+import { ScmBackendDescribeResponseSchema, ScmRemoteRequestSchema, ScmCommitCreateRequestSchema } from '@happier-dev/protocol/scm';
+import type { ScmCapabilities } from '@happier-dev/protocol/scm';
+import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingResultV1Schema,
   CONVERSATION_MANAGEMENT_ACTION_IDS_V1, ConversationBindingReadResultV1Schema,
   type SessionPullRequestBindingInputV1 } from '@happier-dev/channels-protocol/v1';
-import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveCwd } from '@/scm/runtime';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
-import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows';
+import { isWorkflowRunExecutorStorageOperationV1 } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 
-import {
-  AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD,
-  readAgentStartCallerWorkDepthV1,
-  isTerminalAutomationRunStateV3,
-  isExecutionRunTerminalStatus,
-  AgentStartSessionCallerV1Schema,
-  createArtifactAccessActionsV1,
-  createLaunchProfilePublisherV1,
-  createWorkBoardArtifactPortV1,
-  WorkflowRunRecipientCensusResponseV1Schema,
-  resolveWorkflowRunDataKeyV1,
-  buildSessionPermissionRespondRpcParamsV1,
-  SESSION_PERMISSION_MODES,
-  isPermissionModeGrantedV1,
-  AgentSignInStatusResponseSchema, ConnectedAccountAttemptResponseSchema,
-  CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
-  startMachineAgentSignIn,
-  cancelMachineAgentSignIn, restartMachineAgentSignIn,
-  buildMachineAgentsDetectRequest,
-  buildMachineAgentInventoryDescriptors,
-  projectMachineAgentsDetectResponse,
-  MachineAgentInventoryUnavailableError,
-  DaemonContributionRegistryProjectionDescribeResponseSchema,
-  DaemonAgentInstallStartResponseSchema,
-  DaemonAgentInstallReadResponseSchema,
-  DaemonAgentInstallCancelResponseSchema,
-  DaemonTerminalEnsureResponseSchema,
-  DaemonTerminalListResponseV1Schema,
-  DaemonTerminalCloseResponseSchema,
-  DaemonWorkspaceFileSearchResponseSchema,
-  projectSessionActivityCompatibilityV1,
-  projectSessionFollowSourceKeyPreparationAfterSetV1,
-  type SessionFollowSourceKeyPreparationResultV1,
-  SESSION_LIST_AWARENESS_VIEW_V1,
-  AcpConfigOptionOverridesV1Schema,
-  buildAcpConfigOptionOverridesV1,
-  AccountSettingMutationV1Schema,
-  BackendTargetRefV2Schema,
-  derivePluginSessionInputLocalIdV1,
-  MemorySearchResultV1Schema,
-  MemoryWindowV1Schema,
-  buildBackendTargetKeyV2,
-  WorkflowStepExecutionSelectionSchema,
-  getActionSpec,
-  RuntimeDescriptorV1Schema,
-  PromptExternalLinksV1Schema,
-  exportPromptLibraryArtifact,
-  installPromptRegistryItemInLibrary,
-  updatePromptBundleInLibrary,
-  updatePromptDocInLibrary,
-  readPromptDocInLibrary,
-  createPromptDocInLibrary,
-  setPromptDocFavorite,
-  listPromptLibrary,
-  listPromptInvocationsInLibrary,
-  resolvePromptInvocationInLibrary,
-  SessionMcpSelectionV1Schema,
-  SessionAccessErrorCodeV1Schema,
-  SessionModelSelectionV1Schema,
-  SessionModelSelectionResolutionError,
-  SessionCreationCorrespondenceV1Schema,
-  SessionCreationTargetPreparationResultV1Schema,
-  SessionCreationDirectoryApprovalV1Schema,
-  HandoffTargetReplacementPreflightResultV1Schema,
-  deriveWorkspaceSyncTopology,
-  WorkspaceSyncRelationshipsListRpcResultV1Schema,
-  WorkspaceSyncConflictPageV1Schema,
-  WorkspaceSyncConflictInspectRpcResultV1Schema,
-  WorkspaceSyncConflictResolutionResultV1Schema,
-  SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-  SessionAuthoringTerminalV1Schema,
-  normalizeSessionCreationOrganizationPlacementV1,
-  normalizeSpawnSessionErrorDetail,
-  normalizeSpawnSessionNonceResolution,
-  SPAWN_SESSION_ERROR_DETAIL_KINDS,
-  isSessionCreationCorrespondenceConflictSpawnErrorDetail,
-  isSessionCreationOrganizationInvalidSpawnErrorDetail,
-  supportsMachineOperationProtocolCapabilityV1,
-  supportsMachineSessionSpawnProtocolVersionV1,
-  ProviderConnectionIdSchema,
-  isNativeAutomaticModelSelectionInputV1,
-  resolveExplicitSessionSpawnMachineTarget,
-  resolveSessionModelSelectionInputRefV1,
-  mergeSpawnConfigOptionAliases,
-  parseBackendTargetKeyV2,
-  readBackendTargetRefV2,
-  readRuntimeDescriptorV1FromMetadata,
-  resolveActionBackendTargetSelection,
-  withExecutionRunStartFailureDetails,
-  type ResolvedRolesSnapshotV1,
-  type PluginRoleContributionV1,
-  RoleActionInputSchemasV1,
-  RoleActionOutputSchemasV1,
-  readSessionWorkspaceWritesV1,
-  type SpawnConfigOptionValue,
-  type SessionBridgeLifecycleHookEventIdV1,
-  type SessionModelSelectionV1,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  type SessionUsageLimitRecoveryV1,
-  type ActionExecutorDeps,
-  type ActionExecutorContext,
-  type BackendTargetRefV2,
-  type ScmDiffSummaryGenerateInput,
-  type PromptRegistryFetchedItemV1,
-  type SessionSpawnNewInputV2,
-  type SessionSpawnNewResultV1,
-  type SessionCreationDirectoryApprovalV1,
-  type SessionCreationPreparedCheckoutV1,
-  type SessionCreationTargetPreparationRequestV1,
-  type SessionCreationTargetPreparationResultV1,
-  type AgentExecutionTargetV1,
-  type ActionCaller,
-  type ComposerAttachmentInputV1,
-  type SessionInputAdmissionResultV1,
-  type SessionMessageSendResultV1,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  WorkflowIngressContextV1Schema,
-  resolveWorkflowDefinitionRefV1,
-  WorkflowRunSummaryV1Schema,
-  ExecutionRunGetResponseSchema,
-  ExecutionRunGetRequestSchema,
-  readSessionRolesV1,
-  formatWorkflowDefinitionRefV1,
-  ActionDefinitionV1Schema,
-  StrictJsonValueSchema,
-  resolveActionAgentStartContextV1,
-  AgentStartRefusalV1Schema,
-} from '@happier-dev/protocol';
+import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInStatusResponseSchema } from '@happier-dev/protocol/daemon/agentSignIn';
+import { readAgentStartCallerWorkDepthV1, AgentStartSessionCallerV1Schema, AgentStartRefusalV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
+import { createArtifactAccessActionsV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
+import { createLaunchProfilePublisherV1 } from '@happier-dev/protocol/launchProfiles/publishLaunchProfile';
+import { createWorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
+import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
+import { buildSessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { startMachineAgentSignIn, cancelMachineAgentSignIn, restartMachineAgentSignIn } from '@happier-dev/protocol/daemon/startAgentSignIn';
+import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryDescriptors, projectMachineAgentsDetectResponse, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
+import { DaemonWorkspaceFileSearchResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
+import { projectSessionActivityCompatibilityV1, SESSION_LIST_AWARENESS_VIEW_V1 } from '@happier-dev/protocol/sessions/awareness/action';
+import { projectSessionFollowSourceKeyPreparationAfterSetV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
+import type { SessionFollowSourceKeyPreparationResultV1, ResolvedRolesSnapshotV1, PluginRoleContributionV1, SpawnConfigOptionValue, SessionBridgeLifecycleHookEventIdV1, SessionModelSelectionV1, SessionUsageLimitRecoveryResumePromptModeV1, SessionUsageLimitRecoveryV1, ActionExecutorDeps, ActionExecutorContext, BackendTargetRefV2, ScmDiffSummaryGenerateInput, PromptRegistryFetchedItemV1, SessionSpawnNewInputV2, SessionSpawnNewResultV1, SessionCreationDirectoryApprovalV1, SessionCreationPreparedCheckoutV1, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1, AgentExecutionTargetV1, ActionCaller, ComposerAttachmentInputV1, SessionInputAdmissionResultV1, SessionMessageSendResultV1 } from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema, buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { AccountSettingMutationV1Schema } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
+import { BackendTargetRefV2Schema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { derivePluginSessionInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { MemorySearchResultV1Schema } from '@happier-dev/protocol/memory/memorySearch';
+import { MemoryWindowV1Schema } from '@happier-dev/protocol/memory/memoryWindow';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { PromptExternalLinksV1Schema } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
+import { exportPromptLibraryArtifact, installPromptRegistryItemInLibrary, updatePromptBundleInLibrary, updatePromptDocInLibrary, readPromptDocInLibrary, createPromptDocInLibrary, setPromptDocFavorite, listPromptLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { listPromptInvocationsInLibrary, resolvePromptInvocationInLibrary } from '@happier-dev/protocol/prompts/library/promptInvocationActionOperations';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionCreationCorrespondenceV1Schema, normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTargetPreparationResultV1Schema, SessionCreationDirectoryApprovalV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { SessionModelSelectionV1Schema, SessionModelSelectionResolutionError, isNativeAutomaticModelSelectionInputV1, resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import { HandoffTargetReplacementPreflightResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { deriveWorkspaceSyncTopology } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
+import { SessionAuthoringTerminalV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
+import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_DETAIL_KINDS, isSessionCreationCorrespondenceConflictSpawnErrorDetail, isSessionCreationOrganizationInvalidSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
+import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/actions/sessionSpawnMachineTarget';
+import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
+import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { withExecutionRunStartFailureDetails, ExecutionRunGetResponseSchema, ExecutionRunGetRequestSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
+import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveActionAgentStartContextV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
 import { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
@@ -347,12 +288,9 @@ import {
   callMachineRpc,
   readMachineRpcRequestDisposition,
 } from '@/session/transport/rpc/machineRpc';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import {
-  isRpcMethodNotAvailableError,
-  isRpcMethodNotFoundError,
-  readRpcErrorCode,
-} from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { routeSessionCatalogControl } from '@/session/catalogControls/sessionCatalogControlRouter';
 import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
 import {
@@ -405,6 +343,7 @@ import { createRepositoryCheckpointTranscriptPageReader } from '@/scm/checkpoint
 import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { executePluginExternalSessionAction } from './externalSessions/pluginExternalSessionActionExecutor';
+import { createHostExternalSessionActionTransport } from './externalSessions/hostExternalSessionActionTransport';
 import type {
   ExternalSessionPluginAdmissionOwner,
 } from './externalSessions/pluginExternalSessionAdmissionOwner';
@@ -891,6 +830,9 @@ export function createCliActionDeps(params: Readonly<{
   };
   const roleArtifactStore = params.credentials ? createCredentialedAccountArtifactStore(params.credentials) : undefined;
   const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
+  const artifactCallerContext = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
+    ...(homeAccountId ? { runtimeAccountId: homeAccountId } : {}),
+    ...(!context.defaultSessionId && params.sessionId ? { defaultSessionId: params.sessionId } : {}) });
   const todoHomeServerId = params.serverId ?? configuration.activeServerId;
   const todoHomeBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const homeHubArtifactPort = roleArtifactStore && homeAccountId ? createHomeHubArtifactPortV1(createAcknowledgedAccountArtifactTransport(roleArtifactStore), {
@@ -2819,7 +2761,8 @@ export function createCliActionDeps(params: Readonly<{
           ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
       } });
       return params.serverHttpBaseUrl
-        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute(args)) : execute(args);
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => execute({ ...args, context: artifactCallerContext(args.context) }))
+        : execute({ ...args, context: artifactCallerContext(args.context) });
     },
     artifactAccessAction: async (args) => {
       if (!artifactAccessAction) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -2831,7 +2774,8 @@ export function createCliActionDeps(params: Readonly<{
     }) : undefined,
     launchProfilePublish: async (input, context) => {
       if (!launchProfilePublisher) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
-      const publish = () => launchProfilePublisher.publish(input, context);
+      const publish = () => launchProfilePublisher.publish(input, { ...context,
+        context: artifactCallerContext(context?.context ?? { surface: 'cli', authority: 'present_user' }) });
       return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, publish) : publish();
     },
     resolveSessionSpawnAgentInventorySelection,
@@ -2889,7 +2833,7 @@ export function createCliActionDeps(params: Readonly<{
       NonNullable<ActionExecutorDeps['roleActionExecute']>): NonNullable<ActionExecutorDeps['roleActionExecute']> =>
       async (initialRequest) => {
         const operation = async () => {
-        let request = initialRequest;
+        let request = { ...initialRequest, context: artifactCallerContext(initialRequest.context) };
         const input = RoleActionInputSchemasV1[request.actionId].parse(request.input);
         if (request.context.authority !== 'present_user'
           && (request.actionId === 'session.roles.apply_to_reports' || ('sessionId' in input && input.sessionId !== params.sessionId))
@@ -3455,9 +3399,9 @@ export function createCliActionDeps(params: Readonly<{
       read: (signal) => params.serverHttpBaseUrl
         ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createWorkBoardArtifactPortV1(roleArtifactStore).read(signal))
         : createWorkBoardArtifactPortV1(roleArtifactStore).read(signal),
-      apply: (intent, signal) => params.serverHttpBaseUrl
-        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createWorkBoardArtifactPortV1(roleArtifactStore).apply(intent, signal))
-        : createWorkBoardArtifactPortV1(roleArtifactStore).apply(intent, signal),
+      apply: (intent, signal, context) => params.serverHttpBaseUrl
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createWorkBoardArtifactPortV1(roleArtifactStore).apply(intent, signal, context ? artifactCallerContext(context) : undefined))
+        : createWorkBoardArtifactPortV1(roleArtifactStore).apply(intent, signal, context ? artifactCallerContext(context) : undefined),
     } } : {}),
     todoSessionLink: async ({ input, context, signal }) => {
       const parsed = TodoSessionLinkInputV1Schema.safeParse(input);
@@ -4558,6 +4502,17 @@ export function createCliActionDeps(params: Readonly<{
           }
           return await failBeforeSpawn({ type: 'error', code: 'spawn_failed', retryable: true });
         }
+        const details = readRecord(readRecord(error).details);
+        const spawnErrorDetails = [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, readRecord(details.spawnResponse).errorDetail]
+          .map(normalizeSpawnSessionErrorDetail);
+        const initialTriggerRefusal = spawnErrorDetails.find(
+          (detail) => detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED,
+        );
+        // This typed witness proves no Session was born, even when caller
+        // cancellation arrives with the response. Unknown outcomes retain checkout custody.
+        if (initialTriggerRefusal?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED) {
+          return await failBeforeSpawn({ type: 'error', code: initialTriggerRefusal.code === 'feature_disabled' ? 'target_unavailable' : initialTriggerRefusal.code, retryable: false });
+        }
         const initialAccessFailure = projectSessionInitialAccessEnvelopeHostErrorResult(error);
         if (initialAccessFailure) return initialAccessFailure;
         const code = error && typeof error === 'object'
@@ -4592,17 +4547,12 @@ export function createCliActionDeps(params: Readonly<{
         if (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
           return { type: 'error', code: 'incompatible_target', retryable: false };
         }
-        const details = readRecord(readRecord(error).details);
-        for (const candidate of [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, readRecord(details.spawnResponse).errorDetail]) {
-          const detail = normalizeSpawnSessionErrorDetail(candidate);
+        for (const detail of spawnErrorDetails) {
           if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.TERMINAL_HOST_UNAVAILABLE) {
             return { type: 'error', code: 'incompatible_target', retryable: false, terminalHostError: detail };
           }
           if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ACCESS_REFUSED) {
             return { type: 'error', code: detail.code, retryable: false };
-          }
-          if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED) {
-            return { type: 'error', code: detail.code === 'feature_disabled' ? 'target_unavailable' : detail.code, retryable: false };
           }
           if (detail?.kind === 'update_required') {
             return { type: 'error', code: 'update_required', retryable: false, details: detail };
@@ -6300,7 +6250,7 @@ export function createCliActionDeps(params: Readonly<{
         return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       }
       try {
-        let context = args.context;
+        let context = artifactCallerContext(args.context);
         const isTrustedCallingSession = normalizeStringValue(args.context.defaultSessionId) === normalizeStringValue(params.sessionId);
         if (args.actionId === 'workflow.run.start'
           && isTrustedCallingSession
@@ -6350,6 +6300,16 @@ export function createCliActionDeps(params: Readonly<{
       return execution.ok ? execution.result : execution;
     },
 
+    hostExternalSessionAction: params.credentials ? createHostExternalSessionActionTransport({
+      credentials: params.credentials,
+      serverId: params.serverId ?? configuration.activeServerId,
+      serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      resolveSessionMachineId: async (sessionId, signal) => {
+        const transport = await resolveTransportForSession(sessionId, signal);
+        return transport.ok ? normalizeStringValue(readTransportSessionOwnerMetadata(transport)?.machineId) : null;
+      },
+    }) : undefined,
+
     externalSessionAction: async (args) => params.credentials
       ? await executePluginExternalSessionAction(
           { ...args, credentials: params.credentials },
@@ -6373,6 +6333,8 @@ export function createCliActionDeps(params: Readonly<{
       return defaultPreview;
     },
 
+    settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials: params.credentials,
+      serverHttpBaseUrl: params.serverHttpBaseUrl }),
     resetGlobalVoiceAgent: () => {},
   };
   return actionDeps;

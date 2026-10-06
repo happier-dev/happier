@@ -1,25 +1,16 @@
 import { z } from 'zod';
 
-import {
-  AcpConfigOptionOverridesV1Schema,
-  BackendTargetKeySchema,
-  BackendTargetRefSchema,
-  ConnectedServiceBindingsV2IngressSchema,
-  SessionMcpSelectionV1Schema,
-  SessionPermissionModeSchema,
-  SessionSpawnNewInputV2Schema,
-  SpawnConfigOptionValueSchema,
-  buildBackendTargetKey,
-  buildBackendTargetKeyV2,
-  findSpawnConfigOptionAliasConflicts,
-  mergeSpawnConfigOptionAliases,
-  readBackendTargetRefV2,
-  resolveExplicitSessionSpawnMachineTarget,
-  type ApprovalRequestV1,
-  type BackendTargetRefV2,
-  type SessionSpawnNewInputV2,
-  type SpawnConfigOptionValue,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { BackendTargetKeySchema, BackendTargetRefSchema, buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SpawnConfigOptionValueSchema, findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
+import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/actions/sessionSpawnMachineTarget';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { ApprovalRequestV1, BackendTargetRefV2, SessionSpawnNewInputV2, SpawnConfigOptionValue } from '@happier-dev/protocol';
 
 type ReplayAgentDefinition = Readonly<{
   id: string;

@@ -1,10 +1,8 @@
-import {
-  admitAgentStartV1,
-  createWorkflowDefinitionActions as createSharedWorkflowDefinitionActions,
-  materializeWorkflowDefinitionAuthorityV1,
-  SessionAgentSpawnPolicyV1StrictSchema,
-  type WorkflowPluginSourceReaderV1,
-} from '@happier-dev/protocol';
+import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+import { createWorkflowDefinitionActions as createSharedWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
+import { materializeWorkflowDefinitionAuthorityV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
+import type { WorkflowPluginSourceReaderV1 } from '@happier-dev/protocol';
 
 import { encodeAccountArtifactListCursor, type createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { createWorkflowMaterializationHostV1 } from './workflowMaterializationHost';

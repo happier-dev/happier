@@ -42,20 +42,11 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { PromptAssetAdapter } from '@happier-dev/plugin-sdk/resources';
-import {
-  getActionSpec,
-  normalizeServerIdentityIdCapability,
-  resolveActionSessionListAccessFailure,
-  PublicActionIdSchema,
-  SignedRootActionIdSchema,
-  SessionListResultSchema,
-  projectSessionSpawnNewApiRequest,
-  type ApprovalExecutionOriginV1,
-  type ActionExecuteResult,
-  type ActionExecutorContext,
-  type ActionExecutorDeps,
-  type RuntimeActionExecute,
-} from '@happier-dev/protocol';
+import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
+import { resolveActionSessionListAccessFailure } from '@happier-dev/protocol/actions/executor/sessionListAccess';
+import { SessionListResultSchema } from '@happier-dev/protocol/sessions/control/listResult';
+import type { ApprovalExecutionOriginV1, ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute } from '@happier-dev/protocol';
 import {
   connect,
   HappierActionError,
@@ -89,7 +80,7 @@ import {
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { isSessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board';
+import { isSessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board/actionIds';
 
 type CliActionExecutor = ReturnType<typeof createCliActionExecutor>;
 
@@ -316,6 +307,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     }
   }
   const inputSessionId = readNonEmptyString(readRecord(params.input)?.sessionId);
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, params.input);
   const signal = combineInvocationSignals(params.invocationSignal, params.context?.signal);
   // The generic Session command resolves its positional selector before
   // invoking this adapter; first-class CLI and MCP Actions carry `sessionId`.
@@ -324,7 +316,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
   const requestedSessionId = (spec.contextualDefaults?.sessionId === 'current_session'
     ? readNonEmptyString(params.context?.defaultSessionId)
     : null)
-    ?? (spec.executionPlacement === 'session' ? inputSessionId : null);
+    ?? (executionPlacement === 'session' ? inputSessionId : null);
   if (requestedSessionId) {
     const resolved = await resolvePatSessionTarget({
       credentials: params.credentials,
@@ -358,7 +350,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     };
   }
 
-  if (spec.executionPlacement === 'session') {
+  if (executionPlacement === 'session') {
     return { kind: 'settled', result: actionFailure('target_required') };
   }
 

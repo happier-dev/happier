@@ -1,9 +1,7 @@
-import {
-    buildQualifiedPluginContributionKey,
-    createPluginContributionIdentity,
-    StrictJsonValueSchema,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 import type { InvokeContributedAction } from '../services/actions';
 import type {
