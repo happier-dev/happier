@@ -5,7 +5,7 @@ import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButt
 import { View, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -18,7 +18,6 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -47,7 +46,12 @@ export default React.memo(function PathPickerScreen() {
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);

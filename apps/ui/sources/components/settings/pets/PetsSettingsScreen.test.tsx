@@ -330,7 +330,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         importOriginal,
         overrides: {
             ...actual,
-            useSettings: () => ({
+            useSettingsSelector: (selector) => selector({
                 ...settingsDefaults,
                 petsEnabled: false,
                 petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },

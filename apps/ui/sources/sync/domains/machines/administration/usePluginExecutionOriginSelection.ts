@@ -12,9 +12,7 @@ import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSetting, useSettingsVersion } from '@/sync/store/hooks';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
-    requireOneShotAccountSettingsMutationApplied,
     type OneShotAccountSettingsMutationResult,
 } from '@/sync/engine/settings/syncSettings';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -167,17 +165,6 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
         candidates,
         includedWithHappier,
     }), [candidates, includedWithHappier, params.pluginId, storedOrigin]);
-
-    React.useEffect(() => {
-        if (storedOrigin || state.kind !== 'selected' || state.selectionSource !== 'soleCandidate') return;
-        if (settingsVersion === null) return;
-        fireAndForget(
-            persistMachineAdministrationSelectionMutation(expectedSettingsScope, settingsVersion, (current) => (
-                setPluginMachineExecutionOriginPreference(current, params.pluginId, state.origin)
-            )).then(requireOneShotAccountSettingsMutationApplied),
-            { tag: 'usePluginMachineExecutionOriginSelection.initialize' },
-        );
-    }, [expectedSettingsScope, params.pluginId, settingsVersion, state, storedOrigin]);
 
     const selectOrigin = React.useCallback(async (
         origin: PluginMachineExecutionOriginV1,

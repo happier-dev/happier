@@ -3,7 +3,7 @@ import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/fe
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { useSettings } from '@/sync/store/hooks';
+import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 
 import type { SessionPluginRuntimeState } from './useSessionPluginRuntime';
@@ -32,7 +32,7 @@ export function useSessionPluginPolicyContext(input: Readonly<{
         subscribeToSession: false,
         subscribeToTranscript: false,
     });
-    const settings = useSettings();
+    const settings = useFeatureLocalPolicySettings();
     const serverFeaturesSnapshot = useServerFeaturesSnapshotForServerId(input.runtime.serverId, {
         enabled: Boolean(input.runtime.serverId),
     });

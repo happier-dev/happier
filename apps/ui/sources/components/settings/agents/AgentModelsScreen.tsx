@@ -32,7 +32,7 @@ import {
     providerModelLoadRecoveryForError,
     providerRetryRecoveryForError,
 } from '@/providers/connection/recovery';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -47,7 +47,9 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
 }>) {
     const router = useRouter();
     const enabled = useFeatureEnabled('providers');
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        providerSettingsV1: settings.providerSettingsV1,
+    }));
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
     );

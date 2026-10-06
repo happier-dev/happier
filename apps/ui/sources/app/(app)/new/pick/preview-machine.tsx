@@ -4,7 +4,7 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { useAllMachines, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
@@ -13,7 +13,6 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -34,7 +33,12 @@ export default React.memo(function PreviewMachinePickerScreen() {
     }>();
     const machines = useAllMachines();
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;

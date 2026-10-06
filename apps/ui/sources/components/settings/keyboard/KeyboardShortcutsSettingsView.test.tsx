@@ -36,7 +36,7 @@ vi.mock('@/text', async () => {
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSettings: () => settingsFixture,
+        useSettingsSelector: <T,>(selector: (settings: typeof settingsFixture) => T) => selector(settingsFixture),
     });
 });
 vi.mock('@/sync/store/settingsWriters', () => ({

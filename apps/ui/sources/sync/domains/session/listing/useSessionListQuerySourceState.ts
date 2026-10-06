@@ -7,7 +7,7 @@ import {
     useOrdinarySessionListMembershipByServerId,
     useSessionListQueryMembershipByKey,
     useSessionListRowsByServerId,
-    useSettings,
+    useSetting,
     useSocketStatus,
     storage,
 } from '@/sync/domains/state/storage';
@@ -663,10 +663,9 @@ export function useSessionListQuerySourceState(input: SessionListQueryInput): Se
     );
     const rowsByServerId = useSessionListRowsByServerId(homeServerIds);
     const machineListsByServerId = useMachineListByServerId();
-    const settings = useSettings();
-    const activeGroupingV1 = settings.sessionListActiveGroupingV1;
-    const inactiveGroupingV1 = settings.sessionListInactiveGroupingV1;
-    const sectionModeV1 = settings.sessionListSectionModeV1;
+    const activeGroupingV1 = useSetting('sessionListActiveGroupingV1');
+    const inactiveGroupingV1 = useSetting('sessionListInactiveGroupingV1');
+    const sectionModeV1 = useSetting('sessionListSectionModeV1');
     const previousRef = React.useRef<Readonly<{
         byServerId: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>>;
         source: ReadonlyArray<SessionListIndexItem> | null;

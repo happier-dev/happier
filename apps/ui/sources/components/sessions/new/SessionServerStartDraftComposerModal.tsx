@@ -5,8 +5,7 @@ import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessi
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { useAllMachines, useMachineListByServerId, useSettings } from '@/sync/domains/state/storage';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useAllMachines, useMachineListByServerId, useSettingsSelector } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -70,7 +69,10 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
     const machines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
     const activeServer = useActiveServerSnapshot();
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    }));
     const enabledAgentIds = useEnabledAgentIds();
     const initialCandidateIndex = props.seed.directory === undefined
         ? -1

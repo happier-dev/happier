@@ -52,7 +52,7 @@ import {
     useProjectForSession,
     useSessionListPreferredMetadata,
     useSetting,
-    useSettings,
+    useSettingsSelector,
     useSettingsVersion,
     useWorkspaceReviewCommentsDrafts,
     useWorkspaceScmCommitSelectionPatches,
@@ -303,7 +303,9 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     filePath: string;
     host: WorkspaceFileOpenableContentViewerHost | undefined;
 }>): React.ReactElement | null {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        workspaceFileViewerPreferencesV1: settings.workspaceFileViewerPreferencesV1,
+    }));
     const settingsVersion = useSettingsVersion();
     const stage = usePluginDetailsDestinationLaunchStaging();
     const host = props.host;

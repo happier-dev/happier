@@ -9,7 +9,7 @@ import {
     useCurrentSecretBindingsByProfileIdMutable,
     useSetting,
     useSettingMutable,
-    useSettings,
+    useSettingsSelector,
 } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -35,7 +35,6 @@ import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/nav
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -62,7 +61,12 @@ export default React.memo(function ProfilePickerScreen() {
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
     const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
-    const settings = useSettings() ?? settingsDefaults;
+    const settings = useSettingsSelector((settings) => ({
+        lastUsedAgent: settings.lastUsedAgent,
+        lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    }));
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
     const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;

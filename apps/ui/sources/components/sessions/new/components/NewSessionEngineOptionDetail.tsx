@@ -43,7 +43,7 @@ import {
 import { hiddenModelVisibilityKeys } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
@@ -145,7 +145,9 @@ function EngineFavoriteToggle(props: Readonly<{
 }
 
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        providerSettingsV1: settings.providerSettingsV1,
+    }));
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget: props.backendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId,
