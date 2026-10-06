@@ -1,23 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { AgentId } from '@happier-dev/agents';
-import {
-    accountSettingsParse,
-    convertBackendTargetRefV2ToV1,
-    readBackendTargetRefV2,
-    type AccountSettings,
-    type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV1,
-    type BackendTargetRefV2,
-    type BackendTargetRefV2Input,
-    type ConnectedServiceBindingsV2,
-    type ExecutionRunConnectedServicesLaunchV1,
-    type PluginContributionIdentityV1,
-    type ProviderBoundModelRef,
-    type TeamCredentialProviderModelSelectionV1,
-    type SessionInputCausalPermissionAuthorityV1,
-    type SecretReferenceOverlayV1,
-} from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, PluginContributionIdentityV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import type {
     ExecutionRunHostRuntime,
@@ -192,6 +178,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     }>) => Promise<ActiveAccountSettingsSnapshot | null>;
 }>): LazyExecutionRunRuntimeShellConfig {
     let resolvedBackendPromise: Promise<ExecutionRunHostRuntime> | null = null;
+    let activeConnectedServicesEnv: Awaited<ReturnType<typeof resolveExecutionRunConnectedServicesEnv>> = null;
 
     const resolveBackend = async (): Promise<ExecutionRunHostRuntime> => {
         if (resolvedBackendPromise) return await resolvedBackendPromise;
@@ -340,7 +327,9 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     resolvedSelection:
                         materializedConnectedServicesSelection,
                     cwd: opts.cwd,
+                    modelId: boundedOpenInputs?.configuration.model.value ?? opts.modelSelection?.modelId ?? opts.modelId,
                 });
+                activeConnectedServicesEnv = connectedServicesEnv;
                 if (connectedServicesEnv && opts.onConnectedServicesRegistration) {
                     await opts.onConnectedServicesRegistration(connectedServicesEnv.registration);
                 }
@@ -538,6 +527,11 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 
     return {
         resolveRuntime: resolveBackend,
+        async recoverRejectedStart(error) {
+            const retry = await activeConnectedServicesEnv?.recoverRejectedStart(error.classification) ?? false;
+            if (retry) resolvedBackendPromise = null;
+            return retry;
+        },
     };
 }
 

@@ -1,12 +1,6 @@
-import {
-    AgentSessionConfigurationSnapshotV1Schema,
-} from '@happier-dev/protocol/runtime';
-import {
-    ProviderBoundModelRefSchema,
-    type AcpConfigOptionOverridesV1,
-    type BackendTargetRefV2Input,
-    type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ProviderBoundModelRef } from '@happier-dev/protocol';
 import type {
     AgentSessionConfigurationSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';

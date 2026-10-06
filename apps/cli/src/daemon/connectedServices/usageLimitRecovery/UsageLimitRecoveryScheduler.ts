@@ -1,11 +1,5 @@
-import {
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID,
-  SessionUsageLimitRecoveryV1Schema,
-  type SessionUsageLimitRecoveryAuthSelectionV1,
-  type SessionUsageLimitRecoveryResumePromptModeV1,
-  type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID, SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionUsageLimitRecoveryAuthSelectionV1, SessionUsageLimitRecoveryResumePromptModeV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import {
   UsageLimitCheckNowRateLimiter,
   USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,

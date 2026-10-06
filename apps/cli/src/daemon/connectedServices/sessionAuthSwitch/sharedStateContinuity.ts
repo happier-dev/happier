@@ -1,8 +1,5 @@
-import {
-  resolveConnectedServicesProviderStateSharingPolicyV1,
-  type AccountSettings,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import type { AccountSettings, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { getConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/catalogHooks';
 import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
 

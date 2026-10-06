@@ -1,11 +1,5 @@
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceBindingSelectionV1,
-  type ConnectedServiceProfileId,
-  type ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey, ConnectedServiceBindingSelectionV1, ConnectedServiceProfileId, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceResolvedSelection } from './materialization/materializer';
 
@@ -159,6 +153,26 @@ export function readConnectedServiceChildSelectionsFromEnv(
     if (selection) selections.set(selection.serviceId, selection);
   }
   return selections.size > 0 ? selections : null;
+}
+
+/** Non-secret member identity only; the child contract has no account display label. */
+export function readConnectedServiceChildMemberLogContextFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): ReadonlyArray<Readonly<{
+  serviceId: ConnectedAccountServiceKey;
+  groupId: string | null;
+  profileId: string;
+  label: string;
+}>> {
+  return Array.from(readConnectedServiceChildSelectionsFromEnv(env)?.values() ?? [], (selection) => {
+    const profileId = selection.kind === 'group' ? selection.activeProfileId : selection.profileId;
+    return {
+      serviceId: selection.serviceId,
+      groupId: selection.kind === 'group' ? selection.groupId : null,
+      profileId,
+      label: profileId,
+    };
+  });
 }
 
 export function serializeConnectedServiceMaterializedEnvKeys(

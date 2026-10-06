@@ -1,4 +1,5 @@
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type { RuntimeAuthRecoveryIntent } from '../RuntimeAuthRecoveryScheduler';
 
 /** Presentation only; the existing usage-limit field merge owns arrival-time arbitration. */

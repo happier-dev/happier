@@ -41,8 +41,10 @@ import {
 } from './authenticationAttemptOwner';
 import {
     createConnectedAccountContributionRegistry,
+    type ConnectedAccountRuntimeLease,
 } from './contributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '../runtimeSlots';
+import { createConnectedAccountConfigurationOwner } from './configurationOwner';
 import {
     createConnectedAccountHostRuntimeInvoker,
     type ConnectedAccountRuntimeEstablishedOperation,
@@ -1186,7 +1188,26 @@ describe('connected-account runtime invoker', () => {
         ]);
     });
 
-    it('returns typed unavailability when a current lease retires before provider entry', async () => {
+    it.each([
+        { successor: 'unavailable', authentication: 'manual', retirement: 'callback' },
+        { successor: 'sameSource', authentication: 'manual', retirement: 'callback' },
+        { successor: 'changedSource', authentication: 'manual', retirement: 'callback' },
+        { successor: 'configurationChanged', authentication: 'device', retirement: 'callback' },
+        { successor: 'sameSource', authentication: 'device', retirement: 'callback' },
+        { successor: 'sameSource', authentication: 'manual', retirement: 'command' },
+        { successor: 'sameSource', authentication: 'manual', retirement: 'resolution' },
+    ] as const)(
+        'recovers only an unchanged $authentication step when the runtime becomes $successor at $retirement before provider entry', async ({ successor, authentication, retirement }) => {
+        const authenticationMode = authentication === 'manual' ? mode
+            : PluginConnectedAccountAuthenticationModeV2Schema.parse({
+                id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none',
+                ...(successor === 'configurationChanged' ? { configuration: {
+                    scope: 'service', changeBehavior: 'reconnect', fields: [{
+                        id: 'endpoint', title: 'Endpoint', schema: { type: 'string' }, required: true,
+                    }],
+                } } : {}),
+            });
+        const serviceDescriptor = { ...descriptor, authentication: { defaultModeId: authenticationMode.id, modes: [authenticationMode] } };
         const complete = vi.fn(async () => ({
             status: 'connected' as const,
             accountId: 'account-a',
@@ -1201,6 +1222,21 @@ describe('connected-account runtime invoker', () => {
                         kind: 'manual' as const,
                         complete,
                     },
+                    device: {
+                        kind: 'oauthDeviceCode' as const,
+                        begin: async () => {
+                            await complete();
+                            return {
+                                status: 'awaitingDeviceAuthorization' as const,
+                                verificationUri: 'https://provider.example/device',
+                                userCode: 'ABCD',
+                                expiresAtMs: 61_000,
+                                pollIntervalMs: 5_000,
+                            };
+                        },
+                        poll: complete,
+                        cancel: async () => {},
+                    },
                 },
             },
         } satisfies PluginConnectedAccountRuntime;
@@ -1208,32 +1244,50 @@ describe('connected-account runtime invoker', () => {
             provenance: 'external',
             source: { kind: 'path' },
             pluginId: service.pluginId,
-            definition: descriptor,
+            definition: serviceDescriptor,
         };
-        const registry = createConnectedAccountContributionRegistry({
-                        readPluginOccurrenceId: () => runtimeIdentity.occurrenceId,
-            readPluginSourceCustody: () => runtimeIdentity.sourceCustody,
-            isPluginOccurrenceCurrent: () => true,
+        let identity: Pick<ConnectedAccountRuntimeLease, 'occurrenceId' | 'sourceCustody'> = runtimeIdentity;
+        const createRegistry = () => createConnectedAccountContributionRegistry({
+            readPluginOccurrenceId: () => identity.occurrenceId,
+            readPluginSourceCustody: () => identity.sourceCustody,
+            isPluginOccurrenceCurrent: (_pluginId, occurrenceId) => occurrenceId === identity.occurrenceId,
             descriptors: [contribution],
             activateOnDemand: async () => {},
             readRegistrations: () => [{
                 pluginId: service.pluginId,
-                occurrenceId: runtimeIdentity.occurrenceId,
+                occurrenceId: identity.occurrenceId,
                 localId: service.localId,
                 runtime: registeredRuntime,
             }],
         });
+        let registry = createRegistry();
+        const publishSuccessor = () => {
+            registry.dispose();
+            if (successor !== 'unavailable') {
+                identity = Object.freeze({
+                    occurrenceId: createPluginRuntimeOccurrenceId(service.pluginId),
+                    sourceCustody: Object.freeze({
+                        ...runtimeIdentity.sourceCustody,
+                        immutableGenerationId: successor === 'changedSource' ? 'artifact-2' : 'artifact-1',
+                    }),
+                });
+                registry = createRegistry();
+            }
+        };
         const admittedLease = await registry.resolve(service);
         if (!admittedLease) throw new Error('Expected a resolvable connected-account lease');
-        const configuration = Object.freeze({
-            target: Object.freeze({
-                kind: 'service' as const,
-                service,
-                modeId: mode.id,
-            }),
-            revision: 'unconfigured',
-            values: Object.freeze({}),
-            getSecret: async () => null,
+        const configurationOwner = createConnectedAccountConfigurationOwner({
+            // Configuration records and saved secrets are persistence boundaries;
+            // snapshot admission/currentness beneath them remain the real owner.
+            read: async () => successor === 'configurationChanged' ? {
+                revision: identity === runtimeIdentity ? 'configuration-1' : 'configuration-2',
+                values: { endpoint: 'https://provider.example' }, secretRefs: {},
+            } : null,
+            replace: async () => { throw new Error('This attempt must not replace configuration'); },
+            destroyAttempt: async () => {},
+            secrets: { admit: async () => {}, has: async () => false, read: async () => null },
+            isRuntimeCurrent: (input) => registry.describe(service)?.isCurrent() === true
+                && input.pluginId === service.pluginId && input.occurrenceId === identity.occurrenceId,
         });
         const invoker = createConnectedAccountHostRuntimeInvoker({
             resolveNetworkAddresses: testResolveNetworkAddresses,
@@ -1252,13 +1306,13 @@ describe('connected-account runtime invoker', () => {
                     ),
             }),
             createServices: () => {
-                registry.dispose();
+                if (identity === runtimeIdentity && retirement === 'callback') publishSuccessor();
                 return Object.freeze({}) as PluginInvocationContext['services'];
             },
             registerRawForRedaction() {},
             resolveHostOwnedConfiguredEndpoints: () => Object.freeze([]),
         });
-        const settle = vi.fn();
+        const settle = vi.fn(async () => ({ status: 'connected' as const, account: { service, accountId: 'account-a' } }));
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
             maxAttempts: 1,
             createAttemptId: () => 'attempt-1',
@@ -1268,25 +1322,27 @@ describe('connected-account runtime invoker', () => {
             accounts: Object.freeze({
                 readExact: async () => null,
             }),
-            configuration: Object.freeze({
-                admit: async () => Object.freeze({
-                    status: 'ready' as const,
-                    snapshot: configuration,
-                }),
-                isCurrent: async () => true,
-            }),
+            configuration: configurationOwner,
             runtime: Object.freeze({
-                admit: async () => Object.freeze({
-                    service,
-                    descriptor: mode,
-                    occurrenceId: admittedLease.occurrenceId,
-                    sourceCustody: admittedLease.sourceCustody,
-                }),
-                isCurrent: async () => admittedLease.isCurrent(),
-                invoke: async (input) => await invoker.invokeAuthentication({
-                    ...input,
-                    isConfigurationCurrent: async () => true,
-                }),
+                admit: async () => {
+                    const lease = await registry.resolve(service);
+                    if (!lease) throw new Error('Runtime unavailable');
+                    return Object.freeze({
+                        service,
+                        descriptor: authenticationMode,
+                        occurrenceId: lease.occurrenceId,
+                        sourceCustody: lease.sourceCustody,
+                    });
+                },
+                isCurrent: async (admission) => registry.describe(service)?.isCurrent() === true
+                    && admission.occurrenceId === identity.occurrenceId,
+                invoke: async (input) => {
+                    if (identity === runtimeIdentity && retirement === 'resolution') publishSuccessor();
+                    return await invoker.invokeAuthentication({
+                        ...input,
+                        isConfigurationCurrent: configurationOwner.isCurrent,
+                    });
+                },
             }),
             oauth: Object.freeze({
                 create: async () => {
@@ -1300,21 +1356,50 @@ describe('connected-account runtime invoker', () => {
 
         await expect(attempts.beginConnect({
             service,
-            modeId: mode.id,
+            modeId: authenticationMode.id,
         })).resolves.toEqual({
-            status: 'awaitingManual',
+            status: authentication === 'manual' ? 'awaitingManual' : 'starting',
             attemptId: 'attempt-1',
         });
-        await expect(attempts.submitManual({
+        if (authentication === 'device') {
+            await vi.waitFor(async () => {
+                expect(await attempts.read({ attemptId: 'attempt-1' })).toMatchObject({
+                    status: successor === 'configurationChanged' ? 'conflict' : 'awaitingDeviceAuthorization',
+                    attemptId: 'attempt-1',
+                    ...(successor === 'configurationChanged'
+                        ? { code: 'connected_account_configuration_changed' }
+                        : { userCode: 'ABCD' }),
+                });
+            });
+            if (successor === 'configurationChanged') expect(complete).not.toHaveBeenCalled();
+            else expect(complete).toHaveBeenCalledOnce();
+            expect(settle).not.toHaveBeenCalled();
+            attempts.dispose();
+            return;
+        }
+        if (retirement === 'command') publishSuccessor();
+        const response = await attempts.submitManual({
             attemptId: 'attempt-1',
             fields: Object.freeze({ token: 'candidate' }),
-        })).resolves.toEqual({
-            status: 'unavailable',
-            attemptId: 'attempt-1',
-            code: 'connected_account_runtime_generation_changed',
         });
-        expect(complete).not.toHaveBeenCalled();
-        expect(settle).not.toHaveBeenCalled();
+        if (successor === 'sameSource') {
+            expect(response).toEqual({
+                status: 'connected',
+                attemptId: 'attempt-1',
+                account: { service, accountId: 'account-a' },
+            });
+            expect(complete).toHaveBeenCalledOnce();
+            expect(settle).toHaveBeenCalledOnce();
+        } else {
+            expect(response).toMatchObject({
+                status: successor === 'unavailable' ? 'unavailable' : 'conflict',
+                attemptId: 'attempt-1',
+                code: 'connected_account_runtime_generation_changed',
+            });
+            expect(complete).not.toHaveBeenCalled();
+            expect(settle).not.toHaveBeenCalled();
+        }
+        attempts.dispose();
     });
 
     it.each(['providerCheck', 'none'] as const)(

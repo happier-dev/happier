@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import {
-  readPendingLocalId,
-  type SessionContinuationResumePromptModeV1,
-} from '@happier-dev/protocol';
+import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 

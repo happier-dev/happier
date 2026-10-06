@@ -1,15 +1,7 @@
-import {
-  computeTeamCredentialSourceMemberKeyV1,
-  TeamCredentialResourcePageV1Schema,
-  type TeamCredentialResourceSummaryV1,
-  type TeamCredentialSourceBindingV1,
-  type TeamCredentialSourceMemberV1,
-  type TeamCredentialDirectMaterialCensusInputV1,
-  type TeamCredentialDirectMaterialCensusOutputV1,
-  type TeamCredentialDirectMaterialReconcileInputV1,
-  type TeamCredentialDirectMaterialReconcileOutputV1,
-  TeamsPageV1Schema,
-} from '@happier-dev/protocol/teams';
+import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { TeamCredentialResourcePageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialResourceSummaryV1, TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1, TeamCredentialDirectMaterialCensusInputV1, TeamCredentialDirectMaterialCensusOutputV1, TeamCredentialDirectMaterialReconcileInputV1, TeamCredentialDirectMaterialReconcileOutputV1 } from '@happier-dev/protocol/teams';
+import { TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import type {
   QualifiedConnectedAccountGroupV4,
   QualifiedConnectedAccountProfileV4,

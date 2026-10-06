@@ -1,25 +1,12 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  computeCanonicalDomainSeparatedDigest,
-  QualifiedConnectedAccountCredentialPayloadV1Schema,
-  QualifiedConnectedAccountCredentialMetadataV4Schema,
-  QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  openQualifiedConnectedAccountContentEnvelope,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
-  projectQualifiedConnectedAccountCredentialPlaintextV1,
-  sealQualifiedConnectedAccountContentEnvelope,
-  sameQualifiedConnectedAccountRef,
-  type AccountScopedCryptoMaterial,
-  type BuiltInLegacyConnectedServiceId,
-  type ConnectedServiceCredentialRevisionV1,
-  type JsonValue,
-  type PluginConnectedAccountAuthenticationModeV2,
-  type QualifiedConnectedAccountCredentialPayloadV1,
-  type QualifiedConnectedAccountConfigurationSnapshotV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { QualifiedConnectedAccountCredentialMetadataV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { AccountScopedCryptoMaterial, BuiltInLegacyConnectedServiceId, ConnectedServiceCredentialRevisionV1, JsonValue, PluginConnectedAccountAuthenticationModeV2, QualifiedConnectedAccountCredentialPayloadV1, QualifiedConnectedAccountConfigurationSnapshotV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type {
   ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration,
 } from '@happier-dev/plugin-sdk/connected-accounts';

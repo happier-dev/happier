@@ -4,29 +4,18 @@ import {
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES,
-  CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY,
-  AccountSettingsSavedSecretMutationError,
-  QualifiedConnectedAccountCredentialMetadataV4Schema,
-  QualifiedConnectedAccountCredentialPayloadV1Schema,
-  SavedSecretSchema,
-  applyAccountSettingsSavedSecretMutation,
-  accountSettingsParse,
-  sameQualifiedConnectedAccountRef,
-  parseBuiltInLegacyConnectedServiceCredentialRecordV1,
-  parseConnectedAccountServiceConfigurationsV1,
-  parseQualifiedConnectedAccountCredentialPlaintextV1,
-  pluginSourceCustodyV1Equal,
-  openQualifiedConnectedAccountContentEnvelope,
-  isStoredJsonContentEnvelopeModeCompatible,
-  projectQualifiedConnectedAccountCredentialPlaintextV1,
-  sealQualifiedConnectedAccountContentEnvelope,
-  type AccountScopedCryptoMaterial,
-  type ConnectedServiceCredentialRecordV1,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES, CONNECTED_ACCOUNT_SERVICE_CONFIGURATIONS_SETTINGS_KEY, parseConnectedAccountServiceConfigurationsV1 } from '@happier-dev/protocol/account/settings/connectedAccountServiceConfigurationsV1';
+import { AccountSettingsSavedSecretMutationError, applyAccountSettingsSavedSecretMutation } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { parseBuiltInLegacyConnectedServiceCredentialRecordV1, parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import type { AccountScopedCryptoMaterial, ConnectedServiceCredentialRecordV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import {

@@ -1,9 +1,5 @@
-import {
-    QualifiedConnectedAccountServiceRefSchema,
-    type QualifiedConnectedAccountGroupV4,
-    type QualifiedConnectedAccountProfileV4,
-    type QualifiedConnectedAccountServiceRef,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 
 import {
     QualifiedConnectedAccountGroupConflictError,

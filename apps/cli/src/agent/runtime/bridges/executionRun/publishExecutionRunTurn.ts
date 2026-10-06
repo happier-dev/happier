@@ -9,7 +9,9 @@ import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { materializeReviewFindings } from './materializeReviewFindings';
-import { ReviewFindingsV2Schema, ReviewPublicationEvidenceSchema, ScmDiffSummaryResultErrorCodeSchema } from '@happier-dev/protocol';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
+import { ScmDiffSummaryResultErrorCodeSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/publishSavedScmDiffSummaryTurn';
 

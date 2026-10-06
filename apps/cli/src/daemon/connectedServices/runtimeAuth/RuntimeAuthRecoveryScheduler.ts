@@ -4,12 +4,9 @@ import type {
   DaemonServerWorkErrorClassification,
   DaemonServerWorkErrorKind,
 } from '@/daemon/serverWork/types';
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceUxDiagnosticV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceCredentialRevisionV1, ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
 import { buildConnectedServiceUxDiagnostic } from '../diagnostics/connectedServiceUxDiagnostics';
 import {

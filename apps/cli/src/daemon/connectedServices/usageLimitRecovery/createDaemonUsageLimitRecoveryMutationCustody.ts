@@ -15,14 +15,10 @@ import {
   type DaemonWorkStateFieldMutation,
 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
-import {
-  SessionStoredMessageContentSchema,
-  SessionStateWorkStateValueSchema,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
-  writeSessionWorkStateV1ToMetadata,
-  type SessionUsageLimitRecoveryV1,
-  type SessionStoredMessageContent,
-} from '@happier-dev/protocol';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema, writeSessionWorkStateV1ToMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import type { SessionUsageLimitRecoveryV1, SessionStoredMessageContent } from '@happier-dev/protocol';
 
 import { applyDaemonUsageLimitRecoveryMutation } from './applyDaemonUsageLimitRecoveryMutation';
 

@@ -1,40 +1,16 @@
 import { logger } from '@/ui/logger';
-import {
-  buildProviderAccountUsageRecordId,
-  buildRecoveryCreditConsumeIdempotencyKey,
-  buildQualifiedPluginContributionKey,
-  ConnectedServiceIdSchema,
-  ConnectedServiceCredentialRevisionV1Schema,
-  ConnectedServiceUsageSourceV1Schema,
-  isConnectedServiceQuotaObservationFresh,
-  isConnectedServiceCredentialHealthStatusUsable,
-  mergeProviderAccountSubscription,
-  openConnectedServiceQuotaSnapshotCiphertext,
-  openQualifiedConnectedAccountQuotaResponseV4,
-  parseQualifiedPluginContributionKey,
-  parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
-  projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
-  ProviderAccountUsageSnapshotV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  sealProviderAccountUsageSnapshot,
-  type BuiltInLegacyConnectedAccountOperation,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceAuthGroupMemberStateV1,
-  type ConnectedServiceCredentialHealthV1,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
-  type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
-  type ConnectedServiceQuotaSnapshotV1,
-  type ConnectedServiceUsageSourceV1,
-  type ConnectedServiceLimitCategoryV1,
-  type ProviderAccountUsageRecordKeyV1,
-  type ProviderAccountUsageQuotaScopeV1,
-  type ProviderAccountUsageSnapshotV1,
-  type QualifiedConnectedAccountGroupV4,
-  type QualifiedConnectedAccountProfileV4,
-  type QualifiedConnectedAccountRef,
-  type QualifiedConnectedAccountServiceRef,
-} from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceUsageSourceV1Schema, isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
+import { openConnectedServiceQuotaSnapshotCiphertext } from '@happier-dev/protocol/connect/connectedServiceCipher';
+import { openQualifiedConnectedAccountQuotaResponseV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { parseBuiltInLegacyConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1, sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import type { BuiltInLegacyConnectedAccountOperation, ConnectedAccountServiceKey, ConnectedServiceAuthGroupMemberStateV1, ConnectedServiceCredentialHealthV1, ConnectedServiceCredentialRecordV1, ConnectedServiceId, ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1, ConnectedServiceQuotaSnapshotV1, ConnectedServiceUsageSourceV1, ConnectedServiceLimitCategoryV1, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageQuotaScopeV1, ProviderAccountUsageSnapshotV1, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef, QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import type {
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';

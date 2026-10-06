@@ -1,5 +1,10 @@
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { reloadConfiguration } from '@/configuration';
+import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
 import axios from 'axios';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -7084,6 +7089,44 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.endSessionAndClose).not.toHaveBeenCalled();
     expect(createSessionRuntime).not.toHaveBeenCalled();
     expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+  });
+
+  it('publishes a typed failed startup before releasing custody when the daemon catalog is unavailable', async () => {
+    const harness = createHarness();
+    harness.config.flavor = 'grok';
+    harness.config.policyAgentId = 'grok';
+    // Exercise real MCP/catalog logic; the loopback daemon is the network boundary.
+    delete harness.deps.resolveRunnerMcpServersFn;
+    const home = await mkdtemp(join(tmpdir(), 'catalog-startup-failure-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ kind: 'unavailable', code: 'daemon_unavailable' }));
+      });
+    });
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('expected daemon listener');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(), startedWithCliVersion: 'test', controlToken: 'test-token' });
+      await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+        .rejects.toMatchObject({ code: 'daemon_plugin_catalog_unavailable' });
+      expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'fail',
+        issue: expect.objectContaining({ code: 'daemon_plugin_catalog_unavailable', source: 'dependency_failure' }),
+      }));
+      expect(harness.session.close).toHaveBeenCalledOnce();
+    } finally {
+      await clearDaemonStateForTestTeardown();
+      envScope.restore();
+      reloadConfiguration();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('resolves and passes native MCP servers for the Grok catalog policy', async () => {

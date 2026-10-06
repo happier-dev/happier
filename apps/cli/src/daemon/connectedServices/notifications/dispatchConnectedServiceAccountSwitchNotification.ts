@@ -2,8 +2,8 @@ import type {
   AccountSettings,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';

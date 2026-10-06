@@ -1,16 +1,12 @@
-import {
-  ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema,
-  ReviewFollowUpV1Schema,
-  ReviewPublicationEvidenceSchema,
-  resolveEffectiveReviewFindingFollowUps, projectReviewFindingsOverlay,
-  readExecutionRunStartRunCreation,
-  type ReviewWalkthroughRequest, type ReviewFindingsOverlayReview,
-  type ScmDiffSummaryReviewProvenance, type SessionInputAdmissionResultV1,
-  type ReviewFindingsV2,
-  type ReviewPublicationEvidence,
-  AccountSettingsSchema,
-  resolveReviewNarratorPolicy,
-} from '@happier-dev/protocol';
+import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema } from '@happier-dev/protocol/reviews/reviewNarration';
+import { ReviewFollowUpV1Schema } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
+import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
+import { resolveEffectiveReviewFindingFollowUps } from '@happier-dev/protocol/reviews/resolveEffectiveReviewFindings';
+import { projectReviewFindingsOverlay } from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
+import { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ReviewWalkthroughRequest, ReviewFindingsOverlayReview, ScmDiffSummaryReviewProvenance, SessionInputAdmissionResultV1, ReviewFindingsV2, ReviewPublicationEvidence } from '@happier-dev/protocol';
+import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { resolveReviewNarratorPolicy } from '@happier-dev/protocol/reviews/reviewEngines';
 import { buildReviewEngineInventoryItems } from '@/session/actions/inventory/buildReviewEngineInventoryItems';
 import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';

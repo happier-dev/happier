@@ -1,9 +1,6 @@
-import {
-  QualifiedConnectedAccountCredentialSnapshotV4Schema,
-  sameQualifiedConnectedAccountRef,
-  type QualifiedConnectedAccountCredentialSnapshotV4,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type {
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,

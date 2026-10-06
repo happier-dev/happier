@@ -1,9 +1,5 @@
-import {
-  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-  type BuiltInLegacyConnectedServiceId,
-  type ConnectedAccountPeerOperationTransport,
-  type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type { BuiltInLegacyConnectedServiceId, ConnectedAccountPeerOperationTransport, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 import type {
   ConnectedServiceCredentialApi,

@@ -1,15 +1,6 @@
-import {
-    buildProviderAccountUsageRecordId,
-    buildQualifiedPluginContributionKey,
-    ProviderAccountUsageSnapshotV1Schema,
-    type ConnectedServiceQuotaSnapshotV1,
-    type ProviderAccountUsageConfidenceV1,
-    type ProviderAccountUsageRecordKeyV1,
-    type ProviderAccountUsageSourceV1,
-    type ProviderAccountUsageSnapshotV1,
-    type QualifiedConnectedAccountQuotaSnapshotV4,
-    type QualifiedConnectedAccountRef,
-} from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceQuotaSnapshotV1, ProviderAccountUsageConfidenceV1, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageSourceV1, ProviderAccountUsageSnapshotV1, QualifiedConnectedAccountQuotaSnapshotV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 
 function mapQuotaSourceToUsageSource(source: ConnectedServiceQuotaSnapshotV1['source']): ProviderAccountUsageSourceV1 {
     const normalized = source ?? 'unknown';

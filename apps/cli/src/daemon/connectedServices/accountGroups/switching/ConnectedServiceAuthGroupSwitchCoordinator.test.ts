@@ -7,6 +7,7 @@ import {
   type ConnectedServiceAuthGroupSwitchState,
 } from './ConnectedServiceAuthGroupSwitchCoordinator';
 import { ConnectedServiceAuthGroupQuotaProbeIncompleteError } from '../quotas/preTurnQuotaProbe';
+import { buildConnectedServiceAuthGroupObservedFailureMemberState } from '../runtimeState/buildConnectedServiceAuthGroupObservedFailureMemberState';
 
 function state(activeProfileId: string, generation: number): ConnectedServiceAuthGroupSwitchState {
   return {
@@ -46,6 +47,199 @@ class TestGenerationConflictError extends Error {
 }
 
 describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
+  function rejectedStartFixture(overrides: Partial<ConnectedServiceAuthGroupSwitchState> = {}) {
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      ...state('primary', 1),
+      credentialRevision: failedCredentialRevision,
+      policy: { ...state('primary', 1).policy, maxSwitchesPerTurn: 1, maxSwitchesPerSessionHour: 1 },
+      members: [...state('primary', 1).members, { profileId: 'third', priority: 3, createdAtMs: 3, enabled: true }],
+      ...overrides,
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000,
+      quotaFreshnessMs: 60_000,
+      loadState: async () => current,
+      recordObservedFailureState: async (failure) => {
+        const profileId = failure.observedProfileId!;
+        current = { ...current, memberStatesByProfileId: new Map(current.memberStatesByProfileId).set(profileId,
+          buildConnectedServiceAuthGroupObservedFailureMemberState({
+            ...failure, existing: current.memberStatesByProfileId.get(profileId) ?? {},
+            retryAtMs: null, cooldownMs: current.policy.cooldownMs, planType: null, observedAtMs: 1_000,
+          })) };
+      },
+      commitSwitch: async ({ toProfileId }) => {
+        current = { ...current, activeProfileId: toProfileId, generation: current.generation + 1 };
+        return current;
+      },
+      applyGeneration: async () => ({ ok: true }),
+    });
+    const request = {
+      sessionId: 'run-1', serviceId: 'openai-codex', groupId: 'main',
+      reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'gpt-6.1-sol',
+      rejectedStart: true,
+    };
+    return { coordinator, request };
+  }
+
+  it('selects the third member after two rejected model starts without charging or enforcing turn/hour switch limits', async () => {
+    const { coordinator, request } = rejectedStartFixture();
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...request, observedProfileId: 'primary', switchesThisTurn: 1, sessionSwitchesThisHour: 1,
+    })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'backup', generation: 2 });
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...request, observedProfileId: 'backup', switchesThisTurn: 2,
+    })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'third', generation: 3 });
+    // Another model can use the rejected accounts; the two rejected starts must
+    // not have consumed this Run's ordinary hourly switch allowance.
+    const ordinaryRequest = { ...request, providerLimitId: 'another-model', rejectedStart: false };
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...ordinaryRequest, observedProfileId: 'third',
+    })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'primary', generation: 4 });
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...ordinaryRequest, observedProfileId: 'primary',
+    })).resolves.toMatchObject({ status: 'switch_limit_reached', generation: 4 });
+  });
+
+  it('exhausts model-ineligible members instead of reaching the ordinary switch limit', async () => {
+    const { coordinator, request } = rejectedStartFixture();
+    for (const [observedProfileId, activeProfileId] of [['primary', 'backup'], ['backup', 'third']]) {
+      await expect(coordinator.switchAfterClassifiedFailure({ ...request, observedProfileId }))
+        .resolves.toMatchObject({ status: 'switched', activeProfileId });
+    }
+    await expect(coordinator.switchAfterClassifiedFailure({ ...request, observedProfileId: 'third' }))
+      .resolves.toMatchObject({ status: 'no_eligible_member', groupExhausted: true, generation: 3,
+        excluded: expect.arrayContaining([
+          expect.objectContaining({ profileId: 'primary', reason: 'plan_unavailable' }),
+          expect.objectContaining({ profileId: 'backup', reason: 'plan_unavailable' }),
+        ]) });
+  });
+
+  it('records model exclusions for exact-current rejected-start sources before selecting the next member', async () => {
+    const { coordinator, request } = rejectedStartFixture();
+    for (const [profileId, groupGeneration, activeProfileId] of [
+      ['primary', 1, 'backup'], ['backup', 2, 'third'],
+    ] as const) {
+      await expect(coordinator.switchAfterClassifiedFailure({ ...request, observedProfileId: profileId,
+        expectedFailureSource: { profileId, groupGeneration, credentialRevision: failedCredentialRevision },
+      })).resolves.toMatchObject({ status: 'switched', activeProfileId });
+    }
+  });
+
+  it.each(['after_write', 'generation_conflict'] as const)('does not act on a replaced rejected-start source %s', async (replacementPoint) => {
+    let current = stateWithCredential('primary', 1, failedCredentialRevision);
+    const recordObservedFailureState = vi.fn(async () => {
+      current = stateWithCredential('backup', 2, replacementCredentialRevision);
+      if (replacementPoint === 'generation_conflict') throw new TestGenerationConflictError(2);
+    });
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000, quotaFreshnessMs: 60_000, loadState: async () => current,
+      recordObservedFailureState,
+      resolveGenerationConflict: (error) => error instanceof TestGenerationConflictError ? error.generation : null,
+      commitSwitch: async () => { throw new Error('must not switch a replaced source'); },
+      applyGeneration: async () => { throw new Error('must not apply a replaced source'); },
+    });
+    await expect(coordinator.switchAfterClassifiedFailure({
+      serviceId: 'openai-codex', groupId: 'main', observedProfileId: 'primary',
+      reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'gpt-6.1-sol', rejectedStart: true,
+      expectedFailureSource: { profileId: 'primary', groupGeneration: 1, credentialRevision: failedCredentialRevision },
+    })).resolves.toMatchObject({ status: 'stale_context', generation: 2 });
+    expect(recordObservedFailureState).toHaveBeenCalledOnce();
+  });
+
+  it('does not adopt a divergent active member excluded for the rejected-start model', async () => {
+    const { coordinator, request } = rejectedStartFixture({
+      activeProfileId: 'backup',
+      memberStatesByProfileId: new Map([['backup', { modelUnavailableUntilMsByModelId: { 'gpt-6.1-sol': 86_401_000 } }]]),
+    });
+    await expect(coordinator.switchAfterClassifiedFailure({ ...request, observedProfileId: 'primary' }))
+      .resolves.toMatchObject({ status: 'switched', activeProfileId: 'third' });
+  });
+
+  it('selects a model-eligible member before a new turn instead of reusing model-cooled priority members', async () => {
+    const { coordinator } = rejectedStartFixture({
+      memberStatesByProfileId: new Map(['primary', 'backup'].map((profileId) => [profileId, {
+        modelUnavailableUntilMsByModelId: { 'gpt-6.1-sol': 86_401_000 },
+      }])),
+    });
+    const request = { serviceId: 'openai-codex', groupId: 'main', reason: 'soft_threshold' as const,
+      observedProfileId: 'primary', providerLimitId: 'gpt-6.1-sol' };
+    await expect(coordinator.switchBeforeTurn(request))
+      .resolves.toMatchObject({ status: 'switched', activeProfileId: 'third' });
+  });
+
+  it('selects around persisted model entitlement cooldowns before a turn without quota probes and retains ordinary limits', async () => {
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      ...state('primary', 1),
+      memberStatesByProfileId: new Map([['primary', {
+        modelUnavailableUntilMsByModelId: { 'gpt-6.1-sol': 86_401_000 },
+      }]]),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000, quotaFreshnessMs: 60_000,
+      loadState: async () => current,
+      probeQuotaSnapshotsForGroup: async () => { throw new Error('persisted model entitlement must not open quota transport'); },
+      commitSwitch: async ({ toProfileId }) => {
+        current = { ...current, activeProfileId: toProfileId, generation: current.generation + 1 };
+        return current;
+      },
+      applyGeneration: async () => ({ ok: true }),
+    });
+    const request = { serviceId: 'openai-codex', groupId: 'main', reason: 'plan' as const,
+      observedProfileId: 'primary', providerLimitId: 'gpt-6.1-sol' };
+    await expect(coordinator.switchBeforeTurn(request))
+      .resolves.toMatchObject({ status: 'switched', activeProfileId: 'backup', generation: 2 });
+    await expect(coordinator.switchBeforeTurn({ ...request, observedProfileId: 'backup', switchesThisTurn: 1 }))
+      .resolves.toMatchObject({ status: 'switch_limit_reached', generation: 2 });
+  });
+
+  it('does not adopt a model-cooled divergent active member before a new turn despite healthy usage quota', async () => {
+    const { coordinator } = rejectedStartFixture({
+      activeProfileId: 'backup',
+      memberStatesByProfileId: new Map([['primary', { authInvalidUntilMs: 86_401_000 }], ['backup', {
+        modelUnavailableUntilMsByModelId: { 'gpt-6.1-sol': 86_401_000 },
+        quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 80 },
+      }]]),
+    });
+    const request = { serviceId: 'openai-codex', groupId: 'main', reason: 'soft_threshold' as const,
+      observedProfileId: 'primary', providerLimitId: 'gpt-6.1-sol' };
+    await expect(coordinator.switchBeforeTurn(request))
+      .resolves.toMatchObject({ status: 'switched', activeProfileId: 'third' });
+  });
+
+  it.each(['state_read', 'candidate_preparation'] as const)('ignores a rejected-start source revoked during %s', async (revocationPoint) => {
+    let current = true;
+    const stateSnapshot = stateWithCredential('primary', 1, failedCredentialRevision);
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      nowMs: () => 1_000, quotaFreshnessMs: 60_000,
+      loadState: async () => { if (revocationPoint === 'state_read') current = false; return stateSnapshot; },
+      prepareCandidateForSwitch: async () => { current = false; return { status: 'ready' }; },
+      recordObservedFailureState: async () => { if (!current) throw new Error('must not persist revoked source'); },
+      commitSwitch: async () => { throw new Error('must not switch revoked source'); },
+      applyGeneration: async () => { throw new Error('must not apply revoked source'); },
+    });
+    const expectedFailureSource = { profileId: 'primary', groupGeneration: 1, credentialRevision: failedCredentialRevision,
+      isCurrent: () => current };
+    await expect(coordinator.switchAfterClassifiedFailure({
+      serviceId: 'openai-codex', groupId: 'main', observedProfileId: 'primary',
+      reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: 'gpt-6.1-sol', rejectedStart: true,
+      expectedFailureSource,
+    })).resolves.toMatchObject({ status: 'stale_context', generation: 1 });
+  });
+
+  it.each([
+    { rejectedStart: false }, { reason: 'usage_limit' }, { limitCategory: 'usage_limit' },
+    { quotaScope: 'account' }, { providerLimitId: ' ' },
+  ])('retains ordinary limits unless rejected-start model entitlement evidence is complete (%j)', async (override) => {
+    const { coordinator, request } = rejectedStartFixture();
+    await expect(coordinator.switchAfterClassifiedFailure({
+      ...request, ...override, observedProfileId: 'primary', switchesThisTurn: 1,
+    })).resolves.toMatchObject({ status: 'switch_limit_reached', generation: 1 });
+  });
+
   it('does not poison or rotate a pool for an exact unselected quota-family failure', async () => {
     const current = {
       ...state('primary', 7),

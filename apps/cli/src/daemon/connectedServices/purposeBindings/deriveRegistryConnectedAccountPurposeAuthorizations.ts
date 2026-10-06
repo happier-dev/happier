@@ -6,14 +6,12 @@ import type {
   QualifiedConnectedAccountPurposeBindingV1,
   QualifiedConnectedAccountPurposeV1,
 } from '@happier-dev/protocol';
-import {
-  buildQualifiedPluginContributionKey,
-  PluginEventAutomationHistoryGapResetActionInputV1Schema,
-  PluginContributionIdentityV1Schema,
-  QualifiedConnectedAccountPurposeV1Schema,
-  readActionInputOptionValue,
-  readActionInputPath,
-} from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import { readInputOptionValue as readActionInputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
+import { readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';

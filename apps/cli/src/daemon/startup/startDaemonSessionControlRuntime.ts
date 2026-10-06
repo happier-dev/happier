@@ -30,63 +30,28 @@ import {
     readQualifiedConnectedAccountGroupV4,
 } from '@/api/client/qualifiedConnectedAccountApi';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import {
-    ComposerRefV1Schema,
-    buildQualifiedPluginContributionKey,
-    ConnectedServiceBindingsV2IngressSchema,
-    ConnectedAccountServiceKeySchema,
-    ConnectedServiceIdSchema,
-    DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CONCURRENCY,
-    DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS,
-    DEFAULT_LOCAL_SERVICE_PAGE_TITLE_MAX_BODY_BYTES,
-    DEFAULT_LOCAL_SERVICE_PAGE_TITLE_SUCCESS_TTL_MS,
-    DEFAULT_LOCAL_SERVICE_PAGE_TITLE_TIMEOUT_MS,
-    deriveAccountMachineKeyFromRecoverySecret,
-    parseBooleanEnv,
-    projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
-    readConnectedServiceMaterializationIdentityV1FromMetadata,
-    readBuiltInLegacyConnectedAccountServiceKeyIngress,
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-    writeProviderAccountUsageRecordIdToMetadata,
-    writeConnectedServiceMaterializationIdentityV1ToMetadata,
-    assessProviderEndpoint,
-    type AccountSettings,
-    type ComposerRefV1,
-    type ConnectedAccountServiceKey,
-    type ConnectedServiceBindingsV2,
-    type ConnectedServiceCredentialRevisionV1,
-    type ConnectedServiceExecutionAuthorityV1,
-    type ConnectedServiceId,
-    type ConnectedServiceMaterializationIdentityV1,
-    type ConnectedServiceUsageSourceV1,
-    type ProviderAccountUsageSnapshotV1,
-    type MachineSessionTerminalAuthorityV1,
-    type QualifiedConnectedAccountServiceRef,
-    type SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
-    type ProviderAccountUsageRecordId,
-    type ProviderRuntimeBindingBasisV1,
-    ProviderErrorV1Schema,
-    readNonBlankOpaqueIdentifier,
-    type RequestAuthFailureOutcomeV1,
-    type RuntimeDescriptorV1,
-    type SessionContinuationResumePromptModeV1,
-    type SessionRunnerRestartDisabledReason,
-    type SessionRunnerRuntimeStateV1,
-    type SessionRunnerRuntimeStatusV2,
-    type SessionRunnerStatusGetRequestV1,
-    pluginSourceCustodyV1Equal,
-} from '@happier-dev/protocol';
-import {
-    TeamCredentialErrorCodeV1Schema,
-    type TeamCredentialProviderModelSelectionV1,
-} from '@happier-dev/protocol/teams';
+import { ComposerRefV1Schema } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedServiceBindingsV2IngressSchema, ConnectedAccountServiceKeySchema, ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CONCURRENCY, DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS, DEFAULT_LOCAL_SERVICE_PAGE_TITLE_MAX_BODY_BYTES, DEFAULT_LOCAL_SERVICE_PAGE_TITLE_SUCCESS_TTL_MS, DEFAULT_LOCAL_SERVICE_PAGE_TITLE_TIMEOUT_MS } from '@happier-dev/protocol/features/payload/capabilities/localServiceCapabilities';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
+import { readConnectedServiceMaterializationIdentityV1FromMetadata, writeConnectedServiceMaterializationIdentityV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import { writeProviderAccountUsageRecordIdToMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
+import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import type { AccountSettings, ComposerRefV1, ConnectedAccountServiceKey, ConnectedServiceBindingsV2, ConnectedServiceCredentialRevisionV1, ConnectedServiceExecutionAuthorityV1, ConnectedServiceId, ConnectedServiceMaterializationIdentityV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, MachineSessionTerminalAuthorityV1, QualifiedConnectedAccountServiceRef, SessionConnectedServiceAuthReadRuntimeIdentityResponseV1, ProviderAccountUsageRecordId, ProviderRuntimeBindingBasisV1, RequestAuthFailureOutcomeV1, RuntimeDescriptorV1, SessionContinuationResumePromptModeV1, SessionRunnerRestartDisabledReason, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionRunnerStatusGetRequestV1 } from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { resolveRoutedUsageLimitRecoveryResumePromptMode } from '@/session/usageLimitRecoveryControls/resolveRoutedUsageLimitRecoveryResumePromptMode';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
-import {
-    PluginUiArtifactDigestV1Schema,
-    verifyPluginUiArtifactFileSetIntegrityV1,
-} from '@happier-dev/protocol/plugins/ui';
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import { verifyPluginUiArtifactFileSetIntegrityV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     resolveAgentIdFromSessionMetadata,
@@ -515,7 +480,7 @@ import {
 } from '../agentRuntime/prepareForegroundAdmission';
 import { isPidSafeHappySessionProcess } from '../pidSafety';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from '../spawn/spawnRequestCoalescer';
-import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol';
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { resolveExistingSessionSpawnPreGate } from '../spawn/resolveExistingSessionSpawnPreGate';
 import {
     createSessionRunnerRespawnManager,
@@ -9844,6 +9809,26 @@ export async function startDaemonSessionControlRuntime(
     // materialization key, and the run registers into the canonical runtime registry so its
     // refresh/quota views cover materialized run homes without either coordinator owning writes.
     const executionRunConnectedServicesBridge = createExecutionRunConnectedServicesBridge({
+        recoverRejectedStart: async ({ selection, modelId, isCurrent }) => {
+            const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(selection.serviceId);
+            if (!service || !selection.credentialRevision || !isCurrent()
+                || params.resolveQualifiedConnectedAccountV4Support?.() !== 'advertised'
+                || !qualifiedRequestAuthGroupSwitchCoordinator) {
+                return { status: 'stale_context', generation: selection.generation };
+            }
+            // Pool truth changes here; this Run's host releases and rematerializes its own
+            // activation. The request-auth coordinator's applyGeneration does no Session work.
+            return await qualifiedRequestAuthGroupSwitchCoordinator.switchAfterClassifiedFailure({
+                serviceId: service, groupId: selection.groupId, observedProfileId: selection.activeProfileId,
+                reason: 'plan', limitCategory: 'plan_invalid', quotaScope: 'model', providerLimitId: modelId,
+                rejectedStart: true,
+                expectedFailureSource: {
+                    profileId: selection.activeProfileId, groupGeneration: selection.generation,
+                    credentialRevision: selection.credentialRevision,
+                    isCurrent,
+                },
+            });
+        },
         resolveAuthForSpawn: async (input) => await resolveConnectedServiceAuthForSpawn({
             ...input,
             activeServerDir: configuration.activeServerDir,
@@ -14039,6 +14024,7 @@ export async function startDaemonSessionControlRuntime(
         // Execution-run bridge endpoints accept only the scoped run-materialize capability token.
         verifyRunMaterializeToken: (provided) => isValidConnectedServiceRunMaterializeToken(provided, controlToken),
         materializeConnectedServicesForExecutionRun: executionRunConnectedServicesBridge.materialize,
+        recoverConnectedServicesRejectedStartForExecutionRun: executionRunConnectedServicesBridge.recoverRejectedStart,
         checkConnectedServicesGenerationForExecutionRun: async ({
             runId,
             runnerPid,

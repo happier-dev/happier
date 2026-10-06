@@ -1,4 +1,4 @@
-import { ExecutionRunScmCommitMessageInputV1Schema } from '@happier-dev/protocol';
+import { ExecutionRunScmCommitMessageInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import type { ExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 
 import { buildCommitMessagePrompt } from './buildCommitMessagePrompt';

@@ -1,9 +1,7 @@
 import { z } from 'zod';
-import {
-  ScmComparisonSchema, ScmDiffSummaryMetadataSchema, ScmDiffSummaryModelOutputSchema,
-  ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema,
-  type ScmComparison, type ScmDiffSummaryModelOutput, type ScmDiffSummaryOutputs,
-} from '@happier-dev/protocol';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ScmDiffSummaryMetadataSchema, ScmDiffSummaryModelOutputSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryOutputKindSchema } from '@happier-dev/protocol/scm/diffSummary';
+import type { ScmComparison, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
 import type { ExecutionRunProfileTurnCompleteParams, ExecutionRunProfileBoundedCompleteResult } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';
 import { parseDiffSummaryModelOutput } from './parseDiffSummaryModelOutput';

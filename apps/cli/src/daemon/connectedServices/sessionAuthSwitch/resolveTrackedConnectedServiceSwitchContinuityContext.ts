@@ -1,12 +1,9 @@
 import { isAbsolute } from 'node:path';
 
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
-import {
-  readNonBlankOpaqueIdentifier,
-  readRuntimeDescriptorV1,
-  type ConnectedServiceMaterializationIdentityV1,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type { ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';

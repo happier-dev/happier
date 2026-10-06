@@ -1,8 +1,6 @@
-import {
-  AccountProfileSchema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-} from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
 
 import type { ConnectedServiceProjectedAuthGroup } from './reconcileConnectedServiceAuthGroupGenerations';
 

@@ -1,10 +1,6 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceCredentialRevisionV1,
-  type ConnectedServiceExecutionAuthorityV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1, ConnectedServiceExecutionAuthorityV1 } from '@happier-dev/protocol';
 
 export type ConnectedServiceAuthGroupGenerationTarget = Readonly<{
   serviceId: ConnectedAccountServiceKey;

@@ -5,6 +5,10 @@ import { inspect } from 'node:util';
 
 import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
 import { describe, expect, it } from 'vitest';
+import { parse, stringify } from 'smol-toml';
+
+import { codexStateSharingDescriptor } from '../../../../../../packages/plugins/codex/src/agent/auth/services/state/sharing/descriptor';
+import { claudeAuthStateSharingDescriptor } from '../../../../../../packages/plugins/claude/src/agent/auth/services/stateSharing';
 
 import {
   applyConnectedServiceStateSharingDescriptor,
@@ -37,6 +41,71 @@ function createDescriptor(params: Readonly<{
 }
 
 describe('applyConnectedServiceStateSharingDescriptor', () => {
+  it.each(['linked', 'copied', 'isolated'] as const)('shares native Agent configuration and rebases hook decisions in %s mode', async (configMode) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-config-'));
+    const sourceRoot = join(root, 'native');
+    const promotedRoot = join(root, 'promoted');
+    const stageRoot = join(root, 'stage');
+    const nativeKey = `${join(sourceRoot, 'hooks.json')}:stop:0:0`;
+    const inlineKey = `${join(sourceRoot, 'config.toml')}:session_start:0:0`;
+    const profileKey = `${join(promotedRoot, 'hooks.json')}:stop:0:0`;
+    const profileInlineKey = `${join(promotedRoot, 'config.toml')}:session_start:0:0`;
+    const unrelatedKey = `${join(sourceRoot, 'hooks.json.other')}:stop:0:0`;
+    const nativeDecision = { enabled: true, trusted_hash: 'sha256:unchanged' };
+    try {
+      await mkdir(join(sourceRoot, 'plugins'), { recursive: true });
+      await writeFile(join(sourceRoot, 'plugins', 'plugin.json'), '{"name":"native-plugin"}');
+      await writeFile(join(sourceRoot, 'CLAUDE.md'), 'Native instructions');
+      await writeFile(join(sourceRoot, 'hooks.json'), '{"hooks":{"Stop":[]}}');
+      await writeFile(join(sourceRoot, 'config.toml'), stringify({ hooks: { state: {
+        [nativeKey]: nativeDecision, [inlineKey]: nativeDecision,
+        [unrelatedKey]: nativeDecision, 'plugin:example:stop:0:0': nativeDecision,
+      } } }));
+      const input = {
+        descriptor: codexStateSharingDescriptor,
+        nativeSourceContext: { sourceRoot, sourceEnv: {} },
+        target: { targetMaterializedRoot: promotedRoot, targetMaterializedEnv: {} },
+        configMode, requestedStateMode: 'isolated' as const, effectiveStateMode: 'isolated' as const, cwd: root,
+      };
+      await applyConnectedServiceStateSharingDescriptor(input);
+      if (configMode === 'isolated') {
+        await expect(lstat(join(promotedRoot, 'config.toml'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(lstat(join(promotedRoot, 'plugins'))).rejects.toMatchObject({ code: 'ENOENT' });
+      } else {
+        const first = parse(await readFile(join(promotedRoot, 'config.toml'), 'utf8'));
+        expect.soft(first.hooks).toEqual({ state: {
+          [profileKey]: nativeDecision, [profileInlineKey]: nativeDecision,
+          [unrelatedKey]: nativeDecision, 'plugin:example:stop:0:0': nativeDecision,
+        } });
+        await expect.soft(readFile(join(promotedRoot, 'plugins', 'plugin.json'), 'utf8')).resolves.toContain('native-plugin');
+        await expect.soft(lstat(join(promotedRoot, 'plugins')).then(stat => stat.isSymbolicLink())).resolves.toBe(configMode === 'linked');
+        const profileDecision = { enabled: false, trusted_hash: 'sha256:profile-review' };
+        await writeFile(join(promotedRoot, 'config.toml'), stringify({ hooks: { state: {
+          [profileKey]: profileDecision, [profileInlineKey]: profileDecision,
+        } } }));
+        await applyConnectedServiceStateSharingDescriptor({ ...input,
+          previousMaterializedRoot: promotedRoot,
+          target: { targetMaterializedRoot: stageRoot, targetMaterializedEnv: {} },
+        });
+        const staged = parse(await readFile(join(stageRoot, 'config.toml'), 'utf8'));
+        expect.soft(staged.hooks).toEqual({ state: {
+          [profileKey]: profileDecision, [profileInlineKey]: profileDecision,
+          [unrelatedKey]: nativeDecision, 'plugin:example:stop:0:0': nativeDecision,
+        } });
+      }
+      const claudeRoot = join(root, 'claude');
+      await applyConnectedServiceStateSharingDescriptor({ ...input, descriptor: claudeAuthStateSharingDescriptor,
+        target: { targetMaterializedRoot: claudeRoot, targetMaterializedEnv: {} },
+      });
+      if (configMode === 'isolated') {
+        await expect(lstat(join(claudeRoot, 'CLAUDE.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+      } else {
+        await expect(readFile(join(claudeRoot, 'CLAUDE.md'), 'utf8')).resolves.toBe('Native instructions');
+        expect((await lstat(join(claudeRoot, 'CLAUDE.md'))).isSymbolicLink()).toBe(configMode === 'linked');
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('reports malformed native TOML without exposing config content or replacing the promoted home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-invalid-profile-config-'));
     const sourceRoot = join(root, 'native');

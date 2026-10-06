@@ -1,9 +1,6 @@
-import {
-  ConnectedServiceIdSchema,
-  parseQualifiedPluginContributionKey,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 

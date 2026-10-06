@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import { PERMISSION_INTENTS } from '@happier-dev/agents';
-import {
-  AcpConfigOptionOverridesV1Schema, BackendTargetRefSchema, ConnectedServiceBindingsV2Schema,
-  ExecutionRunClassSchema, ExecutionRunDisplaySchema, ExecutionRunIntentSchema,
-  ExecutionRunIoModeSchema, ExecutionRunLaunchOriginSchema, ExecutionRunResumeHandleSchema,
-  ExecutionRunRetentionPolicySchema, ExecutionRunStatusSchema, ExecutionRunInputTurnV1Schema,
-  PluginSourceCustodyV1Schema, PortableRuntimeDescriptorV1Schema, ProviderBoundModelRefSchema,
-  SecretReferenceOverlayV1Schema, SessionMcpSelectionV1Schema, TeamCredentialProviderModelSelectionV1Schema,
-  ExecutionRunVoiceAgentIntentInputV1Schema,
-} from '@happier-dev/protocol';
+import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
+import { BackendTargetRefSchema } from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ExecutionRunClassSchema, ExecutionRunIntentSchema, ExecutionRunIoModeSchema, ExecutionRunRetentionPolicySchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
+import { ExecutionRunDisplaySchema, ExecutionRunLaunchOriginSchema, ExecutionRunResumeHandleSchema, ExecutionRunVoiceAgentIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ExecutionRunStatusSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { ExecutionRunState } from './executionRunTypes';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */

@@ -5,7 +5,8 @@ import {
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
 
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createPluginReloadController, type PluginReloadController } from '@/plugins/runtime/reload/controller';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { logger } from '@/ui/logger';
 import {
@@ -1148,17 +1149,22 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
     function createDaemonOverRealRegistry(input: Readonly<{
       published: boolean;
       generationCurrent(): boolean;
+      replaceDuringActivation?: boolean;
+      replaceSourceDuringActivation?: boolean;
     }>) {
       const registrations: ConnectedAccountRuntimeRegistration[] = [];
       const activations: string[] = [];
+      const occurrenceId = createPluginRuntimeOccurrenceId(service.pluginId);
+      let current = true;
+      let reloadController: PluginReloadController;
       const contributions = createConnectedAccountContributionRegistry({
-                readPluginOccurrenceId: () => createPluginRuntimeOccurrenceId(service.pluginId),
+        readPluginOccurrenceId: () => occurrenceId,
         readPluginSourceCustody: () => ({
           kind: 'managed',
           immutableGenerationId: 'artifact-1',
           installSource: 'archive',
         }),
-        isPluginOccurrenceCurrent: () => input.generationCurrent(),
+        isPluginOccurrenceCurrent: () => current && input.generationCurrent(),
         descriptors: [{
           provenance: 'first_party',
           source: { kind: 'bundled' },
@@ -1170,29 +1176,51 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           if (!input.published) return;
           registrations.push({
             pluginId: ref.pluginId,
-            occurrenceId: 'generation-1',
+            occurrenceId,
             localId: ref.localId,
             runtime: publishedRuntime,
           });
+          if (input.replaceDuringActivation) {
+            const nextOccurrence = createPluginRuntimeOccurrenceId(service.pluginId);
+            const nextContributions = createConnectedAccountContributionRegistry({
+              descriptors: [{ provenance: 'first_party', source: { kind: 'bundled' }, pluginId: service.pluginId, definition: descriptor }],
+              readPluginOccurrenceId: () => nextOccurrence,
+              readPluginSourceCustody: () => ({ ...runtimeIdentity.sourceCustody,
+                immutableGenerationId: input.replaceSourceDuringActivation ? 'artifact-2' : 'artifact-1' }),
+              isPluginOccurrenceCurrent: () => true,
+              activateOnDemand: async () => {},
+              readRegistrations: () => [{ pluginId: service.pluginId, occurrenceId: nextOccurrence, localId: service.localId, runtime: publishedRuntime }],
+            });
+            await reloadController.adoptPreparedRuntimeRegistry({
+              registry: { ...registry, connectedAccountContributions: nextContributions, resolveConnectedAccountRuntime: nextContributions.resolve,
+                readPluginOccurrenceId: () => nextOccurrence,
+                dispose: async () => nextContributions.dispose(),
+                fencePluginConsumers: () => {}, retirePluginConsumers: async () => {},
+              },
+              changedPluginIds: [service.pluginId],
+              runningSessionDisposition: 'retainRunningSessions',
+            });
+          }
         },
         readRegistrations: () => registrations,
       });
+      // Empty unrelated catalogs are fixture data; reload/currentness and account
+      // admission run through their real owners below.
       const registry = {
-        generation: 'generation-1',
+        contributes: { agents: [], providers: [], actions: [], resources: [], activationTargets: [] },
+        pluginDiagnosticsByPluginId: { [service.pluginId]: [] },
+        activatedPluginIds: new Set<string>(),
+        readPluginOccurrenceId: () => occurrenceId,
+        readPluginSourceCustody: () => runtimeIdentity.sourceCustody,
         connectedAccountContributions: contributions,
         resolveConnectedAccountRuntime: contributions.resolve,
-      };
-      const lease = () => ({
-        registry,
-        source: 'active' as const,
-        release: vi.fn(async () => undefined),
-      });
+        fencePluginConsumers: () => { current = false; },
+        retirePluginConsumers: async () => { current = false; },
+        dispose: async () => contributions.dispose(),
+      } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+      reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => registry });
       const daemon = createConnectedAccountDaemonRuntime({
-        reloadController: {
-          acquireRuntimeRegistry: vi.fn(async () => lease()),
-          tryAcquireRuntimeRegistry: vi.fn(() => lease()),
-          isRuntimeRegistryCurrent: vi.fn(() => true),
-        } as unknown as PluginReloadController,
+        reloadController,
         persistence: {
           profiles: { list: vi.fn(async () => []) },
           configuration: {
@@ -1219,6 +1247,17 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       });
       return { daemon, activations };
     }
+
+    it.each([false, true])('refreshes initial lazy admission only for unchanged source (changed: %s)', async (changed) => {
+      const { daemon } = createDaemonOverRealRegistry({
+        published: true, generationCurrent: () => true, replaceDuringActivation: true, replaceSourceDuringActivation: changed,
+      });
+      await expect(daemon.execute({ operation: 'beginConnect', service, modeId: 'oauth' }))
+        .resolves.toMatchObject(changed
+          ? { status: 'conflict', code: 'connected_account_runtime_generation_changed' }
+          : { status: 'configurationRequired', missingFieldIds: expect.arrayContaining(['endpoint', 'clientSecret']) });
+      daemon.dispose();
+    });
 
     it('describes a declared service from the descriptor without activating its plugin', async () => {
       // `published: false` means activation would publish no runtime. Discovery must

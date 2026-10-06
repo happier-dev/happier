@@ -1,12 +1,5 @@
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  ConnectedServiceUxDiagnosticV1Schema,
-  type ConnectedServiceUxDiagnosticCodeV1,
-  type ConnectedServiceUxDiagnosticFailurePhaseV1,
-  type ConnectedServiceUxDiagnosticSourceV1,
-  type ConnectedServiceUxDiagnosticV1,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { ConnectedServiceUxDiagnosticCodeV1, ConnectedServiceUxDiagnosticFailurePhaseV1, ConnectedServiceUxDiagnosticSourceV1, ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
 type DiagnosticScalar = string | number | boolean | null;
 

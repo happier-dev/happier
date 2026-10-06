@@ -1,9 +1,10 @@
 import type { ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
-import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import {
     releaseExecutionRunConnectedServices,
     requestExecutionRunConnectedServicesMaterialization,
+    recoverExecutionRunConnectedServicesRejectedStart,
 } from '@/daemon/controlClient';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import {
@@ -13,6 +14,9 @@ import {
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { logger } from '@/ui/logger';
 import type { ExecutionRunConnectedServicesRegistrationV1 } from '@/daemon/connectedServices/runs/materializeContract';
+import { readConnectedServiceChildMemberLogContextFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+import { createExecutionRunCodedError } from '../errors';
 
 /**
  * Generic (provider-agnostic) connected-services env resolution for execution-run backends.
@@ -62,6 +66,7 @@ type MaterializationDeps = Readonly<{
     readCredentials: () => Promise<StoredCredentials | null>;
     resolveSessionSpawnDefaults: ResolveSessionSpawnDefaults;
     runnerPid: number;
+    recoverRejectedStart?: typeof recoverExecutionRunConnectedServicesRejectedStart;
 }>;
 
 export type ResolvedExecutionRunConnectedServicesEnv = Readonly<{
@@ -69,6 +74,7 @@ export type ResolvedExecutionRunConnectedServicesEnv = Readonly<{
     connectedServicesBindings: unknown;
     registration: ExecutionRunConnectedServicesRegistrationV1;
     cleanup: () => Promise<void>;
+    recoverRejectedStart: (classification: ConnectedServiceRuntimeFailureClassification) => Promise<boolean>;
 }>;
 
 export type ResolvedExecutionRunConnectedServicesSelection = Readonly<{
@@ -115,6 +121,7 @@ function defaultDeps(): MaterializationDeps {
             });
         },
         runnerPid: process.pid,
+        recoverRejectedStart: async (request) => await recoverExecutionRunConnectedServicesRejectedStart(request),
     };
 }
 
@@ -243,6 +250,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     connectedServicesDefaultServiceIds?: readonly string[];
     resolvedSelection?: ResolvedExecutionRunConnectedServicesSelection | null;
     cwd: string;
+    modelId?: string;
     deps?: MaterializationDeps;
 }>): Promise<ResolvedExecutionRunConnectedServicesEnv | null> {
     const backendId = params.backendId.trim();
@@ -290,6 +298,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         agentId: backendId,
         connectedServices: selection.bindings,
         cwd: params.cwd,
+        ...(params.modelId ? { modelId: params.modelId } : {}),
     });
 
     if (!response || response.ok !== true || !('result' in response) || !response.result) {
@@ -317,6 +326,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         agentId: backendId,
         source: selection.source,
         envKeys: Object.keys(response.result.env),
+        selectedMembers: readConnectedServiceChildMemberLogContextFromEnv(response.result.env),
     });
 
     let cleanupPromise: Promise<void> | null = null;
@@ -346,5 +356,24 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         connectedServicesBindings: response.result.connectedServicesBindings,
         registration: response.result.registration,
         cleanup,
+        async recoverRejectedStart(classification) {
+            const modelId = params.modelId ?? classification.providerLimitId;
+            if (!modelId || !deps.recoverRejectedStart) return false;
+            const result = await deps.recoverRejectedStart({
+                runId: params.runId,
+                runnerPid: deps.runnerPid,
+                activationId: response.result.activationId,
+                modelId,
+                classification,
+            });
+            if (result.ok && result.retry) return true;
+            if (!result.ok) {
+                throw createExecutionRunCodedError(result.errorCode ?? 'connected_service_run_materialization_unavailable',
+                    result.errorCode === 'connected_service_run_model_unavailable'
+                        ? `No enabled pool member can serve model '${modelId}'`
+                        : 'Connected account Run startup recovery was refused');
+            }
+            return false;
+        },
     };
 }

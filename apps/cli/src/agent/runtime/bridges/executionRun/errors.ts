@@ -1,3 +1,26 @@
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
+
+/** Provider evidence that the initial input was definitively refused before work. */
+export class ExecutionRunRejectedStartError extends Error {
+  readonly executionRunErrorCode = 'connected_service_model_start_rejected';
+  constructor(readonly classification: ConnectedServiceRuntimeFailureClassification) {
+    super(`Connected account rejected model '${classification.providerLimitId}' before Run start`);
+    this.name = 'ExecutionRunRejectedStartError';
+  }
+}
+
+export function readExecutionRunRejectedStartDiagnostic(diagnostic: unknown): ExecutionRunRejectedStartError | null {
+  if (!diagnostic || typeof diagnostic !== 'object' || !('code' in diagnostic)
+    || diagnostic.code !== 'connected_service_model_start_rejected'
+    || !('details' in diagnostic) || !diagnostic.details || typeof diagnostic.details !== 'object'
+    || !('runtimeAuthClassification' in diagnostic.details)) return null;
+  const classification = sanitizeConnectedServiceRuntimeFailureClassification(diagnostic.details.runtimeAuthClassification);
+  if (!classification || classification.kind !== 'plan' || classification.limitCategory !== 'plan_invalid'
+    || classification.quotaScope !== 'model' || !classification.providerLimitId) return null;
+  return new ExecutionRunRejectedStartError(classification);
+}
+
 export type ExecutionRunTimeoutError = Error & Readonly<{
   executionRunErrorCode: string;
   livenessProbe?: unknown;

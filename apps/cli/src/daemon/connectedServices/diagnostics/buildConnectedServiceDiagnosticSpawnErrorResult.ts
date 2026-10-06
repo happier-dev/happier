@@ -1,11 +1,6 @@
-import {
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-  ConnectedServiceUxDiagnosticCodeV1Schema,
-  SPAWN_SESSION_ERROR_CODES,
-  SPAWN_SESSION_ERROR_DETAIL_KINDS,
-  type ConnectedServiceUxDiagnosticV1,
-  type SpawnSessionResult,
-} from '@happier-dev/protocol';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
+import type { ConnectedServiceUxDiagnosticV1, SpawnSessionResult } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';

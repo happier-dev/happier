@@ -1,15 +1,8 @@
-import {
-    ConnectedAccountPurposeDeclarationsV1Schema,
-    ConnectedAccountRequestAuthUsesV1Schema,
-    PluginContributionIdentityV1Schema,
-    qualifiedPurposeKey,
-    type ConnectedAccountPurposeDeclarationV1,
-    type ConnectedServiceBindingsV2,
-    type PluginContributionIdentityV1,
-    type QualifiedConnectedAccountPurposeBindingV1,
-    type QualifiedConnectedAccountPurposeV1,
-    type QualifiedConnectedAccountRequestAuthUseV1,
-} from '@happier-dev/protocol';
+import { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import type { ConnectedAccountPurposeDeclarationV1, ConnectedServiceBindingsV2, PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 

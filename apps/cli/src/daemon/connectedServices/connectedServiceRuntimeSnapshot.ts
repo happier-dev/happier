@@ -1,9 +1,6 @@
-import {
-  ConnectedServiceBindingsV2IngressSchema,
-  ConnectedServiceMaterializationIdentityV1Schema,
-  type ConnectedServiceBindingsV2,
-  type ConnectedServiceMaterializationIdentityV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
+import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
 export type ConnectedServiceRuntimeSnapshot = Readonly<{
   connectedServices?: ConnectedServiceBindingsV2;

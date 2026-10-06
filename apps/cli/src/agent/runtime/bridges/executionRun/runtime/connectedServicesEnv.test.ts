@@ -19,6 +19,7 @@ import {
     resolveExecutionRunConnectedServicesSelection,
     resolveExecutionRunConnectedServicesEnv,
 } from './connectedServicesEnv';
+import type { ConnectedServiceRunRejectedStartRequest, ConnectedServiceRunRejectedStartResult } from '@/daemon/connectedServices/runs/materializeContract';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -59,6 +60,7 @@ function createDeps(overrides: Partial<{
     release: ReturnType<typeof vi.fn>;
     readCredentials: ReturnType<typeof vi.fn>;
     resolveSessionSpawnDefaults: ReturnType<typeof vi.fn>;
+    recoverRejectedStart: ReturnType<typeof vi.fn>;
 }> = {}) {
     const requestMaterialization = overrides.requestMaterialization ?? vi.fn(async () => ({
         ok: true as const,
@@ -72,10 +74,34 @@ function createDeps(overrides: Partial<{
     const release = overrides.release ?? vi.fn(async () => ({ ok: true as const, released: true }));
     const readCredentials = overrides.readCredentials ?? vi.fn(async () => CREDENTIALS);
     const resolveSessionSpawnDefaults = overrides.resolveSessionSpawnDefaults ?? vi.fn(async () => null);
-    return { requestMaterialization, release, readCredentials, resolveSessionSpawnDefaults, runnerPid: 777 };
+    return { requestMaterialization, release, readCredentials, resolveSessionSpawnDefaults,
+        ...(overrides.recoverRejectedStart ? { recoverRejectedStart: overrides.recoverRejectedStart } : {}), runnerPid: 777 };
 }
 
 describe('resolveExecutionRunConnectedServicesEnv', () => {
+    it('binds rejected-start recovery to its exact Run activation and requested model', async () => {
+        const classification = {
+            serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID, profileId: 'profile_1', groupId: 'pool', groupGeneration: 1,
+            kind: 'plan' as const, source: 'structured_provider_error' as const,
+            limitCategory: 'plan_invalid' as const, quotaScope: 'model' as const, providerLimitId: 'gpt-6.1-sol',
+            resetsAtMs: null, planType: null, rateLimits: null,
+        };
+        const recoverRejectedStart = vi.fn(async (_request: ConnectedServiceRunRejectedStartRequest): Promise<ConnectedServiceRunRejectedStartResult> => ({ ok: true, retry: true }));
+        const deps = createDeps({ recoverRejectedStart });
+        const resolved = await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', modelId: 'gpt-6.1-sol', deps,
+        });
+        expect(deps.requestMaterialization).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'gpt-6.1-sol' }));
+        await expect(resolved?.recoverRejectedStart(classification)).resolves.toBe(true);
+        expect(recoverRejectedStart).toHaveBeenCalledWith({
+            runId: 'run_1', runnerPid: 777, activationId: ACTIVATION_ID, modelId: 'gpt-6.1-sol', classification,
+        });
+        recoverRejectedStart.mockResolvedValueOnce({ ok: false, errorCode: 'connected_service_run_model_unavailable' });
+        await expect(resolved?.recoverRejectedStart(classification)).rejects.toMatchObject({
+            executionRunErrorCode: 'connected_service_run_model_unavailable', message: expect.stringContaining('gpt-6.1-sol'),
+        });
+    });
     beforeEach(() => {
         loggerInfoMock.mockClear();
         loggerWarnMock.mockClear();
@@ -143,6 +169,44 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
         // QA2-F02: explicit selections never consult the session defaulting owner.
         expect(deps.resolveSessionSpawnDefaults).not.toHaveBeenCalled();
+    });
+
+    it('logs the selected pool member through the selection parser without logging credential environment values', async () => {
+        const deps = createDeps({
+            requestMaterialization: vi.fn(async () => ({
+                ok: true as const,
+                result: {
+                    activationId: ACTIVATION_ID,
+                    env: {
+                        CODEX_HOME: MATERIALIZED_ENV_VALUE,
+                        ACCESS_TOKEN: 'secret-never-log',
+                        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+                            kind: 'group',
+                            serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID,
+                            groupId: 'happier',
+                            activeProfileId: 'account-work',
+                            fallbackProfileId: 'account-work',
+                            generation: 3,
+                            policy: { privateValue: 'private-never-log' },
+                        }]),
+                    },
+                    connectedServicesBindings: CONNECTED_BINDINGS,
+                    registration: REGISTRATION,
+                },
+            })),
+        });
+        await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', deps,
+        });
+        const context = loggerInfoMock.mock.calls.find(([message]) => message === '[EXECUTION RUN] connected services: materialized')?.[1];
+        expect(context).toMatchObject({ selectedMembers: [{
+            serviceId: OPENAI_CODEX_ACCOUNT_SERVICE_ID,
+            groupId: 'happier', profileId: 'account-work', label: 'account-work',
+        }] });
+        expect(JSON.stringify(context)).not.toContain('secret-never-log');
+        expect(JSON.stringify(context)).not.toContain('private-never-log');
+        expect(JSON.stringify(context)).not.toContain(MATERIALIZED_ENV_VALUE);
     });
 
     it('QA2-F02: defaults through the SESSION spawn-defaulting owner (credentials-bootstrapped), never a runner settings snapshot', async () => {

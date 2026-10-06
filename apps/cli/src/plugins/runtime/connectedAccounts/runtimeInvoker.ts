@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-    pluginSourceCustodyV1Equal,
-    sameQualifiedConnectedAccountRef,
-    type PluginHostAccessRequestV2,
-} from '@happier-dev/protocol';
+import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
 import {
     type ConnectedAccountMaterializationRequest,
     type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
@@ -277,7 +275,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             || !pluginSourceCustodyV1Equal(lease.sourceCustody, input.admission.sourceCustody)
             || !sameService(lease.ref, input.admission.service)
         ) {
-            throw new Error('Connected-account runtime admission is no longer current');
+            throw new ConnectedAccountRuntimeInvocationNotStartedError();
         }
         const plugin = params.resolvePlugin(lease.ref);
         if (!plugin) {
@@ -629,7 +627,8 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             let invocationContext: Awaited<ReturnType<typeof createContext>>;
             try {
                 invocationContext = await createContext(input);
-            } catch {
+            } catch (error) {
+                if (error instanceof ConnectedAccountRuntimeInvocationNotStartedError) throw error;
                 return authenticationUnavailable(
                     'connected_account_producer_context_unavailable',
                 );

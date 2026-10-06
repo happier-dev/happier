@@ -1,9 +1,6 @@
-import {
-    mergeProviderAccountSubscription,
-    ProviderAccountUsageSnapshotV1Schema,
-    type ConnectedServiceUsageSourceV1,
-    type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
+import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import {
     ProviderAccountUsageAdoptionV1Schema,
     type ProviderAccountUsageAdoptionV1,

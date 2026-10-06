@@ -1,4 +1,6 @@
-import { ExecutionRunPublicStateSchema, projectExecutionRunRequestedConfiguration, type ExecutionRunPublicState } from '@happier-dev/protocol';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { projectExecutionRunRequestedConfiguration } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from './executionRunTypes';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';

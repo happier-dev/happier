@@ -25,25 +25,19 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeAuthControl,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import {
-  buildBackendTargetKeyV2,
-  AgentExecutionTargetV1Schema,
-  BackendTargetRefV2InputSchema,
-  applySessionProviderBindingMetadataV1,
-  convertBackendTargetRefV2ToV1,
-  projectAgentSessionProviderBindingV1,
-  readBackendTargetRefV2,
-  MachinePoolSelectionOriginV1Schema,
-  SESSION_FOLLOW_WAKE_EVENT_MESSAGE,
-  SessionCreationCorrespondenceV1Schema,
-  SessionCreationTagV1Schema,
-  SessionModelSelectionV1Schema,
-  SessionModelTransitionRequestV1Schema,
-  SessionModelTransitionResultV1Schema,
-  renderWorkerUpdatePromptBlockV1,
-  readSessionRolesV1,
-} from '@happier-dev/protocol';
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { BackendTargetRefV2InputSchema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { applySessionProviderBindingMetadataV1, projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { WORKFLOW_STEP_INPUT_EVENT_MESSAGE, isSessionContextOnlyHostInput } from '@/session/shared/sessionTurnLifecycle';
 import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/contextOnly/workflowOriginInput';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
@@ -117,6 +111,9 @@ import { createSessionPromptPlanResolver, type SessionPromptPlanResolver } from 
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { registerHappierSessionAgentToolRpc } from '@/mcp/startHappyServer';
+import { DaemonPluginToolCatalogUnavailableError } from '@/mcp/pluginToolCatalogError';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import {
@@ -3408,6 +3405,17 @@ export async function runHostSessionRuntime(
     if (runtimeStopRequested) rejectRuntimeStop(error);
     if (!lifecycleOwnsConstructionResources) {
       if (hostOwnsSessionConstructionCleanup) {
+        if (!runtimeStopRequested && error instanceof DaemonPluginToolCatalogUnavailableError) {
+          // MCP resolves after Session custody, but before the live loop owns a
+          // turn lifecycle. Publish through that same canonical owner before
+          // releasing durable delivery; an unavailable prerequisite is not idle.
+          await createSessionTurnLifecycle({ session, agentId: policyAgentId }).failTurn({
+            issue: classifyPrimarySessionRuntimeIssue({
+              cause: 'session_error', error, provider: policyAgentId,
+            }),
+            allocateWhenIdle: true,
+          });
+        }
         await cleanupFailedConstruction(
           isAgentSessionContinuationUnreachableError(error),
         );

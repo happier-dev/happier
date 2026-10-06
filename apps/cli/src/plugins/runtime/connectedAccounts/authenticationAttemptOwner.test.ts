@@ -19,6 +19,8 @@ import {
 import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './contributionRegistry';
+import { anthropicConnectedAccountRuntime, ANTHROPIC_API_KEY_INPUT_SCHEMA } from '../../../../../../packages/plugins/claude/src/connectedAccounts/anthropicRuntime';
+import { createUnavailablePluginServices } from '../invocation/services/unavailable';
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 const accountA = Object.freeze({ service, accountId: 'account-a' });
@@ -501,6 +503,59 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
         expect(h.invoke).not.toHaveBeenCalled();
         expect(h.settle).not.toHaveBeenCalled();
+    });
+
+    it('enforces manual descriptor input schemas before invoking the provider or settling an account', async () => {
+        const admitted = manualMode();
+        const descriptor = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'API key', secret: true,
+                schema: { type: 'string', pattern: '^service-key-' } }],
+        });
+        const h = harness({ admittedMode: { ...admitted, descriptor } });
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'not-a-valid-key' } })).resolves.toMatchObject({
+            status: 'rejected', code: 'connected_account_manual_fields_invalid',
+        });
+        expect(h.invoke).not.toHaveBeenCalled();
+        expect(h.settle).not.toHaveBeenCalled();
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(h.owner.submitManual({ attemptId: 'attempt-2', fields: { token: 'service-key-valid' } })).resolves.toMatchObject({ status: 'connected' });
+        expect(h.settle).toHaveBeenCalledOnce();
+    });
+
+    it('never settles an Anthropic provider rejection and permits a fresh verified attempt', async () => {
+        const mode = anthropicConnectedAccountRuntime.authentication.modes['api-key'];
+        if (!mode || mode.kind !== 'manual') throw new Error('Missing manual mode');
+        let providerStatus = 401;
+        const unavailableServices = createUnavailablePluginServices();
+        const admitted = manualMode();
+        const descriptor = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'API key', secret: true, schema: ANTHROPIC_API_KEY_INPUT_SCHEMA }],
+        });
+        const h = harness({ admittedMode: { ...admitted, descriptor }, invoke: async (invocation) => {
+            if (invocation.operation.kind !== 'submitManual') throw new Error('Unexpected operation');
+            return await mode.complete({ fields: invocation.operation.fields }, {
+                ...invocation.context, signal: invocation.signal ?? new AbortController().signal,
+                plugin: { id: service.pluginId, version: '1.0.0' },
+                contribution: { id: service.localId, qualifiedId: `${service.pluginId}/${service.localId}` },
+                surface: 'ui', invokedAtMs: 1_000,
+                // Only the provider's HTTP transport is substituted; staging and settlement admission are real.
+                services: { ...unavailableServices, http: { ...unavailableServices.http,
+                    request: async () => ({ status: providerStatus, finalUrl: 'https://api.anthropic.com/v1/models', headers: {}, body: new Uint8Array() }),
+                } },
+            });
+        } });
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'sk-ant-qa-fake' } })).resolves.toMatchObject({
+            status: 'rejected', code: 'anthropic_api_key_rejected',
+        });
+        expect(h.settle).not.toHaveBeenCalled();
+        providerStatus = 200;
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+        await expect(h.owner.submitManual({ attemptId: 'attempt-2', fields: { token: 'sk-ant-verified' } })).resolves.toMatchObject({ status: 'connected' });
+        expect(h.settle).toHaveBeenCalledWith(expect.objectContaining({ stagedCredentials: { token: 'sk-ant-verified' } }));
     });
 
     it('checks peer admission after awaited currentness and immediately before provider invocation', async () => {

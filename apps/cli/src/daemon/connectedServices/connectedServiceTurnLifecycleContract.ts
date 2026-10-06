@@ -1,6 +1,4 @@
-import {
-  PendingRequestedActionV1Schema,
-} from '@happier-dev/protocol';
+import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { z } from 'zod';
 import {
   TrackedSessionTurnLifecycleResultSchema,

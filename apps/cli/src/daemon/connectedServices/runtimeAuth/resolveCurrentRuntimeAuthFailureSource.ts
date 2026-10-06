@@ -1,9 +1,6 @@
-import {
-  ConnectedServiceCredentialRevisionV1Schema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  type ConnectedAccountServiceKey,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 
 import type {
   LegacyConnectedServiceRuntimeAuthFailureSourceRevisionResolver,

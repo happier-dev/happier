@@ -4,6 +4,7 @@ import type {
   ExecutionRunPermissionCapability,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { wrapExecutionRunHostRuntime } from './wrap';
+import { ExecutionRunRejectedStartError } from '../errors';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -45,6 +46,8 @@ function readRuntimePermissionCapability(
 export function createLazyExecutionRunHostRuntime(params: Readonly<{
   resolveRuntime: () => Promise<ExecutionRunHostRuntime>;
   onProvisionRuntime?: (runtimeId: string) => Promise<void>;
+  /** Exact materialization recovery; only a proven, unaccepted initial input reaches it. */
+  recoverRejectedStart?: (error: ExecutionRunRejectedStartError) => Promise<boolean>;
 }>): ExecutionRunHostRuntime {
   const handlers = new Set<ExecutionRunHostRuntimeMessageHandler>();
   const unsubscribeByHandler = new Map<ExecutionRunHostRuntimeMessageHandler, () => void>();
@@ -57,6 +60,9 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   let permissionCapability: ExecutionRunPermissionCapability | null = null;
   const lifetime = new AbortController();
   let unsubscribeLifetime: (() => void) | null = null;
+  let initialInputAccepted = false;
+  let resumed = false;
+  let startupRecoveryActive = false;
 
   const attachQueuedHandlers = (runtime: ExecutionRunHostRuntime): void => {
     for (const handler of handlers) {
@@ -106,6 +112,32 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     permissionCapability = runtime.permissionCapability ?? permissionCapability;
   };
 
+  const recoverRejectedStart = async (error: unknown): Promise<boolean> => {
+    if (!(error instanceof ExecutionRunRejectedStartError) || initialInputAccepted || resumed
+      || !params.recoverRejectedStart) return false;
+    startupRecoveryActive = true;
+    try {
+      lifetime.signal.throwIfAborted();
+      if (!await params.recoverRejectedStart(error)) return false;
+      lifetime.signal.throwIfAborted();
+      // Retire subscriptions before disposing this rejected occurrence: its own
+      // lifetime ends, while the unaccepted Run remains live for the next member.
+      unsubscribeLifetime?.();
+      unsubscribeLifetime = null;
+      for (const unsubscribe of unsubscribeByHandler.values()) unsubscribe();
+      unsubscribeByHandler.clear();
+      await resolvedRuntime?.dispose();
+      lifetime.signal.throwIfAborted();
+      resolvedRuntime = null;
+      resolvedRuntimePromise = null;
+      permissionCapability = null;
+      activeRuntimeId = null;
+      return true;
+    } finally {
+      startupRecoveryActive = false;
+    }
+  };
+
   const respondToPermission = async (requestId: string, approved: boolean) => {
     if (!activeRuntimeId) {
       if (!runtimeProvisionPromise) {
@@ -133,13 +165,22 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     readProviderSessionId: () => resolvedRuntime?.readProviderSessionId?.bind(resolvedRuntime),
     readCanContinueAfterCancellation: () => resolvedRuntime?.canContinueAfterCancellation?.bind(resolvedRuntime),
     async provisionRuntime(opts) {
+      resumed = Boolean(opts?.resumeRuntimeId);
       const provisionPromise = (async () => {
-        const runtime = await resolveRuntime();
-        const started = await runtime.provisionRuntime(opts);
-        activeRuntimeId = started.runtimeId;
-        refreshPermissionCapability(runtime);
-        await params.onProvisionRuntime?.(started.runtimeId);
-        return started.runtimeId;
+        for (;;) {
+          const runtime = await resolveRuntime();
+          let started: Awaited<ReturnType<ExecutionRunHostRuntime['provisionRuntime']>>;
+          try { started = await runtime.provisionRuntime(opts); }
+          catch (error) {
+            if (await recoverRejectedStart(error)) continue;
+            throw error;
+          }
+          if (opts?.initialPrompt !== undefined) initialInputAccepted = true;
+          activeRuntimeId = started.runtimeId;
+          refreshPermissionCapability(runtime);
+          await params.onProvisionRuntime?.(started.runtimeId);
+          return started.runtimeId;
+        }
       })();
       runtimeProvisionPromise = provisionPromise;
       try {
@@ -152,9 +193,27 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
       }
     },
     async deliverInput(runtimeId, input, context) {
-      const runtime = await resolveRuntime();
-      activeRuntimeId = runtimeId;
-      return await runtime.deliverInput(runtimeId, input, context);
+      let replacementNeedsProvision = false;
+      for (;;) {
+        const runtime = await resolveRuntime();
+        if (replacementNeedsProvision) {
+          const started = await runtime.provisionRuntime();
+          runtimeId = started.runtimeId;
+          refreshPermissionCapability(runtime);
+        }
+        activeRuntimeId = runtimeId;
+        try {
+          const result = await runtime.deliverInput(runtimeId, input, context);
+          if (result.status === 'admitted') initialInputAccepted = true;
+          return result;
+        } catch (error) {
+          if (await recoverRejectedStart(error)) {
+            replacementNeedsProvision = true;
+            continue;
+          }
+          throw error;
+        }
+      }
     },
     readSteerInput: () => {
       const steerInput = resolvedRuntime?.steerInput;
@@ -171,6 +230,10 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     readSubscribeRuntimeEvents: () => resolvedRuntime?.subscribeRuntimeEvents?.bind(resolvedRuntime),
     readActiveTurnAdmissionWitness: () => resolvedRuntime?.readActiveTurnAdmissionWitness?.bind(resolvedRuntime),
     async cancel(runtimeId) {
+      if (startupRecoveryActive) {
+        lifetime.abort(new Error('Execution-run startup recovery aborted'));
+        return;
+      }
       if (!activeRuntimeId) {
         if (!runtimeProvisionPromise) return;
         await runtimeProvisionPromise;

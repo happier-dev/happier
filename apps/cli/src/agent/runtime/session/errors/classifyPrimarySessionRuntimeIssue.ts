@@ -5,19 +5,20 @@ import type {
   SessionRuntimeIssueSourceV1,
   SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
-import {
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  readConnectedServiceLimitCategoryV1,
-  ProviderBrokerAdmissionFailureCodeV1Schema,
-  SPAWN_SESSION_ERROR_CODES,
-  SessionRuntimeIssueSourceV1Schema,
-  SessionRuntimeTeamCredentialDenialDetailsV1Schema,
-} from '@happier-dev/protocol';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
 import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
+import {
+  DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE,
+  DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_PREVIEW,
+} from '@/mcp/pluginToolCatalogError';
 
 export type PrimarySessionRuntimeIssueCause =
   | 'status_error'
@@ -444,7 +445,10 @@ export function classifyPrimarySessionRuntimeIssue(
   const missingCli = !teamCredentialDenial
     && errorCode.kind === 'string'
     && errorCode.value === SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING;
-  const source = missingCli
+  const catalogUnavailable = !teamCredentialDenial
+    && errorCode.kind === 'string'
+    && errorCode.value === DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE;
+  const source = missingCli || catalogUnavailable
     ? 'dependency_failure' as const
     : teamCredentialDenial
     ? 'team_credential' as const
@@ -472,13 +476,16 @@ export function classifyPrimarySessionRuntimeIssue(
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: missingCli ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING : temporaryThrottle ? 'provider_temporary_throttle' : source,
+    code: missingCli ? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING
+      : catalogUnavailable ? DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE
+      : temporaryThrottle ? 'provider_temporary_throttle' : source,
     source,
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
     ...(agentId === null ? {} : { agentId }),
     ...(agentTurnId === null ? {} : { agentTurnId }),
     sanitizedPreview: (missingCli ? AGENT_CLI_MISSING_PREVIEW : null)
+      ?? (catalogUnavailable ? DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_PREVIEW : null)
       ?? buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests' : sanitizedPreviewBySource[source]),
     ...(usageLimit === null ? {} : { usageLimit }),

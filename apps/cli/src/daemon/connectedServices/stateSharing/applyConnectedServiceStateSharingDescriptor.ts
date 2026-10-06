@@ -394,6 +394,16 @@ async function buildDescriptorCopyTransformByEntry(
   for (const transform of input.descriptor.transforms ?? []) {
     if (transform.kind !== 'rewrite_toml') throw new Error(`Unsupported connected-service descriptor transform kind: ${transform.kind}`);
     const retained: Array<Readonly<{ path: readonly string[]; entries: TomlTable }>> = [];
+    const rules = (transform.spec.preserveTableEntries ?? []).map((rule) => {
+      const entryPath = resolve(effectiveRoot, rule.keyPrefixEntry);
+      const sourceEntryPath = resolve(input.nativeSourceContext.sourceRoot, rule.keyPrefixEntry);
+      if (!isPathWithin(entryPath, effectiveRoot)
+        || !isPathWithin(sourceEntryPath, resolve(input.nativeSourceContext.sourceRoot))
+        || !input.descriptor.config.entries.some((entry) => entry.path === rule.keyPrefixEntry)) {
+        throw new Error('Profile preference keys must refer to a declared config entry');
+      }
+      return { ...rule, prefix: `${entryPath}${rule.keyPrefixSuffix}`, sourcePrefix: `${sourceEntryPath}${rule.keyPrefixSuffix}` };
+    });
     if (input.configMode !== 'isolated' && transform.spec.preserveTableEntries?.length) {
       const previousPath = resolve(effectiveRoot, transform.entry);
       if (!isPathWithin(previousPath, effectiveRoot)) throw new Error('Profile config entry must stay within its materialized home');
@@ -414,15 +424,9 @@ async function buildDescriptorCopyTransformByEntry(
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
       if (previous) {
-        for (const rule of transform.spec.preserveTableEntries) {
-          const entryPath = resolve(effectiveRoot, rule.keyPrefixEntry);
-          if (!isPathWithin(entryPath, effectiveRoot)
-            || !input.descriptor.config.entries.some((entry) => entry.path === rule.keyPrefixEntry)) {
-            throw new Error('Profile preference keys must refer to a declared config entry');
-          }
-          const prefix = `${entryPath}${rule.keyPrefixSuffix}`;
+        for (const rule of rules) {
           const entries = Object.fromEntries(Object.entries(tableAt(previous, rule.tablePath) ?? {})
-            .filter(([key]) => key.startsWith(prefix)));
+            .filter(([key]) => key.startsWith(rule.prefix)));
           if (Object.keys(entries).length) {
             retained.push({ path: rule.tablePath, entries });
           }
@@ -433,6 +437,19 @@ async function buildDescriptorCopyTransformByEntry(
       const config = parseConnectedServiceTomlConfig(content, resolve(input.nativeSourceContext.sourceRoot, transform.entry));
       for (const [key, value] of Object.entries(transform.spec.setStringValues)) {
         if (key.trim()) config[key] = value;
+      }
+      for (const rule of rules) {
+        if (!rule.rebaseSourceKeys || input.configMode === 'isolated') continue;
+        const table = tableAt(config, rule.tablePath);
+        if (!table) continue;
+        for (const [key, value] of Object.entries(table)) {
+          if (!key.startsWith(rule.sourcePrefix)) continue;
+          delete table[key];
+          // The native Agent still validates the unchanged trust hash against hook content.
+          Object.defineProperty(table, `${rule.prefix}${key.slice(rule.sourcePrefix.length)}`, {
+            value, writable: true, enumerable: true, configurable: true,
+          });
+        }
       }
       for (const retainedTable of retained) mergeTableEntries(config, retainedTable.path, retainedTable.entries);
       return stringify(config);
