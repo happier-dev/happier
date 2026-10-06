@@ -48,8 +48,8 @@ function wait(delayMs: number): Promise<void> {
   return delayMs <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function baseEnv(socketDir: string): Readonly<Record<string, string>> {
-  return { ZELLIJ_SOCKET_DIR: socketDir };
+function baseEnv(socketDir: string, sessionName: string): Readonly<Record<string, string>> {
+  return { ZELLIJ_SOCKET_DIR: socketDir, ZELLIJ_SESSION_NAME: sessionName };
 }
 
 function normalizePaneId(paneId: string): string {
@@ -302,10 +302,10 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
     }
   }
 
-  async function listSessionPanes(timeoutMs = actionTimeoutMs): Promise<ZellijPane[]> {
+  async function listSessionPanes(sessionName: string, timeoutMs = actionTimeoutMs): Promise<ZellijPane[]> {
     return actions.listPanes({
       zellijBinary: params.zellijBinary,
-      env: baseEnv(params.socketDir),
+      env: baseEnv(params.socketDir, sessionName),
       timeoutMs,
     });
   }
@@ -313,7 +313,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
   async function killManagedSession(sessionName: string): Promise<void> {
     const result = await actions.killSession({
         zellijBinary: params.zellijBinary,
-        env: baseEnv(params.socketDir),
+        env: baseEnv(params.socketDir, sessionName),
         sessionName,
         timeoutMs: actionTimeoutMs,
       });
@@ -380,7 +380,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       // recoverable — there is no live pane to retarget.
       return { liveness: { paneAlive: false, paneDead: true, observedAt }, paneDeadRecoverable: false };
     }
-    const panes = await listSessionPanes();
+    const panes = await listSessionPanes(handle.sessionName);
     const target = resolveRuntimePaneTarget({
       panes,
       paneId: trackedPaneId,
@@ -412,7 +412,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         try {
           const rawDump = await actions.dumpScreen({
             zellijBinary: params.zellijBinary,
-            env: baseEnv(params.socketDir),
+            env: baseEnv(params.socketDir, handle.sessionName),
             paneId: diagnosticPaneId,
             timeoutMs: actionTimeoutMs,
           });
@@ -444,14 +444,14 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
     }
     const before = await actions.dumpScreen({
       zellijBinary: params.zellijBinary,
-      env: baseEnv(params.socketDir),
+      env: baseEnv(params.socketDir, handle.sessionName),
       paneId: inspection.targetPaneId,
       timeoutMs: actionTimeoutMs,
     });
     await waitFn(DEFAULT_INPUT_STABILITY_DELAY_MS);
     const after = await actions.dumpScreen({
       zellijBinary: params.zellijBinary,
-      env: baseEnv(params.socketDir),
+      env: baseEnv(params.socketDir, handle.sessionName),
       paneId: inspection.targetPaneId,
       timeoutMs: actionTimeoutMs,
     });
@@ -461,7 +461,10 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
   return {
     kind: 'zellij',
     async createOrAttachHost(opts) {
-      const env = baseEnv(params.socketDir);
+      // Zellij panes inherit the server environment, not the later `run` client.
+      // Native attach rejects a target advertised as the client's current session.
+      // Creation names its target in argv; subsequent pane actions use the handle's name.
+      const env = { ...opts.spawnEnv, ...baseEnv(params.socketDir, '') };
       let attachResult: ZellijCommandResult;
       try {
         attachResult = await actions.attachCreateBackground({
@@ -484,10 +487,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       try {
         const runResult = await actions.runCommand({
           zellijBinary: params.zellijBinary,
-          env: {
-            ...opts.spawnEnv,
-            ...env,
-          },
+          env,
           unsetEnvKeys: opts.unsetEnvKeys,
           sessionName: opts.sessionName,
           cwd: opts.workingDirectory,
@@ -497,7 +497,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         if (runResult.exitCode !== 0) {
           throw new Error(`zellij run failed: ${runResult.stderr || runResult.stdout}`);
         }
-        const panes = await listSessionPanes(startupActionTimeoutMs);
+        const panes = await listSessionPanes(opts.sessionName, startupActionTimeoutMs);
         const paneId = resolveLivePaneId({
           paneIdFromRun: resolvePaneFromRunOutput(runResult.stdout),
           panes,
@@ -610,7 +610,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       try {
         await actions.pasteText({
           zellijBinary: params.zellijBinary,
-          env: baseEnv(params.socketDir),
+          env: baseEnv(params.socketDir, handle.sessionName),
           paneId,
           text: textToWrite,
           timeoutMs: remainingForWrite,
@@ -637,7 +637,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
                 const screenText = await actions.dumpScreen({
                   zellijBinary: params.zellijBinary,
-                  env: baseEnv(params.socketDir),
+                  env: baseEnv(params.socketDir, handle.sessionName),
                   paneId,
                   timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
                 });
@@ -654,7 +654,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
           submitEnter: async ({ remainingTimeoutMs }) => {
             await actions.sendEnter({
               zellijBinary: params.zellijBinary,
-              env: baseEnv(params.socketDir),
+              env: baseEnv(params.socketDir, handle.sessionName),
               paneId,
               timeoutMs: remainingTimeoutMs ?? DEFAULT_ZELLIJ_ACTION_TIMEOUT_MS,
             });
@@ -665,7 +665,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
               verifyAfterSubmit: async ({ promptText, remainingTimeoutMs }) => {
                 const screenText = await actions.dumpScreen({
                   zellijBinary: params.zellijBinary,
-                  env: baseEnv(params.socketDir),
+                  env: baseEnv(params.socketDir, handle.sessionName),
                   paneId,
                   timeoutMs: remainingTimeoutMs ?? actionTimeoutMs,
                 });
@@ -715,7 +715,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       }
       await actions.sendEscape({
         zellijBinary: params.zellijBinary,
-        env: baseEnv(params.socketDir),
+        env: baseEnv(params.socketDir, handle.sessionName),
         paneId: inspection.targetPaneId,
         timeoutMs: actionTimeoutMs,
       });
@@ -726,7 +726,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       return createZellijTerminalControlPort({
         actions,
         zellijBinary: params.zellijBinary,
-        env: baseEnv(params.socketDir),
+        env: baseEnv(params.socketDir, handle.sessionName),
         sessionName: handle.sessionName,
         ...(handle.paneId !== undefined ? { paneId: handle.paneId } : {}),
         chunkSize: writeChunkSize,
@@ -744,7 +744,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
       }
       await actions.closePane({
         zellijBinary: params.zellijBinary,
-        env: baseEnv(params.socketDir),
+        env: baseEnv(params.socketDir, handle.sessionName),
         paneId,
         timeoutMs: actionTimeoutMs,
       });

@@ -203,10 +203,51 @@ export class TmuxUtilities {
       fullCmd.splice(baseCmd.length + 1, 0, '-t', target);
     }
 
-    return this.executeCommand(fullCmd, {
+    const detachedCreation = (commandName === 'new-session' || commandName === 'new-window') && cmd.includes('-d');
+    const printCreation = cmd.includes('-P');
+    if (detachedCreation) {
+      // Detached new-window does not change the native queue's current window.
+      // Capture the immutable created ID instead of resizing the previous window.
+      const formatIndex = fullCmd.indexOf('-F', baseCmd.length);
+      const format = formatIndex >= 0 ? fullCmd[formatIndex + 1] : commandName === 'new-session'
+        ? '#{session_name}:' : '#{session_name}:#{window_index}.#{pane_index}';
+      if (formatIndex >= 0) fullCmd.splice(formatIndex, 2);
+      fullCmd.splice(baseCmd.length + 1, 0, '-P', '-F', `#{window_id}\t${format ?? ''}`);
+    }
+
+    const result = await this.executeCommand(fullCmd, {
       ...(stdin !== undefined ? { stdin } : {}),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
+    if (detachedCreation && result) {
+      const createdWindow = /^(@\d+)\t/.exec(result.stdout);
+      if (createdWindow) {
+        result.stdout = printCreation ? result.stdout.slice(createdWindow[0].length) : '';
+        // tmux 3.4's initial latest sizing includes unrelated sessions' clients.
+        // Native -a scopes sizing to this window, falling back to default-size.
+        // Restore inheritance immediately so later attached clients still resize it.
+        const windowId = createdWindow[1];
+        const localPolicy = await this.executeCommand([...baseCmd, 'show-options', '-w', '-t', windowId, 'window-size'], options);
+        if (!localPolicy || localPolicy.returncode !== 0) {
+          logTmuxWarn('[TMUX] Failed to read detached window sizing policy', { windowId, stderr: localPolicy?.stderr });
+          return result;
+        }
+        const restorePolicy = localPolicy.stdout.trim() === 'window-size latest'
+          ? `set-option -w -t ${windowId} window-size latest`
+          : `set-option -wu -t ${windowId} window-size`;
+        const sizing = await this.executeCommand([...baseCmd, 'if-shell', '-F', '-t', windowId,
+          '#{&&:#{==:#{window-size},latest},#{==:#{session_attached},0}}',
+          `resize-window -a -t ${windowId} ; ${restorePolicy}`,
+        ], options);
+        if (!sizing || sizing.returncode !== 0) {
+          // Creation succeeded; do not convert this into a retryable launch error.
+          logTmuxWarn('[TMUX] Failed to reconcile detached window geometry', { windowId: createdWindow[1], stderr: sizing?.stderr });
+        }
+      } else if (result.returncode === 0) {
+        logTmuxWarn('[TMUX] Created window ID missing; detached geometry was not reconciled');
+      }
+    }
+    return result;
   }
 
   /**
