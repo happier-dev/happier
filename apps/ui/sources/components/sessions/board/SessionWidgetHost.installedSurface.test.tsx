@@ -1,16 +1,32 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1,
+    PluginProjectionV2Schema, SessionCurrentProjectionRecordV1Schema, SessionListQueryResponseV1Schema, projectLegacySessionAccessCapabilitiesV1,
+    tryWriteServerEnabledBitInPlace, type PluginProjectionV2 } from '@happier-dev/protocol';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
+import { widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 import { manifest as publicAuthoringManifest } from '../../../../../../packages/plugin-sdk/examples/public-authoring/index.ts';
 import { readCanonicalPluginManifest } from '../../../../../cli/src/plugins/manifest/normalize.ts';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { answerMachineProjectionDescribeAtRpcBoundary } from '@/dev/testkit/mocks/machineProjectionRpc';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { storage } from '@/sync/domains/state/storage';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
@@ -29,73 +45,127 @@ import { createSessionBoardSourceAvailabilityResolver } from './sessionBoardItem
  * subscription just to look busy. The one-primary rule says only the placement
  * the Session shell selected may run; the others are inert references.
  *
- * The incumbent plugin subsystem is replaced at its own owner boundary (the same
- * convention `AgentInlineSurface.test.tsx` uses); the shell, presentation and
- * correlation below all run for real.
+ * Only the foreign executable renderer is replaced. Shell admission, the
+ * incumbent host, exact-target snapshots and physical lifetimes run for real.
  */
 
 const state = vi.hoisted(() => ({
     mounts: [] as Record<string, unknown>[],
     activeMountKeys: new Set<string>(),
     session: null as ReturnType<typeof createSessionFixture> | null,
+    serverId: '',
+    daemonProjection: null as PluginProjectionV2 | null,
+    detailResponse: null as Promise<Response> | null,
+    detailRequested: false,
+    mountedProps: new Map<string, Record<string, unknown>>(),
 }));
 
-vi.mock('@/components/plugins/surfaces', () => ({
-    PluginInlineSurfaceHost: (props: Record<string, unknown>) => {
-        state.mounts.push(props);
-        const mountInstanceKey = String(props.mountInstanceKey);
-        React.useEffect(() => {
-            state.activeMountKeys.add(mountInstanceKey);
-            return () => { state.activeMountKeys.delete(mountInstanceKey); };
-        }, [mountInstanceKey]);
-        return React.createElement('PluginInlineSurfaceHost');
+installDisconnectedServerSocketBoundary();
+// The generic Node stub creates a router per render. A mounted host needs the
+// navigation SDK's stable router identity, supplied by the canonical boundary.
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
+// The daemon's describe RPC is the external producer boundary. Catalog,
+// currentness, exact Session selection and input admission remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async (params: { method: string; machineId: string; payload?: { pluginId?: string } }) => {
+        if (params.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+            const pluginId = params.payload?.pluginId;
+            const entry = Object.values(state.daemonProjection?.familiesById.pluginUi?.entriesById ?? {})
+                .find(entry => entry.pluginId === pluginId);
+            return { status: 'current', targetedContributions: {
+                target: { pluginId, occurrenceId: entry?.occurrenceId,
+                    sourceCustody: { kind: 'development', registeredRootId: `${pluginId}-fixture` } }, points: [],
+            }, targetedSurfaceMounts: [] };
+        }
+        return answerMachineProjectionDescribeAtRpcBoundary(() => ({
+            supported: true, projection: state.daemonProjection,
+        }))(params);
     },
 }));
 
-// Policy evaluation has its own owner tests. This composition suite supplies
-// the same admitted exact-Session context so importing its runtime hook does not
-// require generated bundled-plugin artifacts that are intentionally absent from
-// source-only remote mirrors.
-vi.mock('@/components/sessions/plugins/useSessionPluginPolicyContext', () => ({
-    useSessionPluginPolicyContext: () => ({ platform: 'web' }),
-}));
+vi.mock('@/components/plugins/surfaces', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/components/plugins/surfaces')>();
+    return { ...original, PluginInlineSurfaceHost: (props: React.ComponentProps<typeof original.PluginInlineSurfaceHost>) => {
+        state.mountedProps.set(String(props.mountInstanceKey), props);
+        return React.createElement(original.PluginInlineSurfaceHost, props);
+    } };
+});
 
-// Store hooks are a process boundary for this focused host test. Keep the mock
-// closed so an unrelated generated Artifact inventory cannot determine whether
-// the placement/currentness behavior is runnable on a remote executor.
-vi.mock('@/sync/store/hooks', () => ({
-    useSession: () => state.session,
-    useSessionServerId: () => 'home-a',
-    useSettings: () => ({}),
-    useLocalSetting: () => null,
-}));
-
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    useSessionStatus: () => ({ state: 'waiting' }),
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesSnapshotForServerId: () => ({ status: 'ready', features: {} }),
-    resolveRuntimeFeatureDecisionFromSnapshot: () => ({ state: 'enabled' }),
-}));
+// This boundary stands for foreign plugin code; the host prepares its real
+// RenderContext and controller lifetime before reaching it.
+vi.mock('@/components/plugins/reactNative/PluginReactNativeSurface', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/components/plugins/reactNative/PluginReactNativeSurface')>();
+    return { ...original, PluginReactNativeSurface: (props: React.ComponentProps<typeof original.PluginReactNativeSurface>) => {
+        const mountInstanceKey = String(props.mountInstanceKey);
+        React.useEffect(() => {
+            const mounted = state.mountedProps.get(mountInstanceKey);
+            if (!mounted) throw new Error('The foreign renderer must have a real inline host');
+            state.mounts.push(mounted);
+            state.activeMountKeys.add(mountInstanceKey);
+            return () => { state.activeMountKeys.delete(mountInstanceKey); };
+        }, [mountInstanceKey]);
+        return React.createElement('ForeignWidgetRenderer');
+    } };
+});
 
 // The generated app-package byte inventory is intentionally absent from the
 // source-only remote test mirror. Installed-surface correlation/currentness is
-// below that Artifact-read boundary, and the executable host itself is already
-// replaced above.
+// below that Artifact-read boundary. The foreign renderer never loads bytes.
 vi.mock('@/sync/domains/plugins/availability/bundledAppExactArtifactSource', () => ({
     createBundledPluginUiAppExactArtifactSource: () => null,
 }));
-vi.mock('@/sync/domains/plugins/availability/reader', () => ({
-    createPluginAccountAvailabilityReader: vi.fn(() => null),
-    createPluginAccountAvailabilityReaderStore: vi.fn(() => ({
-        get: vi.fn(() => null),
-        subscribe: vi.fn(() => () => {}),
-    })),
-    projectPluginAccountAvailabilityMaterializationIdentity: vi.fn(() => null),
-}));
 
 const SURFACE = { pluginId: 'acme.review', localId: 'review-status-widget' } as const;
+const wireProjections = new WeakMap<NonNullable<SessionPluginRuntimeState['pluginUiProjection']>, PluginProjectionV2>();
+
+function sessionHttpRecord(session: ReturnType<typeof createSessionFixture>) {
+    const owner = createSessionOwnerMetadataV1({ metadata: session.metadata });
+    if (!owner.ok) throw new Error('Expected canonical owner metadata');
+    // The loaded sharing feature opts exact detail into accessProjectionVersion=1.
+    // Detail and native options must serve the same current server projection.
+    return SessionCurrentProjectionRecordV1Schema.parse({
+        id: session.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
+        active: session.active, activeAt: session.activeAt, archivedAt: null,
+        encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 1,
+        metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: session.metadata })), metadataVersion: 1,
+        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata), ownerMetadataVersion: 1,
+        agentState: null, agentStateVersion: 1, share: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) },
+        viewer: { readState: { state: 'not_started' }, relevance: { relevant: false, reasons: [] },
+            attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
+            follow: { follows: false, notificationLevel: 'none' }, notification: { level: 'none', source: 'preference' } },
+        responsibleAccountId: null, responsibleAccount: null,
+    });
+}
+
+function projectFixture(wire: PluginProjectionV2) {
+    const family = wire.familiesById.pluginUi;
+    const entries = Object.values(family?.entriesById ?? {});
+    const renderers = entries.filter(entry => entry.contributionKind === 'surfacePlacement').map(entry => {
+        const renderer = entry.renderer as { contributionId: string };
+        const artifactId = `${entry.pluginId}-widget`;
+        const digest = `sha256:${'a'.repeat(64)}`;
+        const relativePath = `react-native/${artifactId}/entry.cjs.bundle`;
+        return { id: `reactNativeBundle:${entry.pluginId}:${renderer.contributionId}`, pluginId: entry.pluginId,
+            occurrenceId: entry.occurrenceId, contributionKind: 'reactNativeBundle', contributionId: renderer.contributionId,
+            generatedV2: true, pluginVersion: '1.0.0', artifactGraph: { artifactId, tier: 'reactNative', entry: relativePath,
+                files: [{ relativePath, digest: `sha256:${'b'.repeat(64)}`, byteSize: 16 }], digest,
+                builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0' },
+            runtime: { decision: { state: 'load', reason: 'compatible', diagnostics: [] }, loadPolicy: { source: 'installedArtifact' },
+                cacheKey: artifactId, cacheIdentity: { artifactDigest: digest } } };
+    });
+    const current = PluginProjectionV2Schema.parse({ ...wire, installedPackagesById: Object.fromEntries(Object.entries(wire.installedPackagesById)
+        .map(([id, pkg]) => [id, { ...pkg, occurrenceId: entries.find(entry => entry.pluginId === id)?.occurrenceId, version: '1.0.0' }])),
+        familiesById: { ...wire.familiesById, ...(family ? { pluginUi: { ...family,
+            entriesById: { ...family.entriesById, ...Object.fromEntries(renderers.map(renderer => [renderer.id, renderer])) } } } : {}) } });
+    const projection = normalizePluginUiProjection(current);
+    wireProjections.set(projection, current);
+    return projection;
+}
 
 function publicAuthoringProjection() {
     const manifest = readCanonicalPluginManifest(publicAuthoringManifest);
@@ -126,9 +196,12 @@ function publicAuthoringProjection() {
         target: binding.target,
         renderer: { kind: primaryRenderer.kind, contributionId: primaryRenderer.id },
         display: { title: view.title },
+        inputs: view.inputs,
+        inputSchema: view.inputSchema,
+        sessionInputPath: view.sessionInputPath,
         availability: { state: 'available', reason: 'available', diagnostics: [] },
     };
-    return normalizePluginUiProjection({
+    return projectFixture(PluginProjectionV2Schema.parse({
         v: 2,
         generation: 17,
         installedPackagesById: {
@@ -142,8 +215,8 @@ function publicAuthoringProjection() {
             },
         },
         actionsById: {},
-        familiesById: { pluginUi: { entriesById: { [entry.id]: entry } } },
-    } as unknown as PluginProjectionV2);
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [entry.id]: entry } } },
+    }));
 }
 
 function projection(options: Readonly<{
@@ -170,11 +243,17 @@ function projection(options: Readonly<{
         target: binding.target,
         renderer: { kind: 'reactNative', contributionId: 'review-native' },
         display: { title: 'Review status' },
+        inputs: { fields: [{ path: 'session', title: 'Session', widget: 'json', required: true },
+            { path: 'view', title: 'View', widget: 'text' }] },
+        inputSchema: { type: 'object', properties: { session: { type: 'object',
+            properties: { serverId: { type: 'string' }, sessionId: { type: 'string' } }, required: ['serverId', 'sessionId'], additionalProperties: false },
+            view: { type: 'string' } }, required: ['session'], additionalProperties: false },
+        sessionInputPath: 'session',
         availability: options.availability === 'disabled'
             ? { state: 'disabled', reason: 'plugin_disabled', diagnostics: [] }
             : { state: 'available', reason: 'available', diagnostics: [] },
     };
-    return normalizePluginUiProjection({
+    return projectFixture(PluginProjectionV2Schema.parse({
         v: 2,
         generation: options.generation ?? 3,
         installedPackagesById: options.installed === false ? {} : {
@@ -182,16 +261,17 @@ function projection(options: Readonly<{
                 id: SURFACE.pluginId,
                 displayName: 'Review Assistant',
                 enabled: true,
-                source: { kind: 'local', path: '/plugins/acme.review' },
+                source: { kind: 'local', locator: '/plugins/acme.review' },
             },
         },
         actionsById: {},
         familiesById: {
             pluginUi: {
+                family: 'pluginUi',
                 entriesById: options.includePlacement === false ? {} : { [entry.id]: entry },
             },
         },
-    } as unknown as PluginProjectionV2);
+    }));
 }
 
 function runtime(overrides: Partial<SessionPluginRuntimeState> = {}): SessionPluginRuntimeState {
@@ -201,10 +281,10 @@ function runtime(overrides: Partial<SessionPluginRuntimeState> = {}): SessionPlu
         phase: 'current',
         interactionEnabled: true,
         machineId: 'machine-a',
-        serverId: 'home-a',
+        serverId: state.serverId,
         platform: 'web',
         ...overrides,
-    } as SessionPluginRuntimeState;
+    };
 }
 
 const item: SessionBoardItemProjection = {
@@ -212,16 +292,29 @@ const item: SessionBoardItemProjection = {
     revision: 'rev-1',
     state: {
         kind: 'ready',
-        item: {
+        item: SessionSurfaceItemV1Schema.parse({
             v: 1,
             title: 'Review status',
             frame: 'card',
             height: { mode: 'auto', fallback: 'regular' },
-            source: { kind: 'installedSurface', surface: SURFACE },
-            input: { view: 'summary' },
-        } as SessionSurfaceItemV1,
+            source: { kind: 'widget', instance: { v: 1, id: 'widget-1', definition: { kind: 'installed', surface: SURFACE },
+                bindings: { session: { kind: 'context', slot: 'session' }, view: { kind: 'value', value: 'summary' } } } },
+        }),
     },
 };
+
+function FixtureHost(props: React.ComponentProps<typeof SessionWidgetHost>): React.ReactElement {
+    const current = props.pluginRuntime;
+    if (!current) throw new Error('The mounted fixture requires a current runtime');
+    React.useLayoutEffect(() => {
+        state.daemonProjection = current.pluginUiProjection ? wireProjections.get(current.pluginUiProjection) ?? null : null;
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-a', serverId: state.serverId });
+    }, [current.pluginUiProjection]);
+    return <AppShellPluginUiProjectionValueProvider value={{ ...current, clientExecutableActivation: { status: 'ready' },
+        reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+        <SessionWidgetHost {...props} serverId={state.serverId} />
+    </AppShellPluginUiProjectionValueProvider>;
+}
 
 async function renderPlacement(input: Readonly<{
     host: SessionBoardMountHost;
@@ -231,10 +324,11 @@ async function renderPlacement(input: Readonly<{
     runtimeOverrides?: Partial<SessionPluginRuntimeState>;
     onManagePlugin?: () => void;
     onOpenHere?: () => void;
+    onSetInputs?: React.ComponentProps<typeof SessionWidgetHost>['onSetInputs'];
     executableCurrentness?: 'current' | 'stale' | 'offline' | 'unverified';
 }>) {
-    const current = { ...runtime(), ...input.runtimeOverrides } as SessionPluginRuntimeState;
-    return await renderScreen(React.createElement(SessionWidgetHost, {
+    const current = { ...runtime(), ...input.runtimeOverrides };
+    return await renderScreen(React.createElement(FixtureHost, {
         sessionId: 'session-1',
         session: state.session ?? undefined,
         item,
@@ -249,6 +343,7 @@ async function renderPlacement(input: Readonly<{
         resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(current),
         ...(input.onManagePlugin ? { onManagePlugin: input.onManagePlugin } : {}),
         ...(input.onOpenHere ? { onOpenHere: input.onOpenHere } : {}),
+        ...(input.onSetInputs ? { onSetInputs: input.onSetInputs } : {}),
         testID: 'widget',
     }));
 }
@@ -263,19 +358,81 @@ function actionsOf(screen: Awaited<ReturnType<typeof renderScreen>>): ReadonlyAr
         ?.actions ?? [];
 }
 
+async function pressPluginRecovery(screen: Awaited<ReturnType<typeof renderScreen>>, onManagePlugin: () => void) {
+    const findCard = () => screen.tree.root.findAll(node => typeof node.props.testID === 'string'
+        && node.props.action?.onPress === onManagePlugin, { deep: true })[0];
+    await vi.waitFor(() => {
+        const cards = screen.tree.root.findAll(node => typeof node.props.diagnosticCode === 'string', { deep: true })
+            .map(node => ({ testID: node.props.testID, code: node.props.diagnosticCode,
+                action: Boolean(node.props.action), suppliedAction: node.props.action?.onPress === onManagePlugin }));
+        expect(findCard(), JSON.stringify(cards)).toBeDefined();
+    });
+    const card = findCard();
+    if (!card) throw new Error('Expected the visible plugin-management recovery');
+    const actionTestId = card.props.action.testID ?? `${card.props.testID}-action`;
+    expect(screen.findByTestId(actionTestId)).not.toBeNull();
+    await screen.pressByTestIdAsync(actionTestId);
+}
+
 describe('SessionWidgetHost installed surface placements', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         standardCleanup();
+        await import('@/sync/syncEngine');
         state.mounts = [];
         state.activeMountKeys.clear();
-        state.session = createSessionFixture({ id: 'session-1' });
+        state.mountedProps.clear();
+        const previous = storage.getState();
+        state.detailResponse = null;
+        state.detailRequested = false;
+        const http = createHomeHubArtifactHttpBoundary('viewer');
+        const features = createRootLayoutFeaturesResponse();
+        if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', true)) throw new Error('Expected the canonical Board feature');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'http://session-widget-host.test', accountId: 'viewer',
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+                // A missing persisted Board layout is a valid empty layout,
+                // unlike a malformed HTTP envelope. Catalog admission reads it.
+                if (path === '/v2/sessions/session-1/system-records/record') return Response.json({ record: null });
+                if (path === '/v2/sessions/session-1/system-records') return Response.json({ records: [], nextCursor: null, hasNext: false });
+                if (path === '/v2/sessions/query') {
+                    const session = state.session;
+                    if (!session) throw new Error('Expected the current exact Session for native options');
+                    return Response.json(SessionListQueryResponseV1Schema.parse({ sessions: [sessionHttpRecord(session)],
+                        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
+                }
+                if (new URL(String(url)).pathname === '/v2/sessions/session-1' && state.detailResponse) {
+                    state.detailRequested = true;
+                    // Each HTTP read owns a fresh body, even when multiple
+                    // legitimate hydration consumers share the held response.
+                    return (await state.detailResponse).clone();
+                }
+                return http.request(url, init);
+            } });
+        state.serverId = connection.home.id;
+        state.daemonProjection = null;
+        clearDaemonMergedProjectionCacheForTests();
+        state.session = createSessionFixture({ id: 'session-1', serverId: state.serverId,
+            metadata: { path: '/fixture', host: 'fixture', machineId: 'machine-a' } });
+        const machine = createMachineFixture({ id: 'machine-a', activeAt: Date.now() });
+        storage.setState({ endpointStatus: 'online', sessions: { [state.session.id]: state.session },
+            sessionListRowsByServerId: { [state.serverId]: { [state.session.id]: createSessionListRenderableSessionFixture(state.session) } },
+            machines: { [machine.id]: machine }, machineListByServerId: { [state.serverId]: [machine] } });
+        onTestFinished(async () => {
+            standardCleanup();
+            clearDaemonMergedProjectionCacheForTests();
+            await connection.dispose();
+            storage.setState(previous, true);
+        });
     });
 
     it('mounts the maintained emitted public-authoring widget through the real candidate and host path', async () => {
+        const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+        onTestFinished(restoreExecutorModuleLoader);
         const pluginUiProjection = publicAuthoringProjection();
-        const candidate = selectWidgetCandidates(pluginUiProjection, 'session').find(
-            (value) => value.surface.pluginId === publicAuthoringManifest.id
-                && value.surface.localId === 'review-status-widget',
+        const candidate = selectWidgetCandidates(pluginUiProjection, { platform: 'web' }).find(
+            (value) => value.target === 'session' && value.surface?.pluginId === publicAuthoringManifest.id
+                && value.surface?.localId === 'review-status-widget',
         );
         expect(candidate).toMatchObject({
             surface: {
@@ -295,13 +452,13 @@ describe('SessionWidgetHost installed surface placements', () => {
                     title: candidate.title,
                     frame: 'card',
                     height: { mode: 'auto', fallback: 'regular' },
-                    source: { kind: 'installedSurface', surface: candidate.surface },
-                    input: { view: 'summary' },
+                    source: { kind: 'widget', instance: { v: 1, id: 'public-widget-1', definition: widgetCandidateDefinitionV1(candidate),
+                        bindings: { session: { kind: 'context', slot: 'session' }, view: { kind: 'value', value: 'summary' } } } },
                 }),
             },
         };
         const current = runtime({ pluginUiProjection });
-        const renderPublicWidget = (executableCurrentness: 'current' | 'stale') => React.createElement(SessionWidgetHost, {
+        const renderPublicWidget = (executableCurrentness: 'current' | 'stale') => React.createElement(FixtureHost, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
             item: publicItem,
@@ -317,14 +474,19 @@ describe('SessionWidgetHost installed surface placements', () => {
         });
 
         const screen = await renderScreen(renderPublicWidget('current'));
-        expect(state.mounts).toHaveLength(1);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            const diagnosticCodes = screen.tree.root.findAll(node => typeof node.props.diagnosticCode === 'string', { deep: true })
+                .map(node => node.props.diagnosticCode);
+            expect(state.mounts, diagnosticCodes.join(',')).toHaveLength(1);
+        });
         expect(state.mounts[0]).toMatchObject({
             placement: {
                 pluginId: publicAuthoringManifest.id,
                 descriptorId: 'review-status-widget',
             },
             inlineMount: { role: 'widget', presentation: 'content' },
-            launchInput: { view: 'summary' },
+            launchInput: { session: { serverId: state.serverId, sessionId: 'session-1' }, view: 'summary' },
         });
 
         await screen.update(renderPublicWidget('stale'));
@@ -337,12 +499,13 @@ describe('SessionWidgetHost installed surface placements', () => {
         // grid's chrome into every assertion.
         await renderPlacement({ host: 'sidebar', primaryHost: 'sidebar', density: 'compact' });
         expect(state.mounts).toHaveLength(1);
-        expect(state.mounts[0]!.launchInput).toEqual({ view: 'summary' });
+        expect(state.mounts[0]!.launchInput).toEqual({ session: { serverId: state.serverId, sessionId: 'session-1' }, view: 'summary' });
+        expect(state.detailRequested).toBe(false);
     });
 
     it('uses current installed-frame height for Auto, ignores it while fixed, and restores it with Fit content', async () => {
         const onSetHeight = vi.fn();
-        const renderWidget = (height: SessionSurfaceItemV1['height']) => React.createElement(SessionWidgetHost, {
+        const renderWidget = (height: SessionSurfaceItemV1['height']) => React.createElement(FixtureHost, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
             item: {
@@ -408,7 +571,7 @@ describe('SessionWidgetHost installed surface placements', () => {
     it('retains one item through disabled and uninstalled states and remounts a fresh H lifetime on reinstall', async () => {
         const managePlugin = vi.fn();
         const removeFromBoard = vi.fn();
-        const renderWidget = (current: SessionPluginRuntimeState) => React.createElement(SessionWidgetHost, {
+        const renderWidget = (current: SessionPluginRuntimeState) => React.createElement(FixtureHost, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
             item,
@@ -435,8 +598,8 @@ describe('SessionWidgetHost installed surface placements', () => {
         // The canonical availability owner retires the executable mount before
         // publishing the two valid lifecycle recoveries on the inert card.
         expect(state.activeMountKeys).toEqual(new Set());
-        await screen.pressByTestIdAsync('widget-state-action');
-        await screen.pressByTestIdAsync('widget-state-secondary-action');
+        await pressPluginRecovery(screen, managePlugin);
+        await act(async () => { (actionsOf(screen).find(action => action.id === 'remove')?.onPress as (() => void) | undefined)?.(); });
         expect(managePlugin).toHaveBeenCalledOnce();
         expect(removeFromBoard).toHaveBeenCalledOnce();
 
@@ -448,8 +611,8 @@ describe('SessionWidgetHost installed surface placements', () => {
         });
         await screen.update(renderWidget(uninstalled));
         expect(state.activeMountKeys).toEqual(new Set());
-        await screen.pressByTestIdAsync('widget-state-action');
-        await screen.pressByTestIdAsync('widget-state-secondary-action');
+        await pressPluginRecovery(screen, managePlugin);
+        await act(async () => { (actionsOf(screen).find(action => action.id === 'remove')?.onPress as (() => void) | undefined)?.(); });
         expect(managePlugin).toHaveBeenCalledOnce();
         expect(removeFromBoard).toHaveBeenCalledOnce();
 
@@ -472,7 +635,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(screen.findByTestId('widget-provenance')).toBeTruthy();
     });
 
-    it('never offers Open for an unavailable retained widget', async () => {
+    it('keeps a retained record preview inert while Open navigates to its primary placement', async () => {
         const open = vi.fn();
         const screen = await renderPlacement({
             host: 'sidebar',
@@ -486,14 +649,16 @@ describe('SessionWidgetHost installed surface placements', () => {
         });
 
         expect(state.mounts).toHaveLength(0);
-        expect(screen.findByTestId('widget-state')).not.toBeNull();
-        expect(actionsOf(screen).some((action) => action.id === 'openHere')).toBe(false);
-        expect(open).not.toHaveBeenCalled();
+        expect(screen.findByTestId('widget-state')).toBeNull();
+        expect(screen.findByTestId('widget-open-here')).not.toBeNull();
+        await screen.pressByTestIdAsync('widget-open-here');
+        expect(open).toHaveBeenCalledOnce();
+        expect(state.mounts).toHaveLength(0);
     });
 
     it('unmounts a stale retained item and gives the same record a fresh physical lifetime after reconnect', async () => {
         const current = runtime();
-        const renderWidget = (executableCurrentness: 'current' | 'stale' | 'offline' | 'unverified') => React.createElement(SessionWidgetHost, {
+        const renderWidget = (executableCurrentness: 'current' | 'stale' | 'offline' | 'unverified') => React.createElement(FixtureHost, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
             item,
@@ -526,16 +691,18 @@ describe('SessionWidgetHost installed surface placements', () => {
             host: 'details',
             primaryHost: 'details',
             density: 'full',
-            runtimeOverrides: { phase: 'retainedOffline', interactionEnabled: false },
             executableCurrentness: 'current',
         });
-
-        expect(state.mounts).toHaveLength(0);
+        const initialMountKey = state.mounts.at(-1)?.mountInstanceKey;
+        expect(initialMountKey).toEqual(expect.any(String));
+        await act(async () => { storage.setState({ endpointStatus: 'offline' }); });
+        expect(state.activeMountKeys.size).toBe(0);
+        expect(state.mounts).toHaveLength(1);
         expect(screen.findByTestId('widget-runtime-retainedOffline-state')).not.toBeNull();
     });
 
     it('binds a fresh physical mount nonce when the current installed generation changes', async () => {
-        const renderWidget = (current: SessionPluginRuntimeState) => React.createElement(SessionWidgetHost, {
+        const renderWidget = (current: SessionPluginRuntimeState) => React.createElement(FixtureHost, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
             item,
@@ -570,37 +737,86 @@ describe('SessionWidgetHost installed surface placements', () => {
     });
 
     it('derives plugin presentation from the actual compact or expanded host, not persisted frame chrome', async () => {
-        await renderPlacement({ host: 'companion', primaryHost: 'companion', density: 'compact' });
+        const compact = await renderPlacement({ host: 'companion', primaryHost: 'companion', density: 'compact' });
         expect(state.mounts.at(-1)?.inlineMount).toMatchObject({ presentation: 'content' });
-
+        await compact.unmount();
+        expect(state.activeMountKeys.size).toBe(0);
         await renderPlacement({ host: 'focusedDetails', primaryHost: 'focusedDetails', density: 'full', expanded: true });
-        expect(state.mounts.at(-1)?.inlineMount).toMatchObject({ presentation: 'fill' });
+        await vi.waitFor(() => expect(state.mounts.at(-1)?.inlineMount).toMatchObject({ presentation: 'fill' }));
     });
 
     // The mobile Cockpit renders the Board before its Session projection has
     // hydrated. Reporting "this device cannot show this content" for a widget
     // whose plugin is installed, enabled and projected is a lie the person
     // cannot act on — and it is not a renderer fact at all.
-    it('reports a Session that has not hydrated as loading, never as a missing renderer', async () => {
+    it.each(['missing', 'available'] as const)('reports a Session that has not hydrated as loading, then settles %s', async (settlement) => {
+        const session = state.session;
+        if (!session) throw new Error('Expected the known Session fixture');
         state.session = null;
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full' });
-
-        expect(state.mounts).toHaveLength(0);
-        const cards = screen.tree.root.findAll(
-            (node) => typeof (node.props as { diagnosticCode?: unknown }).diagnosticCode === 'string',
-            { deep: true },
-        );
-        const codes = cards.map((node) => (node.props as { diagnosticCode: string }).diagnosticCode);
-        expect(codes).toContain('widget_session_hydrating');
-        expect(codes).not.toContain('session_board_renderer_missing');
+        // The list already names this exact Session; its detail request is
+        // genuinely pending, rather than a settled not-found lookup.
+        storage.setState({ sessions: {} });
+        const response = createDeferred<Response>();
+        state.detailResponse = response.promise;
+        const { sync } = await import('@/sync/sync');
+        const hydration = sync.ensureSessionVisibleForMessageRoute('session-1', {
+            serverId: state.serverId, forceRefresh: true, hydrateMessages: false,
+        });
+        try {
+            await vi.waitFor(() => expect(state.detailRequested).toBe(true));
+            expect(storage.getState().sessionListRowsByServerId[state.serverId]?.['session-1']).toMatchObject({ id: 'session-1' });
+            const onSetInputs = vi.fn<NonNullable<React.ComponentProps<typeof SessionWidgetHost>['onSetInputs']>>()
+                .mockResolvedValue({ ok: true });
+            const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', onSetInputs });
+            expect(state.mounts).toHaveLength(0);
+            const cards = screen.tree.root.findAll(
+                (node) => typeof (node.props as { diagnosticCode?: unknown }).diagnosticCode === 'string',
+                { deep: true },
+            );
+            const codes = cards.map((node) => (node.props as { diagnosticCode: string }).diagnosticCode);
+            expect(codes).toContain('widget_session_hydrating');
+            expect(codes).not.toContain('session_board_renderer_missing');
+            expect(screen.findByTestId('widget-inputs-repair')).toBeNull();
+            let hydrationOutcome: Awaited<typeof hydration> | undefined;
+            await act(async () => {
+                response.resolve(settlement === 'missing'
+                    ? Response.json({ error: 'Session not found' }, { status: 404 })
+                    : Response.json({ session: sessionHttpRecord(session) }));
+                hydrationOutcome = await hydration;
+            });
+            if (settlement === 'missing') {
+                await vi.waitFor(() => expect(screen.tree.root.findAll(
+                    node => node.props.diagnosticCode === 'widget_session_unavailable', { deep: true },
+                )).not.toHaveLength(0));
+                expect(state.activeMountKeys.size).toBe(0);
+                expect(screen.findByTestId('widget-inputs-repair')).not.toBeNull();
+                await screen.pressByTestIdAsync('widget-inputs-repair');
+                expect(onSetInputs).not.toHaveBeenCalled();
+            } else {
+                await vi.waitFor(async () => {
+                    await flushHookEffects();
+                    const currentSession = storage.getState().sessions[session.id];
+                    const codes = screen.tree.root.findAll(node => typeof node.props.diagnosticCode === 'string', { deep: true })
+                        .map(node => node.props.diagnosticCode);
+                    expect(state.activeMountKeys.size, JSON.stringify({ codes, access: currentSession?.access,
+                        metadata: currentSession?.metadata, hydrationOutcome })).toBe(1);
+                });
+                expect(state.mounts.at(-1)?.launchInput).toEqual({ session: { serverId: state.serverId, sessionId: session.id }, view: 'summary' });
+            }
+        } finally {
+            response.resolve(Response.json({ error: 'Session not found' }, { status: 404 }));
+            await hydration;
+        }
     });
 
     it('reports an establishing plugin projection as loading, never as an uninstalled plugin', async () => {
+        const onManagePlugin = vi.fn();
         const screen = await renderPlacement({
             host: 'details',
             primaryHost: 'details',
             density: 'full',
             runtimeOverrides: { pluginUiProjection: null, phase: 'establishing' },
+            onManagePlugin,
         });
 
         expect(state.mounts).toHaveLength(0);
@@ -611,5 +827,18 @@ describe('SessionWidgetHost installed surface placements', () => {
         const codes = cards.map((node) => (node.props as { diagnosticCode: string }).diagnosticCode);
         expect(codes).toContain('widget_projection_establishing');
         expect(codes).not.toContain('plugin_unavailable');
+        expect(screen.findByTestId('widget-state-action')).toBeNull();
+        expect(onManagePlugin).not.toHaveBeenCalled();
+    });
+
+    it('refuses an installed definition absent from a settled projection', async () => {
+        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full',
+            runtimeOverrides: { pluginUiProjection: null, phase: 'current' } });
+
+        expect(state.mounts).toHaveLength(0);
+        expect(screen.tree.root.findAll(node => node.props.diagnosticCode === 'widget_type_unavailable', { deep: true }))
+            .not.toHaveLength(0);
+        expect(screen.tree.root.findAll(node => node.props.diagnosticCode === 'widget_projection_establishing', { deep: true }))
+            .toHaveLength(0);
     });
 });

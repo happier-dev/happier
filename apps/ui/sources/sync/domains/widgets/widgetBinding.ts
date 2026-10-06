@@ -8,9 +8,10 @@ import type { JsonValue } from '@happier-dev/protocol';
 
 export type ConfiguredWidgetTargetResolution =
   | Readonly<{ status: 'ready'; target: InstalledWidgetTarget; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
+  | Readonly<{ status: 'loading'; reasonCode: string }>
   | Readonly<{ status: 'selection_required' | 'invalid' | 'unavailable' | 'denied'; reasonCode: string; fields?: readonly WidgetInputIssueV1[] }>;
 /** The current factual refusal handed back to the host's existing inputs editor. */
-export type WidgetInputRepairOutcome = Exclude<ConfiguredWidgetTargetResolution, { status: 'ready' }>;
+export type WidgetInputRepairOutcome = Exclude<ConfiguredWidgetTargetResolution, { status: 'ready' | 'loading' }>;
 export type ConfiguredWidgetTargetInput = Readonly<{
   scope: WidgetSurfaceRefV1; resolvedInput: WidgetBindingResolutionV1;
   definition?: WidgetDefinitionRefV1;

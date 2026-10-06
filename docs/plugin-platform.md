@@ -63,6 +63,10 @@ Widget Views use the same contribution catalog and Surface Registry as other plu
 
 A Session widget selects its exact Home-qualified Session through its declared input path. Following a host context and pinning a different Session are distinct intents. The selected Session supplies current access, policy, machine and projection; neither the physical Home/Session host nor launch-input routing fields grant authority. Missing, ambiguous, lost or denied targets remain repairable and never fall back to the visible Session.
 
+While that exact Session's detail is hydrating, configured widgets consume the existing Session-route hydration lifecycle and show loading without offering input repair. A settled missing or denied target retains its refusal; an available target proceeds through the same access and runtime admission.
+
+An installed widget whose plugin projection is still establishing also remains loading. A settled missing installed descriptor retains the host's supplied plugin-management action; loading does not offer that action.
+
 The existing Summary, Plan, Changes and Local Services metadata/body owners project into that same catalog and admission path as native definitions, without fabricated plugin identities or a parallel creation registry. Configured copies retain independent bindings. Their native bodies use the selected Session's existing data/action owners; a configured Summary's work destination opens that Session's Agents view rather than borrowing the visible Session's local status popover.
 
 Declared `optionsSourceId: 'sessions'` uses the neutral options resolver and returns qualified `{ serverId, sessionId }` choices from current Session discovery. Setup previews resolve the same declared bindings as saved instances without writing them. The surface's `onRepairInputs` callback exposes its typed unresolved binding outcome to the existing setup composition, without creating another input writer.

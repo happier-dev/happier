@@ -12,6 +12,8 @@ import { useActiveServerAccountScope, useProfile, useSetting, useSession } from 
 import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { resolveConfiguredWidgetTarget, type ConfiguredWidgetTargetResolution } from './widgetBinding';
 import { admitWidgetViewerSelectionMetadataV1 } from './widgetViewerSelectionAdmission';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
 
 /** Physical placement supplies context; only the bound exact Session supplies execution facts. */
 export function useConfiguredWidgetTarget(input: Readonly<{
@@ -71,6 +73,12 @@ export function useConfiguredWidgetTarget(input: Readonly<{
         } : null }, { allowLegacy: true }) : selectedSession?.access;
     const selectedIdentityMatches = requested !== null && selectedSession?.id === requested.sessionId && selectedSession.serverId === requested.serverId;
     const selectedCanRead = selectedIdentityMatches && selectedAccess?.capabilities.readTranscript === true;
+    // Exact target hydration has one lifecycle owner. A pending detail is not
+    // missing authority, nor an input the viewer can repair by selecting again.
+    const hydrationAddress = requested && (!selectedSession || selectedCanRead) ? requested : null;
+    const hydration = useHydrateSessionForRoute(hydrationAddress?.sessionId ?? '', 'WidgetSurface.hydrateSession', {
+        ...(hydrationAddress ? { serverId: hydrationAddress.serverId } : {}),
+    });
     const selectedRuntime = useSessionPluginRuntime({ address: !builtin && selectedCanRead ? requested : null });
     const authored = input.descriptor.authoredDefinition;
     const reference = input.instance.definition;
@@ -106,6 +114,8 @@ export function useConfiguredWidgetTarget(input: Readonly<{
     if (input.enabled === false) return { status: 'unavailable', reasonCode: 'widget_inactive' };
     if (!currentViewer) return { status: 'denied', reasonCode: 'widget_viewer_scope_mismatch' };
     if (!currentDefinition) return { status: 'unavailable', reasonCode: 'widget_type_unavailable' };
+    if (hydrationAddress && isSessionRouteHydrationPending(hydration))
+        return { status: 'loading', reasonCode: 'widget_session_hydrating' };
     if (requested && !selectedSession) return sessionRefusal('unavailable', 'widget_session_unavailable');
     if (requested && !selectedIdentityMatches) return sessionRefusal('denied', 'widget_target_identity_mismatch');
     if (requested && !selectedCanRead) return sessionRefusal('denied', 'widget_session_access_denied');
