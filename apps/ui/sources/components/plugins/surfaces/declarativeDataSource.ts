@@ -65,6 +65,7 @@ export function projectDeclarativeDataResourceSnapshot(
     node: PluginDeclarativeDataNodeV1,
     resource: PluginUiResourceSnapshot | null,
     isCurrent: boolean,
+    lastGood?: DeclarativeDataSourceProjection | null,
 ): DeclarativeDataSourceProjection {
     if (!isCurrent) return { node: null, freshness: 'unknown', pending: 'idle', errorCode: 'plugin_surface_retired' };
     if (node.data.kind === 'value') return { node, freshness: 'fresh', pending: 'idle' };
@@ -76,6 +77,8 @@ export function projectDeclarativeDataResourceSnapshot(
         return { node: freezePluginDeclarativeDataNodeV1(node, output), freshness: resource.freshness, pending: resource.pending,
             digest: resource.digest, ...(resource.error?.code ? { errorCode: resource.error.code } : {}) };
     } catch {
-        return { node: null, freshness: 'unknown', pending: resource.pending, errorCode: 'declarative_data_output_invalid' };
+        return { node: lastGood?.node ?? null, freshness: lastGood?.node ? 'stale' : 'unknown',
+            pending: resource.pending, errorCode: 'declarative_data_output_invalid',
+            ...(lastGood?.digest ? { digest: lastGood.digest } : {}) };
     }
 }

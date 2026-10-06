@@ -4,8 +4,95 @@ import {
   createPluginUiResourceStore,
   type PluginUiResourceClient,
 } from './resourceStore.js';
+import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 
 describe('plugin UI Resource store read failures', () => {
+  it.each(['denied', 'unavailable'] as const)('distinguishes authoritative %s watch-open refusal from a nonretryable transport outage', async (code) => {
+    const value = { contentType: 'application/json', digest: 'private', bytes: new TextEncoder().encode('7') };
+    let baselineRead = true;
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      // Keep the independent live baseline pending so a later successful read
+      // cannot legitimately supersede the watch-open failure under assertion.
+      readResource: () => {
+        if (baselineRead) { baselineRead = false; return Promise.resolve(value); }
+        return new Promise(() => {});
+      },
+      watchResource: async () => { throw Object.assign(new Error('Watch refused'), { code, retryable: false }); },
+    } });
+    const entry = store.getEntry('private-metric');
+    await entry.refresh();
+    const release = entry.subscribe(() => {}, true);
+    await vi.waitFor(() => expect(entry.getSnapshot().error?.code).toBe(code));
+    expect(entry.getSnapshot().value).toBe(code === 'denied' ? undefined : value);
+    expect(entry.getSnapshot().freshness).toBe(code === 'denied' ? 'unknown' : 'stale');
+    release();
+    store.dispose();
+  });
+
+  it.each([
+    { code: 'denied', retryable: false },
+    { code: 'plugin_resource_session_access_unavailable' },
+    { code: 'plugin_resource_context_unavailable' },
+    { code: 'plugin_resource_path_denied' },
+    { code: 'unavailable', diagnostics: [{ code: 'plugin_generation_stale' }] },
+  ])('withdraws private bytes on authoritative read refusal $code and admits a later authorized read', async (failure) => {
+    const value = { contentType: 'application/json', digest: 'private', bytes: new TextEncoder().encode('7') };
+    let refused = false;
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: async () => {
+        if (refused) throw Object.assign(new Error('Read authority lost'), failure);
+        return value;
+      },
+    } });
+    const entry = store.getEntry('private-metric');
+    await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
+    refused = true;
+    const withdrawn = await entry.refresh();
+    expect(withdrawn.value).toBeUndefined();
+    expect(withdrawn.digest).toBeUndefined();
+    expect(withdrawn).toMatchObject({ freshness: 'unknown', pending: 'idle', error: { code: failure.code } });
+    refused = false;
+    await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
+    store.dispose();
+  });
+
+  it.each([
+    { code: 'denied', diagnostics: [] },
+    { code: 'unavailable', diagnostics: ['plugin_resource_session_access_unavailable'] },
+    { code: 'unavailable', diagnostics: ['plugin_resource_context_unavailable'] },
+    { code: 'stale_surface', diagnostics: ['plugin_generation_stale'] },
+    { code: 'expired_resource', diagnostics: [] },
+  ] as const)('withdraws private watch output on $code and rejects a late in-flight read', async (failure) => {
+    const value = { contentType: 'application/json', digest: 'private', bytes: new TextEncoder().encode('7') };
+    let deliver: ((event: ResourceSubscriptionEvent) => void) | undefined;
+    let finishRead: ((content: typeof value) => void) | undefined;
+    let pending = false;
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: () => pending ? new Promise(resolve => { finishRead = resolve; }) : Promise.resolve(value),
+      watchResource: async (_resource, listener) => {
+        deliver = listener;
+        return { admittedDigest: value.digest, dispose() {} };
+      },
+    } });
+    const entry = store.getEntry('private-metric');
+    await entry.refresh();
+    const release = entry.subscribe(() => {}, true);
+    await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+    pending = true;
+    const refresh = entry.refresh();
+    deliver!({ version: 1, subscriptionId: 'private-watch', kind: 'error', ...failure, diagnostics: [...failure.diagnostics] });
+    expect(entry.getSnapshot().value).toBeUndefined();
+    expect(entry.getSnapshot().digest).toBeUndefined();
+    await expect(refresh).resolves.toMatchObject({ freshness: 'unknown', pending: 'idle', error: { code: failure.code } });
+    finishRead!(value);
+    await Promise.resolve();
+    expect(entry.getSnapshot().value).toBeUndefined();
+    pending = false;
+    await expect(entry.refresh()).resolves.toMatchObject({ value, freshness: 'fresh' });
+    release();
+    store.dispose();
+  });
+
   it('retains an already requested read for the first static subscriber without queuing another baseline', async () => {
     const value = { contentType: 'text/plain', digest: 'requested', bytes: new TextEncoder().encode('requested') };
     const reads: Array<{ resolve: (content: typeof value) => void; signal?: AbortSignal }> = [];

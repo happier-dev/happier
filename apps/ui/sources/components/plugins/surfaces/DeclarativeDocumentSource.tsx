@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 
 import {
@@ -484,8 +485,10 @@ export function useDeclarativeDocumentSource(input: DeclarativeDocumentSourceInp
     // A changed Account/occurrenceId (or a mount that lacks a current semantic
     // scope) reverts to static before its new store can publish a fresh
     // candidate. A reconnect-only controller replacement deliberately keeps
-    // the same scope and therefore retains its adopted dynamic LKG.
-    if (state.scope !== sourceScope) {
+    // the same scope and therefore retains its adopted dynamic LKG. An
+    // authoritative Resource withdrawal also removes the adopted private model.
+    const readAuthorityLost = isPluginUiResourceReadAuthorityLost(resource);
+    if (state.scope !== sourceScope || state.digest !== undefined && readAuthorityLost) {
         setState(Object.freeze({
             scope: sourceScope,
             model: input.staticModel,
@@ -553,6 +556,7 @@ export function useDeclarativeDocumentSource(input: DeclarativeDocumentSourceInp
     // during the brief interval before the replacement mount takes over.
     const currentSourceScopeIsCurrent = isCurrentDocumentSourceScope(sourceScope);
     const currentState = state.scope === sourceScope && currentSourceScopeIsCurrent
+        && !readAuthorityLost
         ? state
         : Object.freeze({
             scope: sourceScope,
