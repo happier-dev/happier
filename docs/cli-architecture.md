@@ -714,6 +714,8 @@ Local state lives under `~/.happier` (or `HAPPIER_HOME_DIR`):
 
 Configuration lives in `src/configuration.ts`:
 - `HAPPIER_SERVER_URL` and `HAPPIER_WEBAPP_URL` override defaults.
+- `serverUrl` is the canonical public Home URL used for first-contact key-challenge audience checks. `apiServerUrl` is the request transport: `HAPPIER_PUBLIC_SERVER_URL` selects the canonical URL, while `HAPPIER_LOCAL_SERVER_URL` selects a local/forwarded transport without changing that audience.
+- In the 0.3 development stack, stack-scoped CLI invocations pass both URLs and reconcile the stack-stable active profile through `server set`, including on a fresh CLI home. The wrapper verifies the persisted profile before forwarding the requested command and fails closed if reconciliation did not apply.
 - `HAPPIER_VARIANT`, `HAPPIER_EXPERIMENTAL`, `HAPPIER_DISABLE_CAFFEINATE` control behavior.
 
 ### One default channel per Happier home
