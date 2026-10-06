@@ -3,8 +3,8 @@ title: Public API surface
 description: Every symbol the Plugin SDK exports and the entrypoint it comes from — generated from the SDK's own api-surface projection.
 ---
 
-The SDK exports **2,747 symbols** across **50 entrypoints**:
-554 values and 2,193 types. This page is the index — it answers
+The SDK exports **2,773 symbols** across **51 entrypoints**:
+572 values and 2,201 types. This page is the index — it answers
 "does this exist, and where do I import it from", which is the question a type
 definition file cannot answer until you already know the answer.
 
@@ -14,7 +14,7 @@ counterpart to it.
 
 ## How to read it
 
-**Visibility** separates the 47 entrypoints a plugin author may import
+**Visibility** separates the 48 entrypoints a plugin author may import
 from the 3 the host reserves for itself.
 
 <Callout type="warn">
@@ -46,6 +46,7 @@ catch.
 | `@happier-dev/plugin-sdk/events` | author | any | 11 | 22 |
 | `@happier-dev/plugin-sdk/exec` | author | any | 0 | 16 |
 | `@happier-dev/plugin-sdk/exec/protocol-clients` | author | any | 0 | 14 |
+| `@happier-dev/plugin-sdk/first-party/claude` | author | any | 18 | 8 |
 | `@happier-dev/plugin-sdk/first-party/connected-accounts` | author | any | 8 | 7 |
 | `@happier-dev/plugin-sdk/fs` | author | daemon | 18 | 10 |
 | `@happier-dev/plugin-sdk/hooks` | author | daemon | 11 | 22 |
@@ -218,6 +219,16 @@ Anywhere. Source: `src/exec/index.ts`.
 Anywhere. Source: `src/exec/protocol-clients/index.ts`.
 
 **Types** — `PluginFramedBytesClient`, `PluginJsonRpcClient`, `PluginJsonStreamClient`, `PluginLoopbackWebSocketClientSpec`, `PluginLoopbackWebSocketEndpoint`, `PluginLoopbackWebSocketHandshake`, `PluginLoopbackWebSocketHeader`, `PluginLoopbackWebSocketJsonClient`, `PluginProtocolClientByKind`, `PluginProtocolClientHandle`, `PluginProtocolClientKind`, `PluginProtocolClientSpec`, `PluginProtocolClientSpecByKind`, `ProtocolClientsService`
+
+</Accordion>
+
+<Accordion title="@happier-dev/plugin-sdk/first-party/claude — 26 exports">
+
+Anywhere. Source: `src/first-party/claude/index.ts`.
+
+**Values** — `ANTHROPIC_EFFORT_LEVELS`, `buildAnthropicModelOptions`, `CLAUDE_REMOTE_DEBUG_CATEGORIES`, `CLAUDE_SETTING_SOURCES_V2`, `CLAUDE_UNIFIED_TERMINAL_HOSTS`, `CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES`, `CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICIES`, `DEFAULT_CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE`, `DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY`, `formatAnthropicEffortLevelLabel`, `isValidClaudeRemoteAdvancedOptionsJson`, `MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS`, `normalizeAnthropicModelDisplayName`, `normalizeClaudeRemoteAdvancedOptionsJson`, `normalizeClaudeUnifiedTerminalHost`, `normalizeClaudeUnifiedTerminalResumeChoice`, `normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy`, `RawJSONLinesSchema`
+
+**Types** — `AnthropicEffortLevel`, `ClaudeRawUsage`, `ClaudeRemoteDebugCategory`, `ClaudeSettingSourceV2`, `ClaudeUnifiedTerminalHost`, `ClaudeUnifiedTerminalResumeChoice`, `ClaudeUnifiedTerminalWorkspaceTrustPolicy`, `RawJSONLines`
 
 </Accordion>
 
