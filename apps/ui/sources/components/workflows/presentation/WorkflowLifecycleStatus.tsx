@@ -47,11 +47,33 @@ export function WorkflowLifecycleStatus(props: Readonly<{
     /** The authored block's kind, when known, so a held Wait-for-you step reads its own word. */
     blockKind?: string | null;
     chrome?: 'pill' | 'plain';
+    /**
+     * Only the marker, for a place where healthy state is quiet (a finished Map node). The word stays
+     * the marker's accessible name, so the state is still said once.
+     */
+    markerOnly?: boolean;
     testID?: string;
     accessibilityLabel?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const presentation = describeWorkflowInvocationLifecycle(props.lifecycle, { blockKind: props.blockKind });
+    if (props.markerOnly === true) {
+        return (
+            <View
+                {...(props.testID === undefined ? {} : { testID: props.testID })}
+                accessible
+                accessibilityRole="text"
+                accessibilityLabel={props.accessibilityLabel ?? presentation.label}
+            >
+                <WorkflowStatusMarker
+                    marker={presentation.marker}
+                    color={theme.colors.state[presentation.variant].foreground}
+                    size={ICON_SIZE.xs}
+                    {...(props.testID === undefined ? {} : { testID: `${props.testID}-marker` })}
+                />
+            </View>
+        );
+    }
     return (
         <StatusPill
             {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -103,5 +125,30 @@ export function WorkflowRunStateStatus(props: Readonly<{
                 />
             )}
         />
+    );
+}
+
+/**
+ * The Run's state as its mark alone, leading the outcome sentence that already says the word (lab
+ * `uwr-halo`). Decorative: the sentence is the accessible statement.
+ */
+export function WorkflowRunStateMark(props: Readonly<{
+    state: WorkflowRunStateV1;
+    testID?: string;
+}>): React.ReactElement {
+    const { theme } = useUnistyles();
+    const presentation = describeWorkflowRunState(props.state);
+    return (
+        <View
+            {...(props.testID === undefined ? {} : { testID: props.testID })}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+        >
+            <WorkflowStatusMarker
+                marker={presentation.marker}
+                color={theme.colors.state[presentation.variant].foreground}
+                size={ICON_SIZE.md}
+            />
+        </View>
     );
 }

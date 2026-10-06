@@ -178,7 +178,6 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
                     importantForAccessibility="no-hide-descendants"
                     style={styles.rail}
                 />
-                <Text style={styles.ordinal}>{invocation.memberOrdinal}</Text>
                 <Text style={[styles.label, selected ? styles.labelSelected : null]} numberOfLines={1}>
                     {displayLabel}
                 </Text>

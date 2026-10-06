@@ -301,6 +301,14 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
         maxWidth: '100%',
     },
+    /** A consumer-drawn literal field on a binding's line: it takes the line's free width. */
+    inlineLiteral: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 160,
+        minWidth: 0,
+        maxWidth: '100%',
+    },
     /** A result's optional field path: the token's "· field" part, sized to it rather than a row-wide box. */
     pathValue: {
         flexGrow: 0,

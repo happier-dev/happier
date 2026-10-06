@@ -140,7 +140,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                     <View key={row.key} testID={fieldId} style={workflowEditorStyles.actionFieldRow}>
                         <View style={workflowEditorStyles.actionFieldLabelColumn}>
                             <Text style={workflowEditorStyles.actionFieldLabel}>{row.label}</Text>
-                            {row.required ? (
+                            {row.required && binding === undefined ? (
                                 <Text style={workflowEditorStyles.groupSummary}>{t('workflows.page.blocks.required')}</Text>
                             ) : null}
                         </View>

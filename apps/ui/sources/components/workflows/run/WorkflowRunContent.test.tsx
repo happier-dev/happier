@@ -280,6 +280,7 @@ describe('WorkflowRunContent', () => {
         const invocations = Array.from({ length: 512 }, (_, index) => createWorkflowInvocationIndexFixture({
             id: `inv-${index}`,
             sequence: String(index),
+            parentRecordId: 'run-root',
             lifecycle: index === 400 ? 'waiting_for_approval' : 'completed',
         }));
         const screen = await renderContent({
@@ -359,7 +360,7 @@ describe('WorkflowRunContent', () => {
         viewport.window = { width: 390, height: 844 };
         const onSelectInvocation = vi.fn();
         const onDeselectInvocation = vi.fn();
-        const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'running' });
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'running' });
         const screen = await renderContent({
             invocations: [invocation],
             onSelectInvocation,
@@ -864,7 +865,7 @@ describe('WorkflowRunContent', () => {
     it('renders invocation lifecycle from the canonical index, not from structure', async () => {
         const screen = await renderContent({
             invocations: [
-                createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'waiting_for_capacity' }),
+                createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'waiting_for_capacity' }),
             ],
         });
 
@@ -1467,7 +1468,7 @@ describe('WorkflowRunContent', () => {
             onCancel: vi.fn(),
             onPause: vi.fn(),
             onRunAgain: vi.fn(),
-            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'waiting_for_approval' })],
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'waiting_for_approval' })],
         });
 
         // `hitSlop` is inert on react-native-web's `Pressable`, and the desktop
@@ -1869,7 +1870,8 @@ describe('WorkflowRunContent', () => {
             ],
         });
 
-        expect(screen.findByTestId('workflow-run-flow-node-analyze-state:variant:neutral')).toBeTruthy();
+        // Finished work is quiet on the map: its marker carries the state as its spoken name.
+        expect(screen.findByTestId('workflow-run-flow-node-analyze-state')?.props.accessibilityLabel).toBe('workflows.invocationState.completed');
         expect(screen.findByTestId('workflow-run-flow-node-implement-state:variant:warning')).toBeTruthy();
         // Icon plus label: colour is never the only carrier of the state.
         expect(screen.findByTestId('workflow-run-flow-node-analyze-state-marker')).toBeTruthy();
@@ -2036,7 +2038,7 @@ describe('WorkflowRunContent', () => {
 
     it('carries the Activity row lifecycle with a marker, not colour alone', async () => {
         const screen = await renderContent({
-            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', lifecycle: 'outcome_uncertain' })],
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root', lifecycle: 'outcome_uncertain' })],
         });
 
         expect(screen.findByTestId('workflow-run-invocations-state-inv-1:variant:warning')).toBeTruthy();
@@ -2051,7 +2053,7 @@ describe('WorkflowRunContent', () => {
     it('replaces the Activity paging action with an accessible retry that keeps the loaded rows', async () => {
         const onLoadMoreInvocations = vi.fn();
         const screen = await renderContent({
-            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1' })],
+            invocations: [createWorkflowInvocationIndexFixture({ id: 'inv-1', parentRecordId: 'run-root' })],
             invocationHistoryComplete: false,
             onLoadMoreInvocations,
             loadMoreInvocationsFailed: true,
