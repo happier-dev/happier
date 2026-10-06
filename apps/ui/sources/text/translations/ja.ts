@@ -8951,6 +8951,8 @@ localTailscale: {
 	        copyPath: "パスをコピー",
 	        download: "ダウンロード",
 	        downloadAsZip: "ZIPでダウンロード",
+	        openWith: 'アプリで開く',
+	        share: '共有',
 	      },
 	      dropToUpload: "ファイルをドロップしてアップロード",
 	      rename: {
@@ -9356,6 +9358,7 @@ localTailscale: {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `${fileName}を読み込み中...`,
         binaryFile: "バイナリファイル",
+        videoPreview: '動画プレビュー',
         imagePreviewTooLarge: "画像プレビューが大きすぎて表示できません",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `生成画像 ${name} を開く`,

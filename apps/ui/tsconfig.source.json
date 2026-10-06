@@ -1505,6 +1505,9 @@
     "tools/resolveUiPostinstallTasks.mjs"
   ],
   "exclude": [
+    "sources/components/workspaces/files/file/FileVideoPreview.tsx",
+    "sources/components/workspaces/files/file/useWorkspaceVideoPreview.ts",
+    "sources/sync/runtime/files/nativeFileActions.ts",
     "sources/trash/**/*",
     "node_modules",
     "**/*.test.ts",

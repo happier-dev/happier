@@ -154,11 +154,29 @@ setting `sessionAgentStartAllowListsV1`. The host reads it into the admission co
 an empty list allows none in that selection family. The UI writes this setting
 independently, so a current V1 policy remains readable by 0.2 strict readers.
 
+### Android file actions native runtime (development)
+
+The development UI's Android Save As, Open With, and Share actions require the
+compiled `HappierFileActions` Expo module. The destination uses the fresh
+`0.3.0-native` runtime train for non-publicdev lanes; publicdev retains Expo's
+fingerprint policy. This train is distinct from the predecessor's native runtime
+and must be paired with a new native build before publishing its updates. Do not
+use a runtime maintenance override to send this JavaScript to a binary without
+the module.
+
+Workspace downloads and previews continue through the canonical prepared transfer
+carrier; the port does not restore predecessor bulk-RPC probing or alter encrypted
+transfer contracts and daemon-owned limits. Native cache files have independent
+storage identities while Android receives the original display name. Failed or
+canceled document copies remove the newly created destination; a provider that
+refuses deletion produces an error identifying the remaining document. Web and
+iOS keep their existing download actions.
+
 ### Native date/time picker availability (development)
 
 An OTA update cannot add a compiled native module to an installed app. The
-current UI package defaults non-publicdev Expo lanes to the manually maintained
-`0.2.1-native` runtime; publicdev defaults to fingerprint compatibility, and
+current UI package defaults non-publicdev Expo lanes to its configured
+`happierExpoRuntimeVersion` train; publicdev defaults to fingerprint compatibility, and
 explicit runtime overrides remain configuration-owned. A runtime match alone is
 not evidence that the installed binary contains a newly added native SDK.
 

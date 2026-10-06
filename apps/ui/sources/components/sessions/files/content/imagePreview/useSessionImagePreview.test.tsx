@@ -258,7 +258,6 @@ describe('useSessionImagePreview', () => {
             mimeType: 'image/png',
             maxBytes: 1_000_000,
             expectedSizeBytes: 3,
-            cacheIdentity: 'sha-1',
         }));
         expect(hook.getCurrent()).toMatchObject({
             status: 'loaded',

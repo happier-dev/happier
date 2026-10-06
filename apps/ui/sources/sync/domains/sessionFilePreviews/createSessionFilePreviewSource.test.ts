@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createWorkspaceFileDownloadHarness } from '@/dev/testkit/harness/workspaceFileDownloadHarness';
 
 const downloadDaemonWorkspaceFileToDestinationMock = vi.hoisted(() => vi.fn());
 const inspectComposerContentMock = vi.hoisted(() => vi.fn());
@@ -56,7 +57,6 @@ describe('createSessionFilePreviewSource', () => {
             filePath: '.happier/uploads/messages/m1/image.png',
             mimeType: 'image/png',
             maxBytes: 16,
-            cacheIdentity: 'sha-1',
         });
 
         expect(source.ok).toBe(true);
@@ -241,7 +241,6 @@ describe('createSessionFilePreviewSource', () => {
             filePath: '.happier/uploads/artifacts/session-1/message-1/recording.webm',
             mimeType: 'video/webm',
             maxBytes: 16,
-            cacheIdentity: 'sha-video-1',
         });
 
         expect(source.ok).toBe(true);
@@ -290,7 +289,6 @@ describe('createSessionFilePreviewSource', () => {
             filePath: '.happier/uploads/messages/m1/image.png',
             mimeType: 'image/png',
             maxBytes: 16,
-            cacheIdentity: 'sha-1',
         });
 
         expect(source.ok).toBe(true);
@@ -321,10 +319,37 @@ describe('createSessionFilePreviewSource', () => {
             filePath: '.happier/uploads/messages/m1/icon.svg',
             mimeType: 'image/svg+xml',
             maxBytes: 16,
-            cacheIdentity: 'sha-svg',
         });
 
         expect(source).toEqual({ ok: false, error: 'Unsupported preview type' });
         expect(downloadDaemonWorkspaceFileToDestinationMock).not.toHaveBeenCalled();
     });
+    it('materializes an Android MP4 through the encrypted prepared workspace carrier without an image/text limit', async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+        const fs = createExpoFileSystemFileMock();
+        vi.doMock('react-native', () => createReactNativeNativeMock({ platformOS: 'android' }));
+        vi.doMock('expo-file-system', () => fs.module);
+        vi.doUnmock('@/sync/runtime/files/nativeCacheFileSink');
+        vi.doUnmock('@/sync/domains/transfers/runtime/transferRuntime');
+        const harness = await createWorkspaceFileDownloadHarness({ name: 'clip.mp4', bytes: new Uint8Array([1, 2, 3]) });
+        try {
+            const { createSessionFilePreviewSource } = await import('./createSessionFilePreviewSource');
+            const result = await createSessionFilePreviewSource({
+                scope: harness.scope, filePath: 'clip.mp4', mimeType: 'video/mp4',
+                // Video delegates size admission to the canonical transfer owner.
+                maxBytes: null,
+            });
+            expect(result.ok, result.ok ? undefined : result.error).toBe(true);
+            expect(result).toMatchObject({ ok: true, source: { kind: 'cache-file', mimeType: 'video/mp4', byteLength: 3 } });
+            if (!result.ok || result.source.kind !== 'cache-file') throw new Error('Expected video cache source');
+            expect(fs.files.get(result.source.uri)).toEqual([1, 2, 3]);
+            expect(harness.requests.some((request) => request.url.endsWith('/chunks/0'))).toBe(true);
+            await result.source.delete();
+            expect(fs.files.size).toBe(0);
+        } finally {
+            await harness.reset();
+        }
+    });
+
 });

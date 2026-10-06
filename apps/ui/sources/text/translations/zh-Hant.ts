@@ -7342,6 +7342,8 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
                 copyPath: '複製路徑',
                 download: '下載',
                 downloadAsZip: '以 ZIP 下載',
+                openWith: '開啟方式',
+                share: '分享',
             },
             dropToUpload: '拖放檔案以上傳',
             rename: {
@@ -7694,6 +7696,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         },
         loadingFile: ({ fileName }: { fileName: string }) => `正在載入 ${fileName}...`,
         binaryFile: '二進位檔案',
+        videoPreview: '影片預覽',
         imagePreviewTooLarge: '圖片預覽太大，無法顯示',
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `開啟生成的圖片 ${name}`,

@@ -85,4 +85,23 @@ describe('file details independent acquisition', () => {
         expect(result).toMatchObject({ diffContent: expect.stringContaining('+new') });
     });
 
+    it('classifies a large video before text limits and returns its own size/mtime revision', async () => {
+        transport.stat.mockResolvedValue({ success: true, exists: true, sizeBytes: 12000000, modifiedMs: 1234 });
+        const result = await refreshWorkspaceFileDetails({ ...input, filePath: 'clips/demo.mp4' });
+        expect(result).toMatchObject({
+            status: 'ready', error: null, diffContent: null,
+            fileContent: { isBinary: true, binaryMime: 'video/mp4', binarySizeBytes: 12000000, binaryPreviewRevision: '[12000000,1234]' },
+        });
+        expect(transport.diff).not.toHaveBeenCalled();
+        expect(transport.read).not.toHaveBeenCalled();
+    });
+    it('does not apply text preview limits to an opaque binary that has no preview', async () => {
+        transport.stat.mockResolvedValue({ success: true, exists: true, sizeBytes: 12000000 });
+        const result = await refreshWorkspaceFileDetails({ ...input, filePath: 'archives/big.zip' });
+        expect(result).toMatchObject({ error: null, fileContent: { isBinary: true } });
+        expect(transport.stat).not.toHaveBeenCalled();
+        expect(transport.diff).not.toHaveBeenCalled();
+        expect(transport.read).not.toHaveBeenCalled();
+    });
+
 });

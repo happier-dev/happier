@@ -8,7 +8,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import { randomUUID } from '@/platform/randomUUID';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 import { downloadWebFile } from '@/sync/runtime/files/downloadWebFile';
 import { t } from '@/text';
@@ -53,7 +52,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
                 uri = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: reference.mime }));
                 cleanup = () => URL.revokeObjectURL(uri);
             } else {
-                const sink = await createNativeCacheFileSink({ directoryName: 'happier-session-file-previews', fileName: `${randomUUID()}-${props.name}` });
+                const sink = await createNativeCacheFileSink({ directoryName: 'happier-session-file-previews', fileName: props.name });
                 if (!sink.ok) throw new Error(sink.error);
                 cleanup = sink.cleanup;
                 await sink.writeBytes(bytes);
@@ -84,7 +83,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             controller.signal.throwIfAborted();
             if (Platform.OS === 'web') downloadWebFile(new Blob([new Uint8Array(bytes)], { type: reference.mime }), props.name, async () => {});
             else {
-                const sink = await createNativeCacheFileSink({ directoryName: 'happier-session-file-previews', fileName: `${randomUUID()}-${props.name}` });
+                const sink = await createNativeCacheFileSink({ directoryName: 'happier-session-file-previews', fileName: props.name });
                 if (!sink.ok) throw new Error(sink.error);
                 try {
                     await sink.writeBytes(bytes); await sink.close();

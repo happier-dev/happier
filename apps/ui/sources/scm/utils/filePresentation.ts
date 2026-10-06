@@ -7,6 +7,7 @@ const KNOWN_BINARY_EXTENSIONS = new Set([
     'bmp',
     'ico',
     'mp4',
+    'm4v',
     'avi',
     'mov',
     'wmv',
@@ -54,8 +55,17 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
     svg: 'image/svg+xml',
 };
 
+const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+    mp4: 'video/mp4',
+    m4v: 'video/x-m4v',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+};
+
+const SUPPORTED_VIDEO_MIMES = new Set(Object.values(VIDEO_MIME_BY_EXTENSION));
+
 function getPathExtension(path: string): string | null {
-    const basename = path.split('/').pop() ?? path;
+    const basename = path.split(/[\\/]/).pop() ?? path;
     const lastDotIndex = basename.lastIndexOf('.');
     if (lastDotIndex <= 0 || lastDotIndex >= basename.length - 1) return null;
     return basename.slice(lastDotIndex + 1).toLowerCase();
@@ -74,6 +84,15 @@ export function getImageMimeTypeFromPath(path: string): string | null {
 
 export function isKnownImagePath(path: string): boolean {
     return getImageMimeTypeFromPath(path) != null;
+}
+
+export function getVideoMimeTypeFromPath(path: string): string | null {
+    const extension = getPathExtension(path);
+    return extension ? VIDEO_MIME_BY_EXTENSION[extension] ?? null : null;
+}
+
+export function isSupportedVideoMimeType(mimeType: string): boolean {
+    return SUPPORTED_VIDEO_MIMES.has(mimeType.trim().toLowerCase());
 }
 
 export function isBinaryContent(content: string): boolean {

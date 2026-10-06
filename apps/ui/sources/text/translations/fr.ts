@@ -8674,6 +8674,8 @@ export const fr = {
 	        copyPath: "Copier le chemin",
 	        download: "Télécharger",
 	        downloadAsZip: "Télécharger en zip",
+	        openWith: 'Ouvrir avec',
+	        share: 'Partager',
 	      },
 	      dropToUpload: "Dépose des fichiers à envoyer",
 	      rename: {
@@ -9084,6 +9086,7 @@ export const fr = {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Chargement de ${fileName}...`,
         binaryFile: "Fichier binaire",
+        videoPreview: 'Aperçu vidéo',
         imagePreviewTooLarge: "L’aperçu de l’image est trop grand pour être affiché",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `Ouvrir l’image générée ${name}`,

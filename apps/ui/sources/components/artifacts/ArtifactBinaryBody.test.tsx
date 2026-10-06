@@ -83,7 +83,12 @@ describe('ArtifactBinaryBody', () => {
         vi.spyOn(URL, 'createObjectURL').mockImplementation(() => 'blob:next');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
-        vi.stubGlobal('document', { createElement: () => anchor, body: { appendChild: () => {} } });
+        vi.stubGlobal('document', {
+            createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
+            getElementById: () => null,
+            head: { appendChild: () => {} },
+            body: { appendChild: () => {} },
+        });
         try {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="first" name="first.zip" {...first} />);
             await screen.pressByTestIdAsync('artifact:download');
@@ -140,7 +145,12 @@ describe('ArtifactBinaryBody', () => {
         });
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         const anchor = { href: '', download: '', rel: '', style: {}, click: vi.fn(), remove: vi.fn() };
-        vi.stubGlobal('document', { createElement: () => anchor, body: { appendChild: () => {} } });
+        vi.stubGlobal('document', {
+            createElement: (tag: string) => tag === 'a' ? anchor : { id: '', textContent: '' },
+            getElementById: () => null,
+            head: { appendChild: () => {} },
+            body: { appendChild: () => {} },
+        });
         try {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="html" name="page.html" {...source} />);
             expect(source.request).not.toHaveBeenCalled();

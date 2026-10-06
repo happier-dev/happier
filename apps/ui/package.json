@@ -2,7 +2,7 @@
   "name": "@happier-dev/app",
   "main": "index.ts",
   "version": "0.2.10",
-  "happierExpoRuntimeVersion": "0.2.1-native",
+  "happierExpoRuntimeVersion": "0.3.0-native",
   "happier": {
     "installFreshnessInputs": [
       "app.config.js",

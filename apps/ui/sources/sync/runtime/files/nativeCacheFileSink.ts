@@ -1,4 +1,6 @@
-import { sanitizeFileUriSegment } from './fileUriPath';
+import { log } from '@/log';
+import { randomUUID } from '@/platform/randomUUID';
+import { MAX_CACHE_FILE_NAME_BYTES, sanitizeFileUriSegment } from './fileUriPath';
 
 type ExpoFileSystemModule = Readonly<{
     Directory: new (parent: ExpoFileSystemDirectory | string, name?: string) => ExpoFileSystemDirectory;
@@ -72,7 +74,8 @@ export async function createNativeCacheFileSink(input: Readonly<{
         }
 
         const directoryName = sanitizeFileUriSegment(input.directoryName, 'happier-cache');
-        const fileName = sanitizeFileUriSegment(input.fileName, 'preview');
+        const prefix = `${randomUUID()}-`;
+        const fileName = `${prefix}${sanitizeFileUriSegment(input.fileName, 'preview', MAX_CACHE_FILE_NAME_BYTES - new TextEncoder().encode(prefix).byteLength)}`;
         const cacheDirectory = typeof cachePath === 'string'
             ? new FileSystem.Directory(cachePath)
             : cachePath;
@@ -80,31 +83,54 @@ export async function createNativeCacheFileSink(input: Readonly<{
         directory.create({ intermediates: true, idempotent: true });
 
         const file = new FileSystem.File(directory, fileName);
-        try {
-            file.delete();
-        } catch {}
         file.create();
-        const handle = file.open();
+        let handle: ExpoFileSystemFileHandle;
+        try {
+            handle = file.open();
+        } catch (error) {
+            try {
+                file.delete();
+            } catch (cleanupError) {
+                throw Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}; Failed to clean up cache file: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`), {
+                    errors: [error, cleanupError],
+                });
+            }
+            throw error;
+        }
         if (typeof handle.offset === 'number' || handle.offset === null) {
             handle.offset = 0;
         }
 
         let closed = false;
+        let removed = false;
         const close = async () => {
             if (closed) return;
+            handle.close();
             closed = true;
-            try {
-                handle.close();
-            } catch {}
         };
 
         const cleanup = async () => {
+            const errors: unknown[] = [];
             try {
                 await close();
-            } catch {}
+            } catch (error) {
+                errors.push(error);
+            }
             try {
-                file.delete();
-            } catch {}
+                if (!removed) {
+                    file.delete();
+                    removed = true;
+                }
+            } catch (error) {
+                errors.push(error);
+            }
+            if (errors.length > 0) {
+                log.log(`Failed to clean up cache file: ${errors.map(error => error instanceof Error ? error.message : String(error)).join('; ')}`);
+            }
+            if (errors.length === 1) throw errors[0];
+            if (errors.length > 1) {
+                throw Object.assign(new Error(errors.map(error => error instanceof Error ? error.message : String(error)).join('; ')), { errors });
+            }
         };
 
         return {

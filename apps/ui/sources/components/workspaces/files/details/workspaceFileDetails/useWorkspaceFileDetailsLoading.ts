@@ -7,7 +7,8 @@ type Input = Omit<Parameters<typeof refreshWorkspaceFileDetails>[0], 'scope' | '
 function sameContent(a: WorkspaceFileDetailsFileContent | null, b: WorkspaceFileDetailsFileContent | null): boolean {
     return a === b || Boolean(a && b && a.content === b.content && a.isBinary === b.isBinary
         && a.contentHash === b.contentHash && a.binaryBase64 === b.binaryBase64
-        && a.binaryMime === b.binaryMime && a.binarySizeBytes === b.binarySizeBytes);
+        && a.binaryMime === b.binaryMime && a.binarySizeBytes === b.binarySizeBytes
+        && a.binaryPreviewRevision === b.binaryPreviewRevision);
 }
 
 /** Owns retained details state and publication for the currently active request. */

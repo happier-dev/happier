@@ -7,14 +7,29 @@ export function joinFileUri(baseUri: string, childPath: string): string {
     return `${withSlash}${child}`;
 }
 
-export function sanitizeFileUriSegment(value: string, fallback: string): string {
-    const normalized = String(value ?? '')
-        .trim()
-        .replace(/\\/g, '/')
-        .split('/')
-        .filter(Boolean)
-        .at(-1)
-        ?.replace(/[^A-Za-z0-9._-]+/g, '_')
-        .replace(/^_+|_+$/g, '');
-    return normalized && normalized.length > 0 ? normalized : fallback;
+// Android/Linux cache filesystems limit each filename component to 255 UTF-8 bytes.
+export const MAX_CACHE_FILE_NAME_BYTES = 255;
+const filenameEncoder = new TextEncoder();
+
+function truncateUtf8(value: string, maxBytes: number): string {
+    let bytes = 0;
+    let result = '';
+    for (const character of value) {
+        bytes += filenameEncoder.encode(character).byteLength;
+        if (bytes > maxBytes) break;
+        result += character;
+    }
+    return result;
+}
+
+export function sanitizeFileUriSegment(value: string, fallback: string, maxBytes = MAX_CACHE_FILE_NAME_BYTES): string {
+    const safe = String(value ?? '').trim().replace(/\\/g, '/').split('/').filter(Boolean).at(-1)
+        ?.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/g, '_') || fallback;
+    const extensionIndex = safe.lastIndexOf('.');
+    const extension = extensionIndex > 0 ? safe.slice(extensionIndex) : '';
+    const extensionBytes = filenameEncoder.encode(extension).byteLength;
+    if (extension && extensionBytes < maxBytes) {
+        return `${truncateUtf8(safe.slice(0, extensionIndex), maxBytes - extensionBytes)}${extension}`;
+    }
+    return truncateUtf8(safe, maxBytes);
 }

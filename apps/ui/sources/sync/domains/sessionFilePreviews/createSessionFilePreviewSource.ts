@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { isSupportedVideoMimeType } from '@/scm/utils/filePresentation';
 import type { ComposerContentHandleV1, SessionAttachmentHandleV1 } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
@@ -50,22 +51,14 @@ function isSupportedPreviewMimeType(mimeType: string): boolean {
         || normalized === 'image/jpeg'
         || normalized === 'image/webp'
         || normalized === 'image/gif'
-        || normalized === 'video/webm';
-}
-
-function toPreviewCacheFileName(input: Readonly<{ filePath: string; cacheIdentity?: string | null }>): string {
-    const rawIdentity = String(input.cacheIdentity ?? '').trim();
-    const basename = input.filePath.split('/').filter(Boolean).at(-1) ?? 'preview';
-    if (!rawIdentity) return basename;
-    return `${rawIdentity}-${basename}`.replace(/[^A-Za-z0-9._-]+/g, '_');
+        || isSupportedVideoMimeType(normalized);
 }
 
 async function createPreviewSource(input: Readonly<{
     filePath: string;
     mimeType: string;
-    maxBytes: number;
+    maxBytes: number | null;
     expectedSizeBytes?: number | null;
-    cacheIdentity?: string | null;
     signal?: AbortSignal | null;
     load: PreviewByteLoader;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
@@ -74,8 +67,8 @@ async function createPreviewSource(input: Readonly<{
         return { ok: false, error: 'Unsupported preview type' };
     }
 
-    const maxBytes = Number.isFinite(input.maxBytes) ? Math.max(0, Math.floor(input.maxBytes)) : 0;
-    if (maxBytes <= 0) {
+    const maxBytes = input.maxBytes === null ? null : Number.isFinite(input.maxBytes) ? Math.max(0, Math.floor(input.maxBytes)) : 0;
+    if (maxBytes !== null && maxBytes <= 0) {
         return { ok: false, error: PREVIEW_TOO_LARGE_ERROR };
     }
 
@@ -83,7 +76,7 @@ async function createPreviewSource(input: Readonly<{
         typeof input.expectedSizeBytes === 'number' && Number.isFinite(input.expectedSizeBytes)
             ? Math.max(0, Math.floor(input.expectedSizeBytes))
             : null;
-    if (expectedSizeBytes != null && expectedSizeBytes > maxBytes) {
+    if (maxBytes !== null && expectedSizeBytes != null && expectedSizeBytes > maxBytes) {
         return { ok: false, error: PREVIEW_TOO_LARGE_ERROR };
     }
 
@@ -102,7 +95,7 @@ async function createPreviewSource(input: Readonly<{
     const destination = {
         writeBytes: async (bytes: Uint8Array) => {
             byteLength += bytes.byteLength;
-            if (byteLength > maxBytes) {
+            if (maxBytes !== null && byteLength > maxBytes) {
                 throw new Error(PREVIEW_TOO_LARGE_ERROR);
             }
             const copy = new Uint8Array(bytes);
@@ -129,10 +122,7 @@ async function createPreviewSource(input: Readonly<{
     if (Platform.OS !== 'web') {
         const sink = await createNativeCacheFileSink({
             directoryName: PREVIEW_CACHE_DIRECTORY_NAME,
-            fileName: toPreviewCacheFileName({
-                filePath: input.filePath,
-                cacheIdentity: input.cacheIdentity ?? null,
-            }),
+            fileName: input.filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? 'preview',
         });
         if (!sink.ok) {
             return { ok: false, error: sink.error };
@@ -194,7 +184,7 @@ async function createPreviewSource(input: Readonly<{
         };
     } catch (error) {
         await destination.cleanup();
-        return { ok: false, error: error instanceof Error ? error.message : 'Failed to create image preview' };
+        return { ok: false, error: error instanceof Error ? error.message : 'Failed to create file preview' };
     }
 }
 
@@ -202,14 +192,16 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     scope: WorkspaceScopeBase;
     filePath: string;
     mimeType: string;
-    maxBytes: number;
+    maxBytes: number | null;
     expectedSizeBytes?: number | null;
-    cacheIdentity?: string | null;
     signal?: AbortSignal | null;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
-    const maxBytes = Number.isFinite(input.maxBytes)
-        ? Math.max(0, Math.floor(input.maxBytes))
-        : 0;
+    // Workspace video uses transfer-owned admission. Image/attachment/staged consumers retain their own limits.
+    const maxBytes = input.maxBytes === null && isSupportedVideoMimeType(input.mimeType)
+        ? null
+        : typeof input.maxBytes === 'number' && Number.isFinite(input.maxBytes)
+            ? Math.max(0, Math.floor(input.maxBytes))
+            : 0;
     return await createPreviewSource({
         ...input,
         maxBytes,
@@ -221,7 +213,7 @@ export async function createSessionFilePreviewSource(input: Readonly<{
                 request: { path: input.filePath, asZip: false },
                 destination,
                 onInit: async (init) => {
-                    if (init.sizeBytes > maxBytes) {
+                    if (maxBytes !== null && init.sizeBytes > maxBytes) {
                         return { success: false, error: PREVIEW_TOO_LARGE_ERROR };
                     }
                 },
@@ -246,7 +238,6 @@ export async function createSessionAttachmentPreviewSource(input: Readonly<{
         mimeType: input.mimeType,
         maxBytes: input.maxBytes,
         expectedSizeBytes: input.expectedSizeBytes,
-        cacheIdentity: input.handle.id,
         signal: input.signal,
         load: async ({ destination, signal }) => {
             const context = (await import('@/sync/sync')).sync.getSessionAttachmentTransferContext(input.handle.sessionId, { purpose: 'attachmentPreview' });
@@ -286,7 +277,6 @@ export async function createComposerStagedMediaPreviewSource(input: Readonly<{
         mimeType: input.handle.mimeType,
         maxBytes,
         expectedSizeBytes: input.handle.sizeBytes,
-        cacheIdentity: input.handle.sha256,
         signal: input.signal ?? null,
         load: async ({ destination, signal }) => {
             const inspection = await inspectComposerContent(

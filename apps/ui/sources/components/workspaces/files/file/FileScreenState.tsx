@@ -3,6 +3,8 @@ import { Image, View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { FileVideoPreview } from './FileVideoPreview';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 type FileStateProps = {
@@ -10,7 +12,7 @@ type FileStateProps = {
 };
 
 function getBasename(path: string): string {
-    const parts = path.split('/');
+    const parts = path.split(/[\\/]/);
     const last = parts.at(-1) ?? path;
     return last || path;
 }
@@ -43,7 +45,24 @@ export function FileBinaryState({
     theme,
     filePath,
     imagePreviewUri,
-}: FileStateProps & { filePath: string; imagePreviewUri?: string | null }) {
+    workspaceScope,
+    videoMimeType,
+    binaryPreviewRevision,
+    isActive = true,
+}: FileStateProps & {
+    filePath: string;
+    imagePreviewUri?: string | null;
+    workspaceScope?: WorkspaceScopeBase | null;
+    videoMimeType?: string | null;
+    binaryPreviewRevision?: string | null;
+    isActive?: boolean;
+}) {
+    if (workspaceScope && videoMimeType) {
+        return <View style={{ padding: 20, alignItems: 'center' }}>
+            <FileVideoPreview workspaceScope={workspaceScope} filePath={filePath} mimeType={videoMimeType}
+                revision={binaryPreviewRevision} isActive={isActive} />
+        </View>;
+    }
     return (
         <View
             style={{

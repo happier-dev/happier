@@ -1,7 +1,7 @@
 import { t } from '@/text';
 import { config } from '@/config';
 import { callDaemonWorkspaceStatFileRpc, downloadDaemonWorkspaceFileToBase64 } from '@/sync/domains/transfers/runtime/transferRuntime';
-import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
+import { getImageMimeTypeFromPath, getVideoMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import type { FileDiffMode } from '@/components/workspaces/files/file/FileActionToolbar';
 import type { ScmEntryKind } from '@/sync/domains/state/storageTypes';
@@ -17,6 +17,7 @@ export type WorkspaceFileDetailsFileContent = Readonly<{
     binaryBase64?: string | null;
     binaryMime?: string | null;
     binarySizeBytes?: number | null;
+    binaryPreviewRevision?: string | null;
 }>;
 
 export type WorkspaceFileDetailsRefreshResult = Readonly<{
@@ -135,13 +136,25 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
             try {
                 if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
                 const imageMime = getImageMimeTypeFromPath(input.filePath);
-                const wantsBinaryPreview = typeof imageMime === 'string' && imageMime.trim().length > 0;
-                const maxPreviewBytes = wantsBinaryPreview
+                const videoMime = getVideoMimeTypeFromPath(input.filePath);
+                const previewMime = imageMime ?? videoMime;
+                const wantsBinaryPreview = previewMime !== null;
+                // Opaque binary classification performs no inline read and consumes no text budget.
+                if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
+                    return {
+                        status: 'ready', error: null, diffContent,
+                        fileContent: { content: '', isBinary: true, contentHash: null },
+                        fileWriteSupported: true,
+                    };
+                }
+                // Video admission belongs to the ordinary workspace transfer, independently of inline preview limits.
+                const maxPreviewBytes = videoMime ? null : imageMime
                     ? resolveOptionalMaxBytes(input.maxImagePreviewBytes)
                     : resolveMaxPreviewBytes();
                 let statSizeBytes: number | null = null;
+                let binaryPreviewRevision: string | null = null;
 
-                if (maxPreviewBytes != null) {
+                if (maxPreviewBytes != null || videoMime) {
                     const stat = await callDaemonWorkspaceStatFileRpc({
                         machineId: input.scope.machineId,
                         serverId: input.scope.serverId,
@@ -157,11 +170,13 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         && stat.sizeBytes >= 0
                     ) {
                         statSizeBytes = Math.floor(stat.sizeBytes);
+                        binaryPreviewRevision = JSON.stringify([statSizeBytes, stat.modifiedMs ?? null]);
                     }
                     if (
                         stat.success
                         && stat.exists === true
                         && typeof stat.sizeBytes === 'number'
+                        && maxPreviewBytes != null
                         && stat.sizeBytes > maxPreviewBytes
                     ) {
                         return {
@@ -174,19 +189,8 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                     }
                 }
 
-                if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
-                    fileContent = { content: '', isBinary: true, contentHash: null };
-                    return {
-                        status: 'ready',
-                        error: null,
-                        diffContent,
-                        fileContent,
-                        fileWriteSupported: true,
-                    };
-                }
-
                 if (wantsBinaryPreview) {
-                    fileContent = { content: '', isBinary: true, contentHash: null, binaryMime: imageMime, binarySizeBytes: statSizeBytes };
+                    fileContent = { content: '', isBinary: true, contentHash: null, binaryMime: previewMime, binarySizeBytes: statSizeBytes, binaryPreviewRevision };
                     return {
                         status: 'ready',
                         error: null,

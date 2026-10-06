@@ -405,15 +405,15 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     httpOriginOverride?: string | null;
     acquirePreparedCarrier?: ((prepared: Readonly<{ operationId: string }>) => Promise<MachineCarrierHttpLease | null>) | null;
 }>): Promise<DirectTransferFileDownloadResponse> {
-    async function cleanupFailedDestination(): Promise<void> {
+    async function cleanupFailedDestination(originalError?: unknown): Promise<void> {
         if (params.cleanupOnFailure === false) {
             return;
         }
-        await cleanupBulkTransferDestination(params.destination);
+        await cleanupBulkTransferDestination(params.destination, originalError);
     }
 
     async function returnCanceled(): Promise<DirectTransferFileDownloadResponse> {
-        await cleanupFailedDestination();
+        await cleanupFailedDestination(new Error('Download canceled'));
         return { ok: false, error: 'Download canceled' };
     }
 
@@ -423,7 +423,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
 
     const prepared = await prepareDirectTransferExport(params);
     if (!prepared.ok) {
-        await cleanupFailedDestination();
+        await cleanupFailedDestination(new Error(prepared.error));
         return {
             ok: false,
             error: prepared.error,
@@ -434,7 +434,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     let carrierRoute: Extract<DirectTransferCarrierRouteResult, { ok: true }> | null = null;
     try {
     if (typeof prepare.name !== 'string' || typeof prepare.sizeBytes !== 'number' || !Number.isFinite(prepare.sizeBytes) || prepare.sizeBytes < 0) {
-        await cleanupFailedDestination();
+        await cleanupFailedDestination(new Error('Direct export prepare returned invalid file metadata'));
         return { ok: false, error: 'Direct export prepare returned invalid file metadata' };
     }
     const preparedName = prepare.name;
@@ -458,7 +458,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
 
     const initialDestinationFailure = await initializeDestination();
     if (initialDestinationFailure) {
-        await cleanupFailedDestination();
+        await cleanupFailedDestination(new Error(initialDestinationFailure.error));
         return { ok: false, error: initialDestinationFailure.error };
     }
     if (params.signal?.aborted) {
@@ -473,7 +473,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         ...(params.acquirePreparedCarrier === undefined ? {} : { acquirePreparedCarrier: params.acquirePreparedCarrier }),
     });
     if (!acquiredRoute.ok) {
-        await cleanupFailedDestination();
+        await cleanupFailedDestination(new Error(acquiredRoute.error));
         return {
             ok: false,
             error: acquiredRoute.error,
@@ -483,6 +483,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
     carrierRoute = acquiredRoute;
     const carrierRequest = carrierRoute.request;
 
+    let completed: Extract<DirectTransferFileDownloadResponse, { ok: true }> | null = null;
     for (const [index, candidate] of carrierRoute.endpointCandidates.entries()) {
         const hasMoreCandidates = index + 1 < carrierRoute.endpointCandidates.length;
         try {
@@ -584,12 +585,12 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
                 throw new Error('Direct export file manifest mismatch');
             }
 
-            await params.destination.close();
-            return {
+            completed = {
                 ok: true,
                 name: prepare.name,
                 sizeBytes: download.sizeBytes,
             };
+            break;
         } catch (error) {
             if (params.signal?.aborted) {
                 return await returnCanceled();
@@ -598,7 +599,7 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
                 await resetBulkTransferDestinationAfterCandidateFailure(params.destination);
                 const resetFailure = await initializeDestination();
                 if (resetFailure) {
-                    await cleanupFailedDestination();
+                    await cleanupFailedDestination(new Error(resetFailure.error));
                     return { ok: false, error: resetFailure.error };
                 }
                 continue;
@@ -607,7 +608,19 @@ export async function downloadBulkPayloadViaDirectExportToDestination(params: Re
         }
     }
 
-    await cleanupFailedDestination();
+    if (completed) {
+        try {
+            await params.destination.close();
+        } catch (error) {
+            await cleanupFailedDestination(error);
+            throw error;
+        }
+        return completed;
+    }
+
+    await cleanupFailedDestination(new Error(carrierRoute?.releaseCarrier && !params.signal?.aborted
+        ? MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR
+        : 'Direct export download unavailable'));
     return carrierRoute?.releaseCarrier && !params.signal?.aborted
         ? {
             ok: false,

@@ -8803,6 +8803,8 @@ export const pt = {
 	        copyPath: "Copiar caminho",
 	        download: "Baixar",
 	        downloadAsZip: "Baixar como ZIP",
+	        openWith: 'Abrir com',
+	        share: 'Compartilhar',
 	      },
 	      dropToUpload: "Solte arquivos para enviar",
 	      rename: {
@@ -9215,6 +9217,7 @@ export const pt = {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Carregando ${fileName}...`,
         binaryFile: "Arquivo binário",
+        videoPreview: 'Prévia do vídeo',
         imagePreviewTooLarge: "A pré-visualização da imagem é grande demais para ser exibida",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `Abrir imagem gerada ${name}`,

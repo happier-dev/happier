@@ -6,12 +6,13 @@ import {
     useWorkspaceFileTransfers as useWorkspaceFileTransfersImpl,
     type UploadConflictStrategy,
     type WorkspaceDownloadState,
+    type WorkspaceFileDownloadAction,
     type WorkspaceTransferResult,
     type WorkspaceUploadEntry,
     type WorkspaceUploadState,
 } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
 
-export type { WorkspaceUploadEntry, UploadConflictStrategy, WorkspaceUploadState, WorkspaceDownloadState };
+export type { WorkspaceUploadEntry, UploadConflictStrategy, WorkspaceUploadState, WorkspaceDownloadState, WorkspaceFileDownloadAction };
 
 export async function buildUploadEntryPlan(input: Readonly<{
     sessionId: string;
@@ -37,7 +38,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     downloadState: WorkspaceDownloadState;
     startUploads: (input: Readonly<{ entries: readonly WorkspaceUploadEntry[]; destinationDir: string }>) => Promise<WorkspaceTransferResult>;
     cancelUploads: () => void;
-    startDownload: (input: Readonly<{ path: string; asZip: boolean }>) => Promise<WorkspaceTransferResult>;
+    startDownload: (input: Readonly<{ path: string; asZip: boolean; action?: WorkspaceFileDownloadAction }>) => Promise<WorkspaceTransferResult>;
     cancelDownload: () => void;
 }> {
     const workspaceScope = resolveWorkspaceScopeForSession(params.sessionId);
