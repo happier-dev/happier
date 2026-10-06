@@ -50,6 +50,10 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // with checked-in `.happier-plugin` manifests continue to reach the replica.
   'packages/plugins/*/.happier-plugin',
   'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js',
+  // Prisma clients and the docs static export are generated on each target.
+  // Keep these package-owned outputs local without excluding authored generated sources.
+  'apps/server/generated',
+  'apps/docs/out',
   '.project',
   HAPPIER,
   '.happier-stack',
