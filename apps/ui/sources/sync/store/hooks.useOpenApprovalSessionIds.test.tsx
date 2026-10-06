@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import {
@@ -94,6 +95,12 @@ describe('useOpenApprovalSessionReferences', () => {
                 ordinarySessionListMembershipByServerId: {
                     ...state.ordinarySessionListMembershipByServerId,
                     'server-a': ['session-a'],
+                },
+                sessionListRowsByServerId: {
+                    ...state.sessionListRowsByServerId,
+                    'server-a': {
+                        'session-a': buildSessionListRenderableFromSession(createSessionFixture({ id: 'session-a', serverId: 'server-a' })),
+                    },
                 },
                 artifacts: {
                     open: artifact('open', {
@@ -200,6 +207,12 @@ describe('session detail scoped projections', () => {
                 ordinarySessionListMembershipByServerId: {
                     ...state.ordinarySessionListMembershipByServerId,
                     'server-a': ['session-a'],
+                },
+                sessionListRowsByServerId: {
+                    ...state.sessionListRowsByServerId,
+                    'server-a': {
+                        'session-a': buildSessionListRenderableFromSession(createSessionFixture({ id: 'session-a', serverId: 'server-a' })),
+                    },
                 },
                 artifacts: {
                     open: artifact('open', {

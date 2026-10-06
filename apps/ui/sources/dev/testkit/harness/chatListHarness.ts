@@ -593,24 +593,67 @@ export async function withChatListHarnessWebScrollerDom<T>(
     run: () => Promise<T>,
     options: ChatListHarnessDomInstallerOptions = {},
 ): Promise<T> {
+    const { JSDOM } = await import('jsdom');
     const previousDocument = (globalThis as any).document;
     const previousHTMLElement = (globalThis as any).HTMLElement;
     const previousWindow = (globalThis as any).window;
     const previousRequestAnimationFrame = (globalThis as any).requestAnimationFrame;
     const previousCancelAnimationFrame = (globalThis as any).cancelAnimationFrame;
 
-    (globalThis as any).document = {
-        querySelector: () => scrollerElement,
-        getElementById: () => ({ querySelectorAll: () => [scrollerElement] }),
-        ...(options.document ?? {}),
+    // Geometry is the test boundary; event dispatch and DOM ownership remain real.
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'https://transcript.test' });
+    const document: Document = dom.window.document;
+    // Existing callers hold mutable layout fixtures. Bridge only those external
+    // measurements onto an actual element so DOM walkers and keyboard ownership
+    // never receive a plain object where the browser promises a Node.
+    const elements = new Map<ChatListHarnessWebElement, HTMLElement>();
+    const toDomElement = (geometry: ChatListHarnessWebElement): HTMLElement => {
+        const cached = elements.get(geometry);
+        if (cached) return cached;
+        const element = document.createElement('div');
+        elements.set(geometry, element);
+        for (const key of ['scrollTop', 'scrollHeight', 'clientHeight', 'scrollWidth', 'clientWidth'] as const) {
+            Object.defineProperty(element, key, {
+                configurable: true,
+                get: () => geometry[key],
+                set: (value: number) => { geometry[key] = value; },
+            });
+        }
+        const testId = geometry.getAttribute('data-testid');
+        if (testId) element.dataset.testid = testId;
+        element.getBoundingClientRect = () => geometry.getBoundingClientRect();
+        // Browser layout fixtures may publish rows separately from the renderer.
+        Object.assign(element, {
+            querySelectorAll: (selector: string) => geometry.querySelectorAll(selector).map(toDomElement),
+            querySelector: (selector: string) => {
+                const match = geometry.querySelector(selector);
+                return match ? toDomElement(match) : null;
+            },
+        });
+        return element;
     };
-    (globalThis as any).window = {
+    const scroller = !('HTMLElement' in options) && scrollerElement instanceof ChatListHarnessWebElement
+        ? toDomElement(scrollerElement)
+        : scrollerElement;
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    if (scroller instanceof dom.window.HTMLElement) root.appendChild(scroller as HTMLElement);
+    const hasCustomElementBoundary = 'HTMLElement' in options;
+    Object.assign(document, {
+        querySelector: () => scroller,
+        getElementById: () => hasCustomElementBoundary ? { querySelectorAll: () => [scroller] } : root,
+        // Custom element fixtures explicitly select their existing selector-only
+        // geometry boundary; a DOM TreeWalker cannot consume those non-Nodes.
+        ...(hasCustomElementBoundary ? { createTreeWalker: undefined } : {}),
+        ...(options.document ?? {}),
+    });
+    (globalThis as any).document = document;
+    Object.assign(dom.window, {
         getComputedStyle: () => ({ overflowY: 'auto' }),
         ...(options.window ?? {}),
-    };
-    if ('HTMLElement' in options) {
-        (globalThis as any).HTMLElement = options.HTMLElement;
-    }
+    });
+    (globalThis as any).window = dom.window;
+    (globalThis as any).HTMLElement = options.HTMLElement ?? dom.window.HTMLElement;
 
     if (options.useImmediateAnimationFrame !== false) {
         // Timeout-based shim: the Legend adapter's bounded settle monitor re-schedules itself
@@ -631,6 +674,7 @@ export async function withChatListHarnessWebScrollerDom<T>(
         (globalThis as any).window = previousWindow;
         (globalThis as any).requestAnimationFrame = previousRequestAnimationFrame;
         (globalThis as any).cancelAnimationFrame = previousCancelAnimationFrame;
+        dom.window.close();
     }
 }
 
@@ -647,7 +691,11 @@ export async function withRenderedChatListHarnessWebScroller<T>(
         scrollerElement,
         async () => {
             const screen = await renderChatList(element, options.render ?? {});
-            return run(screen);
+            try {
+                return await run(screen);
+            } finally {
+                await screen.unmount();
+            }
         },
         options.dom ?? {},
     );

@@ -1,35 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationDefinitionListItemSchema,
     AutomationV3RunListItemSchema,
 } from '@happier-dev/protocol';
 
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createServerFetchAtEndpoint } from '@/sync/http/client';
+import { storage } from '@/sync/domains/state/storage';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import type { AutomationRequestContext } from '@/sync/api/automations/apiAutomations';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './syncAutomations';
 
 type ApplyAutomations = Parameters<typeof fetchAndApplyAutomations>[0]['applyAutomations'];
 
-const listAutomationDefinitionsMock = vi.hoisted(() => vi.fn());
-const listAutomationDefinitionRunsMock = vi.hoisted(() => vi.fn());
-const resolveRuntimeFeatureDecisionOrThrowMock = vi.hoisted(() => vi.fn());
-const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn(() => ({ serverId: 'server-1' })));
-
-vi.mock('@/sync/api/automations/apiAutomations', () => ({
-    listAutomationDefinitions: listAutomationDefinitionsMock,
-}));
-
-vi.mock('@/sync/api/automations/apiAutomationRuns', () => ({
-    listAutomationDefinitionRuns: listAutomationDefinitionRunsMock,
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
-    resolveRuntimeFeatureDecisionOrThrow: resolveRuntimeFeatureDecisionOrThrowMock,
-}));
-
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: getActiveServerSnapshotMock,
-}));
+// Response factories run only at the genuine HTTP boundary; API schemas,
+// projection, feature policy and concurrency owners remain real.
+const listAutomationDefinitionsMock = vi.fn();
+const listAutomationDefinitionRunsMock = vi.fn();
+let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+let credentials: AuthCredentials;
+let requestContext: AutomationRequestContext;
+const initialStorageState = storage.getState();
 
 const eventSummary = AutomationDefinitionListItemSchema.parse({
     id: 'event-1',
@@ -105,35 +101,49 @@ const eventRun = AutomationV3RunListItemSchema.parse({
     updatedAt: 12,
 });
 
-describe('fetchAndApplyAutomations', () => {
-    beforeEach(() => {
+beforeEach(async () => {
         listAutomationDefinitionsMock.mockReset();
         listAutomationDefinitionRunsMock.mockReset();
-        resolveRuntimeFeatureDecisionOrThrowMock.mockReset();
-        getActiveServerSnapshotMock.mockClear();
-
-        resolveRuntimeFeatureDecisionOrThrowMock.mockResolvedValue({ state: 'enabled' });
+        resetServerFeaturesClientForTests();
+        network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome('https://automations-sync.example.test', 'automation-account');
+        credentials = { token: home.token };
+        requestContext = { serverId: home.id, request: createServerFetchAtEndpoint({
+            serverId: home.id, endpointUrl: home.serverUrl, credentials,
+        }) };
+        storage.setState({ settings: { ...initialStorageState.settings, experiments: true } });
         listAutomationDefinitionsMock.mockResolvedValue({ automations: [eventSummary], nextCursor: null });
         listAutomationDefinitionRunsMock.mockResolvedValue({
             runs: [eventRun],
             nextCursor: null,
         });
+        network.setHttpResponder(async (input) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v3/automations') return Response.json(await listAutomationDefinitionsMock());
+            if (/^\/v3\/automations\/[^/]+\/runs$/u.test(url.pathname)) return Response.json(await listAutomationDefinitionRunsMock());
+            return null;
+        });
     });
 
+afterEach(() => {
+    resetServerFeaturesClientForTests();
+    network.dispose();
+    vi.restoreAllMocks();
+    storage.setState(initialStorageState, true);
+});
+
+describe('fetchAndApplyAutomations', () => {
+
     it('applies content-free summaries and refreshes already-loaded Event runs through the current API', async () => {
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
-        const refreshAutomationRunsWindow = vi.fn();
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const refreshAutomationRunsWindow = vi.fn(storage.getState().refreshAutomationRunsWindow);
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             applyAutomations,
             loadedAutomationRunIds: ['event-1'],
             refreshAutomationRunsWindow,
-        });
-
-        expect(resolveRuntimeFeatureDecisionOrThrowMock).toHaveBeenCalledWith({
-            featureId: 'automations',
-            serverId: 'server-1',
         });
 
         expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
@@ -148,31 +158,34 @@ describe('fetchAndApplyAutomations', () => {
         expect(appliedSummary).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(appliedSummary).not.toHaveProperty('templateCiphertext');
         expect(appliedSummary).not.toHaveProperty('executionRecipe');
-        expect(listAutomationDefinitionRunsMock).toHaveBeenCalledWith({
-            credentials: { accessToken: 'token' },
-            automationId: 'event-1',
-            limit: 20,
-        });
+        expect(network.httpRequests).toEqual(expect.arrayContaining([{
+            url: 'https://automations-sync.example.test/v3/automations/event-1/runs?limit=20',
+            token: `Bearer ${credentials.token}`,
+        }]));
         expect(refreshAutomationRunsWindow).toHaveBeenCalledWith('event-1', [eventRun], null);
+        expect(storage.getState().automations['event-1']?.detail).toEqual({ kind: 'unloaded', templateVersion: 3 });
+        expect(storage.getState().automationRunIdsByAutomationId['event-1']).toEqual([eventRun.id]);
     });
 
     it('does not turn a list refresh into a private direct-detail fanout', async () => {
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             applyAutomations,
         });
 
         expect(listAutomationDefinitionsMock).toHaveBeenCalledTimes(1);
+        expect(network.httpRequests.filter(({ url }) => new URL(url).pathname.startsWith('/v3/automations'))
+            .map(({ url }) => new URL(url).pathname)).toEqual(['/v3/automations']);
         expect(applyAutomations.mock.calls[0]?.[0]?.[0]).toMatchObject({
             detail: { kind: 'unloaded', templateVersion: 3 },
         });
     });
 
     it('refreshes already-loaded run lists through the shared request-concurrency owner', async () => {
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
-        const refreshAutomationRunsWindow = vi.fn();
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const refreshAutomationRunsWindow = vi.fn(storage.getState().refreshAutomationRunsWindow);
         const loadedAutomationRunIds = Array.from({ length: 20 }, (_unused, index) => `event-${index + 1}`);
         listAutomationDefinitionsMock.mockResolvedValue({
             automations: loadedAutomationRunIds.map((id) => ({ ...eventSummary, id })),
@@ -189,7 +202,7 @@ describe('fetchAndApplyAutomations', () => {
         });
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             applyAutomations,
             loadedAutomationRunIds,
             refreshAutomationRunsWindow,
@@ -205,11 +218,11 @@ describe('fetchAndApplyAutomations', () => {
     });
 
     it('drops fetched automations when the captured sync scope is stale before apply', async () => {
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
-        const refreshAutomationRunsWindow = vi.fn();
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const refreshAutomationRunsWindow = vi.fn(storage.getState().refreshAutomationRunsWindow);
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             applyAutomations,
             loadedAutomationRunIds: ['event-1'],
             refreshAutomationRunsWindow,
@@ -219,6 +232,7 @@ describe('fetchAndApplyAutomations', () => {
         expect(applyAutomations).not.toHaveBeenCalled();
         expect(listAutomationDefinitionRunsMock).not.toHaveBeenCalled();
         expect(refreshAutomationRunsWindow).not.toHaveBeenCalled();
+        expect(storage.getState().automations).toEqual(initialStorageState.automations);
     });
 
     it('appends an exact continuation page without replacing the current definition window', async () => {
@@ -226,29 +240,31 @@ describe('fetchAndApplyAutomations', () => {
             automations: [{ ...eventSummary, id: 'event-2' }],
             nextCursor: 'cursor-2',
         });
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
-        const appendAutomations = vi.fn(() => true);
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const appendAutomations = vi.fn(storage.getState().appendAutomations);
+        const traversalToken = storage.getState().applyAutomations([createAutomationDefinitionSummary(eventSummary)], 'cursor-1')!;
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             cursor: 'cursor-1',
-            traversalToken: 7,
+            traversalToken,
             applyAutomations,
             appendAutomations,
         });
 
-        expect(listAutomationDefinitionsMock).toHaveBeenCalledWith(
-            { accessToken: 'token' },
-            { cursor: 'cursor-1' },
-        );
+        const listRequest = network.httpRequests.find(({ url }) => new URL(url).pathname === '/v3/automations');
+        expect(listRequest?.token).toBe(`Bearer ${credentials.token}`);
+        expect(new URL(listRequest!.url).searchParams.get('cursor')).toBe('cursor-1');
         expect(applyAutomations).not.toHaveBeenCalled();
         expect(appendAutomations).toHaveBeenCalledWith(
             'cursor-1',
-            7,
+            traversalToken,
             [expect.objectContaining({ id: 'event-2' })],
             'cursor-2',
         );
         expect(listAutomationDefinitionRunsMock).not.toHaveBeenCalled();
+        expect(storage.getState().automations['event-2']?.id).toBe('event-2');
+        expect(storage.getState().automationDefinitionNextCursor).toBe('cursor-2');
     });
 
     it('does not apply a second-page result after the Account sync scope rejoins', async () => {
@@ -260,13 +276,14 @@ describe('fetchAndApplyAutomations', () => {
                 nextCursor: null,
             };
         });
-        const applyAutomations = vi.fn<ApplyAutomations>(() => null);
-        const appendAutomations = vi.fn(() => true);
+        const applyAutomations = vi.fn<ApplyAutomations>((...args) => storage.getState().applyAutomations(...args));
+        const appendAutomations = vi.fn(storage.getState().appendAutomations);
+        const traversalToken = storage.getState().applyAutomations([createAutomationDefinitionSummary(eventSummary)], 'prior-account-page-2')!;
 
         await fetchAndApplyAutomations({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             cursor: 'prior-account-page-2',
-            traversalToken: 7,
+            traversalToken,
             shouldContinue: () => currentScope,
             applyAutomations,
             appendAutomations,
@@ -274,6 +291,7 @@ describe('fetchAndApplyAutomations', () => {
 
         expect(applyAutomations).not.toHaveBeenCalled();
         expect(appendAutomations).not.toHaveBeenCalled();
+        expect(storage.getState().automations).not.toHaveProperty('event-from-prior-account');
     });
 });
 
@@ -283,28 +301,28 @@ describe('fetchAndApplyAutomationRuns', () => {
             runs: [eventRun],
             nextCursor: null,
         });
-        resolveRuntimeFeatureDecisionOrThrowMock.mockResolvedValue({ state: 'enabled' });
-        const setAutomationRuns = vi.fn(() => null);
-        const appendAutomationRuns = vi.fn(() => true);
+        storage.getState().applyAutomations([createAutomationDefinitionSummary(eventSummary)], null);
+        const traversalToken = storage.getState().setAutomationRuns('event-1', [], 'opaque-root-page')!;
+        const setAutomationRuns = vi.fn(storage.getState().setAutomationRuns);
+        const appendAutomationRuns = vi.fn(storage.getState().appendAutomationRuns);
 
         const result = await fetchAndApplyAutomationRuns({
-            credentials: { accessToken: 'token' } as any,
+            credentials, requestContext,
             automationId: 'event-1',
             limit: 20,
             cursor: 'opaque-root-page',
-            traversalToken: 7,
+            traversalToken,
             setAutomationRuns,
             appendAutomationRuns,
         });
 
-        expect(listAutomationDefinitionRunsMock).toHaveBeenCalledWith({
-            credentials: { accessToken: 'token' },
-            automationId: 'event-1',
-            limit: 20,
-            cursor: 'opaque-root-page',
-        });
+        expect(network.httpRequests).toEqual(expect.arrayContaining([{
+            url: 'https://automations-sync.example.test/v3/automations/event-1/runs?limit=20&cursor=opaque-root-page',
+            token: `Bearer ${credentials.token}`,
+        }]));
         expect(setAutomationRuns).not.toHaveBeenCalled();
-        expect(appendAutomationRuns).toHaveBeenCalledWith('event-1', 'opaque-root-page', 7, [eventRun], null);
+        expect(appendAutomationRuns).toHaveBeenCalledWith('event-1', 'opaque-root-page', traversalToken, [eventRun], null);
+        expect(storage.getState().automationRunIdsByAutomationId['event-1']).toEqual([eventRun.id]);
         expect(result).toEqual({ nextCursor: null, traversalToken: null });
     });
 });

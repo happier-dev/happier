@@ -1,30 +1,29 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { SessionAgentCatalogIdentityIcon } from '../presentation/SessionAgentCatalogIdentityIcon';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@happier-dev/agents', () => ({
-    resolveAgentIdFromSessionMetadata: (metadata: { flavor?: string | null } | null | undefined) => (
-        metadata?.flavor === 'codex' ? 'codex' : null
-    ),
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('@expo/vector-icons', async () => {
+    const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+    return createExpoVectorIconsMock();
+});
 vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
-vi.mock('@/sync/domains/session/readSessionOwnerMetadataView', () => ({
-    readSessionOwnerMetadataView: (session: { metadata?: unknown }) => session.metadata ?? null,
-}));
-vi.mock('@/sync/domains/session/presentation/readSessionPresentationAgentId', () => ({
-    readSessionPresentationAgentId: (session: { metadata?: { flavor?: string } }) => (
-        session.metadata?.flavor === 'codex' ? 'codex' : null
-    ),
-}));
-vi.mock('@/utils/sessions/sessionUtils', () => ({ getSessionAvatarId: () => 'avatar-1' }));
-vi.mock('../presentation/SessionAgentCatalogIdentityIcon', () => ({
-    SessionAgentCatalogIdentityIcon: 'SessionAgentCatalogIdentityIcon',
-}));
 
 describe('SessionListIdentity', () => {
+    afterEach(() => standardCleanup());
     it('projects the selected provider logo with the exact Home context', async () => {
         const { SessionListIdentity } = await import('./SessionListIdentity');
         const session = createSessionFixture({
@@ -47,7 +46,7 @@ describe('SessionListIdentity', () => {
             />,
         );
 
-        expect(screen.tree.root.findByType('SessionAgentCatalogIdentityIcon').props).toMatchObject({
+        expect(screen.tree.root.findByType(SessionAgentCatalogIdentityIcon).props).toMatchObject({
             agentId: 'codex',
             machineId: 'machine-a',
             serverId: 'server-a',
@@ -85,7 +84,7 @@ describe('SessionListIdentity', () => {
             />,
         );
 
-        expect(screen.tree.root.findByType('SessionAgentCatalogIdentityIcon').props).toMatchObject({
+        expect(screen.tree.root.findByType(SessionAgentCatalogIdentityIcon).props).toMatchObject({
             agentId: '',
             machineId: 'machine-b',
             serverId: 'server-b',

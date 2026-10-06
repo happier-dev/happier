@@ -1,242 +1,122 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { decodePlainMachineStoredContent, type MachineUpdateMetadataRequest, type MachineUpdateMetadataResponse } from '@happier-dev/protocol';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import type { MachineMetadata } from '@/sync/domains/state/storageTypes';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
-import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
-import { storage } from '@/sync/domains/state/storage';
-import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import {
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    decodePlainMachineStoredContent,
-} from '@happier-dev/protocol';
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const sent: MachineUpdateMetadataRequest[] = [];
+let respond: (request: MachineUpdateMetadataRequest) => Promise<MachineUpdateMetadataResponse>;
+installDisconnectedServerSocketBoundary((socket) => {
+    socket.connected = true;
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, request: MachineUpdateMetadataRequest) => {
+        if (event !== 'machine-update-metadata') throw new Error('Unexpected metadata socket event: ' + event);
+        sent.push(request);
+        return await respond(request);
+    });
+});
 
-const emitWithAckMock = vi.hoisted(() => vi.fn());
-const getMachineEncryptionMock = vi.hoisted(() => vi.fn());
-const encryptRawMock = vi.hoisted(() => vi.fn());
-const getSyncSingletonMock = vi.hoisted(() => vi.fn());
-const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        emitWithAck: (...args: any[]) => emitWithAckMock(...args),
-        machineRPC: vi.fn(),
-    },
-}));
-
-vi.mock('../sync', () => ({
-    sync: {
-        encryption: {
-            getMachineEncryption: (machineId: string) => getMachineEncryptionMock(machineId),
-        },
-    },
-}));
-
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: getSyncSingletonMock,
-}));
-
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
-}));
-
-const initialStorageState = storage.getInitialState();
-
-function buildMachine(params: Readonly<{
-    id: string;
-    metadataVersion: number;
-    metadata: MachineMetadata | null;
-    storageMode?: 'plain' | 'e2ee';
-}>): Machine {
-    return {
-        id: params.id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: true,
-        activeAt: 1,
-        revokedAt: null,
-        metadata: params.metadata,
-        metadataVersion: params.metadataVersion,
-        daemonState: null,
-        daemonStateVersion: 0,
-        ...(params.storageMode ? { storageMode: params.storageMode } : {}),
-    };
-}
-
-const machinesModulePromise = import('./machines');
-
-function findTelemetryEvent(name: string) {
-    return syncPerformanceTelemetry.snapshot().events.find((event) => event.name === name);
+type StoreState = ReturnType<ReturnType<typeof import('@/sync/domains/state/storage').getStorage>['getState']>;
+let initialState: StoreState;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+async function fixture(mode: 'plain' | 'e2ee') {
+    const homeId = await homes.addHome({ name: 'Metadata Home', serverUrl: 'https://machine-metadata.test', accountId: 'account-a', accountEncryptionMode: mode });
+    const token = homes.findByServerUrl('https://machine-metadata.test')?.token;
+    if (!token) throw new Error('expected_metadata_account');
+    homes.answer(homeId, '/v2/cursor', { body: { cursor: '0' } });
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const credentials = mode === 'plain' ? { token } : { token, secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') };
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer(credentials);
+    const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+    const sync = getSyncSingleton();
+    if (mode === 'e2ee') {
+        if (!sync.encryption) throw new Error('expected_real_account_encryption');
+        await sync.encryption.initializeMachines(new Map([['m1', new Uint8Array(32).fill(23)]]));
+    }
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    const machine = createMachineFixture({ id: 'm1', storageMode: mode, metadataVersion: 4 });
+    getStorage().getState().applyMachines([machine]);
+    const metadata: MachineMetadata = { ...machine.metadata!, displayName: 'New Name' };
+    return { sync, metadata, homeId };
 }
 
 describe('machineUpdateMetadata', () => {
-    beforeEach(() => {
-        storage.setState(initialStorageState, true);
-        emitWithAckMock.mockReset();
-        getMachineEncryptionMock.mockReset();
-        encryptRawMock.mockReset();
-        getSyncSingletonMock.mockReset();
-        getServerFeaturesSnapshotMock.mockReset();
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    accountStoredContentCompatibility: {
-                        v: 1,
-                        minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                        currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                        declarationTransport: 'http-header-and-socket-auth-v1',
-                    },
-                },
-            },
-        });
-
-        getSyncSingletonMock.mockReturnValue({
-            encryption: {
-                getMachineEncryption: (machineId: string) => getMachineEncryptionMock(machineId),
-            },
-        });
-        getMachineEncryptionMock.mockReturnValue({
-            encryptRaw: (...args: any[]) => encryptRawMock(...args),
-            decryptRaw: vi.fn(),
-        });
-        encryptRawMock.mockResolvedValue('enc_local');
+    beforeEach(async () => {
+        webLocks = installWebLockManagerMock();
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        initialState = getStorage().getState();
+        sent.length = 0;
     });
-
-    afterEach(() => {
+    afterEach(async () => {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        await homes.reset();
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().setState(initialState, true);
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
+        vi.restoreAllMocks();
+        webLocks.restore();
     });
 
-    it('applies the updated metadata locally on success', async () => {
-        syncPerformanceTelemetry.configure({
-            enabled: true,
-            slowThresholdMs: 1_000_000,
-            flushIntervalMs: 1_000_000,
-        });
+    it('encrypts E2EE metadata and applies the updated metadata locally on success', async () => {
+        const { sync, metadata } = await fixture('e2ee');
+        const cipher = sync.encryption?.getMachineEncryption('m1');
+        if (!cipher) throw new Error('expected_real_machine_cipher');
+        const serverBytes = await cipher.encryptRaw(metadata);
+        respond = async () => ({ result: 'success', version: 5, metadata: serverBytes });
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        syncPerformanceTelemetry.configure({ enabled: true });
         syncPerformanceTelemetry.reset();
-
-        storage.getState().applyMachines([buildMachine({
-            id: 'm1',
-            metadataVersion: 1,
-            metadata: { host: 'h1' } as any,
-        })]);
-
-        emitWithAckMock.mockResolvedValueOnce({
-            result: 'success',
-            version: 2,
-            metadata: 'enc_server',
-        });
-
-        const { machineUpdateMetadata } = await machinesModulePromise;
-        const updatedMetadata: MachineMetadata = { host: 'h1', displayName: 'New Name' } as any;
-        const res = await machineUpdateMetadata('m1', updatedMetadata, 1);
-
-        expect(res).toEqual({ version: 2, metadata: 'enc_server' });
-        expect(getSyncSingletonMock).toHaveBeenCalledTimes(1);
-        expect(emitWithAckMock).toHaveBeenCalledWith('machine-update-metadata', {
-            machineId: 'm1',
-            metadata: 'enc_local',
-            expectedVersion: 1,
-        });
-
-        const updated = storage.getState().machines['m1'];
-        expect(updated?.metadataVersion).toBe(2);
-        expect((updated?.metadata as any)?.displayName).toBe('New Name');
-        expect(findTelemetryEvent('sync.encryption.machine.encryptRaw.metadataWrite')).toMatchObject({
-            count: 1,
-            fields: { items: 1 },
-        });
+        const { machineUpdateMetadata } = await import('./machines');
+        await expect(machineUpdateMetadata('m1', metadata, 4)).resolves.toEqual({ version: 5, metadata: serverBytes });
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ machineId: 'm1', expectedVersion: 4 });
+        expect(decodePlainMachineStoredContent(sent[0]!.metadata)).toBeNull();
+        expect(await cipher.decryptRaw(sent[0]!.metadata)).toEqual(metadata);
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        expect(getStorage().getState().machines.m1).toMatchObject({ metadataVersion: 5, metadata });
+        expect(syncPerformanceTelemetry.snapshot().events.find((event) => event.name === 'sync.encryption.machine.encryptRaw.metadataWrite'))
+            .toMatchObject({ count: 1, fields: { items: 1 } });
     });
 
-    it('writes plaintext Machine metadata without constructing or consulting Machine encryption', async () => {
-        storage.getState().applyMachines([buildMachine({
-            id: 'm-plain',
-            metadataVersion: 4,
-            metadata: { host: 'plain-host' } as any,
-            storageMode: 'plain',
-        })]);
-        emitWithAckMock.mockResolvedValueOnce({
-            result: 'success',
-            version: 5,
-            metadata: 'server-plain',
-        });
-
-        const { machineUpdateMetadata } = await machinesModulePromise;
-        const nextMetadata: MachineMetadata = {
-            host: 'plain-host',
-            displayName: 'Plain Machine',
-        } as any;
-        await machineUpdateMetadata('m-plain', nextMetadata, 4);
-
-        expect(getMachineEncryptionMock).not.toHaveBeenCalled();
-        const sent = emitWithAckMock.mock.calls[0]?.[1];
-        expect(sent).toMatchObject({
-            machineId: 'm-plain',
-            expectedVersion: 4,
-        });
-        expect(decodePlainMachineStoredContent(sent.metadata)).toEqual(nextMetadata);
+    it('writes plaintext Machine metadata without requiring Account or Machine encryption', async () => {
+        const { sync, metadata } = await fixture('plain');
+        expect(sync.encryption).toBeNull();
+        respond = async (request) => ({ result: 'success', version: 5, metadata: request.metadata });
+        const { machineUpdateMetadata } = await import('./machines');
+        await machineUpdateMetadata('m1', metadata, 4);
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ machineId: 'm1', expectedVersion: 4 });
+        expect(decodePlainMachineStoredContent(sent[0]!.metadata)).toEqual(metadata);
     });
 
-    it('preserves a typed stored-content upgrade requirement returned by the metadata socket operation', async () => {
-        storage.getState().applyMachines([buildMachine({
-            id: 'm-plain-upgrade',
-            metadataVersion: 4,
-            metadata: { host: 'plain-host' } as any,
-            storageMode: 'plain',
-        })]);
-        emitWithAckMock.mockResolvedValueOnce({
+    it('preserves a typed Home stored-content upgrade requirement without a local snapshot preflight', async () => {
+        const { sync, metadata, homeId } = await fixture('plain');
+        expect(sync.encryption).toBeNull();
+        homes.answer(homeId, '/v1/features', { body: { capabilities: { encryption: { storagePolicy: 'optional' } } } });
+        respond = async () => ({
             error: 'client-upgrade-required',
-            requirement: {
-                v: 1,
-                kind: 'account-stored-content',
-                minimumProtocolVersion: 2,
-            },
+            requirement: { v: 1, kind: 'account-stored-content', minimumProtocolVersion: 2 },
         });
-
-        const { machineUpdateMetadata } = await machinesModulePromise;
-        await expect(machineUpdateMetadata(
-            'm-plain-upgrade',
-            { host: 'plain-host', displayName: 'Plain Machine' } as any,
-            4,
-        )).rejects.toMatchObject({
-            code: 'client-upgrade-required',
-            retryable: false,
-            requirement: {
-                v: 1,
-                kind: 'account-stored-content',
-                minimumProtocolVersion: 2,
-            },
+        const { machineUpdateMetadata } = await import('./machines');
+        await expect(machineUpdateMetadata('m1', metadata, 4)).rejects.toMatchObject({
+            code: 'client-upgrade-required', retryable: false,
+            requirement: { v: 1, kind: 'account-stored-content', minimumProtocolVersion: 2 },
         });
-    });
-
-    it('refuses a plain Machine metadata marker update before socket emission on an old server snapshot', async () => {
-        storage.getState().applyMachines([buildMachine({
-            id: 'm-plain-old-server',
-            metadataVersion: 4,
-            metadata: { host: 'plain-host' } as any,
-            storageMode: 'plain',
-        })]);
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    encryption: {
-                        storagePolicy: 'optional',
-                    },
-                },
-            },
-        });
-
-        const { machineUpdateMetadata } = await machinesModulePromise;
-        await expect(machineUpdateMetadata(
-            'm-plain-old-server',
-            { host: 'plain-host', displayName: 'Do not send' } as any,
-            4,
-        )).rejects.toMatchObject({
-            code: 'client-upgrade-required',
-            retryable: false,
-        });
-
-        expect(emitWithAckMock).not.toHaveBeenCalled();
-        expect(getMachineEncryptionMock).not.toHaveBeenCalled();
+        // Compatibility admission is the server socket owner's verdict today,
+        // not an invented client feature-snapshot preflight or plaintext fallback.
+        expect(sent).toHaveLength(1);
+        expect(decodePlainMachineStoredContent(sent[0]!.metadata)).toEqual(metadata);
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        expect(getStorage().getState().machines.m1?.metadataVersion).toBe(4);
     });
 });

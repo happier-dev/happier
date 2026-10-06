@@ -11,18 +11,6 @@ vi.mock('@/voice/agent/getVoiceAgentSessionTeleportAvailability', () => ({
     getVoiceAgentSessionTeleportAvailability: () => ({ ok: false }),
 }));
 
-// The real hook returns the module-level registry snapshot
-// (`connectedServiceRegistry.ts:179-181`), so the mock must be a stable object
-// too — a fresh literal per render would manufacture exactly the instability
-// this test exists to detect.
-const connectedServices = vi.hoisted(() => ({
-    snapshot: Object.freeze({ entries: Object.freeze([]) }),
-}));
-
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useProjectedConnectedServicesRegistry: () => connectedServices.snapshot,
-}));
-
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: () => '/session/target-session' }).module;

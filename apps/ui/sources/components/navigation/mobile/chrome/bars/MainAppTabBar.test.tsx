@@ -1,9 +1,11 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
+import { createSessionFixture, flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { FeaturesResponseSchema, UserProfileSchema } from '@happier-dev/protocol';
+import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,7 +31,7 @@ const badgeSettingsState = vi.hoisted(() => ({
     showLabels: true,
 }));
 
-installNavigationCommonModuleMocks({
+installUiListsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -37,27 +39,7 @@ installNavigationCommonModuleMocks({
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
         });
     },
-    storage: async (importOriginal) => {
-        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-        return {
-            ...actual,
-            useFriendRequestCount: (() => friendRequestsState.items.length) as typeof import('@/sync/domains/state/storage').useFriendRequestCount,
-            useSetting: ((key: string) => {
-                if (key === 'tabBarFriendsBadgeEnabled') return badgeSettingsState.friends;
-                if (key === 'tabBarInboxBadgeEnabled') return badgeSettingsState.inbox;
-                if (key === 'tabBarSessionsBadgeEnabled') return badgeSettingsState.sessions;
-                if (key === 'tabBarShowLabels') return badgeSettingsState.showLabels;
-                if (key === 'tabBarSize') return 'regular';
-                return undefined;
-            }) as typeof import('@/sync/domains/state/storage').useSetting,
-        };
-    },
 });
-
-vi.mock('react-native-safe-area-context', () => ({
-    initialWindowMetrics: null,
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
 
 vi.mock('expo-image', () => ({
     get Image() {
@@ -76,21 +58,35 @@ vi.mock('@/components/ui/layout/layout', () => ({
     useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
 }));
 
-vi.mock('@/hooks/inbox/useInboxHasContent', () => ({
-    useInboxHasContent: () => inboxState.hasContent,
-}));
-
-vi.mock('@/hooks/session/useSessionsHaveAttention', () => ({
-    useSessionsHaveAttention: () => sessionsAttentionState.hasAttention,
-}));
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => true,
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
-}));
+async function renderTabBar(element: React.ReactElement) {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
+    const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+    const serverId = getActiveServerSnapshot().serverId;
+    const baseFeatures = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false }, automations: { enabled: false } } });
+    const features = FeaturesResponseSchema.parse({ ...baseFeatures, capabilities: { ...baseFeatures.capabilities,
+        social: { friends: { allowUsername: true, requiredIdentityProviderId: null } } } });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const session = createSessionFixture({ id: 'needs-attention', serverId, active: true, activeAt: Date.now(),
+        pendingPermissionRequestCount: 1, pendingRequestObservedAt: Date.now() });
+    const hasAttention = sessionsAttentionState.hasAttention || inboxState.hasContent;
+    storage.setState({
+        isDataReady: true,
+        profile: { ...storage.getState().profile, username: 'tabbar-viewer' },
+        settings: { ...storage.getState().settings,
+            tabBarFriendsBadgeEnabled: badgeSettingsState.friends, tabBarInboxBadgeEnabled: badgeSettingsState.inbox,
+            tabBarSessionsBadgeEnabled: badgeSettingsState.sessions, tabBarShowLabels: badgeSettingsState.showLabels,
+            tabBarSize: 'regular' },
+        friends: Object.fromEntries(friendRequestsState.items.map(({ id }) => [id, UserProfileSchema.parse({
+            id, username: id, firstName: id, lastName: null, avatar: null, bio: null, publicKey: null, status: 'pending' })])),
+        sessions: hasAttention ? { [session.id]: session } : {},
+        sessionListRowsByServerId: hasAttention ? { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } } : {},
+        ordinarySessionListMembershipByServerId: hasAttention ? { [serverId]: [session.id] } : {}, artifacts: {},
+    });
+    return renderScreen(<InboxSummaryProvider>{element}</InboxSummaryProvider>);
+}
 
 function hasTextChild(node: renderer.ReactTestInstance, value: string) {
     return node.findAllByType('Text' as never).some((child) => String(child.props.children) === value);
@@ -99,13 +95,16 @@ function hasTextChild(node: renderer.ReactTestInstance, value: string) {
 function hasIndicatorDot(node: renderer.ReactTestInstance) {
     return node.findAll((child) => {
         if (String(child.type) !== 'View') return false;
-        const style = child.props?.style ?? {};
+        const style = flattenTestStyle(child.props?.style);
         return style.width === 6 && style.height === 6;
     }).length > 0;
 }
 
 describe('MainAppTabBar', () => {
-    beforeEach(() => {
+    let initialStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState>;
+    beforeEach(async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        initialStorageState = storage.getState();
         friendRequestsState.items = [];
         inboxState.hasContent = false;
         sessionsAttentionState.hasAttention = false;
@@ -114,13 +113,16 @@ describe('MainAppTabBar', () => {
         badgeSettingsState.inbox = true;
         badgeSettingsState.sessions = true;
         badgeSettingsState.showLabels = true;
-        vi.resetModules();
+    });
+    afterEach(async () => {
+        standardCleanup();
+        (await import('@/sync/domains/state/storageStore')).storage.setState(initialStorageState, true);
     });
 
     it('renders a trailing accessory beside the tabs without turning it into one', async () => {
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const screen = await renderScreen(
+        const screen = await renderTabBar(
             <MainAppTabBar
                 activeTab="sessions"
                 onTabPress={() => {}}
@@ -142,7 +144,7 @@ describe('MainAppTabBar', () => {
         sessionsAttentionState.hasAttention = true;
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const screen = await renderScreen(
+        const screen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
 
@@ -169,7 +171,7 @@ describe('MainAppTabBar', () => {
     it('supplements RNW tab activation for Space without double-handling Enter or pointer presses', async () => {
         const onTabPress = vi.fn();
         const { MainAppTabBar } = await import('./MainAppTabBar');
-        const screen = await renderScreen(
+        const screen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
         );
         const projectsTab = screen.findByTestId('tabbar-tab-projects');
@@ -200,7 +202,7 @@ describe('MainAppTabBar', () => {
         const previousPlatform = Platform.OS;
         (Platform as { OS: string }).OS = 'ios';
         try {
-            const nativeScreen = await renderScreen(
+            const nativeScreen = await renderTabBar(
                 <MainAppTabBar activeTab="sessions" onTabPress={onTabPress} />,
             );
             expect(nativeScreen.findByTestId('tabbar-tab-projects')?.props.onKeyDown).toBeUndefined();
@@ -218,7 +220,7 @@ describe('MainAppTabBar', () => {
         badgeSettingsState.sessions = false;
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const tree = (await renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
+        const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const tabs = tree.findAll((node) => typeof node.props?.onPress === 'function');
         const allTextNodes = tree.findAllByType('Text' as never);
@@ -229,7 +231,7 @@ describe('MainAppTabBar', () => {
     it('renders tabs in settings, friends, projects, sessions, inbox order', async () => {
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const tree = (await renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
+        const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const tabIds = Array.from(new Set(
             tree.findAll((node) => typeof node.props?.testID === 'string' && node.props.testID.startsWith('tabbar-tab-'))
@@ -244,7 +246,7 @@ describe('MainAppTabBar', () => {
         inboxState.hasContent = true;
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const tree = (await renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
+        const tree = (await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />)).tree;
 
         const tabs = tree.findAll((node) => typeof node.props?.onPress === 'function');
         const inboxTab = tabs.find((tab) => hasIndicatorDot(tab));
@@ -260,7 +262,7 @@ describe('MainAppTabBar', () => {
         sessionsAttentionState.hasAttention = true;
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
-        const tree = (await renderScreen(<MainAppTabBar activeTab="inbox" onTabPress={() => {}} />)).tree;
+        const tree = (await renderTabBar(<MainAppTabBar activeTab="inbox" onTabPress={() => {}} />)).tree;
 
         const sessionsTab = tree
             .findAll((node) => typeof node.props?.testID === 'string' && node.props.testID === 'tabbar-tab-sessions')[0];
@@ -273,7 +275,7 @@ describe('MainAppTabBar', () => {
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
         sessionsAttentionState.hasAttention = false;
-        const quietScreen = await renderScreen(
+        const quietScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
         const quietSessionsTab = quietScreen.findByTestId('tabbar-tab-sessions');
@@ -281,7 +283,7 @@ describe('MainAppTabBar', () => {
         expect(quietSessionsTab?.props.accessibilityState).toEqual({ selected: true });
 
         sessionsAttentionState.hasAttention = true;
-        const attentionScreen = await renderScreen(
+        const attentionScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
         const attentionSessionsTab = attentionScreen.findByTestId('tabbar-tab-sessions');
@@ -289,14 +291,14 @@ describe('MainAppTabBar', () => {
         expect(attentionSessionsTab?.props.accessibilityState).toEqual({ selected: true });
 
         const attentionDot = attentionSessionsTab?.find(
-            (node) => String(node.type) === 'View' && node.props?.style?.width === 6,
+            (node) => String(node.type) === 'View' && flattenTestStyle(node.props?.style).width === 6,
         );
         expect(attentionDot?.props.accessible).toBe(false);
         expect(attentionDot?.props.accessibilityElementsHidden).toBe(true);
         expect(attentionDot?.props.importantForAccessibility).toBe('no-hide-descendants');
 
         badgeSettingsState.sessions = false;
-        const disabledScreen = await renderScreen(
+        const disabledScreen = await renderTabBar(
             <MainAppTabBar activeTab="sessions" onTabPress={() => {}} />,
         );
         const disabledSessionsTab = disabledScreen.findByTestId('tabbar-tab-sessions');
@@ -309,7 +311,7 @@ describe('MainAppTabBar', () => {
         const { MainAppTabBar } = await import('./MainAppTabBar');
 
         await expect(
-            renderScreen(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />),
+            renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}} />),
         ).resolves.toBeTruthy();
     });
 });

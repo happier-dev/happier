@@ -1,13 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { act } from 'react-test-renderer';
 
 import { installServerHookCommonModuleMocks } from '../server/serverHookModuleTestHelpers';
 
-const resolveSessionTargetServerIdSpy = vi.hoisted(() =>
-    vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>(() => 'server-canonical'),
-);
 const useExecutionRunsBackendsForSessionSpy = vi.hoisted(() =>
     vi.fn<(...args: unknown[]) => { claude: { available: true; intents: ['review'] } }>(
         () => ({ claude: { available: true, intents: ['review'] } }),
@@ -26,24 +25,16 @@ const externalSessionRuntimeSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) =
     externalSessionLink: null,
     status: { runnerActive: true },
 })));
-const preferredServerIdState = vi.hoisted(() => ({
-    value: 'server-canonical' as string | null,
-}));
 const sessionMachineTargetState = vi.hoisted(() => ({
     value: null as null | { machineId: string; basePath: string },
 }));
 
 const sessionState = vi.hoisted(() => ({
-    value: {
-        id: 'session-1',
-        active: true,
-        serverId: 'server-explicit',
-        metadata: { flavor: 'claude' },
-    } as any,
+    value: null as Session | null,
 }));
 
 installServerHookCommonModuleMocks({
-    storage: async () => createStorageModuleStub({
+    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
         useSession: () => sessionState.value,
         useProjectForSession: () => null,
     }),
@@ -78,13 +69,6 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: (args: unknown) => resumeCapabilityOptionsSpy(args),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: (sessionId: string, fallbackServerId?: string | null) => {
-        resolveSessionTargetServerIdSpy(sessionId, fallbackServerId);
-        return preferredServerIdState.value ?? fallbackServerId ?? null;
-    },
-}));
-
 vi.mock('@/components/sessions/model/useSessionExternalSessionRuntime', () => ({
     useSessionExternalSessionRuntime: (...args: unknown[]) => externalSessionRuntimeSpy(...args),
 }));
@@ -105,9 +89,17 @@ vi.mock('@/sync/domains/session/external/resolveSessionMachineId', () => ({
 }));
 
 describe('useSessionExecutionRunLaunchability', () => {
-    afterEach(() => {
-        standardCleanup();
-        resolveSessionTargetServerIdSpy.mockReset();
+    const initialStorageState: { sessions: Record<string, Session> } = { sessions: {} };
+    beforeEach(async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        initialStorageState.sessions = storage.getState().sessions;
+        storage.setState({ sessions: {} });
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
+    });
+    afterEach(async () => {
+        await standardCleanup();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ sessions: initialStorageState.sessions });
         useExecutionRunsBackendsForSessionSpy.mockReset();
         useSessionExecutionRunsSupportedSpy.mockReset();
         resumeCapabilityOptionsSpy.mockReset();
@@ -115,14 +107,8 @@ describe('useSessionExecutionRunLaunchability', () => {
         featureScopeSpy.mockClear();
         machineReachabilitySpy.mockClear();
         externalSessionRuntimeSpy.mockClear();
-        preferredServerIdState.value = 'server-canonical';
         sessionMachineTargetState.value = null;
-        sessionState.value = {
-            id: 'session-1',
-            active: true,
-            serverId: 'server-explicit',
-            metadata: { flavor: 'claude' },
-        } as any;
+        sessionState.value = null;
     });
 
     it('says why agents cannot start here instead of only hiding the launcher', async () => {
@@ -134,7 +120,7 @@ describe('useSessionExecutionRunLaunchability', () => {
 
         // An inactive Session whose Machine is unreachable cannot resume, so it cannot start agents.
         machineReachabilitySpy.mockImplementation(() => ({ machineReachable: false }));
-        sessionState.value = { id: 'session-1', active: false, serverId: 'server-explicit', metadata: { flavor: 'claude' } } as any;
+        sessionState.value = createSessionFixture({ id: 'session-1', active: false, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
         const offline = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
         expect(offline.getCurrent()).toMatchObject({ canShowExecutionRunLauncher: false, launchUnavailableReason: 'machineOffline' });
         await offline.unmount();
@@ -146,7 +132,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         await stopped.unmount();
 
         // A Session started outside Happier can start agents only while Happier's runner is attached.
-        sessionState.value = { id: 'session-1', active: true, serverId: 'server-explicit', metadata: { flavor: 'claude' } } as any;
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
         externalSessionRuntimeSpy.mockImplementation(() => ({
             externalSessionLink: { v: 1 } as any,
             status: { runnerActive: false },
@@ -161,10 +147,9 @@ describe('useSessionExecutionRunLaunchability', () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
 
-        expect(resolveSessionTargetServerIdSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
-        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-canonical');
+        expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
         expect(hook.getCurrent()).toMatchObject({
-            sessionServerId: 'server-canonical',
+            sessionServerId: 'server-explicit',
             executionRunsSupported: true,
             executionRunsBackends: { claude: { available: true, intents: ['review'] } },
         });
@@ -173,6 +158,9 @@ describe('useSessionExecutionRunLaunchability', () => {
     });
 
     it('refreshes backend lookup when the preferred session server changes', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: undefined, metadata: { flavor: 'claude' } });
+        storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: 'server-canonical' }) } });
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook((session: typeof sessionState.value) => useSessionExecutionRunLaunchability('session-1', session), {
             initialProps: sessionState.value,
@@ -180,7 +168,9 @@ describe('useSessionExecutionRunLaunchability', () => {
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-canonical');
 
-        preferredServerIdState.value = 'server-updated';
+        await act(async () => {
+            storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: 'server-updated' }) } });
+        });
         await hook.rerender(sessionState.value);
 
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenLastCalledWith('session-1', 'server-updated');
@@ -188,9 +178,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         await hook.unmount();
     });
 
-    it('falls back to the direct session server id while the preferred server lookup is unresolved', async () => {
-        preferredServerIdState.value = null;
-
+    it('uses the direct qualified session Home even when the legacy lookup has no Session', async () => {
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
 
@@ -202,13 +190,12 @@ describe('useSessionExecutionRunLaunchability', () => {
     });
 
     it('uses the explicit Home for feature, Machine, runtime and backend decisions even when the same-id Session points at another Home', async () => {
-        sessionState.value = {
+        sessionState.value = createSessionFixture({
             id: 'same-session',
             active: true,
             serverId: 'home-a',
             metadata: { flavor: 'claude', machineId: 'machine-a' },
-        } as any;
-        preferredServerIdState.value = 'home-a';
+        });
         sessionMachineTargetState.value = { machineId: 'machine-b', basePath: '/home-b/workspace' };
 
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
@@ -232,7 +219,7 @@ describe('useSessionExecutionRunLaunchability', () => {
 
     it('builds resume capability options from the resolved session machine target', async () => {
         sessionMachineTargetState.value = { machineId: 'machine-reachable', basePath: '/tmp/reachable' };
-        sessionState.value = {
+        sessionState.value = createSessionFixture({
             id: 'session-1',
             active: false,
             serverId: 'server-explicit',
@@ -241,7 +228,7 @@ describe('useSessionExecutionRunLaunchability', () => {
                 machineId: 'machine-stale',
                 path: '/tmp/stale',
             },
-        } as any;
+        });
 
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
@@ -254,7 +241,7 @@ describe('useSessionExecutionRunLaunchability', () => {
     });
 
     it('lets an inactive external session launch only after resume support and a live execution-runs tool agree', async () => {
-        sessionState.value = {
+        sessionState.value = createSessionFixture({
             id: 'session-1',
             active: false,
             serverId: 'server-explicit',
@@ -271,7 +258,7 @@ describe('useSessionExecutionRunLaunchability', () => {
                 },
                 nativeResumeIdentityV1: { v: 1, vendorResumeId: 'acme-session-1' },
             },
-        } as any;
+        });
         resumeCapabilityOptionsSpy.mockReturnValue({
             resumeCapabilityOptions: {
                 currentAgentCapabilities: {

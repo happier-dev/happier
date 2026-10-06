@@ -22,6 +22,9 @@ import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/p
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
+import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,6 +34,7 @@ const state = vi.hoisted(() => ({
     dismissed: false,
     show: null as null | ((options: unknown) => void),
     window: { width: 1600, height: 900 },
+    phone: false,
     push: null as null | ((href: unknown) => void),
     params: {} as { setupStep?: string },
     layout: { order: [], hidden: [] } as Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'sections' | 'instances'>>,
@@ -74,19 +78,20 @@ vi.mock('@/modal', async () => {
     }) as never;
     return createModalModuleMock({ spies: { show } }).module;
 });
-// The Home's feature probe (HTTP): no Home answers here, so a pairing code cannot be made.
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/api/capabilities/serverFeaturesClient')>(),
-    getServerFeaturesSnapshot: (...args: Parameters<typeof getServerFeaturesSnapshot>) => state.featureSnapshot(...args),
-    observeAuthenticatedServerFeaturesFresh: () => state.featureSnapshot({}),
-}));
 // Pairing HTTP and persisted credentials are system boundaries; the real QR lifecycle runs below them.
 vi.mock('@/sync/http/client', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/http/client')>();
     return { ...actual, createServerFetchAtEndpoint: (...args: Parameters<typeof actual.createServerFetchAtEndpoint>) => {
         const request = actual.createServerFetchAtEndpoint(...args);
-        return (...requestArgs: Parameters<typeof request>) => requestArgs[0].startsWith('/v1/auth/pairing/') || requestArgs[0] === '/v1/auth/account/response'
-            ? state.request(requestArgs[0], requestArgs[1]) : request(...requestArgs);
+        return async (...requestArgs: Parameters<typeof request>) => {
+            if (requestArgs[0] === '/v1/features' || requestArgs[0] === '/v1/features/authenticated') {
+                const snapshot = await state.featureSnapshot({});
+                if (snapshot.status !== 'ready') throw new Error('Test Home feature HTTP unavailable');
+                return Response.json(snapshot.features);
+            }
+            return requestArgs[0].startsWith('/v1/auth/pairing/') || requestArgs[0] === '/v1/auth/account/response'
+                ? state.request(requestArgs[0], requestArgs[1]) : request(...requestArgs);
+        };
     } };
 });
 // Device storage for the recovery-key flag, and the server's feature answer (HTTP).
@@ -103,10 +108,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         },
     };
 });
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => ({ features: { auth: { ui: { recoveryKeyReminder: { enabled: true } } } } }),
-    getCachedReadyServerFeatures: () => null,
-}));
 // The plugins machine's cached answer (none in this launch).
 vi.mock('@/components/settings/plugins/model/pluginAdministrationSummary', () => ({
     usePluginAdministrationSummary: () => ({ known: false, awaitingDecision: 0, userInstalled: 0 }),
@@ -142,6 +143,7 @@ afterEach(async () => {
     state.machineListSettled = true;
     state.dismissed = false;
     state.window = { width: 1600, height: 900 };
+    state.phone = false;
     state.push = null;
     state.params = {};
     state.layout = { order: [], hidden: [] };
@@ -160,7 +162,7 @@ afterEach(async () => {
 async function renderSection(presentation?: 'tiles' | 'checklist') {
     if (!connection) {
         artifact.seed({ v: 1, instances: [], ...state.layout });
-        await import('@/sync/syncEngine');
+        await loadSyncSingletonForTests();
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
         await prepareSessionDraftPersistenceStorage();
         restoreActionLoader = await installRealActionExecutorModuleLoader();
@@ -185,16 +187,26 @@ async function renderSection(presentation?: 'tiles' | 'checklist') {
 }
 
 function AccountShell({ children }: React.PropsWithChildren) {
+    const workspace: WorkspaceNavigationContextValue = {
+        active: true,
+        state: createWorkspaceState({ id: 'home', target: { kind: 'home', params: {} }, pinned: false, preview: true }),
+        phone: state.phone ? { catalog: [], onTab: true, openHref: () => true, activateTab: () => {}, closeTab: () => {} } : null,
+        canGoBack: false, canGoForward: false, openHref: () => true,
+        activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+        navigationForTab: () => { throw new Error('Unexpected tab navigation'); },
+        registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+    };
     return <InjectedAuthProvider credentials={state.authenticated ? connection!.credentials : null}>
         <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(connection!.home.id), platform: 'web',
             clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
-            {children}
+            <WorkspaceNavigationContext.Provider value={workspace}>{children}</WorkspaceNavigationContext.Provider>
         </AppShellPluginUiProjectionValueProvider>
     </InjectedAuthProvider>;
 }
 
 const phoneWindow = () => {
+    state.phone = true;
     state.window = { width: 360, height: 800 };
     vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' });
 };

@@ -187,7 +187,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         })).toBe(false);
     });
 
-    it('intersects the full Codex goal surface with the active runner registry', () => {
+    it('intersects the declared Codex edit/clear goal surface with the active runner registry', () => {
         const session = makeSession({
             active: true,
             metadata: {
@@ -208,9 +208,9 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
 
         expect(resolveSessionGoalActionCapabilityProfile({ agentId: 'codex', session })).toEqual({
             canEdit: true,
-            canStop: true,
+            canStop: false,
             canClear: false,
-            canConfigureBudget: true,
+            canConfigureBudget: false,
         });
         expect(supportsEditableSessionGoals({ agentId: 'codex', session })).toBe(true);
         expect(supportsEditableSessionGoals({
@@ -255,7 +255,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                         v: 1,
                         agentId: 'codex',
                         backendId: 'codex',
-                        items: [{ id: 'goal-1', kind: 'goal', title: 'Ship port' }],
+                        items: [{ id: 'goal-1', kind: 'goal', title: 'Ship port', goalCapabilities: { canEdit: true, canClear: true } }],
                     },
                 } satisfies Metadata,
             }),
@@ -271,7 +271,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                         v: 1,
                         agentId: 'codex',
                         backendId: 'codex',
-                        items: [{ id: 'goal-1', kind: 'goal', title: 'Ship port' }],
+                        items: [{ id: 'goal-1', kind: 'goal', title: 'Ship port', goalCapabilities: { canEdit: true, canClear: true } }],
                     },
                 } satisfies Metadata,
             }),

@@ -10,16 +10,10 @@ import { sanitizePersonalHomeDiagnosticMessage } from './PersonalHomeDiagnosticD
 import type { PersonalHomeBootstrapSnapshot } from '../bootstrap/personalHomeBootstrapTypes';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 
-const transparency = vi.hoisted(() => ({ reduced: false }));
-
 vi.mock('react-native', async () => {
     // Import the boundary factory directly: the barrel's render helpers also import react-native.
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        AccessibilityInfo: {
-            isReduceTransparencyEnabled: async () => transparency.reduced,
-        },
-    });
+    return createReactNativeWebMock();
 });
 
 const snapshot: PersonalHomeBootstrapSnapshot = {
@@ -314,7 +308,7 @@ describe('PersonalHomeSetupSurface', () => {
     });
 
     it.each([false, true])('uses the Home backdrop material with reduced transparency %s', async (reduced) => {
-        transparency.reduced = reduced;
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: reduced }) });
         try {
             const screen = await renderScreen(<PersonalHomeSetupSurface snapshot={snapshot} />);
             const root = screen.findAllHostsByTestId('personal-home-setup-surface')[0];
@@ -327,7 +321,7 @@ describe('PersonalHomeSetupSurface', () => {
                 expect(material.backdropFilter).toMatch(/^blur\(/);
             }
         } finally {
-            transparency.reduced = false;
+            vi.unstubAllGlobals();
         }
     });
     it('names the erased Home distinctly and never promotes raw diagnostic text to primary copy', async () => {

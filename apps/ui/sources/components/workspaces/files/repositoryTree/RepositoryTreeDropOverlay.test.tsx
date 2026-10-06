@@ -10,7 +10,6 @@ let disposeBinding: (() => void) | undefined;
 afterEach(async () => { await act(async () => { disposeBinding?.(); disposeBinding = undefined; }); });
 
 installRepositoryTreeCommonModuleMocks({
-    typography: () => vi.importActual('@/constants/Typography'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({

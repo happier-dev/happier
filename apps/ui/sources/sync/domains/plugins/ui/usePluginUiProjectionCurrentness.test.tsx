@@ -1,86 +1,68 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-const activeServerSnapshot = vi.hoisted(() => ({
-    serverId: 'server-1',
-    serverUrl: 'https://relay.example.test',
-    generation: 1,
-}));
-const storageState = vi.hoisted(() => ({
-    profileScope: null as null | Readonly<{ serverId: string; accountId: string }>,
-}));
 const projectionRuntime = vi.hoisted(() => ({
     describe: vi.fn<(machineId: string, options?: unknown) => Promise<unknown>>(),
-    getRevision: vi.fn<(scope: unknown) => number>(() => 0),
-    subscribe: vi.fn<(scope: unknown, listener: () => void) => () => void>(() => () => {}),
 }));
-const projectionConnectionState = vi.hoisted(() => ({
-    endpointStatus: 'online',
-    daemonStateVersion: 1,
-    isOnline: true,
-}));
-const projectionSubscriptionState = vi.hoisted(() => ({
-    subscribes: 0,
-    unsubscribes: 0,
-    revision: 0,
-    listeners: new Set<() => void>(),
-}));
-
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>()),
-    getAppliedActiveServerSnapshot: () => activeServerSnapshot,
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
-
-vi.mock('@/sync/domains/state/storageStateReaderBridge', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/state/storageStateReaderBridge')>()),
-    readRegisteredStorageState: () => storageState,
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useEndpointStatus: () => projectionConnectionState.endpointStatus,
-        useMachineCliDetectionTarget: () => ({
-            daemonStateVersion: projectionConnectionState.daemonStateVersion,
-            isOnline: projectionConnectionState.isOnline,
-        }),
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock((params) => {
+        if (params.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) throw new Error(`Unexpected currentness fixture RPC: ${params.method}`);
+        return projectionRuntime.describe(params.machineId, params);
     });
 });
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/ops/machineContributionRegistryProjection')>()),
-    machineContributionRegistryProjectionDescribe: (machineId: string, options?: unknown) => (
-        projectionRuntime.describe(machineId, options)
-    ),
-    getMachineContributionRegistryProjectionRevision: (scope: unknown) => (
-        projectionRuntime.getRevision(scope)
-    ),
-    subscribeMachineContributionRegistryProjectionInvalidation: (
-        scope: unknown,
-        listener: () => void,
-    ) => projectionRuntime.subscribe(scope, listener),
-    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-}));
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let homeId: string;
+const { storage } = await import('@/sync/domains/state/storage');
+const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+const { publishMachineContributionRegistryProjectionInvalidation, publishMachineContributionRegistryProjectionReconnect } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 
-import {
-    retireActiveServerAccountScopeLifetime,
-} from '@/sync/domains/scope/activeServerAccountScope';
-import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
 import {
     forgetPluginUiProjectionAdmissionSnapshots,
 } from './projectionWarmCache';
-import {
+const {
     resolvePluginUiClientExecutablePlatform,
     resolvePluginUiProjectionPlatform,
     usePluginUiProjectionCurrentness,
-} from './usePluginUiProjectionCurrentness';
+} = await import('./usePluginUiProjectionCurrentness');
+
+function setMachine(input: { active?: boolean; daemonStateVersion?: number }) {
+    const current = storage.getState().machines['machine-1'];
+    // No heartbeat timestamp in this boundary fixture: the real presence
+    // owner therefore uses the Home-published active bit, not a stale clock.
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', ...current, ...input, activeAt: 0 })], true, { sourceServerId: connection?.home.id });
+}
+
+async function switchAccount(accountId: string) {
+    const machine = storage.getState().machines['machine-1'];
+    const endpointStatus = storage.getState().endpointStatus;
+    await connection?.dispose();
+    await harness.switchAccount(homeId, accountId);
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://relay.example.test', accountId });
+    storage.setState({ profileScope: { serverId: 'server-1', accountId }, settingsScope: { serverId: 'server-1', accountId }, profile: { ...profileDefaults, id: accountId }, isDataReady: true, endpointStatus });
+    setMachine({ active: machine?.active ?? true, daemonStateVersion: machine?.daemonStateVersion ?? 1 });
+}
+
+function invalidateProjection() {
+    publishMachineContributionRegistryProjectionInvalidation({ serverId: 'server-1', machineId: 'machine-1' });
+}
 
 function projection(title: string) {
     return PluginProjectionV2Schema.parse({
@@ -107,10 +89,10 @@ function projection(title: string) {
 }
 
 function supportedProjection(title: string) {
-    return {
-        supported: true as const,
+    return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+        protocolVersion: 1,
         projection: projection(title),
-    };
+    });
 }
 
 describe('usePluginUiProjectionCurrentness', () => {
@@ -126,34 +108,23 @@ describe('usePluginUiProjectionCurrentness', () => {
         // otherwise leak between cases in this module.
         forgetPluginUiProjectionAdmissionSnapshots({ serverId: 'server-1', accountId: 'account-a' });
         forgetPluginUiProjectionAdmissionSnapshots({ serverId: 'server-1', accountId: 'account-b' });
-        activeServerSnapshot.serverId = 'server-1';
-        activeServerSnapshot.serverUrl = 'https://relay.example.test';
-        activeServerSnapshot.generation = 1;
-        storageState.profileScope = { serverId: 'server-1', accountId: 'account-a' };
-        projectionConnectionState.endpointStatus = 'online';
-        projectionConnectionState.daemonStateVersion = 1;
-        projectionConnectionState.isOnline = true;
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        homeId = await harness.addHome({ name: 'Projection currentness', serverUrl: 'https://relay.example.test', serverIdentityId: 'server-1', accountId: 'account-a' });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://relay.example.test', accountId: 'account-a' });
+        const scope = { serverId: 'server-1', accountId: 'account-a' };
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: 'account-a' }, isDataReady: true, endpointStatus: 'online' });
+        setMachine({ active: true, daemonStateVersion: 1 });
         projectionRuntime.describe.mockReset();
-        projectionRuntime.getRevision.mockReset();
-        projectionSubscriptionState.revision = 0;
-        projectionSubscriptionState.listeners.clear();
-        projectionRuntime.getRevision.mockImplementation(() => projectionSubscriptionState.revision);
-        projectionRuntime.subscribe.mockReset();
-        projectionSubscriptionState.subscribes = 0;
-        projectionSubscriptionState.unsubscribes = 0;
-        projectionRuntime.subscribe.mockImplementation((_scope, listener) => {
-            projectionSubscriptionState.subscribes += 1;
-            projectionSubscriptionState.listeners.add(listener);
-            return () => {
-                projectionSubscriptionState.unsubscribes += 1;
-                projectionSubscriptionState.listeners.delete(listener);
-            };
-        });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
         retireActiveServerAccountScopeLifetime();
+        await connection?.dispose();
+        connection = null;
+        await harness.reset();
+        storage.setState(storage.getInitialState(), true);
         delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
     });
 
@@ -177,14 +148,13 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
 
         // Cold process: laptop asleep, phone on cellular. The Account server
         // still answers, every daemon is unreachable, and nothing may reach
         // for one.
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         projectionRuntime.describe.mockReset();
         projectionRuntime.describe.mockImplementation(() => {
             throw new Error('a cold process must not need a daemon to mount');
@@ -194,7 +164,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(cold.getCurrent().phase).toBe('retainedOffline');
         expect(cold.getCurrent().interactionEnabled).toBe(false);
@@ -213,7 +183,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(emptied.getCurrent().phase).toBe('establishing');
         expect(emptied.getCurrent().pluginUiProjection?.generation).toBeNull();
@@ -226,8 +196,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
         clearDaemonMergedProjectionCacheForTests();
 
@@ -241,14 +210,14 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(cold.getCurrent().phase).toBe('establishing');
 
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         await act(async () => {
             await cold.rerender();
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(cold.getCurrent().phase).toBe('retainedOffline');
         expect(cold.getCurrent().interactionEnabled).toBe(false);
@@ -263,8 +232,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
         clearDaemonMergedProjectionCacheForTests();
 
@@ -272,19 +240,19 @@ describe('usePluginUiProjectionCurrentness', () => {
         // machine cannot serve the projection at all. Device custody must not
         // overturn that answer when the machine subsequently drops offline.
         projectionRuntime.describe.mockReset();
-        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        projectionRuntime.describe.mockResolvedValue({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         const answered = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(answered.getCurrent().phase).toBe('unavailable');
 
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         await act(async () => {
             await answered.rerender();
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(answered.getCurrent().phase).toBe('unavailable');
         expect(answered.getCurrent().pluginUiProjection).toBeNull();
@@ -296,24 +264,23 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
         clearDaemonMergedProjectionCacheForTests();
 
         // A transport failure is not the daemon's answer. It must leave the
         // retained snapshot in device custody for the next process.
         projectionRuntime.describe.mockReset();
-        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'error' });
+        projectionRuntime.describe.mockResolvedValue({ protocolVersion: 1, projection: null });
         const transient = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(transient.getCurrent().phase).toBe('establishing');
         await transient.unmount();
 
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         projectionRuntime.describe.mockReset();
         projectionRuntime.describe.mockImplementation(() => {
             throw new Error('a cold process must not need a daemon to mount');
@@ -322,7 +289,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(afterTransient.getCurrent().phase).toBe('retainedOffline');
         expect(afterTransient.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Retained catalog' },
@@ -331,18 +298,18 @@ describe('usePluginUiProjectionCurrentness', () => {
 
         // The daemon's own definitive answer is that this machine does not
         // serve the projection. That must survive a restart.
-        projectionConnectionState.isOnline = true;
+        setMachine({ active: true });
         projectionRuntime.describe.mockReset();
-        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        projectionRuntime.describe.mockResolvedValue({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
         const answered = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(answered.getCurrent().phase).toBe('unavailable');
         await answered.unmount();
 
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         projectionRuntime.describe.mockReset();
         projectionRuntime.describe.mockImplementation(() => {
             throw new Error('a cold process must not need a daemon to mount');
@@ -351,7 +318,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(afterDefinitive.getCurrent().phase).toBe('establishing');
         expect(afterDefinitive.getCurrent().pluginUiProjection?.generation).toBeNull();
@@ -360,7 +327,7 @@ describe('usePluginUiProjectionCurrentness', () => {
     it('never retains a daemon-backed contribution family in the Account admission snapshot', async () => {
         const withComposerControl = projection('Retained catalog');
         projectionRuntime.describe.mockResolvedValueOnce({
-            supported: true as const,
+            protocolVersion: 1,
             projection: PluginProjectionV2Schema.parse({
                 ...withComposerControl,
                 familiesById: {
@@ -395,14 +362,13 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         // The live projection does admit the Composer control, so the cold
         // assertion below discriminates retention from normalization.
         expect(warm.getCurrent().pluginUiProjection?.composerControlsById['acme.preview/add-issue']).toBeDefined();
         await warm.unmount();
 
-        projectionConnectionState.isOnline = false;
+        setMachine({ active: false });
         projectionRuntime.describe.mockReset();
         projectionRuntime.describe.mockImplementation(() => {
             throw new Error('a cold process must not need a daemon to mount');
@@ -411,7 +377,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(cold.getCurrent().phase).toBe('retainedOffline');
         expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']).toBeDefined();
@@ -424,8 +390,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
         clearDaemonMergedProjectionCacheForTests();
 
@@ -435,7 +400,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(refreshing.getCurrent().phase).toBe('establishing');
         expect(refreshing.getCurrent().interactionEnabled).toBe(false);
@@ -451,39 +416,36 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(warm.getCurrent().phase).toBe('current');
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
         await warm.unmount();
 
         // Account B on the same server and the same machine must not reach
         // Account A's retained catalog.
-        storageState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
-        retireActiveServerAccountScopeLifetime();
-        projectionConnectionState.isOnline = false;
+        await act(async () => { await switchAccount('account-b'); });
+        setMachine({ active: false });
         projectionRuntime.describe.mockReset();
 
         const otherAccount = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(otherAccount.getCurrent().phase).toBe('establishing');
         expect(otherAccount.getCurrent().pluginUiProjection?.generation).toBeNull();
         await otherAccount.unmount();
 
         // Back on Account A the retained catalog is reusable, and the moment a
         // daemon answers it is superseded by live authority.
-        storageState.profileScope = { serverId: 'server-1', accountId: 'account-a' };
-        retireActiveServerAccountScopeLifetime();
+        await act(async () => { await switchAccount('account-a'); });
         const restored = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(restored.getCurrent().phase).toBe('retainedOffline');
 
         projectionRuntime.describe.mockResolvedValue(supportedProjection('Live catalog'));
-        projectionConnectionState.isOnline = true;
+        setMachine({ active: true });
         await act(async () => {
             await restored.rerender();
         });
@@ -503,7 +465,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent()).toMatchObject({
             phase: 'establishing',
@@ -513,13 +475,13 @@ describe('usePluginUiProjectionCurrentness', () => {
     });
 
     it('reports an answered unsupported projection as unavailable', async () => {
-        projectionRuntime.describe.mockResolvedValueOnce({ supported: false, reason: 'not-supported' });
+        projectionRuntime.describe.mockResolvedValueOnce({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
 
         const rendered = await renderHook(() => usePluginUiProjectionCurrentness({
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent()).toMatchObject({
             phase: 'unavailable',
@@ -540,20 +502,17 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Account A' },
         });
         expect(rendered.getCurrent().interactionEnabled).toBe(true);
         expect(rendered.getCurrent().phase).toBe('current');
-        expect(projectionSubscriptionState).toMatchObject({ subscribes: 1, unsubscribes: 0 });
+
         expect(rendered.getCurrent().connectedAccountProjection).toEqual({ kind: 'ready', descriptors: [] });
 
-        storageState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
-        await act(async () => {
-            retireActiveServerAccountScopeLifetime();
-        });
+        await act(async () => { await switchAccount('account-b'); });
 
         // A selected surface can only expose Resource methods while this
         // projection is current. Account A's descriptor must therefore be
@@ -565,12 +524,12 @@ describe('usePluginUiProjectionCurrentness', () => {
         expect(rendered.getCurrent().interactionEnabled).toBe(false);
         expect(rendered.getCurrent().phase).not.toBe('current');
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
-        expect(projectionSubscriptionState).toMatchObject({ subscribes: 2, unsubscribes: 1 });
+
 
         await act(async () => {
             resolveAccountB(supportedProjection('Account B'));
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent().pluginUiProjection?.generation).toBe(41);
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
@@ -596,7 +555,7 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Account A' },
         });
@@ -605,17 +564,13 @@ describe('usePluginUiProjectionCurrentness', () => {
         // request returns. The replacement uses the same server, machine, and
         // daemon generation, so only the captured Account lifetime can fence it.
         await act(async () => {
-            projectionSubscriptionState.revision += 1;
-            for (const listener of projectionSubscriptionState.listeners) listener();
+            invalidateProjection();
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
 
-        storageState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
-        await act(async () => {
-            retireActiveServerAccountScopeLifetime();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await act(async () => { await switchAccount('account-b'); });
+        await flushHookEffects();
 
         expect(rendered.getCurrent()).toMatchObject({
             phase: 'establishing',
@@ -627,7 +582,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         await act(async () => {
             resolveRetiredAccountA(supportedProjection('Late Account A'));
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent().phase).toBe('establishing');
         expect(rendered.getCurrent().interactionEnabled).toBe(false);
@@ -637,7 +592,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         await act(async () => {
             resolveAccountB(supportedProjection('Account B'));
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent()).toMatchObject({
             phase: 'current',
@@ -664,21 +619,22 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Authority A' },
         });
 
         await act(async () => {
-            projectionSubscriptionState.revision += 1;
-            for (const listener of projectionSubscriptionState.listeners) listener();
+            invalidateProjection();
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
 
-        projectionConnectionState.endpointStatus = 'offline';
-        projectionConnectionState.isOnline = false;
+        await act(async () => {
+            storage.setState({ endpointStatus: 'offline' });
+            setMachine({ active: false });
+        });
         await rendered.rerender();
         expect(rendered.getCurrent().interactionEnabled).toBe(false);
         expect(rendered.getCurrent().phase).toBe('retainedOffline');
@@ -686,20 +642,19 @@ describe('usePluginUiProjectionCurrentness', () => {
         // A socket reconnect advances every machine's projection revision
         // (`publishMachineContributionRegistryProjectionReconnect`), so the
         // one owner issues a fresh read instead of joining the prior flight.
-        projectionConnectionState.endpointStatus = 'online';
-        projectionConnectionState.isOnline = true;
-        projectionSubscriptionState.revision += 1;
-        await rendered.rerender();
         await act(async () => {
-            for (const listener of projectionSubscriptionState.listeners) listener();
+            storage.setState({ endpointStatus: 'online' });
+            setMachine({ active: true });
+            publishMachineContributionRegistryProjectionReconnect();
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await rendered.rerender();
+        await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(3);
 
         await act(async () => {
             resolveReconnectedAuthority(supportedProjection('Authority B'));
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Authority B' },
         });
@@ -708,7 +663,7 @@ describe('usePluginUiProjectionCurrentness', () => {
         await act(async () => {
             resolvePriorAuthority(supportedProjection('Late Authority A'));
         });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Authority B' },
         });
@@ -723,18 +678,18 @@ describe('usePluginUiProjectionCurrentness', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
             en: { title: 'Before daemon republish' },
         });
 
-        // A durable registry adoption republishes the existing daemon state;
-        // its server-owned version is the consumer's authority signal. No
-        // projection invalidation or reconnect occurs in this transition.
-        projectionConnectionState.daemonStateVersion = 2;
+        // A durable registry adoption advances the version through the real
+        // machine writer. It does not replace the daemon endpoint, so no
+        // explicit projection invalidation or reconnect is involved.
+        await act(async () => { setMachine({ daemonStateVersion: 2 }); });
         await rendered.rerender();
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
 
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
@@ -753,12 +708,12 @@ describe('usePluginUiProjectionCurrentness', () => {
             serverId: 'server-1',
             reloadRevision,
         }));
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(1);
 
         reloadRevision = 1;
         await rendered.rerender();
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await flushHookEffects();
         expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
         expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
             .toEqual({ en: { title: 'After refresh' } });
@@ -769,20 +724,19 @@ describe('usePluginUiProjectionCurrentness', () => {
         try {
             projectionRuntime.describe
                 .mockResolvedValueOnce(supportedProjection('Last known good'))
-                .mockResolvedValueOnce({ supported: false, reason: 'error' })
+                .mockResolvedValueOnce({ protocolVersion: 1, projection: null })
                 .mockResolvedValueOnce(supportedProjection('Recovered'));
 
             const rendered = await renderHook(() => usePluginUiProjectionCurrentness({
                 machineId: 'machine-1',
                 serverId: 'server-1',
             }));
-            await flushHookEffects({ cycles: 2, turns: 2 });
+            await flushHookEffects();
 
             await act(async () => {
-                projectionSubscriptionState.revision += 1;
-                for (const listener of projectionSubscriptionState.listeners) listener();
+                invalidateProjection();
             });
-            await flushHookEffects({ cycles: 2, turns: 2 });
+            await flushHookEffects();
 
             expect(rendered.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
                 en: { title: 'Last known good' },
@@ -806,26 +760,22 @@ describe('usePluginUiProjectionCurrentness', () => {
         try {
             projectionRuntime.describe
                 .mockResolvedValueOnce(supportedProjection('Last known good'))
-                .mockResolvedValueOnce({ supported: false, reason: 'error' })
+                .mockResolvedValueOnce({ protocolVersion: 1, projection: null })
                 .mockImplementationOnce(() => new Promise(() => {}));
 
             await renderHook(() => usePluginUiProjectionCurrentness({
                 machineId: 'machine-1',
                 serverId: 'server-1',
             }));
-            await flushHookEffects({ cycles: 2, turns: 2 });
+            await flushHookEffects();
 
             await act(async () => {
-                projectionSubscriptionState.revision += 1;
-                for (const listener of projectionSubscriptionState.listeners) listener();
+                invalidateProjection();
             });
-            await flushHookEffects({ cycles: 2, turns: 2 });
+            await flushHookEffects();
             expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
 
-            storageState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
-            await act(async () => {
-                retireActiveServerAccountScopeLifetime();
-            });
+            await act(async () => { await switchAccount('account-b'); });
             await flushHookEffects({ advanceTimersMs: 10_000, cycles: 1, turns: 2 });
 
             // The successor Account gets its one new authoritative request;
@@ -844,13 +794,13 @@ describe('usePluginUiProjectionCurrentness', () => {
             // here as the same opaque `error`. Retrying it faster than the
             // app's own 30 s projection refresh buys nothing and re-pulls the
             // whole projection each time.
-            projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'error' });
+            projectionRuntime.describe.mockResolvedValue({ protocolVersion: 1, projection: null });
 
             await renderHook(() => usePluginUiProjectionCurrentness({
                 machineId: 'machine-1',
                 serverId: 'server-1',
             }));
-            await flushHookEffects({ cycles: 2, turns: 2 });
+            await flushHookEffects();
 
             // The transient burst is deliberately preserved: 250 ms, 1 s,
             // 2.5 s, 5 s. Real blips live inside those first ~8.75 s.

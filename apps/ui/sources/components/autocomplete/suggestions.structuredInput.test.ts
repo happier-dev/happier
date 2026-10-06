@@ -1,3 +1,6 @@
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { storage } from '@/sync/domains/state/storage';
+import { seedAutocompleteSessions } from './autocompleteTestFixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,39 +10,7 @@ import {
 
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn((_sessionId: string) => 'server-a'));
 const searchFilesMock = vi.hoisted(() => vi.fn(async () => []));
-const storageStateMock = vi.hoisted(() => ({
-    sessions: {
-        s1: {
-            id: 's1',
-            active: true,
-            metadata: {
-                path: '/repo',
-            },
-        },
-    } as Record<string, { id?: string; active?: boolean; metadata?: Record<string, unknown> }>,
-    machines: {} as Record<string, unknown>,
-    getProjectForSession: vi.fn(),
-    applySessions: vi.fn((sessions: Array<{ id?: string; metadata?: Record<string, unknown> }>) => {
-        for (const session of sessions) {
-            if (!session.id) continue;
-            storageStateMock.sessions[session.id] = {
-                ...(storageStateMock.sessions[session.id] ?? { id: session.id }),
-                ...session,
-            };
-        }
-    }),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: {
-            getState: () => storageStateMock,
-        },
-    });
-});
 
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     searchFiles: searchFilesMock,
@@ -70,20 +41,13 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params),
 }));
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionIdMock(sessionId),
-}));
-
 describe('structured input autocomplete suggestions', () => {
     beforeEach(() => {
         sessionRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockReset();
-        resolvePreferredServerIdForSessionIdMock.mockClear();
-        storageStateMock.applySessions.mockClear();
-        storageStateMock.machines = {};
-        storageStateMock.getProjectForSession.mockReset();
+        storage.setState({ machines: {} });
         searchFilesMock.mockClear();
-        storageStateMock.sessions = {
+        seedAutocompleteSessions({
             s1: {
                 id: 's1',
                 active: true,
@@ -91,7 +55,7 @@ describe('structured input autocomplete suggestions', () => {
                     path: '/repo',
                 },
             },
-        };
+        });
     });
 
     // Scoping is about which kinds a trigger RESOLVES, not about when their modules
@@ -292,8 +256,7 @@ describe('structured input autocomplete suggestions', () => {
             method: 'session.vendorPluginCatalog.list',
             payload: { cwd: '/repo' },
         });
-        expect(storageStateMock.applySessions).toHaveBeenCalledWith([
-            expect.objectContaining({
+        expect(storage.getState().sessions.s1).toMatchObject({
                 id: 's1',
                 metadata: expect.objectContaining({
                     sessionVendorPluginCatalogV1: expect.objectContaining({
@@ -308,8 +271,7 @@ describe('structured input autocomplete suggestions', () => {
                         }),
                     }),
                 }),
-            }),
-        ]);
+        });
         expect(suggestions[0]).toMatchObject({
             key: 'vendor-plugin-plugin://gmail@openai-curated',
             text: '@gmail',
@@ -359,7 +321,7 @@ describe('structured input autocomplete suggestions', () => {
         const { getSuggestions } = await import('./suggestions');
 
         await expect(getSuggestions('s1', '@plugin:gmail')).resolves.toEqual([]);
-        expect(storageStateMock.applySessions).not.toHaveBeenCalled();
+        expect(storage.getState().sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeUndefined();
 
         await expect(getSuggestions('s1', '@plugin:gmail')).resolves.toEqual([
             expect.objectContaining({
@@ -504,8 +466,7 @@ describe('structured input autocomplete suggestions', () => {
                 agentId: 'codex-agent',
             },
         });
-        expect(storageStateMock.applySessions).toHaveBeenCalledWith([
-            expect.objectContaining({
+        expect(storage.getState().sessions.s1).toMatchObject({
                 id: 's1',
                 metadata: expect.objectContaining({
                     sessionSkillCatalogV1: expect.objectContaining({
@@ -521,8 +482,7 @@ describe('structured input autocomplete suggestions', () => {
                         }),
                     }),
                 }),
-            }),
-        ]);
+        });
         expect(meta).toMatchObject({
             happierStructuredInputV1: {
                 v: 1,
@@ -548,7 +508,7 @@ describe('structured input autocomplete suggestions', () => {
     });
 
     it('hydrates missing inactive-session catalogs through daemon machine RPCs', async () => {
-        storageStateMock.sessions = {
+        seedAutocompleteSessions({
             s1: {
                 id: 's1',
                 active: false,
@@ -557,21 +517,15 @@ describe('structured input autocomplete suggestions', () => {
                     machineId: 'machine-1',
                 },
             },
-        };
-        storageStateMock.machines = {
-            'machine-1': {
+        });
+        storage.setState({ machines: {
+            'machine-1': createMachineFixture({
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
-            },
-        } as never;
-        storageStateMock.getProjectForSession.mockReturnValue({
-            key: {
-                machineId: 'machine-1',
-                path: '/repo',
-            },
-        });
+                metadata: { host: 'host.local', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/home/test/.happier' },
+            }),
+        } });
         machineRpcWithServerScopeMock.mockImplementation(async (params: { method?: string }) => {
             if (params.method === 'daemon.sessionVendorPluginCatalog.list') {
                 return {

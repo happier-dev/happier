@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSessionFilesCommonModuleMocks } from './sessionFilesTestHelpers';
 import { SourceControlOperationsHistorySection } from '@/components/workspaces/scm/SourceControlOperationsHistorySection';
+import { ScmTimelineGutter } from '@/components/workspaces/scm/history/ScmTimelineGutter';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,8 +73,10 @@ describe('SourceControlOperationsHistorySection', () => {
         const commitRowsBefore = getCommitRows(screen, 12);
         expect(commitRowsBefore).toHaveLength(12);
 
-        const headBadges = screen.findAllHostsByTestId('scm-commit-entry-head-badge');
-        expect(headBadges).toHaveLength(1);
+        // HEAD is now identified by the timeline's emphasized point, not a separate badge.
+        const headPoints = screen.findAllByType(ScmTimelineGutter).filter((point) => point.props.tone === 'head');
+        expect(headPoints).toHaveLength(1);
+        expect(headPoints[0]?.props.testID).toBe('scm-commit-entry-sha-1-when');
 
         const loadMore = screen.findAllHostsByTestId('scm-commit-load-more');
         expect(loadMore).toHaveLength(1);

@@ -115,7 +115,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
       v: 1,
       sessionCreationTag,
       recipe: {
-        execution: { machineId: 'machine-exact', directory: '/tmp/project' },
+        execution: { machineId: 'machine-exact', directory: { kind: 'path', path: '/tmp/project' } },
         organization: { folderId: 'folder-original', tagIds: ['tag-original'] },
         agentTarget: {
           kind: 'agent',
@@ -170,7 +170,7 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
       v: 1,
       sessionCreationTag,
       recipe: {
-        execution: { machineId: 'machine-exact', directory: '/tmp/project' },
+        execution: { machineId: 'machine-exact', directory: { kind: 'path', path: '/tmp/project' } },
         organization: { folderId: null, tagIds: [] },
         agentTarget: {
           kind: 'agent',

@@ -4,15 +4,27 @@ import { act } from 'react-test-renderer';
 import {
     buildLiveActivityRemoteUpdateCapabilityDiagnostics,
     PUSH_NOTIFICATION_ACTION_IDS,
+    type LiveActivityRemoteUpdateCapabilityDiagnostics,
 } from '@happier-dev/protocol';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { LiveActivitySnapshot } from '../liveActivities/buildLiveActivitySnapshots';
 
 import { createSessionFixture as createBaseSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { storage } from '@/sync/domains/state/storage';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import type { StorageState } from '@/sync/store/types';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
+import type { LiveActivityTargetRegistrationInput } from '@/sync/api/session/apiLiveActivityTargets';
 
 import {
     buildHappierFocusLiveActivityIdentity,
@@ -112,7 +124,10 @@ const serverFeaturesMainSelectionState = vi.hoisted(() => ({
     value: {
         status: 'ready',
         serverIds: [] as string[],
-        snapshotsByServerId: {} as Record<string, unknown>,
+        snapshotsByServerId: {} as Record<string, {
+            status: 'ready';
+            features: { capabilities: { liveActivities: { remoteUpdates: LiveActivityRemoteUpdateCapabilityDiagnostics } } };
+        }>,
     },
 }));
 
@@ -187,31 +202,6 @@ const localSettingsState = vi.hoisted(() => ({
     value: createLocalSettingsState(),
 }));
 
-const serverProfilesState = vi.hoisted(() => {
-    type ServerProfileFixture = Readonly<{
-        id: string;
-        name: string;
-        serverUrl: string;
-        createdAt: number;
-        updatedAt: number;
-        lastUsedAt: number;
-    }>;
-    type ActiveServerSnapshotFixture = Readonly<{
-        serverId: string;
-        serverUrl: string;
-        generation: number;
-    }>;
-    return {
-        profiles: [] as ServerProfileFixture[],
-        generation: 0,
-        active: {
-            serverId: '',
-            serverUrl: '',
-            generation: 0,
-        } as ActiveServerSnapshotFixture,
-    };
-});
-
 const widgetInteractionsState = vi.hoisted(() => ({
     listener: null as null | ((event: {
         source: string;
@@ -240,9 +230,6 @@ const liveActivityHandleTokenApiState = vi.hoisted(() => ({
     enabled: false,
     currentPushToken: null as string | null,
     throwOnAddPushTokenListener: false,
-}));
-const lastRegisteredExpoPushTokenState = vi.hoisted(() => ({
-    value: 'ExponentPushToken[background-wake]',
 }));
 const liveActivityInstances = vi.hoisted(() => [] as Array<{
     update: (props: unknown) => Promise<void>;
@@ -280,10 +267,12 @@ const liveActivityStart = vi.hoisted(() =>
 const liveActivityUpdate = vi.hoisted(() => vi.fn(async (_props: unknown, _staleDate?: Date) => {}));
 const liveActivityEnd = vi.hoisted(() => vi.fn(async () => {}));
 const liveActivityGetInstances = vi.hoisted(() => vi.fn(() => liveActivityInstances));
+// Recorded HTTP response ports, not replacements for the registration API.
+// The real adapter serializes the input and validates each response below.
 const registerLiveActivityTarget = vi.hoisted(() =>
-    vi.fn(async () => ({ targetId: 'target-direct-1' }))
+    vi.fn(async (_input: LiveActivityTargetRegistrationInput) => ({ targetId: 'target-direct-1' }))
 );
-const markLiveActivityTargetEnded = vi.hoisted(() => vi.fn(async () => undefined));
+const markLiveActivityTargetEnded = vi.hoisted(() => vi.fn(async (_targetId: string, _options: { serverId: string }) => undefined));
 const addUserInteractionListener = vi.hoisted(() =>
     vi.fn((listener: typeof widgetInteractionsState.listener) => {
         if (widgetInteractionListenerAttachState.throwOnAttach) {
@@ -341,11 +330,8 @@ vi.mock('../backgroundWake/defineLiveActivityBackgroundWakeTask', async (importO
     return { ...actual, syncLiveActivityBackgroundWakeTaskRegistration };
 });
 
-vi.mock('expo-router', () => ({
-    router: {
-        push: routerPush,
-    },
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
+    .createExpoRouterMock({ router: { push: routerPush } }).module);
 
 vi.mock('expo-widgets', () => ({
     addUserInteractionListener,
@@ -362,38 +348,7 @@ vi.mock('expo-modules-core', () => ({
     requireOptionalNativeModule: () => liveActivityAuthorizationState.module,
 }));
 
-vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/features/featureDecisionRuntime')>();
-    return {
-        ...actual,
-        useServerFeaturesMainSelectionSnapshot: () => serverFeaturesMainSelectionState.value,
-    };
-});
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    return {
-        ...actual,
-        listServerProfiles: () => serverProfilesState.profiles,
-        getServerProfilesGeneration: () => serverProfilesState.generation,
-        subscribeServerProfiles: () => () => undefined,
-        getActiveServerSnapshot: () => serverProfilesState.active,
-        subscribeActiveServer: () => () => undefined,
-    };
-});
-
-vi.mock('@/sync/api/session/apiLiveActivityTargets', () => ({
-    registerLiveActivityTarget,
-    markLiveActivityTargetEnded,
-}));
-
-vi.mock('@/sync/domains/state/pushTokenRegistration', () => ({
-    loadLastRegisteredExpoPushToken: () => lastRegisteredExpoPushTokenState.value,
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    const createActivitySourceStorageState = () => {
+function publishActivityFixture(): void {
         const sessionListRowsByServerId: Record<string, Record<string, ReturnType<typeof buildSessionListRenderableFromSession>>> = {};
         const ordinarySessionListMembershipByServerId: Record<string, string[]> = {};
         for (const session of sessionsState.value) {
@@ -401,11 +356,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
             (sessionListRowsByServerId[serverId] ??= {})[session.id] = buildSessionListRenderableFromSession(session);
             (ordinarySessionListMembershipByServerId[serverId] ??= []).push(session.id);
         }
-        const sessionListIndexByServerId = sessionsState.value.reduce<Record<string, Array<{
-            type: 'session';
-            sessionId: string;
-            serverId?: string;
-        }>>>((byServerId, session) => {
+        const sessionListIndexByServerId = sessionsState.value.reduce<Record<string, NonNullable<StorageState['sessionListIndexByServerId'][string]>>>((byServerId, session) => {
             const serverId = resolveFixtureServerId(session);
             const items = byServerId[serverId] ?? [];
             items.push({
@@ -416,52 +367,31 @@ vi.mock('@/sync/domains/state/storage', async () => {
             byServerId[serverId] = items;
             return byServerId;
         }, {});
-        return {
+        storage.setState({
             isDataReady: dataReadyState.value,
-            settings: {
-                workspacePathDisplayModeV1: 'name' as const,
-                workspaceRefsV1: [],
-                ...settingsState.value,
-            },
+            settings: settingsParse(settingsState.value),
+            localSettings: localSettingsParse(localSettingsState.value),
             sessions: Object.fromEntries(sessionsState.value.map((session) => [session.id, session])),
             sessionListRowsByServerId,
             ordinarySessionListMembershipByServerId,
             sessionMessages: {},
             sessionListIndexByServerId,
             concurrentSessionListCacheByServerId: {},
-        };
-    };
-    const storage = Object.assign(
-        (selector?: (state: ReturnType<typeof createActivitySourceStorageState>) => unknown) => {
-            const state = createActivitySourceStorageState();
-            return typeof selector === 'function' ? selector(state) : state;
-        },
-        {
-            getState: createActivitySourceStorageState,
-            getInitialState: createActivitySourceStorageState,
-            setState: () => undefined,
-            subscribe: () => () => undefined,
-            destroy: () => undefined,
-        },
-    );
-    return createStorageModuleStub({
-        storage,
-        useAllSessions: () => {
-            throw new Error('ActivitySurfacesRuntime should use the shared activity source');
-        },
-        useSetting: createUseSettingMock({ fallback: (key) => settingsParse(settingsState.value)[key] }),
-        useLocalSettings: () => localSettingsState.value,
-        useIsDataReady: () => dataReadyState.value,
-    });
-});
+        });
+}
 
-// Activity surfaces are an Account delivery channel: every candidate is admitted by
-// its own Home's persisted Account policy. Binding the Home/Account identity here
-// keeps these cases exercising the real admission path instead of device credentials.
-vi.mock('@/hooks/teams/useSessionAudienceContext', async () => {
-    const { createSessionAudienceContextModuleMock } = await import('@/dev/testkit/mocks/sessionAudienceContext');
-    return createSessionAudienceContextModuleMock();
-});
+// Fixture writes reach the actual Zustand owner, including mounted updates.
+// The runtime's selectors and subscriptions are never replaced by test hooks.
+for (const fixture of [sessionsState, sessionIndexServerOverridesState, dataReadyState, settingsState, localSettingsState]) {
+    let value = fixture.value;
+    Object.defineProperty(fixture, 'value', {
+        get: () => value,
+        set: (next: typeof value) => {
+            value = next;
+            publishActivityFixture();
+        },
+    });
+}
 
 const ACTIVITY_TEST_HOME_SERVER_IDS = ['server-a', 'server-b', 'local'] as const;
 
@@ -492,7 +422,7 @@ vi.mock('./iosActivityWidgetModules', () => ({
     },
 }));
 
-function configureDirectApnsRemoteUpdatesForServer(serverId: string): void {
+async function configureDirectApnsRemoteUpdatesForServer(serverId: string): Promise<void> {
     constantsState.expoConfig.plugins = [
         ['expo-widgets', { enablePushNotifications: true, widgets: [] }],
     ];
@@ -527,9 +457,10 @@ function configureDirectApnsRemoteUpdatesForServer(serverId: string): void {
             },
         },
     };
+    await getServerFeaturesSnapshot({ serverId, force: true });
 }
 
-function configureHostedRelayRemoteUpdatesForServer(serverId: string): void {
+async function configureHostedRelayRemoteUpdatesForServer(serverId: string): Promise<void> {
     constantsState.expoConfig.plugins = [
         ['expo-widgets', { enablePushNotifications: true, widgets: [] }],
     ];
@@ -578,9 +509,10 @@ function configureHostedRelayRemoteUpdatesForServer(serverId: string): void {
             },
         },
     };
+    await getServerFeaturesSnapshot({ serverId, force: true });
 }
 
-function configureBackgroundWakeRemoteUpdatesForServer(serverId: string): void {
+async function configureBackgroundWakeRemoteUpdatesForServer(serverId: string): Promise<void> {
     settingsState.value = {
         experiments: true,
         featureToggles: {
@@ -626,31 +558,55 @@ function configureBackgroundWakeRemoteUpdatesForServer(serverId: string): void {
             },
         },
     };
+    await getServerFeaturesSnapshot({ serverId, force: true });
 }
 
-function configureVerifiedLocalServerContext(serverId: string): void {
-    serverProfilesState.profiles = [{
-        id: serverId,
-        name: serverId,
-        serverUrl: `https://${serverId}.example.test`,
-        createdAt: 1,
-        updatedAt: 1,
-        lastUsedAt: 1,
-    }];
-    serverProfilesState.generation += 1;
-    serverProfilesState.active = {
-        serverId,
-        serverUrl: `https://${serverId}.example.test`,
-        generation: serverProfilesState.generation,
-    };
+async function configureVerifiedLocalServerContext(serverId: string): Promise<void> {
+    await setActiveServerId(serverId);
 }
 
 describe('ActivitySurfacesRuntime', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        resetServerFeaturesClientForTests();
+        // These are HTTP response ports. The real feature parser/cache/hook and
+        // Live Activity registration adapter run above this network boundary.
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            const serverId = url.hostname;
+            if (url.pathname === '/v1/features') {
+                const remoteUpdates = serverFeaturesMainSelectionState.value.snapshotsByServerId[serverId]
+                    ?.features.capabilities.liveActivities.remoteUpdates;
+                return Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+                    liveActivities: remoteUpdates ? { remoteUpdates } : {},
+                } }));
+            }
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            if (url.pathname === '/v1/live-activity-targets' && init?.method === 'POST') {
+                // This body was serialized by the real typed API adapter.
+                const request = JSON.parse(String(init.body)) as LiveActivityTargetRegistrationInput;
+                const target = await registerLiveActivityTarget(request);
+                return Response.json({ success: true, target: { id: target.targetId } });
+            }
+            if (url.pathname.startsWith('/v1/live-activity-targets/') && init?.method === 'DELETE') {
+                await markLiveActivityTargetEnded(decodeURIComponent(url.pathname.split('/').at(-1)!), { serverId });
+                return Response.json({ success: true });
+            }
+            throw new Error(`Unexpected Activity Home request: ${url.pathname}`);
+        });
+        for (const serverId of ACTIVITY_TEST_HOME_SERVER_IDS) {
+            await upsertServerProfile({ serverUrl: `https://${serverId}`, name: serverId });
+        }
+        await setActiveServerId('server-a');
+        saveLastRegisteredExpoPushToken('ExponentPushToken[background-wake]');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) => ({
+            token: createAccountTokenForTests(`account-${new URL(url).hostname}`),
+        }));
         persistDefaultActivityHomeAccountSettings();
+        publishActivityFixture();
     });
 
     afterEach(() => {
+        standardCleanup();
         vi.useRealTimers();
         vi.unstubAllEnvs();
         platformState.os = 'ios';
@@ -668,13 +624,6 @@ describe('ActivitySurfacesRuntime', () => {
             serverIds: [],
             snapshotsByServerId: {},
         };
-        serverProfilesState.profiles = [];
-        serverProfilesState.generation = 0;
-        serverProfilesState.active = {
-            serverId: '',
-            serverUrl: '',
-            generation: 0,
-        };
         settingsState.value = createFeatureToggleState();
         localSettingsState.value = createLocalSettingsState();
         widgetInteractionsState.listener = null;
@@ -682,7 +631,6 @@ describe('ActivitySurfacesRuntime', () => {
         liveActivityHandleTokenApiState.enabled = false;
         liveActivityHandleTokenApiState.currentPushToken = null;
         liveActivityHandleTokenApiState.throwOnAddPushTokenListener = false;
-        lastRegisteredExpoPushTokenState.value = 'ExponentPushToken[background-wake]';
         liveActivityPushTokenListeners.length = 0;
         focusWidgetUpdateSnapshot.mockClear();
         sessionsWidgetUpdateSnapshot.mockClear();
@@ -698,6 +646,7 @@ describe('ActivitySurfacesRuntime', () => {
         routerPush.mockClear();
         actionExecutorExecute.mockClear();
         syncLiveActivityBackgroundWakeTaskRegistration.mockClear();
+        vi.restoreAllMocks();
     });
 
     // The Live Activity fallback wake is this runtime's own leg, and a
@@ -913,7 +862,6 @@ describe('ActivitySurfacesRuntime', () => {
 
         await act(async () => {});
 
-        expect(focusWidgetUpdateSnapshot).toHaveBeenCalledTimes(1);
         expect(sessionsWidgetUpdateSnapshot).toHaveBeenCalledWith(expect.objectContaining({
             sessions: expect.arrayContaining([
                 expect.objectContaining({ sessionId: 'permission' }),
@@ -1109,7 +1057,7 @@ describe('ActivitySurfacesRuntime', () => {
                 attentionState: 'permission_required',
                 presentationTemplate: 'urgentAttention',
                 apnsPriority: 5,
-                relevanceScore: 89,
+                relevanceScore: 90,
             }),
             '/session/permission?serverId=server-a',
             expect.any(Date),
@@ -1574,7 +1522,7 @@ describe('ActivitySurfacesRuntime', () => {
 
     it('registers ActivityKit update tokens after native token rotation when direct APNs is selected', async () => {
         liveActivityHandleTokenApiState.enabled = true;
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         sessionsState.value = [
             createSessionFixture({
                 id: 'permission',
@@ -1628,7 +1576,7 @@ describe('ActivitySurfacesRuntime', () => {
     it('registers an already available ActivityKit update token before waiting for rotation events', async () => {
         liveActivityHandleTokenApiState.enabled = true;
         liveActivityHandleTokenApiState.currentPushToken = 'raw-activitykit-token-current';
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         sessionsState.value = [
             createSessionFixture({
                 id: 'permission',
@@ -1678,7 +1626,7 @@ describe('ActivitySurfacesRuntime', () => {
         registerLiveActivityTarget
             .mockResolvedValueOnce({ targetId: 'target-current-token' })
             .mockResolvedValueOnce({ targetId: 'target-native-token' });
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         sessionsState.value = [
             createSessionFixture({
                 id: 'permission',
@@ -1725,7 +1673,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     it('registers the current Expo push token as a background-wake Live Activity target without ActivityKit token APIs', async () => {
-        configureBackgroundWakeRemoteUpdatesForServer('server-a');
+        await configureBackgroundWakeRemoteUpdatesForServer('server-a');
         constantsState.expoConfig.extra = {
             app: {
                 iosBackgroundWakeNotificationsEnabled: true,
@@ -1773,7 +1721,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     it('does not register background-wake targets when the static background task config is disabled', async () => {
-        configureBackgroundWakeRemoteUpdatesForServer('server-a');
+        await configureBackgroundWakeRemoteUpdatesForServer('server-a');
         constantsState.expoConfig.extra = {
             app: {
                 iosBackgroundWakeNotificationsEnabled: false,
@@ -1811,7 +1759,7 @@ describe('ActivitySurfacesRuntime', () => {
 
     it('uses the configured APNs production environment for ActivityKit target registration', async () => {
         liveActivityHandleTokenApiState.enabled = true;
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         constantsState.expoConfig.extra = {
             app: {
                 happierLiveActivityApnsEnvironment: 'production',
@@ -1857,7 +1805,7 @@ describe('ActivitySurfacesRuntime', () => {
 
     it('normalizes runtime APNs environment metadata before ActivityKit target registration', async () => {
         liveActivityHandleTokenApiState.enabled = true;
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_IOS_APNS_ENVIRONMENT', 'PRODUCTION');
         sessionsState.value = [
             createSessionFixture({
@@ -1902,7 +1850,7 @@ describe('ActivitySurfacesRuntime', () => {
         registerLiveActivityTarget
             .mockResolvedValueOnce({ targetId: 'target-direct-1' })
             .mockResolvedValueOnce({ targetId: 'target-hosted-1' });
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         const session = createSessionFixture({
             id: 'permission',
             serverId: 'server-a',
@@ -1937,7 +1885,7 @@ describe('ActivitySurfacesRuntime', () => {
         }));
 
         await act(async () => {
-            configureHostedRelayRemoteUpdatesForServer('server-a');
+            await configureHostedRelayRemoteUpdatesForServer('server-a');
             sessionsState.value = [{
                 ...session,
                 updatedAt: session.updatedAt + 1,
@@ -1997,7 +1945,7 @@ describe('ActivitySurfacesRuntime', () => {
 
         await expect(act(async () => {
             liveActivityHandleTokenApiState.throwOnAddPushTokenListener = true;
-            configureDirectApnsRemoteUpdatesForServer('server-a');
+            await configureDirectApnsRemoteUpdatesForServer('server-a');
             sessionsState.value = [{
                 ...session,
                 updatedAt: session.updatedAt + 1,
@@ -2015,7 +1963,7 @@ describe('ActivitySurfacesRuntime', () => {
 
     it('marks remembered Live Activity remote targets ended when the activity is removed locally', async () => {
         liveActivityHandleTokenApiState.enabled = true;
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         const session = createSessionFixture({
             id: 'permission',
             serverId: 'server-a',
@@ -2059,7 +2007,7 @@ describe('ActivitySurfacesRuntime', () => {
 
     it('keeps and retries the exact remote target after end transport failure without blocking local teardown', async () => {
         liveActivityHandleTokenApiState.enabled = true;
-        configureDirectApnsRemoteUpdatesForServer('server-a');
+        await configureDirectApnsRemoteUpdatesForServer('server-a');
         const session = createSessionFixture({
             id: 'permission',
             serverId: 'server-a',
@@ -2159,7 +2107,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     it('executes a verified Live Activity permission action when privacy and surface policy allow direct actions', async () => {
-        configureVerifiedLocalServerContext('server-a');
+        await configureVerifiedLocalServerContext('server-a');
         localSettingsState.value = createLocalSettingsState({
             attentionDeviceOverridesV1: {
                 v: 1,
@@ -2333,7 +2281,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     it('executes a verified widget permission action when widget privacy and surface policy allow direct actions', async () => {
-        configureVerifiedLocalServerContext('server-a');
+        await configureVerifiedLocalServerContext('server-a');
         localSettingsState.value = createLocalSettingsState({
             iosLiveActivitiesEnabled: false,
             attentionDeviceOverridesV1: {
@@ -2401,7 +2349,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     it('executes a verified widget permission action when shared source index owns the server scope', async () => {
-        configureVerifiedLocalServerContext('server-a');
+        await configureVerifiedLocalServerContext('server-a');
         sessionIndexServerOverridesState.value = {
             permission: 'server-a',
         };

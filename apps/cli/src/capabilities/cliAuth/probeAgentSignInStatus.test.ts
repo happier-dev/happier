@@ -4,6 +4,8 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
 import type { RpcHandler } from '@/api/rpc/types';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 describe('on-demand native sign-in status', () => {
   const directories: string[] = [];
@@ -34,11 +36,21 @@ describe('on-demand native sign-in status', () => {
     // The manifest's system-tool probe also resolves by executable name.
     vi.stubEnv('PATH', `${dir}${delimiter}${process.env.PATH ?? ''}`);
     write('{"user":{"email":"fixture@example.invalid"}}');
-    expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedIn', accountLabel: 'fixture@example.invalid' });
-    write('{}');
-    expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedOut' });
-    write('not-json');
-    expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown' });
+    // The native JSON interpretation belongs to Cursor's admitted cliAuth
+    // contribution. The cold declaration projection is not executable authority.
+    const runtime = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.cursor'] },
+    });
+    try {
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedIn', accountLabel: 'fixture@example.invalid' });
+      write('{}');
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'signedOut' });
+      write('not-json');
+      expect(await probeAgentSignInStatus('cursor')).toMatchObject({ status: 'unknown' });
+    } finally {
+      await runtime.dispose();
+    }
   });
   it('does not infer signed-in or signed-out when no native probe can answer', async () => {
     expect(await probeAgentSignInStatus('missing-fixture-agent')).toMatchObject({ status: 'unknown' });

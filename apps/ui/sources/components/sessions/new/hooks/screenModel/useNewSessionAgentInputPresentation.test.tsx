@@ -7,34 +7,10 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
-vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/index.js', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/index', () => ({ __esModule: true, default: {}, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/publicGlobals', () => ({ __esModule: true, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-vi.mock('react-native-reanimated/lib/module/publicGlobals.js', () => ({ __esModule: true, Easing: { bezier: () => (value: number) => value, linear: (value: number) => value } }));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: {
-            getState: () => ({}),
-        },
-    });
-});
-
-vi.mock('@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent', () => ({
-    LinkFilePickerPopoverContent: (props: Record<string, unknown>) => React.createElement('LinkFilePickerPopoverContent', props),
-}));
-
-vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
-    OptionPickerOverlay: (props: Record<string, unknown>) => React.createElement('OptionPickerOverlay', props),
-}));
 
 const sessionAgentInputTheme = {
     colors: {
@@ -48,14 +24,7 @@ const sessionAgentInputTheme = {
 describe('useNewSessionAgentInputPresentation', () => {
     it('invalidates stabilized chips when their rendered content revision changes', async () => {
         const presentationModule = await import('./useNewSessionAgentInputPresentation');
-        const buildSignature = (presentationModule as unknown as {
-            buildExtraActionChipsSignature: (params: {
-                chips: ReadonlyArray<Record<string, unknown>>;
-                agentType: string;
-                backendTarget: unknown;
-                checkoutPickerOpen: boolean;
-            }) => string;
-        }).buildExtraActionChipsSignature;
+        const buildSignature = presentationModule.buildExtraActionChipsSignature;
         const base = {
             agentType: 'claude',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },

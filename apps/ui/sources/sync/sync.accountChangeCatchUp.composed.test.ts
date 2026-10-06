@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import React from 'react';
+import type { Socket } from 'socket.io-client';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     projectLegacySessionAccessCapabilitiesV1,
@@ -130,55 +136,44 @@ vi.mock('react-native', async () => {
     });
 });
 
-const apiRequest = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        onMessage: vi.fn(),
-        onError: vi.fn(),
-        onReconnected: vi.fn(),
-        onStatusChange: vi.fn(() => () => {}),
-        onConnectionStateChange: vi.fn(() => () => {}),
-        connect: vi.fn(),
-        disconnect: vi.fn(),
-        invalidateRequests: vi.fn(),
-        disposeScopedAuthority: vi.fn(),
-        getSessionScopedTarget: vi.fn(() => null),
-        initialize: vi.fn(),
-        request: apiRequest,
-    },
-}));
+// The SDK and HTTP leaves are the only replaced owners in the composed cases.
+const sockets: Socket[] = [];
+installDisconnectedServerSocketBoundary((socket) => { sockets.push(socket); });
+const domainHttp = vi.hoisted(() => vi.fn<(params: { url: string; init?: RequestInit }) => Promise<Response>>());
+const changesResponse = vi.hoisted(() => vi.fn());
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let authScreen: RenderScreenResult | undefined;
 
-const runtimeFetchWithServerReachability = vi.hoisted(() =>
-    vi.fn<(params: { url: string }) => Promise<Response>>(),
-);
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability,
-}));
-
-const fetchChanges = vi.hoisted(() => vi.fn());
-vi.mock('./api/session/apiChanges', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('./api/session/apiChanges')>();
-    return {
-        fetchChanges: (params: Parameters<typeof actual.fetchChanges>[0]) => params.request ? actual.fetchChanges(params) : fetchChanges(params),
-        fetchCurrentChangesCursor: (params: Parameters<typeof actual.fetchCurrentChangesCursor>[0]) => params.request
-            ? actual.fetchCurrentChangesCursor(params)
-            : Promise.resolve({ status: 'ok' as const, cursor: '0' }),
-    };
-});
-
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
+async function restoreTestAccount(): Promise<void> {
+    await loadSyncSingletonForTests();
+    account = await restoreServerAccountForTest({
+        serverUrl: 'http://localhost:53288',
+        accountId: ACCOUNT_ID,
+        credentials: { token: ACCOUNT_TOKEN },
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health') return jsonResponse({});
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return jsonResponse({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return jsonResponse({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (path === '/v2/account/settings') return jsonResponse({ content: null, version: 0 });
+            if (path === '/v2/cursor') return jsonResponse({ cursor: 0, changesFloor: 0 });
+            if (path === '/v2/changes') {
+                const page = await changesResponse({ url: String(url), init });
+                return jsonResponse({ changes: page?.changes ?? [], nextCursor: Number(page?.nextCursor ?? 0) });
+            }
+            return domainHttp({ url: String(url), init });
+        },
+    });
+    const { AuthProvider } = await import('@/auth/context/AuthContext');
+    const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+    authScreen = await renderScreen(React.createElement(AuthProvider, {
+        initialCredentials: account.credentials, children: null,
+    }));
+}
 
 function jsonResponse(value: unknown): Response {
     return new Response(JSON.stringify(value), {
@@ -248,30 +243,9 @@ function currentAccountStoredContentCompatibilityFeaturesResponse(): Response {
 }
 
 async function prepareAccountChangeWakeSchedulingHarness(): Promise<SyncAccountChangeWakeSchedulingHarness> {
-    const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-    const { storage } = await import('./domains/state/storage');
+    await restoreTestAccount();
     const { sync } = await import('./syncEngine');
-
-    await upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-    const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    storage.getState().activateProfileScope({ serverId, accountId: ACCOUNT_ID });
-    storage.setState((state) => ({
-        ...state,
-        profile: { ...(state.profile ?? {}), id: ACCOUNT_ID },
-    }), true);
-
-    const harness = sync as unknown as SyncAccountChangeWakeSchedulingHarness;
-    harness.credentials = { token: ACCOUNT_TOKEN };
-    harness.serverID = ACCOUNT_ID;
-    harness.isForeground = true;
-    harness.resumeInFlight = null;
-    // The socket owner only handles wakes for the Home its transport is applied to.
-    (harness as unknown as { appliedServerTarget: unknown }).appliedServerTarget = {
-        serverId,
-        serverUrl: 'http://localhost:53288',
-        generation: 1,
-    };
-    return harness;
+    return sync as unknown as SyncAccountChangeWakeSchedulingHarness;
 }
 
 function accountChangeWake(id: string): Readonly<{
@@ -292,17 +266,25 @@ describe('sync AccountChange catch-up projection', () => {
     let localStorage: LocalStorageMockHandle | null = null;
     let webLocks: WebLockManagerMockHandle | null = null;
 
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.resetModules();
         kvStore.clear();
         localStorage = installLocalStorageMock();
         webLocks = installWebLockManagerMock();
-        apiRequest.mockReset();
-        runtimeFetchWithServerReachability.mockReset();
-        fetchChanges.mockReset();
+        sockets.length = 0;
+        domainHttp.mockReset();
+        domainHttp.mockResolvedValue(Response.json({}, { status: 404 }));
+        changesResponse.mockReset();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await authScreen?.unmount();
+        authScreen = undefined;
+        await account?.dispose();
+        account = undefined;
+        const { sync } = await import('./syncEngine');
+        sync.disposeEmbedSession();
+        vi.restoreAllMocks();
         vi.unstubAllGlobals();
         localStorage?.restore();
         localStorage = null;
@@ -320,7 +302,11 @@ describe('sync AccountChange catch-up projection', () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const storedCredentialRead = vi.spyOn(TokenStorage, 'getCredentials');
         const scopedCredentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        await loadSyncSingletonForTests();
         const { sync } = await import('./syncEngine');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const apiRequest = vi.spyOn(apiSocket, 'request');
+        const initialize = vi.spyOn(apiSocket, 'initialize');
         const paths: string[] = [];
         const changesAfter: string[] = [];
         let expectedToken = 'hap_v1_child';
@@ -333,7 +319,7 @@ describe('sync AccountChange catch-up projection', () => {
             expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${expectedToken}`);
             if (url.pathname === '/v1/features/authenticated') return currentAccountStoredContentCompatibilityFeaturesResponse();
             if (url.pathname === '/v2/cursor') return credentialRejected
-                ? new Response(null, { status: 401 }) : jsonResponse({ cursor: 8 });
+                ? new Response(null, { status: 401 }) : jsonResponse({ cursor: 8, changesFloor: 0 });
             if (url.pathname === '/v2/changes') {
                 expect(url.searchParams.get('sessionId')).toBe('embed');
                 changesAfter.push(url.searchParams.get('after') ?? '');
@@ -365,10 +351,11 @@ describe('sync AccountChange catch-up projection', () => {
         expect(scopedCredentialRead).not.toHaveBeenCalled();
         expect(apiRequest).not.toHaveBeenCalled();
         expect(kvStore.size).toBe(0);
-        const { apiSocket } = await import('@/sync/api/session/apiSocket');
         const state = (await import('@/sync/domains/state/storage')).storage;
         const retainedTranscriptBeforeRenewal = state.getState().sessionMessages.embed;
         const retainedTurnsBeforeRenewal = state.getState().sessions.embed?.sessionTurns;
+        expect(state.getState().isDataReady).toBe(true);
+        expect((sync as unknown as SyncAccountChangeCatchUpHarness).changesCursor).toBe('8');
         const initialContext = sync.getEmbedSessionRequestContext();
         paths.length = 0;
         expectedToken = 'hap_v1_renewed';
@@ -387,10 +374,10 @@ describe('sync AccountChange catch-up projection', () => {
         expect(state.getState().sessionMessages.embed).toBe(retainedTranscriptBeforeRenewal);
         expect(state.getState().sessions.embed?.sessionTurns).toBe(retainedTurnsBeforeRenewal);
         expect(state.getState().sessions.embed?.access?.capabilities.submitAgentInput).toBe(true);
-        expect(vi.mocked(apiSocket.initialize).mock.calls.map(([configuration]) => configuration.token))
+        expect(initialize.mock.calls.map(([configuration]) => configuration.token))
             .toEqual(['hap_v1_child', 'hap_v1_renewed']);
         await expect(initialContext!.request('/v2/sessions/embed')).rejects.toMatchObject({ name: 'StaleServerGenerationError' });
-        const onUpdate = vi.mocked(apiSocket.onMessage).mock.calls.find(([event]) => event === 'update')?.[1];
+        const onUpdate = sockets.at(-1)?.listeners('update')[0];
         const before = (await import('@/sync/domains/state/storage')).storage.getState().sessions.embed?.access;
         await onUpdate?.({ id: 'u', seq: 1, createdAt: 2, body: { t: 'update-session', id: 'embed',
             access: { role: 'owner', capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) } } }, { serverId: 'http://localhost:53288' });
@@ -412,7 +399,7 @@ describe('sync AccountChange catch-up projection', () => {
     it('projects one V3 AccountChange catch-up page through the existing Data, Settings, and Availability owners', async () => {
         const availabilityRefresh = createDeferred<void>();
         let dataReadCount = 0;
-        runtimeFetchWithServerReachability.mockImplementation(async ({ url }: { url: string }) => {
+        domainHttp.mockImplementation(async ({ url }: { url: string }) => {
             const path = new URL(url).pathname;
             if (path === '/v1/features') {
                 return currentAccountStoredContentCompatibilityFeaturesResponse();
@@ -439,7 +426,7 @@ describe('sync AccountChange catch-up projection', () => {
             }
             return jsonResponse({});
         });
-        fetchChanges.mockResolvedValue({
+        changesResponse.mockResolvedValue({
             status: 'ok',
             changes: [
                 {
@@ -489,7 +476,6 @@ describe('sync AccountChange catch-up projection', () => {
             nextCursor: '9',
         });
 
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         const { storage } = await import('./domains/state/storage');
         const { loadChangesCursor } = await import('./domains/state/persistence');
@@ -511,29 +497,8 @@ describe('sync AccountChange catch-up projection', () => {
         const { sync } = await import('./sync');
         const syncHarness = sync as unknown as SyncAccountChangeCatchUpHarness;
 
-        await upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-        const { switchConnectionToActiveServer } = await import('./runtime/orchestration/connectionManager');
-        await switchConnectionToActiveServer();
+        await restoreTestAccount();
         const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
-        storage.getState().activateProfileScope({ serverId, accountId: ACCOUNT_ID });
-        await storage.getState().activateSettingsScope({ serverId, accountId: ACCOUNT_ID });
-        storage.setState((state) => ({
-            ...state,
-            profile: { ...(state.profile ?? {}), id: ACCOUNT_ID },
-        }), true);
-        await expect(TokenStorage.setCredentials({ token: ACCOUNT_TOKEN })).resolves.toBe(true);
-        recordAccountStoredContentServerRequirements({
-            serverUrl: getActiveServerSnapshot().serverUrl,
-            requirements: {
-                v: 1,
-                minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-                declarationTransport: 'http-header-and-socket-auth-v1',
-            },
-        });
-
-        syncHarness.credentials = { token: ACCOUNT_TOKEN };
-        syncHarness.serverID = ACCOUNT_ID;
         syncHarness.changesCursor = '0';
         const cursorScope = syncHarness.getChangesCursorScope();
         expect(cursorScope).not.toBeNull();
@@ -626,7 +591,7 @@ describe('sync AccountChange catch-up projection', () => {
             status: 'ready',
             rows: [{ fields: { title: 'after AccountChange' } }],
         });
-        expect(runtimeFetchWithServerReachability.mock.calls.map(([params]) => new URL(params.url).pathname)).toEqual(expect.arrayContaining([
+        expect(domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname)).toEqual(expect.arrayContaining([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
@@ -655,7 +620,7 @@ describe('sync AccountChange catch-up projection', () => {
         const changesStarted = new Promise<void>((resolve) => {
             markChangesStarted = resolve;
         });
-        fetchChanges.mockImplementationOnce(async () => {
+        changesResponse.mockImplementationOnce(async () => {
             markChangesStarted();
             await changesReleased;
             return {
@@ -690,7 +655,8 @@ describe('sync AccountChange catch-up projection', () => {
         expect(observedWakes).toEqual([{
             serverId: sourceServerId,
             entityIds: ['self'],
-            sessionListQueryAffects: false,
+            // An unqualified self change can alter credential/Account currentness.
+            sessionListQueryAffects: true,
         }]);
         dispose();
         harness.disconnectServer();
@@ -704,15 +670,10 @@ describe('sync AccountChange catch-up projection', () => {
         const { storage } = await import('./domains/state/storage');
         const appliedSnapshot = getActiveServerSnapshot();
         const appliedServerId = String(appliedSnapshot.serverId ?? '').trim();
-        Reflect.set(harness, 'appliedServerTarget', {
-            serverId: appliedServerId,
-            serverUrl: appliedSnapshot.serverUrl,
-            generation: appliedSnapshot.generation,
-        });
         harness.changesCursor = '0';
         harness.settingsSync = { invalidateAndAwait: vi.fn(async () => undefined) };
         harness.profileSync = { invalidateAndAwait: vi.fn(async () => undefined) };
-        fetchChanges.mockResolvedValueOnce({
+        changesResponse.mockResolvedValueOnce({
             status: 'ok' as const,
             changes: [{
                 cursor: 1,
@@ -734,10 +695,8 @@ describe('sync AccountChange catch-up projection', () => {
             accountId: ACCOUNT_ID,
         });
         expect(stagedSnapshot.serverId).not.toBe(appliedServerId);
-        expect(getActiveServerAccountScope()).toEqual({
-            serverId: stagedSnapshot.serverId,
-            accountId: ACCOUNT_ID,
-        });
+        // Selecting a Home cannot grant its Account an applied runtime lifetime.
+        expect(getActiveServerAccountScope()).toBeNull();
 
         const observedWakes: Array<{ serverId: string }> = [];
         const dispose = subscribeHomeAccountChange((event) => observedWakes.push(event));
@@ -745,7 +704,7 @@ describe('sync AccountChange catch-up projection', () => {
             status: 'ok',
         });
 
-        expect(fetchChanges).toHaveBeenCalledOnce();
+        expect(changesResponse).toHaveBeenCalledOnce();
         expect(observedWakes).toEqual([expect.objectContaining({ serverId: appliedServerId })]);
         dispose();
         harness.disconnectServer();

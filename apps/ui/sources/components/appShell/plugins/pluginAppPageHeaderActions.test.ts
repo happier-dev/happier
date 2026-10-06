@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle } from '@/dev/testkit';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import type {
-    PluginContributionIdentityV1,
     PluginProjectedActionV2,
 } from '@happier-dev/protocol';
 
-import type {
-    PluginUiPageHeaderActionProjection,
+import {
+    createPluginUiProjectedActionResolver,
+    type PluginUiPageHeaderActionProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 
@@ -29,63 +29,49 @@ function page(): PluginAppPage {
     } as unknown as PluginAppPage;
 }
 
-function actionAuthority(generation: number): PluginSurfaceLaunchAuthority {
+const NOTES_OCCURRENCE_ID = 'acme.notes-occurrence-current';
+
+function actionAuthority(): PluginSurfaceLaunchAuthority {
     return {
         machineId: 'machine-1',
         serverId: 'server-a',
-        occurrenceId: `page-action-occurrence-${generation}`,
+        occurrenceId: NOTES_OCCURRENCE_ID,
         accountLifetime: null,
         executionOrigin: null,
     };
 }
 
-function resolveClientTargetAction(
-    identity: PluginContributionIdentityV1,
+function projectedAction(
+    execution: PluginProjectedActionV2['execution'],
+    available = true,
 ): PluginProjectedActionV2 {
     return {
-        id: identity.localId,
-        pluginId: identity.pluginId,
-        occurrenceId: `${identity.pluginId}-occurrence-current`,
-        title: identity.localId,
+        id: 'refresh-index',
+        pluginId: 'acme.notes',
+        occurrenceId: NOTES_OCCURRENCE_ID,
+        title: 'Refresh index',
         scopes: ['session'],
         surfaces: ['ui'],
-        execution: {
-            target: 'client',
-            client: {
-                artifactId: 'client-action-bundle',
-                exportName: 'execute',
-            },
-            platforms: ['web'],
-        },
+        execution,
         dangerLevel: 'safe',
-        available: true,
+        available,
     };
 }
 
-function resolveDaemonTargetAction(
-    identity: PluginContributionIdentityV1,
-): PluginProjectedActionV2 {
-    return {
-        id: identity.localId,
-        pluginId: identity.pluginId,
-        occurrenceId: `${identity.pluginId}-occurrence-current`,
-        title: identity.localId,
-        scopes: ['session'],
-        surfaces: ['ui'],
-        execution: { target: 'daemon' },
-        dangerLevel: 'safe',
-        available: true,
-    };
-}
-
-function resolveUnavailableDaemonTargetAction(
-    identity: PluginContributionIdentityV1,
-): PluginProjectedActionV2 {
-    return {
-        ...resolveDaemonTargetAction(identity),
-        available: false,
-    };
-}
+// Projected registry DTOs are fixtures; reference resolution remains the real owner.
+const resolveClientTargetAction = createPluginUiProjectedActionResolver({
+    'acme.notes/refresh-index': projectedAction({
+        target: 'client',
+        client: { artifactId: 'client-action-bundle', exportName: 'execute' },
+        platforms: ['web'],
+    }),
+});
+const resolveDaemonTargetAction = createPluginUiProjectedActionResolver({
+    'acme.notes/refresh-index': projectedAction({ target: 'daemon' }),
+});
+const resolveUnavailableDaemonTargetAction = createPluginUiProjectedActionResolver({
+    'acme.notes/refresh-index': projectedAction({ target: 'daemon' }, false),
+});
 
 describe('dispatchPluginAppPageHeaderAction', () => {
     it('does not require daemon authority or call the daemon for a client-target Action', async () => {
@@ -177,7 +163,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         });
     });
 
-    it('routes executeAction through the canonical generation-leased dispatcher with input absent', async () => {
+    it('routes executeAction through the exact contributor occurrence with input absent', async () => {
         const action: PluginUiPageHeaderActionProjection = {
             id: 'refresh',
             title: 'Refresh',
@@ -194,7 +180,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
         await expect(dispatchPluginAppPageHeaderAction({
             action,
             page: page(),
-            actionAuthority: actionAuthority(7),
+            actionAuthority: actionAuthority(),
             openSurface: vi.fn(),
             resolveContributedAction: resolveDaemonTargetAction,
             execute,
@@ -202,7 +188,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
 
         expect(execute).toHaveBeenCalledWith('machine-1', {
             serverId: 'server-a',
-            expectedContributorOccurrenceId: '7',
+            expectedContributorOccurrenceId: NOTES_OCCURRENCE_ID,
             qualifiedActionId: 'acme.notes/refresh-index',
             executionSurface: 'ui',
         });
@@ -221,7 +207,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
                 },
             },
             page: page(),
-            actionAuthority: actionAuthority(7),
+            actionAuthority: actionAuthority(),
             openSurface: vi.fn(),
             resolveContributedAction: resolveUnavailableDaemonTargetAction,
             execute,
@@ -249,7 +235,7 @@ describe('dispatchPluginAppPageHeaderAction', () => {
                 },
             },
             page: page(),
-            actionAuthority: actionAuthority(7),
+            actionAuthority: actionAuthority(),
             openSurface: vi.fn(),
             resolveContributedAction: resolveDaemonTargetAction,
             execute,

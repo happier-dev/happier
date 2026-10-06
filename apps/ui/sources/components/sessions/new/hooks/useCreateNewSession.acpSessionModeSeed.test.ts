@@ -1,3 +1,4 @@
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import 'fake-indexeddb/auto';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -17,9 +18,6 @@ import type { HandleCreateSessionOptions } from './useCreateNewSession';
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const scopedSocketEmitWithAckSpy = vi.hoisted(() => vi.fn());
-const syncSingletonBridge = vi.hoisted(() => ({
-  current: null as typeof import('@/sync/sync').sync | null,
-}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
   createEphemeralServerSocketClient: vi.fn(async () => ({
@@ -27,15 +25,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocke
     emit: vi.fn(),
     disconnect: vi.fn(),
   })),
-}));
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-  getSyncSingleton: () => {
-    if (!syncSingletonBridge.current) throw new Error('Test Sync singleton is not loaded');
-    return syncSingletonBridge.current;
-  },
-}));
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
-  BUNDLED_PLUGIN_UI_APP_ARTIFACTS: Object.freeze([]),
 }));
 
 installNewSessionScreenModelCommonModuleMocks({
@@ -75,6 +64,7 @@ async function createHarness() {
   vi.doUnmock('@/sync/domains/state/persistence');
   const persistence = await import('@/sync/domains/state/persistence');
   const clearNewSessionDraftSpy = vi.spyOn(persistence, 'clearNewSessionDraft');
+  await loadSyncSingletonForTests();
   await selectNewSessionTestHome();
   const { storage } = await import('@/sync/domains/state/storageStore');
   storage.getState().activateProfileScope({ serverId: 'server-a', accountId: 'account-a' });
@@ -92,7 +82,6 @@ async function createHarness() {
   }
 
   const { sync } = await import('@/sync/syncEngine');
-  syncSingletonBridge.current = sync;
   const publishModeSpy = vi.spyOn(sync, 'publishSessionAcpSessionModeOverrideToMetadata');
   const sendMessageSpy = vi.spyOn(sync, 'sendMessage');
 
@@ -193,7 +182,6 @@ beforeAll(async () => {
   await prepareSessionDraftPersistenceStorage();
 });
 afterAll(() => {
-  syncSingletonBridge.current = null;
   vi.restoreAllMocks();
 });
 

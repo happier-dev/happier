@@ -38,7 +38,7 @@ import { RootLayoutRedirectGate } from '@/components/navigation/root/RootLayoutR
 import { useOnboardingJourneySessionActive } from '@/components/onboarding/tour/state/journeySession';
 import { VoiceAnnouncer } from '@/components/voice/surface/VoiceAnnouncer';
 import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
-import { buildUniversalSearchRouteScreenOptions } from './universalSearchRouteScreenOptions';
+import { buildUniversalSearchRouteScreenOptions } from '@/components/appShell/search/universalSearchRouteScreenOptions';
 import { buildSessionRouteScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;

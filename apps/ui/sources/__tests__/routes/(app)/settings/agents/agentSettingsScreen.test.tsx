@@ -24,6 +24,9 @@ import {
 } from '@/dev/testkit';
 import { installSessionSettingsEntryModuleMocks } from '../sessionSettingsEntryTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { storage } from '@/sync/domains/state/storageStore';
+
+const initialAgentSettingsStorage = storage.getState();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -634,11 +637,6 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useSettingsVersion: () => 7,
-    useActiveServerAccountScope: () => null,
-}));
-
 // The Agent purpose section observes the Home's entitled Team credential
 // catalog (a Home query); no Team resource is offered in this suite.
 vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
@@ -1063,9 +1061,11 @@ describe('PluginAgentSettingsScreen', () => {
     afterEach(() => {
         clearProjectedAgentUiBehaviorDescriptors();
         standardCleanup();
+        storage.setState(initialAgentSettingsStorage, true);
     });
 
     beforeEach(() => {
+        storage.setState({ settingsVersion: 7, settingsScope: null });
         clearDaemonMergedProjectionCacheForTests();
         mockProviderId = 'codex';
         mockAgentPluginId = null;

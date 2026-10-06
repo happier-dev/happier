@@ -30,14 +30,16 @@ vi.mock('@/plugins/runtime/reload/singleton', () => ({
 }));
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import Ajv2020 from 'ajv/dist/2020.js';
 import {
   ActionsSettingsV1Schema,
-  actionSpecToActionDefinitionV1,
-  getActionSpec,
-  searchSerializedActionSpecsForSurface,
+  ActionDefinitionV1Schema,
+  createActionExecutor,
 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 import { listBuiltInHappierTools } from './listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
@@ -174,22 +176,9 @@ describe('built-in Happier tools', () => {
   });
 
   it('uses canonical Action executor discovery and projects Session-bound schemas', async () => {
-    const executeActionByToolName = vi.fn(async (toolName: string, args: unknown) => {
-      if (toolName === 'action_spec_search') {
-        const query = typeof (args as { query?: unknown } | null)?.query === 'string'
-          ? (args as { query: string }).query
-          : '';
-        return ok({
-          actionSpecs: searchSerializedActionSpecsForSurface({ surface: 'agent', query }),
-        });
-      }
-      if (toolName === 'action_spec_get') {
-        const id = (args as { id?: unknown } | null)?.id;
-        if (id === 'subagents.plan.start' || id === 'session.spawn_new') {
-          return ok({ actionSpec: actionSpecToActionDefinitionV1(getActionSpec(id), { surface: 'agent' }) });
-        }
-      }
-      return unsupported();
+    const { executeActionByToolName } = createActionToolExecutorBridge({
+      surface: 'agent',
+      executor: createActionExecutor(createUnavailableActionTransportDeps()),
     });
     const listResult = await dispatchBuiltInHappierTool({
       toolName: 'action_spec_search',
@@ -255,33 +244,26 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(spawnGetResult).toEqual(expect.objectContaining({
-      ok: true,
-      result: expect.objectContaining({
-        actionSpec: expect.objectContaining({
-          kindVersion: 1,
-          inputSchema: expect.objectContaining({
-            properties: expect.objectContaining({
-              executionTarget: expect.objectContaining({
-                properties: expect.objectContaining({
-                  serverId: expect.objectContaining({ minLength: 1, maxLength: 191 }),
-                }),
-              }),
-              organizationPlacement: expect.objectContaining({
-                properties: expect.objectContaining({
-                  tagIds: expect.objectContaining({ type: 'array', maxItems: 500 }),
-                }),
-              }),
-              agentSessionStartupInstructionsV1: expect.objectContaining({
-                properties: expect.objectContaining({
-                  revision: expect.objectContaining({ exclusiveMinimum: 0, maximum: 2_147_483_647 }),
-                }),
-              }),
-            }),
-          }),
-        }),
-      }),
-    }));
+    expect(spawnGetResult.ok).toBe(true);
+    if (!spawnGetResult.ok) throw new Error('Expected spawn Action discovery');
+    const definition = ActionDefinitionV1Schema.parse((spawnGetResult.result as { actionSpec: unknown }).actionSpec);
+    expect(definition.kindVersion).toBe(1);
+    if (!definition.inputSchema) throw new Error('Expected spawn input schema');
+    // Exercise the published schema, including references, rather than requiring inline serialization.
+    const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(definition.inputSchema);
+    const input = {
+      executionTarget: { serverId: 'active', machineId: 'machine-1' },
+      directory: { kind: 'path', path: '/workspace/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      organizationPlacement: { tagIds: [] },
+      agentSessionStartupInstructionsV1: { v: 1, id: 'fixture.instructions', revision: 1, instructions: 'Inspect the workspace.' },
+    };
+    expect(validate(input)).toBe(true);
+    expect(validate({ ...input, executionTarget: { ...input.executionTarget, serverId: 'x'.repeat(192) } })).toBe(false);
+    expect(validate({ ...input, organizationPlacement: { tagIds: Array.from({ length: 501 }, (_, i) => `tag-${i}`) } })).toBe(false);
+    for (const revision of [0, 2_147_483_648]) {
+      expect(validate({ ...input, agentSessionStartupInstructionsV1: { ...input.agentSessionStartupInstructionsV1, revision } })).toBe(false);
+    }
   });
 
   it('routes Action discovery through the canonical executor so contributed Actions are visible', async () => {

@@ -195,15 +195,16 @@ const mcpServersCommonModuleMockOptions = {
     },
 };
 
-vi.mock('@react-navigation/native', () => ({
-    usePreventRemove: (
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({ usePreventRemove: (
         enabled: boolean,
         callback: (event: { data: { action: unknown } }) => void,
     ) => {
         navigationPreventRemove.enabled = enabled;
         navigationPreventRemove.callback = callback;
-    },
-}));
+    } });
+});
 
 installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
 

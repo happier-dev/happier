@@ -357,6 +357,23 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
+  it('adopts newer permission metadata before deciding a new tool call', async () => {
+    const session = new FakeSession();
+    session.setMetadataSnapshot({ permissionMode: 'yolo', permissionModeUpdatedAt: 100 });
+    // This fixture replaces only the server-backed metadata, agent-state, and RPC boundary.
+    const boundarySession = session as unknown as ConstructorParameters<typeof CodexLikePermissionHandler>[0]['session'];
+    const handler = new CodexLikePermissionHandler({ session: boundarySession, logPrefix: '[Test]' });
+    handler.setPermissionMode('yolo', 100);
+
+    session.setMetadataSnapshot({ permissionMode: 'read-only', permissionModeUpdatedAt: 200 });
+
+    await expect(handler.handleToolCall('metadata-narrowed-new-call', 'Write', { path: '/tmp/x', content: 'hi' }))
+      .resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests).toEqual({});
+    expect(session.agentState.completedRequests['metadata-narrowed-new-call'])
+      .toEqual(expect.objectContaining({ status: 'denied', decision: 'denied' }));
+  });
+
   it('does not use the tool call id as authorization input', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });

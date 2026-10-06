@@ -78,10 +78,7 @@ vi.mock('@/utils/errors/toolErrorParser', () => ({
   parseToolUseError: () => ({ isToolUseError: false }),
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-  resolveAgentIdFromFlavor: () => null,
-  getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
-}));
+const { ToolInlineBody } = await import('./ToolInlineBody');
 
 describe('ToolInlineBody (text selection scope)', () => {
   afterEach(() => {
@@ -91,7 +88,6 @@ describe('ToolInlineBody (text selection scope)', () => {
   });
 
   it('wraps tool body output in a TextSelectabilityScope so content defaults to selectable', async () => {
-    const { ToolInlineBody } = await import('./ToolInlineBody');
 
     const tool: any = {
       id: 't1',
@@ -126,7 +122,6 @@ describe('ToolInlineBody (text selection scope)', () => {
   });
 
   it('uses structured fallback instead of raw ToolError for SubAgentRun error rows without specific renderer', async () => {
-    const { ToolInlineBody } = await import('./ToolInlineBody');
 
     const tool: any = {
       id: 't-subagent',
@@ -157,7 +152,6 @@ describe('ToolInlineBody (text selection scope)', () => {
   });
 
   it('uses SubAgentRun fallback even when normalized tool name is not SubAgentRun', async () => {
-    const { ToolInlineBody } = await import('./ToolInlineBody');
 
     const tool: any = {
       id: 't-subagent-raw',
@@ -188,7 +182,6 @@ describe('ToolInlineBody (text selection scope)', () => {
   });
 
   it('uses structured fallback for error payloads that match SubAgentRun result shape', async () => {
-    const { ToolInlineBody } = await import('./ToolInlineBody');
 
     const tool: any = {
       id: 't-subagent-shape',
@@ -224,7 +217,6 @@ describe('ToolInlineBody (text selection scope)', () => {
   });
 
   it('clamps oversized default input and output before rendering CodeView', async () => {
-    const { ToolInlineBody } = await import('./ToolInlineBody');
     const { TranscriptRowLayoutMutationProvider } = await import(
       '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext'
     );
@@ -273,7 +265,6 @@ describe('ToolInlineBody (text selection scope)', () => {
 
   it('keeps the tool header actions context value stable across equivalent rerenders', async () => {
     specificToolViewState.enabled = true;
-    const { ToolInlineBody } = await import('./ToolInlineBody');
     const tool: any = {
       id: 't-specific',
       name: 'Specific',

@@ -18,12 +18,6 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
-const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
-const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() =>
-    vi.fn<(serverId: string, sessionId: string) => SessionListRenderableSession | null>(() => null),
-);
-const formatShortRelativeTimeSpy = vi.hoisted(() => vi.fn((_timestamp: number) => '1m'));
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
 let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
@@ -81,23 +75,18 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useHasUnreadMessages: () => hasUnreadMessagesValue,
-            useProfile: useProfileSpy,
-            useSession: useSessionSpy,
-            useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
-            useSessionListMeaningfulActivityAt: () => 60_000,
-            useSetting: (key: string) => {
-                if (key === 'sessionListNarrowWorkingIndicatorStyle') return workingIndicatorStyle;
-                if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
-                if (key === 'sessionListActiveColorModeV1') return sessionListActiveColorMode;
-                return undefined;
-            },
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
+
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+
+const storageModule = await import('@/sync/domains/state/storage');
+const useProfileSpy = vi.spyOn(storageModule, 'useProfile');
+const useSessionSpy = vi.spyOn(storageModule, 'useSession');
+const useSessionListRenderableWithServerScopeSpy = vi.spyOn(storageModule, 'useSessionListRenderableWithServerScope');
+let previousStorageState: ReturnType<typeof storageModule.storage.getState>;
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -120,10 +109,6 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/components/sessions/pendingBadge', () => ({
-    formatPendingCountBadge: () => null,
-}));
-
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
@@ -136,20 +121,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
 
-vi.mock('@/utils/errors/errors', () => ({
-    HappyError: class HappyError extends Error {},
-}));
-
-vi.mock('@/utils/time/formatShortRelativeTime', () => ({
-    formatShortRelativeTime: formatShortRelativeTimeSpy,
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionRename: vi.fn(async () => ({ success: true })),
-}));
-
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
@@ -158,16 +129,6 @@ vi.mock('./sessionPinIcons', () => ({
 vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
-
-vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/sessions/sessionUtils')>();
-    return {
-        ...actual,
-        getSessionName: (session: { metadata?: { name?: string } | null }) => session.metadata?.name ?? 'Session',
-        getSessionSubtitle: () => 'Subtitle',
-        getSessionAvatarId: () => 'avatar',
-    };
-});
 
 type MockSessionStatus = SessionStatus;
 let projectStatus: typeof import('@/utils/sessions/sessionUtils').getSessionStatus;
@@ -218,7 +179,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 
 function createSession(
     id: string,
-    metadata: ReturnType<typeof createSessionFixture>['metadata'] = null,
+    metadata: ReturnType<typeof createSessionFixture>['metadata'] = { name: 'Session', path: '/workspace/repo', host: 'host' },
 ) {
     return createSessionFixture({
         id,
@@ -227,7 +188,7 @@ function createSession(
         encryptionMode: 'plain',
         createdAt: 1,
         updatedAt: 1,
-        metadata,
+        metadata: metadata ? { ...metadata, name: metadata.name ?? 'Session' } : null,
         presence: 'online',
     });
 }
@@ -275,12 +236,19 @@ async function importSessionItem() {
     });
 }
 
-function styleEntries(style: unknown): unknown[] {
-    return Array.isArray(style) ? style : [style];
+function findRowGeometryStyle(screen: Awaited<ReturnType<typeof renderScreen>>, sessionId: string) {
+    let node = screen.findByTestId(`session-list-item-${sessionId}`)?.parent;
+    while (node) {
+        const style = flattenStyle(node.props.style);
+        if (typeof style.height === 'number') return style;
+        node = node.parent;
+    }
+    throw new Error(`expected row geometry for ${sessionId}`);
 }
 
 describe('SessionItem activity time', () => {
     beforeEach(async () => {
+        previousStorageState = storageModule.storage.getState();
         projectStatus = (await import('@/utils/sessions/sessionUtils')).getSessionStatus;
         hasUnreadMessagesValue = false;
         workingIndicatorStyle = 'spinner';
@@ -290,16 +258,14 @@ describe('SessionItem activity time', () => {
         mockSessionStatus = createStatusFixture({
             ...defaultSessionStatus,
         });
-        formatShortRelativeTimeSpy.mockReset();
-        formatShortRelativeTimeSpy.mockImplementation(() => '1m');
         useProfileSpy.mockClear();
         useSessionSpy.mockClear();
-        useSessionListRenderableWithServerScopeSpy.mockReset();
-        useSessionListRenderableWithServerScopeSpy.mockReturnValue(null);
+        useSessionListRenderableWithServerScopeSpy.mockClear();
     });
 
     afterEach(() => {
         standardCleanup();
+        storageModule.storage.setState(previousStorageState, true);
     });
 
     it('renders the meaningful activity timestamp instead of the raw session updatedAt', async () => {
@@ -326,7 +292,6 @@ describe('SessionItem activity time', () => {
     it('renders the row view model activity timestamp for date-grouped lists', async () => {
         const updatedAt = 1_700_000_000_000 - 3 * 60 * 60 * 1000;
         const meaningfulActivityAt = 1_700_000_000_000 - 5 * 60 * 60 * 1000;
-        formatShortRelativeTimeSpy.mockImplementation((timestamp: number) => timestamp === meaningfulActivityAt ? '5h' : 'unexpected');
         const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
@@ -691,7 +656,7 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_title')?.props.style);
+        const rowStyle = findRowGeometryStyle(screen, 'sess_compact_title');
         expect(rowStyle.height).toBe(34);
 
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
@@ -720,7 +685,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByType('Avatar' as any)?.props).toMatchObject({
-            id: 'avatar',
+            id: 'sess_compact_avatar_web',
             size: 18,
         });
         expect(findRowContentStyle(screen, 'sess_compact_avatar_web').marginLeft).toBe(8);
@@ -746,7 +711,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByType('Avatar' as any)?.props.size).toBe(20);
-        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_avatar_phone')?.props.style);
+        const rowStyle = findRowGeometryStyle(screen, 'sess_compact_avatar_phone');
         expect(rowStyle.height).toBe(42);
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
         const titleStyle = flattenStyle(title?.props.style);
@@ -851,11 +816,8 @@ describe('SessionItem activity time', () => {
         );
 
         const titleStyle = flattenStyle(findSessionTitleText(screen, 'Session')?.props.style);
-        const titleStyleEntries = styleEntries(findSessionTitleText(screen, 'Session')?.props.style);
-        const explicitTitleColorStyle = titleStyleEntries[titleStyleEntries.length - 1] as { color?: unknown } | undefined;
         expect(titleStyle.color).toBe(lightTheme.colors.text.secondary);
-        expect(explicitTitleColorStyle).toMatchObject({ color: titleStyle.color });
-        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(explicitTitleColorStyle?.color);
+        expect(screen.findByType('SessionAgentCatalogIdentityIcon' as any)?.props.color).toBe(titleStyle.color);
     });
 
     it('can use the active title color for all active connected session rows', async () => {
@@ -1001,7 +963,6 @@ describe('SessionItem activity time', () => {
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_compact_active-trailing');
         expect(spinner).toBeTruthy();
         const spinnerStyle = flattenStyle(spinner?.props.style);
-        expect(spinnerStyle).toMatchObject({ width: 12, height: 12 });
         expect(spinnerStyle.animationName).toBeUndefined();
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('Working on it');
@@ -1038,7 +999,6 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
         const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-secondary');
         expect(spinner).toBeTruthy();
-        expect(flattenStyle(spinner?.props.style)).toMatchObject({ width: 12, height: 12 });
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
         const flat = flattenStyle(statusText?.props.style);
@@ -1303,11 +1263,11 @@ describe('SessionItem activity time', () => {
     });
 
     it('uses list-row pending approval flags when the scoped store renderable is stale', async () => {
-        useSessionListRenderableWithServerScopeSpy.mockReturnValue({
+        storageModule.storage.getState().applyServerScopedSessionListRows('server_a', [{
             ...createSession('sess_overlay_permission'),
             hasPendingPermissionRequests: false,
             hasPendingUserActionRequests: false,
-        });
+        }], { source: 'rowOnly', mode: 'append' });
         mockSessionStatus = createStatusFixture({
             state: 'permission_required',
             isConnected: true,

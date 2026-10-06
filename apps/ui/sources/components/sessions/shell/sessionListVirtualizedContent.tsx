@@ -12,10 +12,13 @@ import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 import { SessionListViewEmptyState } from './SessionListViewEmptyState';
 import type { SessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListViewContext, SessionListViewFilters } from './search/sessionListViewFilters';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;
+    kind: SessionListIndexItem['type'];
+    headerKind?: Extract<SessionListIndexItem, { type: 'header' }>['headerKind'];
     rowViewModel?: SessionListRowViewModel | null;
     isGroupTail?: boolean;
 }>;
@@ -94,15 +97,8 @@ export function SessionListFilteredNoResultsMessage(props: Readonly<{
     );
 }
 
-function readSessionListHeaderKindFromNodeId(nodeId: string): string | null {
-    if (!nodeId.startsWith('header:')) return null;
-    const remaining = nodeId.slice('header:'.length);
-    const separatorIndex = remaining.search(/[:|]/);
-    return separatorIndex >= 0 ? remaining.slice(0, separatorIndex) : remaining;
-}
-
 function isPrioritySessionListHeaderNode(node: SessionListVirtualizedNode): boolean {
-    const headerKind = readSessionListHeaderKindFromNodeId(node.id);
+    const headerKind = node.kind === 'header' ? node.headerKind : undefined;
     return headerKind === 'attention'
         || headerKind === 'working'
         || headerKind === 'pinned'
@@ -110,7 +106,7 @@ function isPrioritySessionListHeaderNode(node: SessionListVirtualizedNode): bool
 }
 
 function isInactiveSessionListHeaderNode(node: SessionListVirtualizedNode): boolean {
-    return readSessionListHeaderKindFromNodeId(node.id) === 'inactive';
+    return node.kind === 'header' && node.headerKind === 'inactive';
 }
 
 function resolveWebListInitialNumToRender(nodes: ReadonlyArray<SessionListVirtualizedNode>): number {
@@ -150,30 +146,17 @@ export type SessionListRowDensity = 'default' | 'compact' | 'minimal';
  * the inter-group gap, 'body' rows (first/middle) do not.
  */
 function getSessionListNodeType(node: SessionListVirtualizedNode, rowDensity: SessionListRowDensity): string {
-    const nodeId = node.id;
-    if (nodeId.startsWith('workflow_run:')) {
+    if (node.kind === 'workflow_run') {
         return `workflow_run:${rowDensity}:${node.isGroupTail === true ? 'tail' : 'body'}`;
     }
-    if (typeof nodeId === 'string' && nodeId.startsWith('session:')) {
+    if (node.kind === 'session') {
         const heightClass = node.rowViewModel?.isLast === true || node.rowViewModel?.isSingle === true
             ? 'tail'
             : 'body';
         return `session:${rowDensity}:${heightClass}`;
     }
-    if (typeof nodeId === 'string' && nodeId.startsWith('header:')) {
-        const parts = nodeId.split(':');
-        const explicit = parts[1] ?? '';
-        if (explicit && explicit !== 'server') {
-            return `header:${explicit}`;
-        }
-        if (explicit === 'server' && parts.length <= 3) {
-            return 'header:server';
-        }
-        if (nodeId.includes(':project:')) return 'header:project';
-        if (nodeId.includes(':day:') || nodeId.includes(':date:')) return 'header:date';
-        if (nodeId.includes(':pinned')) return 'header:pinned';
-        if (nodeId.endsWith(':active') || nodeId.includes(':active:')) return 'header:active';
-        if (nodeId.endsWith(':inactive') || nodeId.includes(':inactive:')) return 'header:inactive';
+    if (node.kind === 'header' && node.headerKind) {
+        return `header:${node.headerKind}`;
     }
     return 'header';
 }

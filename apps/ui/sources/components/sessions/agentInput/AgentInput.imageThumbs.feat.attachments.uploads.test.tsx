@@ -1,176 +1,40 @@
+// @vitest-environment jsdom
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import {
-    projectAgentInputAttachmentRowItems,
-    type AgentInputAttachment,
-} from './agentInputContracts';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { projectAgentInputAttachmentRowItems, type AgentInputAttachment } from './agentInputContracts';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
-    }
+    if (Array.isArray(style)) return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
     return typeof style === 'object' ? style as Record<string, unknown> : {};
 }
-
-const modalShowSpy = vi.fn((config: unknown) => {
-    void config;
-    return 'modal-1';
-});
-
+type ModalShowConfig = Parameters<typeof import('@/modal')['Modal']['show']>[0];
+const modalShowSpy = vi.fn((_config: ModalShowConfig) => 'modal-1');
 installAgentInputCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            TurboModuleRegistry: {
-                get: () => ({}),
-                getEnforcing: () => ({}),
-            },
-            Platform: {
-                OS: 'web',
-                select: (x: any) => x?.web ?? x?.default ?? x?.ios ?? x?.android ?? null,
-            },
-            useWindowDimensions: () => ({ width: 800, height: 600 }),
-            Dimensions: {
-                get: () => ({ width: 800, height: 600, scale: 1, fontScale: 1 }),
-            },
-        });
-    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                show: (config: unknown) => modalShowSpy(config),
-                alert: vi.fn(),
-                confirm: vi.fn(),
-                prompt: vi.fn(),
-            },
-        }).module;
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
-                if (key === 'agentInputChipDensity') return 'labels';
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                return null;
-            },
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => null,
-        });
+        return createModalModuleMock({ spies: { show: modalShowSpy } }).module;
     },
 });
-
 vi.mock('expo-image', () => ({
-    Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
+    Image: (props: Record<string, unknown>) => React.createElement('Image', props),
 }));
-
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
-}));
-
-vi.mock('@/components/ui/theme/haptics', () => ({
-    hapticsLight: () => { },
-    hapticsError: () => { },
-}));
-
-vi.mock('expo-linear-gradient', () => ({
-    LinearGradient: 'LinearGradient',
-}));
-
-vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
-    PermissionFooter: () => null,
-}));
-
-const featureEnabledState: Record<string, boolean> = { voice: false };
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
-}));
-
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
-}));
-
-vi.mock('@/components/sessions/sourceControl/status', () => ({
-    SourceControlStatusBadge: () => null,
-    useHasMeaningfulScmStatus: () => false,
-}));
-
-vi.mock('@/sync/domains/state/storageStore', () => {
-    const storage = Object.assign(
-        (selector?: (state: Record<string, unknown>) => unknown) => (
-            typeof selector === 'function'
-                ? selector({
-                    sessionMessages: {},
-                    localSettings: {
-                        uiContentWidthMode: 'default',
-                    },
-                })
-                : {
-                    sessionMessages: {},
-                    localSettings: {
-                        uiContentWidthMode: 'default',
-                    },
-                }
-        ),
-        {
-            getState: () => ({
-                sessionMessages: {},
-                localSettings: {
-                    uiContentWidthMode: 'default',
-                },
-            }),
-        },
-    );
-    return {
-        storage,
-        getStorage: () => storage,
-    };
+vi.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+const runtime = installSessionPaneRuntimeTestHarness();
+beforeEach(() => {
+    modalShowSpy.mockClear();
+    storage.setState({ settings: { ...storage.getState().settings, agentInputEnterToSend: true,
+        agentInputActionBarLayout: 'wrap', agentInputChipDensity: 'labels',
+        sessionPermissionModeApplyTiming: 'immediate' } });
 });
-
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
-    return {
-        ...actual,
-        useLocalSetting: () => 1,
-        useSessionServerId: () => null,
-    };
-});
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentIconSvgXml: () => null,
-    getAgentIconSource: () => null,
-    getAgentIconTintColor: () => undefined,
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    isBundledAgentId: (value: unknown) => typeof value === 'string' && ['codex', 'claude', 'opencode', 'gemini'].includes(value),
-    resolveAgentIdFromFlavor: () => null,
-    resolveAgentIdFromFlavorNoDefault: () => null,
-    getAgentCore: () => ({
-        displayNameKey: 'agents.codex',
-        toolRendering: { hideUnknownToolsByDefault: false },
-        model: { supportsSelection: false, allowedModes: [] },
-        permissions: { modeGroup: 'codexLike' },
-        sessionModes: { kind: 'legacy' },
-    }),
-}));
+async function renderScreen(element: React.ReactElement) {
+    return renderPanelScreen(element, { wrapper: runtime.Wrapper });
+}
 
 describe('AgentInput (image attachment thumbnails)', () => {
     async function renderAgentInput(attachments: readonly AgentInputAttachment[]) {
@@ -213,13 +77,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
         await screen.pressByTestIdAsync('agent-input-attachment-image:a1');
 
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
-        const modalConfig = (modalShowSpy.mock.calls[0]?.[0] ?? null) as null | {
-            component?: unknown;
-            props?: Readonly<{
-                images?: ReadonlyArray<Readonly<{ uri: string; title: string }>>;
-                initialIndex?: number;
-            }>;
-        };
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0];
         expect(modalConfig?.component).toBeDefined();
         expect(modalConfig?.props).toEqual(expect.objectContaining({
             initialIndex: 0,
@@ -242,7 +100,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
         ] satisfies readonly AgentInputAttachment[];
 
         modalShowSpy.mockClear();
-        const portalTarget = { tag: 'agent-input-parent-modal-target' } as unknown as Element;
+        const portalTarget = document.createElement('div');
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(
@@ -263,9 +121,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
         await screen.pressByTestIdAsync('agent-input-attachment-image:a1');
 
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
-        const modalConfig = (modalShowSpy.mock.calls[0]?.[0] ?? null) as null | {
-            webPortalTarget?: unknown;
-        };
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0];
         expect(modalConfig?.webPortalTarget).toBe(portalTarget);
     });
 

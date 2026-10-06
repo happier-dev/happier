@@ -1,4 +1,4 @@
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import { vi } from 'vitest';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -241,6 +241,7 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
                 body: { mode: options.accountEncryptionMode ?? 'plain', updatedAt: 0 },
             });
             record.answers.set(ACCOUNT_SETTINGS_V2_PATH, { body: { content: null, version: 0 } });
+            record.answers.set(`GET ${AUTHORING_MEMORY_ROUTE_V1}`, { body: AuthoringMemoryListResponseV1Schema.parse({ rows: [] }) });
 
             const features = createRootLayoutFeaturesResponse();
             if (options.teamsEnabled !== undefined

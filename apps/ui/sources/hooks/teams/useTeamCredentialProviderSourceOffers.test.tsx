@@ -96,7 +96,8 @@ describe('useTeamCredentialProviderSourceOffers', () => {
 
         expect(refreshed).toBeNull();
         expect(rendered.getCurrent().offers).toHaveLength(2);
-        expect(rendered.getCurrent().error?.code).toBe('provider_machine_unavailable');
+        expect(rendered.getCurrent().error).toMatchObject({ code: 'agent_error', machineId: 'machine-a' });
+        expect(JSON.stringify(rendered.getCurrent().error)).not.toContain('transport unavailable');
         expect(rendered.getCurrent().loading).toBe(false);
     });
 });

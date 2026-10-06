@@ -167,7 +167,9 @@ describe('QualifiedAccountDetailView', () => {
                 </OverlayPortalProvider>
             </PopoverPortalTargetContextProvider>,
             { createNodeMock: (element) => {
-                const props = React.isValidElement<{ ref?: unknown; children?: React.ReactNode }>(element) ? element.props : null;
+                // react-test-renderer passes a host descriptor, not a React
+                // element with $$typeof, to the native measurement boundary.
+                const props: { ref?: unknown; children?: React.ReactNode } = element.props;
                 const bounds = () => {
                     const host = screen?.root.findAll((node) => node.type === element.type && (
                         props?.ref ? node.props.ref === props.ref : node.props.children === props?.children

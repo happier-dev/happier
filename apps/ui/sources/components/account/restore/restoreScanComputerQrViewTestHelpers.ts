@@ -126,13 +126,6 @@ export function installRestoreScanComputerQrViewCommonModuleMocks(
         });
     });
 
-    vi.mock('@/components/ui/text/Text', () => ({
-        Text: 'Text',
-    }));
-
-    vi.mock('@/components/ui/buttons/RoundButton', () => ({
-        RoundButton: 'RoundButton',
-    }));
 }
 
 export { restoreScanComputerQrViewModuleState };

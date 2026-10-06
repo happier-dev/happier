@@ -69,8 +69,8 @@ describe('openBugReportFallbackIssueUrl', () => {
         );
 
         expect(opened).toBe(false);
-        expect(buttons.map((button) => button.text)).toContain('Copy');
-        buttons.find((button) => button.text === 'Copy')?.onPress?.();
+        expect(buttons).toHaveLength(1);
+        buttons[0]?.onPress?.();
         await Promise.resolve();
         expect(copyUrl).toHaveBeenCalledWith('https://github.com/happier-dev/happier/issues/new?title=report');
     });
@@ -110,12 +110,14 @@ describe('openBugReportFallbackIssueUrl', () => {
             throw new Error('open failed');
         });
 
-        await expect(
-            openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
+        const pending = openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
                 canOpenUrl,
                 openUrl,
-            }),
-        ).resolves.toBe(false);
+            });
+
+        await vi.waitFor(() => expect(modalType).toBe('alert'));
+        Modal.resolveAlert('alert-1');
+        await expect(pending).resolves.toBe(false);
 
         expect(modalType).toBe('alert');
         expect(canOpenUrl).not.toHaveBeenCalled();

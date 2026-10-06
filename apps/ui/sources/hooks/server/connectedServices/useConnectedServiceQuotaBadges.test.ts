@@ -8,7 +8,7 @@ import {
   type ConnectedAccountDaemonControlResponse,
 } from '@happier-dev/protocol';
 import { sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext } from '@happier-dev/protocol/testing/accountScopedCipherFixtures';
-import type { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { getConnectedServiceQuotaSnapshotSealed } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import type { getConnectedServiceQuotaSnapshotPlain } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import type { runConnectedAccountControlCommand } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
@@ -31,18 +31,16 @@ const useSettingsSpy = vi.fn(() => ({
 const useFeatureEnabledSpy = vi.fn((_featureId: string) => true);
 
 const {
-  fetchAccountEncryptionModeSpy,
-  getConnectedServiceQuotaSnapshotPlainSpy,
-  getConnectedServiceQuotaSnapshotSealedSpy,
+  encryptionResponseBoundary,
+  plainQuotaResponseBoundary,
+  sealedQuotaResponseBoundary,
   runConnectedAccountControlCommandSpy,
 } = vi.hoisted(() => ({
-  fetchAccountEncryptionModeSpy: vi.fn<
-    (...args: Parameters<typeof fetchAccountEncryptionMode>) => ReturnType<typeof fetchAccountEncryptionMode>
-  >(async () => ({ mode: 'e2ee', updatedAt: 0 })),
-  getConnectedServiceQuotaSnapshotPlainSpy: vi.fn<
+  encryptionResponseBoundary: vi.fn(async (): Promise<{ mode: 'plain' | 'e2ee'; updatedAt: number }> => ({ mode: 'e2ee', updatedAt: 0 })),
+  plainQuotaResponseBoundary: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>
   >(async () => null),
-  getConnectedServiceQuotaSnapshotSealedSpy: vi.fn<
+  sealedQuotaResponseBoundary: vi.fn<
     (...args: Parameters<typeof getConnectedServiceQuotaSnapshotSealed>) => ReturnType<typeof getConnectedServiceQuotaSnapshotSealed>
   >(async () => null),
   runConnectedAccountControlCommandSpy: vi.fn<
@@ -137,17 +135,28 @@ vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', () => ({
   runConnectedAccountControlCommand: runConnectedAccountControlCommandSpy,
 }));
 
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
-  fetchAccountEncryptionMode: fetchAccountEncryptionModeSpy,
-}));
-
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV2', () => ({
-  getConnectedServiceQuotaSnapshotSealed: getConnectedServiceQuotaSnapshotSealedSpy,
-}));
-
-vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
-  getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
-}));
+// HTTP responses only: Account-mode cache and quota parsers/decryption remain real.
+vi.mock('@/sync/http/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/http/client')>();
+  return {
+    ...actual,
+    serverFetch: async (path: string) => {
+      if (path === '/v1/account/encryption') return Response.json(await encryptionResponseBoundary());
+      const match = path.match(/^\/v([23])\/connect\/([^/]+)\/profiles\/([^/]+)\/quotas$/);
+      if (!match) throw new Error(`Unexpected quota HTTP path: ${path}`);
+      const request = { serviceId: ConnectedServiceIdSchema.parse(decodeURIComponent(match[2])),
+        profileId: decodeURIComponent(match[3]) };
+      if (match[1] === '2') {
+        const body = await sealedQuotaResponseBoundary(currentCredentials, request);
+        return body ? Response.json(body) : new Response('{}', { status: 404 });
+      }
+      const snapshot = await plainQuotaResponseBoundary(currentCredentials, request);
+      return snapshot ? Response.json({ content: { t: 'plain', v: snapshot },
+        metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } })
+        : new Response('{}', { status: 404 });
+    },
+  };
+});
 
 beforeEach(() => {
   currentCredentials = stableCredentials;
@@ -196,14 +205,15 @@ function sealQuotaSnapshot(snapshot: ReturnType<typeof buildWeeklyQuotaSnapshot>
 }
 
 describe('useConnectedServiceQuotaBadges', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
+    await loadSyncSingletonForTests();
   });
 
   it('returns badges for pinned meters after snapshot fetch', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
-    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
+    encryptionResponseBoundary.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
 
     const secretBytes = new Uint8Array(32).fill(3);
     const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
@@ -242,7 +252,7 @@ describe('useConnectedServiceQuotaBadges', () => {
       connectedServicesDefaultProfileByServiceId: {},
     });
 
-    getConnectedServiceQuotaSnapshotSealedSpy.mockResolvedValue({
+    sealedQuotaResponseBoundary.mockResolvedValue({
       sealed: { format: 'account_scoped_v1', ciphertext },
       metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
     });
@@ -258,7 +268,7 @@ describe('useConnectedServiceQuotaBadges', () => {
 
   it('supports plaintext quotas in plaintext accounts', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
-    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
+    encryptionResponseBoundary.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
 
     const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
       v: 1,
@@ -290,7 +300,7 @@ describe('useConnectedServiceQuotaBadges', () => {
       connectedServicesDefaultProfileByServiceId: {},
     });
 
-    getConnectedServiceQuotaSnapshotPlainSpy.mockResolvedValue(snapshot);
+    plainQuotaResponseBoundary.mockResolvedValue(snapshot);
 
     const { useConnectedServiceQuotaBadges } = await import('./useConnectedServiceQuotaBadges');
     const seen = await renderHookAndCollectValues(() => useConnectedServiceQuotaBadges([
@@ -307,7 +317,7 @@ describe('useConnectedServiceQuotaBadges', () => {
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
     try {
       useFeatureEnabledSpy.mockReturnValue(true);
-      fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
+      encryptionResponseBoundary.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
 
       const secretBytes = new Uint8Array(32).fill(3);
       const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
@@ -346,7 +356,7 @@ describe('useConnectedServiceQuotaBadges', () => {
         connectedServicesDefaultProfileByServiceId: {},
       });
 
-      getConnectedServiceQuotaSnapshotSealedSpy
+      sealedQuotaResponseBoundary
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
           sealed: { format: 'account_scoped_v1', ciphertext },
@@ -366,14 +376,14 @@ describe('useConnectedServiceQuotaBadges', () => {
       });
 
       expect(setIntervalSpy).not.toHaveBeenCalled();
-      expect(getConnectedServiceQuotaSnapshotSealedSpy).toHaveBeenCalledTimes(1);
+      expect(sealedQuotaResponseBoundary).toHaveBeenCalledTimes(1);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(30_000);
         await flushHookEffects();
       });
 
-      expect(getConnectedServiceQuotaSnapshotSealedSpy).toHaveBeenCalledTimes(2);
+      expect(sealedQuotaResponseBoundary).toHaveBeenCalledTimes(2);
       const last = seen.at(-1) ?? {};
       expect(last['anthropic/work']?.map((b) => b.text)).toContain('Weekly 18%');
       await hook.unmount();
@@ -403,15 +413,15 @@ describe('useConnectedServiceQuotaBadges', () => {
     ], { fetchPolicy: 'cache_only' }));
     await flushHookEffects({ cycles: 5, turns: 5 });
 
-    expect(fetchAccountEncryptionModeSpy).not.toHaveBeenCalled();
-    expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalled();
-    expect(getConnectedServiceQuotaSnapshotSealedSpy).not.toHaveBeenCalled();
+    expect(encryptionResponseBoundary).not.toHaveBeenCalled();
+    expect(plainQuotaResponseBoundary).not.toHaveBeenCalled();
+    expect(sealedQuotaResponseBoundary).not.toHaveBeenCalled();
     expect(hook.getCurrent()).toEqual({ 'anthropic/work': [] });
   });
 
   it('uses cached quota snapshots for default cache-only badges without pinned meters or polling', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
-    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
+    encryptionResponseBoundary.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
     useSettingsSpy.mockReturnValue({
       connectedServicesQuotaPinnedMeterIdsByKey: {},
       connectedServicesQuotaSummaryStrategyByKey: {},
@@ -423,7 +433,7 @@ describe('useConnectedServiceQuotaBadges', () => {
       work: buildWeeklyQuotaSnapshot({ profileId: 'work', meterId: 'weekly', label: 'Weekly', used: 82 }),
       backup: buildWeeklyQuotaSnapshot({ profileId: 'backup', meterId: 'daily', label: 'Daily', used: 40 }),
     } as const;
-    getConnectedServiceQuotaSnapshotSealedSpy.mockImplementation(async (_credentials, request) => {
+    sealedQuotaResponseBoundary.mockImplementation(async (_credentials, request) => {
       const snapshot = snapshotsByProfileId[request.profileId as keyof typeof snapshotsByProfileId] ?? null;
       if (!snapshot) return null;
       return {
@@ -442,17 +452,17 @@ describe('useConnectedServiceQuotaBadges', () => {
     expect(fetchedValues.at(-1)?.snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('weekly');
     expect(fetchedValues.at(-1)?.snapshotsByKey['anthropic/backup']?.meters[0]?.meterId).toBe('daily');
 
-    fetchAccountEncryptionModeSpy.mockClear();
-    getConnectedServiceQuotaSnapshotPlainSpy.mockClear();
-    getConnectedServiceQuotaSnapshotSealedSpy.mockClear();
+    encryptionResponseBoundary.mockClear();
+    plainQuotaResponseBoundary.mockClear();
+    sealedQuotaResponseBoundary.mockClear();
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     try {
       const cacheOnlyHook = await renderHook(() => useConnectedServiceQuotaBadges(profiles, { fetchPolicy: 'cache_only' }));
       await flushHookEffects({ cycles: 5, turns: 5 });
 
-      expect(fetchAccountEncryptionModeSpy).not.toHaveBeenCalled();
-      expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalled();
-      expect(getConnectedServiceQuotaSnapshotSealedSpy).not.toHaveBeenCalled();
+      expect(encryptionResponseBoundary).not.toHaveBeenCalled();
+      expect(plainQuotaResponseBoundary).not.toHaveBeenCalled();
+      expect(sealedQuotaResponseBoundary).not.toHaveBeenCalled();
       expect(setTimeoutSpy).not.toHaveBeenCalled();
       expect(cacheOnlyHook.getCurrent()['anthropic/work']?.map((badge) => badge.meterId)).toEqual(['weekly']);
       expect(cacheOnlyHook.getCurrent()['anthropic/work']?.map((badge) => badge.text)).toEqual(

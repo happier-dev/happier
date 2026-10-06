@@ -2,10 +2,9 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,44 +32,12 @@ installSessionShellCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useHasUnreadMessages: () => false,
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'sessionListIdentityDisplay') return 'avatar';
-                    if (key === 'sessionListActiveColorModeV1') return 'activityAndAttention';
-                    if (key === 'sessionListNarrowWorkingIndicatorStyle') return 'spinner';
-                    return undefined;
-                } }),
-                useProfile: () => ({
-                    id: 'u1',
-                    timestamp: 0,
-                    firstName: null,
-                    lastName: null,
-                    username: null,
-                    avatar: null,
-                    linkedProviders: [],
-                    connectedServices: [],
-                    connectedServicesV2: [],
-                    connectedServiceCredentialRevisionsV1: [],
-                    connectedAccountsV4: [],
-                    connectedAccountGroupsV4: [],
-                }),
-                useSession: () => null,
-                useSessionListMeaningfulActivityAt: () => null,
-            },
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
@@ -81,25 +48,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
 }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-}));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -109,18 +57,11 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: 'AgentIcon',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-}));
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/components/sessions/pendingBadge', () => ({
-    formatPendingCountBadge: () => null,
-}));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
@@ -134,19 +75,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/utils/errors/errors', () => ({
-    HappyError: class HappyError extends Error {},
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionRename: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('@/utils/time/formatShortRelativeTime', () => ({
-    formatShortRelativeTime: () => '1m',
-}));
 
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
@@ -157,8 +85,8 @@ vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
 }));
 
-function createSession(): any {
-    return {
+function createSession() {
+    return createSessionFixture({
         id: 'sess_1',
         seq: 1,
         createdAt: 1,
@@ -172,7 +100,7 @@ function createSession(): any {
         thinking: false,
         thinkingAt: 0,
         presence: 'online',
-    };
+    });
 }
 
 async function importSessionItem() {

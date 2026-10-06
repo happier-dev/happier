@@ -1,49 +1,24 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import fastify, { type FastifyInstance } from 'fastify';
+import type { MockInstance } from 'vitest';
 
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import {
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
+    SessionMetadataTuplePatchV1Schema,
+    type ExternalSessionTranscriptRawMessageV1,
+} from '@happier-dev/protocol';
 
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-
-const {
-    fetchSessionByIdMock,
-    fetchAccountEncryptionCurrentnessMock,
-    tryDecryptSessionOwnerMetadataViewMock,
-    updateSessionMetadataWithRetryMock,
-} = vi.hoisted(() => ({
-    fetchSessionByIdMock: vi.fn(),
-    fetchAccountEncryptionCurrentnessMock: vi.fn(),
-    tryDecryptSessionOwnerMetadataViewMock: vi.fn(),
-    updateSessionMetadataWithRetryMock: vi.fn(async () => {}),
-}));
-
-vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
-    fetchAccountEncryptionCurrentness: fetchAccountEncryptionCurrentnessMock,
-}));
-
-vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
-    const actual = await importOriginal<
-        typeof import('@/session/transport/http/sessionsHttp')
-    >();
-    return {
-        ...actual,
-        fetchSessionById: fetchSessionByIdMock,
-    };
-});
-
-vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
-    tryDecryptSessionOwnerMetadataView: tryDecryptSessionOwnerMetadataViewMock,
-}));
-
-vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
-    updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
-}));
-
-vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
-    resolveBackendExecutionSurfaces: async () => ({ externalSession: null }),
-}));
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import {
+    createAccountEncryptionCurrentnessFixture,
+    createSessionNotificationContextFixture,
+} from '@/testkit/backends/sessionFixtures';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
@@ -56,20 +31,12 @@ import type { ExternalSessionObservationLinkInput } from './resolveExternalSessi
 
 const credentials = {
     token: 'token',
-    encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array([1]),
-    },
+    encryption: null,
 };
 const source = {
     kind: 'claudeConfig' as const,
     configDir: '/tmp/happier-follow-recovery-claude',
     projectId: 'project-follow-recovery',
-};
-const rawSession = {
-    id: 'session-background-follow',
-    metadata: 'encrypted-metadata',
-    metadataVersion: 1,
 };
 const metadata = {
     externalSessionV1: {
@@ -78,14 +45,34 @@ const metadata = {
         machineId: 'machine-background-follow',
         remoteSessionId: 'remote-background-follow',
         source,
+        linkData: { projectId: source.projectId },
         linkedAtMs: 1,
     },
 };
+function createStoredSessionRecord(sessionId: string, ownerMetadata: unknown) {
+    const fields = buildSessionMetadataEnvelopeFields({
+        credentials,
+        accountEncryptionMode: 'plain',
+        storedContentMode: 'plain',
+        metadata: ownerMetadata,
+        agentState: null,
+    });
+    return {
+        ...createSessionNotificationContextFixture(sessionId),
+        encryptionMode: 'plain' as const,
+        metadataLayoutVersion: fields.metadataLayoutVersion,
+        metadata: fields.sharedMetadata.ciphertext,
+        ownerMetadata: fields.ownerMetadata,
+        agentState: fields.agentState,
+        agentStateVersion: 0,
+    };
+}
+const rawSession = createStoredSessionRecord('session-background-follow', metadata);
 const resource = {
     linkGeneration: '1',
-    occurrenceId: 'plugin-generation',
+    occurrenceId: '',
 };
-const observation = {
+let observation: ExternalSessionObservationLinkInput = {
     resource: {
         pluginId: 'happier.agent.claude',
         agentLocalId: 'claude',
@@ -99,7 +86,7 @@ const observation = {
         linkedSource: {
             source,
             remoteSessionId: 'remote-background-follow',
-            linkData: {},
+            linkData: { projectId: source.projectId },
         },
         changeObservation: 'watch_file_changes',
     },
@@ -117,7 +104,7 @@ const observation = {
         },
         linkGeneration: resource.linkGeneration,
     },
-} as ExternalSessionObservationLinkInput;
+};
 
 const transcriptItem = (id: string, createdAtMs: number): ExternalSessionTranscriptRawMessageV1 => ({
     id,
@@ -126,40 +113,100 @@ const transcriptItem = (id: string, createdAtMs: number): ExternalSessionTranscr
 });
 
 describe('acquireCanonicalExternalSessionFollowLease background recovery', () => {
-    let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+    let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
+    let httpApp: FastifyInstance;
+    let restoreHttpAdapter: () => void;
+    let patchSpy: MockInstance<typeof axios.patch>;
+    let serverSession: ReturnType<typeof createStoredSessionRecord>;
+    let beforeSessionResponse: (() => Promise<void>) | null;
+    let afterMetadataPublication: (() => void) | null;
 
     beforeAll(async () => {
-        runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
-            resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-                contributes: getResolvedContributionRegistry(),
-                pluginIds: ['happier.agent.claude'],
-            }),
+        runtimeFixture = await createAdmittedPluginRuntimeFixture({
+            controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.codex'] },
         });
+        const occurrenceId = runtimeFixture.registry.readPluginOccurrenceId?.('happier.agent.claude');
+        if (!occurrenceId) throw new Error('Claude plugin occurrence was not admitted');
+        resource.occurrenceId = occurrenceId;
+        observation = {
+            ...observation,
+            resource: { ...observation.resource, occurrenceId },
+        };
     });
 
     afterAll(async () => {
-        await runtimeRegistryLease?.release();
-        runtimeRegistryLease = null;
-        await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+        await runtimeFixture?.dispose();
+        runtimeFixture = null;
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
         vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', source.configDir);
-        fetchSessionByIdMock.mockResolvedValue(rawSession);
-        fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
-            mode: 'plain',
-            version: 1,
-            signingKeyFingerprint: null,
-            contentKeyFingerprint: null,
-            updatedAt: 1,
+        serverSession = rawSession;
+        beforeSessionResponse = null;
+        afterMetadataPublication = null;
+        httpApp = fastify();
+        // Only the HTTP boundary is substituted: Account admission, Session parsing,
+        // owner-envelope decoding and metadata tuple mutation stay real.
+        httpApp.addHook('preHandler', async (request) => {
+            expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
         });
-        tryDecryptSessionOwnerMetadataViewMock.mockReturnValue(metadata);
+        httpApp.get('/v1/account/encryption/currentness', async () => (
+            createAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 })
+        ));
+        httpApp.get<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request) => {
+            expect(request.params.sessionId).toBe(serverSession.id);
+            const pendingResponse = beforeSessionResponse;
+            beforeSessionResponse = null;
+            await pendingResponse?.();
+            return { session: serverSession };
+        });
+        httpApp.patch<{ Params: { sessionId: string } }>('/v2/sessions/:sessionId', async (request) => {
+            expect(request.params.sessionId).toBe(serverSession.id);
+            const patch = SessionMetadataTuplePatchV1Schema.parse(request.body);
+            if (patch.mode !== 'owner') throw new Error('Expected an owner metadata tuple patch');
+            expect(patch.sharedMetadata.expectedVersion).toBe(serverSession.metadataVersion);
+            expect(patch.expectedOwnerMetadata).toEqual(serverSession.ownerMetadata);
+            expect(patch.agentState.expectedVersion).toBe(serverSession.agentStateVersion);
+            serverSession = {
+                ...serverSession,
+                metadata: patch.sharedMetadata.ciphertext,
+                ownerMetadata: patch.ownerMetadata,
+                metadataVersion: serverSession.metadataVersion + 1,
+                agentState: patch.agentState.ciphertext,
+                agentStateVersion: serverSession.agentStateVersion + 1,
+            };
+            afterMetadataPublication?.();
+            return {
+                success: true,
+                metadataLayoutVersion: 1,
+                sharedMetadata: { version: serverSession.metadataVersion },
+                agentState: { version: serverSession.agentStateVersion },
+            };
+        });
+        await httpApp.ready();
+        restoreHttpAdapter = installAxiosFastifyAdapter({
+            app: httpApp,
+            origin: new URL(resolveServerHttpBaseUrl()).origin,
+        });
+        patchSpy = vi.spyOn(axios, 'patch');
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        vi.restoreAllMocks();
+        restoreHttpAdapter();
+        await httpApp.close();
         vi.unstubAllEnvs();
     });
+
+    function readPersistedMetadata() {
+        return tryDecryptSessionOwnerMetadataView({
+            credentials,
+            rawSession: serverSession,
+            accountEncryptionMode: 'plain',
+        });
+    }
 
     async function acquire(
         readAfterTranscript: NonNullable<
@@ -233,7 +280,13 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             maxBytes: 64_000,
             maxItems: 200,
         }));
-        expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledOnce();
+        expect(patchSpy).toHaveBeenCalledOnce();
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(readPersistedMetadata()))
+            .toMatchObject({
+                remoteSessionId: 'remote-background-follow',
+                linkedAtMs: 1,
+                lastKnownActivityAtMs: 20,
+            });
 
         await lease.requestTranscriptRefresh?.();
         expect(requestedCursors).toEqual([
@@ -273,7 +326,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         expect(pageTranscript).toHaveBeenCalledOnce();
         // The unaccounted tail is never adopted as the accepted cursor.
         expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
-        expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+        expect(patchSpy).not.toHaveBeenCalled();
     });
 
     it('revalidates an exact hosted owner during gap recovery without persisting a second link', async () => {
@@ -281,19 +334,16 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             kind: 'codexHome' as const,
             home: 'user' as const,
         };
-        const hostedRawSession = {
-            id: 'session-hosted-follow',
-            currentStorageState: 'hosted' as const,
-            metadata: 'encrypted-hosted-metadata',
-            metadataVersion: 1,
-        };
         const hostedMetadata = {
             machineId: 'machine-hosted-follow',
             flavor: 'codex',
             codexSessionId: 'thread-hosted-follow',
         };
-        fetchSessionByIdMock.mockResolvedValue(hostedRawSession);
-        tryDecryptSessionOwnerMetadataViewMock.mockReturnValue(hostedMetadata);
+        const hostedRawSession = {
+            ...createStoredSessionRecord('session-hosted-follow', hostedMetadata),
+            currentStorageState: 'hosted' as const,
+        };
+        serverSession = hostedRawSession;
 
         const loaded = await loadLinkedExternalSession({
             credentials,
@@ -308,9 +358,11 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         });
         if (!loaded.ok) throw new Error(loaded.error);
 
+        const hostedOccurrenceId = runtimeFixture?.registry.readPluginOccurrenceId?.('happier.agent.codex');
+        if (!hostedOccurrenceId) throw new Error('Codex plugin occurrence was not admitted');
         const hostedResource = {
             linkGeneration: loaded.session.linkGeneration,
-            occurrenceId: 'plugin-generation-hosted',
+            occurrenceId: hostedOccurrenceId,
         };
         const hostedObservation: ExternalSessionObservationLinkInput = {
             ...observation,
@@ -380,6 +432,8 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         }
         await expect(result.recover()).resolves.toBeUndefined();
         expect(pageTranscript).toHaveBeenCalledOnce();
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-hosted-resynced');
+        expect(readPersistedMetadata()).not.toHaveProperty('externalSessionV1');
     });
 
     it.each([
@@ -401,7 +455,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
 
             expect(requestedCursors).toEqual(['cursor-accepted', 'cursor-accepted']);
             expect(pageTranscript).not.toHaveBeenCalled();
-            expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+            expect(patchSpy).not.toHaveBeenCalled();
         },
     );
 
@@ -417,9 +471,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
                 hasMore: false,
             };
         });
-        updateSessionMetadataWithRetryMock
-            .mockRejectedValueOnce(new Error('progress publication rejected'))
-            .mockResolvedValue(undefined);
+        patchSpy.mockRejectedValueOnce(new Error('progress publication rejected'));
         const { lease } = await acquire(readAfterTranscript);
 
         await expect(lease.requestTranscriptRefresh?.())
@@ -428,6 +480,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             .resolves.toEqual({ outcome: 'advanced' });
 
         expect(requestedCursors).toEqual(['cursor-accepted', 'cursor-accepted']);
+        expect(lease.readAcceptedCursor?.()).toBe('cursor-advanced');
     });
 
     it('does not complete release or advance the accepted cursor while progress publication is in flight', async () => {
@@ -435,9 +488,12 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
         const progressPublication = new Promise<void>((resolve) => {
             releaseProgressPublication = resolve;
         });
-        updateSessionMetadataWithRetryMock.mockImplementationOnce(
-            async () => await progressPublication,
-        );
+        const publish = patchSpy.getMockImplementation();
+        if (!publish) throw new Error('HTTP patch transport unavailable');
+        patchSpy.mockImplementationOnce(async (...args) => {
+            await progressPublication;
+            return await publish(...args);
+        });
         const demanded: boolean[] = [];
         const loaded = await loadLinkedExternalSession({
             credentials,
@@ -479,7 +535,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
             completions.push('refresh');
         });
         await vi.waitFor(() => {
-            expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledOnce();
+            expect(patchSpy).toHaveBeenCalledOnce();
         });
 
         const release = lease.release().then(() => {
@@ -505,18 +561,17 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
     });
 
     it('does not commit an advanced cursor when release starts during final link validation', async () => {
-        let fetchCount = 0;
+        let finalValidationStarted = false;
         let releaseFinalValidation!: () => void;
         const finalValidation = new Promise<void>((resolve) => {
             releaseFinalValidation = resolve;
         });
-        fetchSessionByIdMock.mockImplementation(async () => {
-            fetchCount += 1;
-            if (fetchCount === 6) {
+        afterMetadataPublication = () => {
+            beforeSessionResponse = async () => {
+                finalValidationStarted = true;
                 await finalValidation;
-            }
-            return rawSession;
-        });
+            };
+        };
         const demanded: boolean[] = [];
         const loaded = await loadLinkedExternalSession({
             credentials,
@@ -556,7 +611,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
 
         const refresh = lease.requestTranscriptRefresh?.();
         await vi.waitFor(() => {
-            expect(fetchCount).toBe(6);
+            expect(finalValidationStarted).toBe(true);
         });
         let releaseCompleted = false;
         const release = lease.release().then(() => {
@@ -573,7 +628,7 @@ describe('acquireCanonicalExternalSessionFollowLease background recovery', () =>
 
         expect(lease.readAcceptedCursor?.()).toBe('cursor-accepted');
         expect(demanded).toEqual([true, false]);
-        expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledOnce();
+        expect(patchSpy).toHaveBeenCalledOnce();
     });
 
     it('releases transcript demand when canonical observer admission is unavailable', async () => {

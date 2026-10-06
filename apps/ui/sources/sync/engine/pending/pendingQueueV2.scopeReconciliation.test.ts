@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+beforeAll(loadSyncSingletonForTests);
 
 import { Encryption } from '@/sync/encryption/encryption';
 import { storage } from '@/sync/domains/state/storage';

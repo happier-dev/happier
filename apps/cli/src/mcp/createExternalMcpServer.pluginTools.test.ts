@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 const boundary = vi.hoisted(() => ({
-  requestDaemonPluginActionExecution: vi.fn(async () => ({
+  daemonPost: vi.fn(async () => ({
     matched: true as const,
     result: {
       ok: true as const,
@@ -12,17 +12,13 @@ const boundary = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock('@/daemon/controlClient', () => ({
-  requestDaemonPluginActionExecution: boundary.requestDaemonPluginActionExecution,
-  readDaemonPluginCatalog: vi.fn(async () => ({ kind: 'unavailable', code: 'test' })),
-  resolveDaemonSpawnSessionByNonce: vi.fn(),
-  spawnDaemonSession: vi.fn(),
-  stopDaemonSession: vi.fn(),
-  decideDaemonPluginChange: vi.fn(),
-  requestDaemonPluginChange: vi.fn(),
+// Daemon HTTP is the system boundary; retain the real control-client contract.
+vi.mock('@/daemon/controlHttp', () => ({
+  daemonPost: boundary.daemonPost,
 }));
 
 import { createExternalMcpServer } from './createExternalMcpServer';
+import { PLUGIN_ACTION_EXECUTE_PATH } from '@/plugins/daemon/controlRoutes';
 
 describe('createExternalMcpServer plugin tools', () => {
   it('advertises and dispatches a daemon-projected plugin tool through the MCP SDK boundary', async () => {
@@ -72,7 +68,7 @@ describe('createExternalMcpServer plugin tools', () => {
         surfaces: ['agent', 'mcp', 'cli'],
         expectedContributorOccurrenceId: 'occurrence-g',
       }],
-    } as any);
+    });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'plugin-tools-test', version: '1.0.0' }, { capabilities: {} });
@@ -132,14 +128,13 @@ describe('createExternalMcpServer plugin tools', () => {
         structuredContent: { completed: true },
         isError: false,
       });
-      expect(boundary.requestDaemonPluginActionExecution).toHaveBeenCalledWith({
+      expect(boundary.daemonPost).toHaveBeenCalledWith(PLUGIN_ACTION_EXECUTE_PATH, {
         actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
         surface: 'mcp',
-        authority: 'account_automation',
         defaultSessionId: 'cli-global',
         expectedContributorOccurrenceId: 'occurrence-g',
-      });
+      }, expect.objectContaining({ timeoutMs: 300_000 }));
     } finally {
       await client.close();
       await mcp.close();

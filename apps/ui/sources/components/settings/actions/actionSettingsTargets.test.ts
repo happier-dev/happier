@@ -40,6 +40,7 @@ describe('actionSettingsTargets', () => {
             disabledSurfaces: [],
             disabledPlacements: [],
             approvalRequiredSurfaces: ['mcp'],
+            toolExposureModes: {},
         });
     });
 
@@ -56,6 +57,7 @@ describe('actionSettingsTargets', () => {
             disabledSurfaces: [],
             disabledPlacements: [],
             approvalRequiredSurfaces: ['ui'],
+            toolExposureModes: {},
         });
     });
 
@@ -150,6 +152,7 @@ describe('actionSettingsTargets', () => {
             disabledSurfaces: ['api'],
             disabledPlacements: [],
             approvalRequiredSurfaces: ['plugin'],
+            toolExposureModes: {},
         });
     });
 

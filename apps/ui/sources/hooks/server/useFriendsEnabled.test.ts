@@ -1,25 +1,44 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { buildServerFeaturesResponse, stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
+
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
+
+const homes = createHomeGovernanceHarness();
+beforeEach(async () => {
+    await homes.reset();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    getStorage().setState({ settings: { ...settingsDefaults }, settingsScope: null });
+    // Device credential reads are the OS boundary; selection and usable-Home policy stay real.
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => {
+        const token = homes.findByServerUrl(serverUrl)?.token;
+        return token ? { token } : null;
+    });
+    const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+    await updateEffectiveHomeViewState(() => ({
+        version: 1, groups: [], activeTargetKind: null, activeTargetId: null,
+    }), { scope: 'device' });
+});
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => {
+    standardCleanup();
     vi.unstubAllGlobals();
-    vi.resetModules();
+    vi.restoreAllMocks();
 });
 
 describe('useFriendsEnabled', () => {
-    const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-
-    afterEach(() => {
-        if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
-    });
-
     it('returns false when the server reports friends are disabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ friendsEnabled: false });
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -36,7 +55,6 @@ describe('useFriendsEnabled', () => {
     });
 
     it('fails closed when the request fails', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetchFailure();
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
@@ -51,7 +69,6 @@ describe('useFriendsEnabled', () => {
     });
 
     it('returns true when local and server policy are enabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -68,7 +85,6 @@ describe('useFriendsEnabled', () => {
     });
 
     it('returns false when local experiment gate is disabled', async () => {
-        vi.resetModules();
         await stubServerFeaturesFetch({ friendsEnabled: true });
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
@@ -83,49 +99,41 @@ describe('useFriendsEnabled', () => {
     });
 
     it('returns true when the active server supports friends even if a selected group contains an unsupported server', async () => {
-        vi.resetModules();
 
-        // Isolate persisted server profile state so this test can't interfere with other suites.
-        const scope = `friendsEnabled_group_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-
-        const profiles = await import('@/sync/domains/server/serverProfiles');
         const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         resetServerFeaturesClientForTests();
 
-        const primary = await profiles.upsertServerProfile({ serverUrl: 'http://primary.example.test', name: 'Primary' });
-        const legacy = await profiles.upsertServerProfile({ serverUrl: 'http://legacy.example.test', name: 'Legacy' });
-        await profiles.setActiveServerId(primary.id, { scope: 'device' });
+        const primaryId = await homes.addHome({ serverUrl: 'http://primary.example.test', name: 'Primary', accountId: 'account-primary' });
+        const legacyId = await homes.addHome({ serverUrl: 'http://legacy.example.test', name: 'Legacy', accountId: 'account-legacy', active: false });
+        await homes.selectHomes([primaryId, legacyId]);
 
         const okPayload = buildServerFeaturesResponse({ friendsEnabled: true });
         vi.stubGlobal(
             'fetch',
-            vi.fn(async (input: any) => {
-                const url = typeof input === 'string' ? input : String(input?.url ?? '');
+            vi.fn(async (input: RequestInfo | URL) => {
+                const url = input instanceof Request ? input.url : String(input);
                 if (url.includes('legacy.example.test') && url.endsWith('/v1/features')) {
-                    return { ok: false, status: 404 } as any;
+                    return new Response(null, { status: 404 });
                 }
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => okPayload,
-                } as any;
-            }) as any,
+                return Response.json(okPayload);
+            }),
         );
 
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().getState().applySettingsLocal({
             experiments: true,
             featureToggles: { 'social.friends': true },
-            serverSelectionGroups: [{ id: 'g1', name: 'Group', serverIds: [primary.id, legacy.id], presentation: 'grouped' }],
-            serverSelectionActiveTargetKind: 'group',
-            serverSelectionActiveTargetId: 'g1',
         });
-        await getServerFeaturesSnapshot({ serverId: primary.id, force: true });
+        await getServerFeaturesSnapshot({ serverId: primaryId, force: true });
 
         const { useFriendsEnabled } = await import('./useFriendsEnabled');
-        const seen = await renderHookAndCollectValues(() => useFriendsEnabled());
-
-        expect(seen.at(-1)).toBe(true);
+        const { useEffectiveServerSelection } = await import('./useEffectiveServerSelection');
+        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const hook = await renderHook(() => ({ enabled: useFriendsEnabled(), selection: useEffectiveServerSelection() }));
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().selection.serverIds).toEqual([primaryId, legacyId]);
+            expect(hook.getCurrent().enabled).toBe(true);
+        });
     });
 });

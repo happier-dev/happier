@@ -46,6 +46,7 @@ describe('native observed viewport-state generic effects', () => {
                     viewportState: {
                         isPinned: false,
                         offsetY: 96,
+                        shouldPersistViewport: false,
                         shouldRestoreViewport: false,
                     },
                 },
@@ -65,6 +66,7 @@ describe('native observed viewport-state generic effects', () => {
                 viewportState: {
                     isPinned: false,
                     offsetY: 96,
+                    shouldPersistViewport: false,
                     shouldRestoreViewport: false,
                 },
                 wantsPinned: true,
@@ -90,6 +92,7 @@ describe('native observed viewport-state generic effects', () => {
         expect(effect.state.viewportState).toEqual({
             isPinned: false,
             offsetY: 180,
+            shouldPersistViewport: false,
             shouldRestoreViewport: true,
         });
         expect(effect.state.drain).toEqual({
@@ -119,6 +122,7 @@ describe('native observed viewport-state generic effects', () => {
         expect(effect.state.viewportState).toEqual({
             isPinned: true,
             offsetY: 0,
+            shouldPersistViewport: false,
             shouldRestoreViewport: false,
         });
         expect(effect.state.drain).toEqual({

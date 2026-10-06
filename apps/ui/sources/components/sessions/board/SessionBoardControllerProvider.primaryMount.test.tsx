@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { SessionCompanionContent } from '../companion/SessionCompanionContent';
 import { HIDDEN_SESSION_COMPANION_PREFERENCE_V1 } from '../companion/state/sessionCompanionPreference';
 import type { SessionCompanionController } from '../companion/state/useSessionCompanionController';
@@ -137,6 +138,7 @@ function Harness(props: Readonly<{ probe: Probe }>): React.ReactElement {
 }
 
 afterEach(() => { standardCleanup(); });
+beforeAll(async () => { await loadSyncSingletonForTests(); });
 
 const session = createSessionFixture({ id: ADDRESS.sessionId, serverId: ADDRESS.serverId });
 const available = () => ({ kind: 'available' as const });

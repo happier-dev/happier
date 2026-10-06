@@ -4,86 +4,69 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
+import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
-import { installAppPaneScopeHostCommonModuleMocks } from './appPaneScopeHostTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const paneHostState = vi.hoisted(() => ({
-    scope: {
-        right: { isOpen: true, activeTabId: null, selectedDestination: null as unknown, tabState: {} },
-        details: { isOpen: false },
-        bottom: { isOpen: true, activeTabId: null, selectedDestination: null as unknown, tabState: {} },
+const deviceTypeState = vi.hoisted(() => ({ value: 'tablet' as 'phone' | 'tablet' }));
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        const dimensions = () => ({ width: deviceTypeState.value === 'phone' ? 390 : 1200, height: 800, scale: 1, fontScale: 1 });
+        return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
     },
-    dispatch: vi.fn(),
-}));
-const pluginUnavailableSpy = vi.hoisted(() => vi.fn());
-const deviceTypeState = vi.hoisted(() => ({
-    value: 'tablet' as 'phone' | 'tablet',
-}));
-
-let lastProps: Readonly<Record<string, unknown>> | null = null;
-
-function readLastPaneProp(key: 'rightPane' | 'detailsPane' | 'bottomPane'): unknown {
-    return lastProps?.[key] ?? null;
-}
-
-installAppPaneScopeHostCommonModuleMocks({
-    getLocalSetting: (key) => key === 'uiMultiPanePanelsEnabled' ? true : null,
 });
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({ theme: { colors: { text: { secondary: '#777' } } } });
-});
-
-vi.mock('@/components/ui/panels/MultiPaneHostWithBottom', () => ({
-    MultiPaneHostWithBottom: (props: Readonly<Record<string, unknown>>) => {
-        lastProps = props;
-        return React.createElement(
-            'MultiPaneHostStub',
-            props,
-            props.rightPane as React.ReactNode,
-            props.detailsPane as React.ReactNode,
-            props.bottomPane as React.ReactNode,
-        );
-    },
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => deviceTypeState.value,
-}));
-
-vi.mock('./AppPaneProvider', () => ({
-    useAppPaneContext: () => ({
-        dispatch: paneHostState.dispatch,
-        state: { scopes: { scope1: paneHostState.scope } },
-        getDriver: () => null,
-        driverRegistryVersion: 1,
-    }),
-}));
-
-vi.mock('@/components/plugins/surfaces', () => ({
-    PluginSurfacePlacementHost: (props: Readonly<Record<string, unknown>>) => (
-        React.createElement('PluginSurfacePlacementHostMock', props)
-    ),
-}));
-
-vi.mock('@/components/plugins/reactNative/PluginReactNativeUnavailable', () => ({
-    PluginReactNativeUnavailable: (props: Readonly<Record<string, unknown>>) => {
-        pluginUnavailableSpy(props);
-        return React.createElement('PluginReactNativeUnavailableMock', props);
-    },
-}));
-
-beforeEach(() => {
+const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1', scopeId: 'scope1' });
+let currentScreen: Awaited<ReturnType<typeof renderPanelScreen>>;
+let ActualSurfaceHost: typeof import('@/components/plugins/surfaces')['PluginSurfacePlacementHost'];
+let MultiPaneHostWithBottom: typeof import('@/components/ui/panels/MultiPaneHostWithBottom')['MultiPaneHostWithBottom'];
+let paneSeed: Readonly<{ right?: SelectedPaneDestinationV1; bottom?: SelectedPaneDestinationV1 }> = {};
+beforeEach(async () => {
     deviceTypeState.value = 'tablet';
+    paneSeed = {};
+    ({ PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces'));
+    ({ MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom'));
+    const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', serverId: runtime.serverId })]);
+    storage.getState().applySessions([{ ...session, metadata: session.metadata
+        ? { ...session.metadata, machineId: 'machine-1' } : null }]);
+    storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true } });
 });
+function readLastPaneProp(key: 'rightPane' | 'detailsPane' | 'bottomPane') {
+    // The real renderer keeps layout and modal/resize owners mounted beneath this public input.
+    const props: React.ComponentProps<typeof MultiPaneHostWithBottom> = currentScreen.root.findByType(MultiPaneHostWithBottom).props;
+    return props[key];
+}
+function surfaceHostProps(container: 'rightPane' | 'bottomPane') {
+    const node = currentScreen.root.findAllByType(ActualSurfaceHost)
+        .find(host => host.props.placement.binding.container === container);
+    if (!node) throw new Error(`No admitted ${container} surface`);
+    const props: React.ComponentProps<typeof ActualSurfaceHost> = node.props;
+    return props;
+}
+function setPaneState(input: Readonly<{ right?: SelectedPaneDestinationV1; bottom?: SelectedPaneDestinationV1 }> = {}) {
+    paneSeed = input;
+}
+async function renderScreen(element: React.ReactElement) {
+    currentScreen = await renderPanelScreen(<React.Fragment />, { wrapper: runtime.Wrapper });
+    await act(async () => {
+        runtime.pane.openRight();
+        runtime.pane.openBottom();
+        if (paneSeed.right) runtime.pane.selectRightDestination(paneSeed.right);
+        if (paneSeed.bottom) runtime.pane.selectBottomDestination(paneSeed.bottom);
+    });
+    await currentScreen.update(element);
+    return currentScreen;
+}
 
 function createPlacement(input: Readonly<{
     descriptorId: string;
@@ -119,12 +102,12 @@ function createPlacement(input: Readonly<{
         headerActions: [],
         hostOrigin: {
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             generation: 1,
             phase: 'current',
             interactionEnabled: true,
             executionOrigin: {
-                serverIdentityId: 'srv_account_one',
+                serverIdentityId: runtime.serverId,
                 materializationRef: {
                     pluginId: 'acme.preview',
                     machineId: 'machine-1',
@@ -140,24 +123,6 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
         ...EMPTY_PLUGIN_UI_PROJECTION,
         generation: 1,
         surfacePlacementsById: Object.fromEntries(placements.map((placement) => [placement.id, placement])),
-    };
-}
-
-function setPaneState(input: Readonly<{
-    right?: unknown;
-    bottom?: unknown;
-}> = {}): void {
-    paneHostState.scope.right = {
-        isOpen: true,
-        activeTabId: null,
-        selectedDestination: input.right ?? null,
-        tabState: {},
-    };
-    paneHostState.scope.bottom = {
-        isOpen: true,
-        activeTabId: null,
-        selectedDestination: input.bottom ?? null,
-        tabState: {},
     };
 }
 
@@ -188,7 +153,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                         pluginUiProjection: projectionWith(),
                         projectionPhase: 'current',
                         machineId: 'machine-1',
-                        serverId: 'server-1',
+                        serverId: runtime.serverId,
                         platform: 'web',
                         interactionEnabled: true,
                     }}
@@ -219,7 +184,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
                 destination: rightPlacement.binding.destination,
             },
         });
-        lastProps = null;
         deviceTypeState.value = 'phone';
 
         const phoneScreen = await renderScreen(
@@ -232,7 +196,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -243,9 +207,8 @@ describe('AppPaneScopeHost plugin destinations', () => {
             type: PluginReactNativeUnavailable,
             props: expect.objectContaining({ diagnostics: ['pane_destination_platform_unavailable'] }),
         }));
-        expect(phoneScreen.root.findAllByType('PluginSurfacePlacementHostMock' as never)).toHaveLength(0);
+        expect(phoneScreen.root.findAllByType(ActualSurfaceHost)).toHaveLength(0);
 
-        lastProps = null;
         deviceTypeState.value = 'tablet';
         const tabletScreen = await renderScreen(
             <AppPaneScopeHost
@@ -257,14 +220,14 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
             />,
         );
 
-        expect(tabletScreen.root.findByType('PluginSurfacePlacementHostMock' as never).props).toEqual(expect.objectContaining({
+        expect(tabletScreen.root.findByType(ActualSurfaceHost).props).toEqual(expect.objectContaining({
             placement: rightPlacement,
             formFactor: 'tablet',
         }));
@@ -275,8 +238,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const rightPlacement = createPlacement({ descriptorId: 'side', container: 'rightPane' });
         const detailsPlacement = createPlacement({ descriptorId: 'details', container: 'detailsPane' });
         const projection = projectionWith(rightPlacement, detailsPlacement);
-        lastProps = null;
-        paneHostState.dispatch.mockClear();
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -294,7 +255,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -306,15 +267,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             />,
         );
 
-        const rightHost = readLastPaneProp('rightPane') as React.ReactElement<Readonly<{
-            binding?: Readonly<{
-                openSurface?: (request: Readonly<{
-                    destination: { pluginId: string; localId: string };
-                    input?: unknown;
-                }>) => Promise<unknown> | unknown;
-            }>;
-        }>> | null;
-        const openSurface = rightHost?.props.binding?.openSurface;
+        const openSurface = surfaceHostProps('rightPane').binding?.openSurface;
         expect(openSurface).toBeTypeOf('function');
         if (!openSurface) throw new Error('AppPane did not supply its destination handler');
 
@@ -325,11 +278,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'openDetailsOverlay',
-            scopeId: 'scope1',
-            destination: detailsPlacement.binding.destination,
-        });
+        expect(runtime.pane.scopeState.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
     });
 
     it('stages a Project full-bleed details destination without enabling a docked details pane', async () => {
@@ -345,8 +294,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
             targetKind: 'project',
         });
         const projection = projectionWith(rightPlacement, detailsPlacement);
-        lastProps = null;
-        paneHostState.dispatch.mockClear();
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -368,22 +315,14 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
             />,
         );
 
-        const rightHost = readLastPaneProp('rightPane') as React.ReactElement<Readonly<{
-            binding?: Readonly<{
-                openSurface?: (request: Readonly<{
-                    destination: { pluginId: string; localId: string };
-                    input?: unknown;
-                }>) => Promise<unknown> | unknown;
-            }>;
-        }>> | null;
-        const openSurface = rightHost?.props.binding?.openSurface;
+        const openSurface = surfaceHostProps('rightPane').binding?.openSurface;
         expect(openSurface).toBeTypeOf('function');
         if (!openSurface) throw new Error('AppPane did not supply its destination handler');
 
@@ -394,11 +333,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'openDetailsOverlay',
-            scopeId: 'scope1',
-            destination: detailsPlacement.binding.destination,
-        });
+        expect(runtime.pane.scopeState.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
     });
 
     it('hands an admitted right-pane open to the AppPane bottom selection owner without persisting input', async () => {
@@ -406,8 +341,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const rightPlacement = createPlacement({ descriptorId: 'side', container: 'rightPane' });
         const bottomPlacement = createPlacement({ descriptorId: 'bottom', container: 'bottomPane' });
         const projection = projectionWith(rightPlacement, bottomPlacement);
-        lastProps = null;
-        paneHostState.dispatch.mockClear();
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -425,22 +358,14 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
             />,
         );
 
-        const rightHost = readLastPaneProp('rightPane') as React.ReactElement<Readonly<{
-            binding?: Readonly<{
-                openSurface?: (request: Readonly<{
-                    destination: { pluginId: string; localId: string };
-                    input?: unknown;
-                }>) => Promise<unknown> | unknown;
-            }>;
-        }>> | null;
-        const openSurface = rightHost?.props.binding?.openSurface;
+        const openSurface = surfaceHostProps('rightPane').binding?.openSurface;
         expect(openSurface).toBeTypeOf('function');
         if (!openSurface) throw new Error('AppPane did not supply its destination handler');
 
@@ -451,19 +376,14 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(paneHostState.dispatch).toHaveBeenCalledWith({
-            type: 'selectBottomDestination',
-            scopeId: 'scope1',
-            destination: {
-                kind: 'plugin',
-                destination: bottomPlacement.binding.destination,
-            },
+        expect(runtime.pane.scopeState.bottom.selectedDestination).toEqual({
+            kind: 'plugin', destination: bottomPlacement.binding.destination,
         });
+        expect(JSON.stringify(storage.getState().localSettings.appPaneScopesV1)).not.toContain('run-1');
     });
 
     it('uses a typed default when no pane is selected and otherwise renders no pane', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
-        lastProps = null;
         setPaneState();
 
         await renderScreen(<AppPaneScopeHost scopeId="scope1" main={<div />} />);
@@ -491,7 +411,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const { PaneLoadingFallback } = await import('@/components/ui/panels/PaneLoadingFallback');
         const placement = createPlacement({ descriptorId: 'side', container: 'rightPane' });
-        lastProps = null;
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -511,7 +430,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const rightPlacement = createPlacement({ descriptorId: 'side', container: 'rightPane', instancePolicy: 'multiple' });
         const bottomPlacement = createPlacement({ descriptorId: 'bottom', container: 'bottomPane', instancePolicy: 'multiple' });
         const projection = projectionWith(rightPlacement, bottomPlacement);
-        lastProps = null;
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -535,7 +453,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -552,7 +470,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             />,
         );
 
-        const hosts = screen.root.findAllByType('PluginSurfacePlacementHostMock' as never);
+        const hosts = screen.root.findAllByType(ActualSurfaceHost);
         expect(hosts.find((host) => host.props.placement === rightPlacement)?.props).toEqual(expect.objectContaining({
             placement: rightPlacement,
             mountInstanceKey: 'instance-right',
@@ -571,7 +489,8 @@ describe('AppPaneScopeHost plugin destinations', () => {
             targetKind: 'session',
         });
         const sessionProjection = projectionWith(sessionPlacement);
-        lastProps = null;
+        const scopedSession = createSessionFixture({ id: 'session-42', serverId: runtime.serverId });
+        storage.getState().applySessions([scopedSession]);
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -588,20 +507,20 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     sessionId: 'session-42',
                     pluginUiProjection: sessionProjection,
                     projectionPhase: 'current',
-                    machineId: 'machine-session',
-                    serverId: 'server-session',
+                    machineId: 'machine-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
             />,
         );
 
-        expect(screen.root.findByType('PluginSurfacePlacementHostMock' as never).props).toEqual(expect.objectContaining({
+        expect(screen.root.findByType(ActualSurfaceHost).props).toEqual(expect.objectContaining({
             placement: sessionPlacement,
             pluginUiProjection: sessionProjection,
             sessionId: 'session-42',
-            machineId: 'machine-session',
-            serverId: 'server-session',
+            machineId: 'machine-1',
+            serverId: runtime.serverId,
         }));
     });
 
@@ -609,7 +528,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const rightPlacement = createPlacement({ descriptorId: 'retained-side', container: 'rightPane' });
         const projection = projectionWith(rightPlacement);
-        lastProps = null;
         setPaneState({
             right: { kind: 'plugin', destination: rightPlacement.binding.destination },
         });
@@ -624,22 +542,20 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'retainedOffline',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
             />,
         );
 
-        expect(screen.root.findByType('PluginSurfacePlacementHostMock' as never).props
+        expect(screen.root.findByType(ActualSurfaceHost).props
             .projectionInteractionEnabled).toBe(false);
     });
 
     it('keeps an unavailable selected plugin destination as a tombstone instead of falling back', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
         const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');
-        lastProps = null;
-        pluginUnavailableSpy.mockClear();
         const projection = projectionWith();
         setPaneState({
             right: {
@@ -659,7 +575,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -686,7 +602,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
             availability: { state: 'fallback' as const, reason: 'feature_disabled', diagnostics: ['feature_disabled'] },
         } satisfies PluginUiSurfacePlacementProjection;
         const projection = projectionWith(sidebarPlacement);
-        lastProps = null;
         setPaneState({
             right: {
                 kind: 'plugin',
@@ -704,7 +619,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
                     pluginUiProjection: projection,
                     projectionPhase: 'current',
                     machineId: 'machine-1',
-                    serverId: 'server-1',
+                    serverId: runtime.serverId,
                     platform: 'web',
                     interactionEnabled: true,
                 }}
@@ -727,7 +642,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
         const BuiltinPane = (props: Readonly<{ destinationId: string | null }>) => (
             React.createElement('BuiltinPane', props)
         );
-        lastProps = null;
         setPaneState({ right: { kind: 'builtin', id: 'git' } });
 
         await renderScreen(
@@ -749,7 +663,6 @@ describe('AppPaneScopeHost plugin destinations', () => {
 
     it('does not render a pane when no adapter owns the selected built-in id', async () => {
         const { AppPaneScopeHost } = await import('./AppPaneScopeHost');
-        lastProps = null;
         setPaneState({ right: { kind: 'builtin', id: 'unknown-pane' } });
 
         await renderScreen(

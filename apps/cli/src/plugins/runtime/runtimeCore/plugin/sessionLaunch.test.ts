@@ -69,6 +69,7 @@ describe('plugin session launch binding', () => {
       slot: { kind: 'provider_model' as const },
       resourceId: 'resource-1',
       expectedResourceRevision: 3,
+      deliveryMode: 'brokered' as const,
     };
     const input = buildPluginSessionBindingInput({
       credentials,
@@ -86,6 +87,7 @@ describe('plugin session launch binding', () => {
       slot: { kind: 'provider_model' as const },
       resourceId: 'resource-1',
       expectedResourceRevision: 3,
+      deliveryMode: 'brokered' as const,
     };
     expect(buildPluginSessionBindingInput({
       credentials,

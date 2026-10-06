@@ -150,9 +150,10 @@ describe('useNewSessionSourceContext', () => {
 
     it('accepts a source Home alias when the target uses its canonical profile identity', async () => {
         const profileUrl = `https://source-alias-${Date.now()}-${Math.random().toString(16).slice(2)}.example.test`;
-        const canonicalServerId = `source-canonical-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const canonicalServerId = `srv_source_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         const profile = await upsertServerProfile({ serverUrl: profileUrl, name: 'Alias test', source: 'manual' });
-        await setServerProfileIdentityForUrl(profileUrl, canonicalServerId);
+        const identifiedProfile = await setServerProfileIdentityForUrl(profileUrl, canonicalServerId);
+        expect(identifiedProfile?.serverIdentityId).toBe(canonicalServerId);
         try {
             storage.setState((state) => ({
                 ...state,

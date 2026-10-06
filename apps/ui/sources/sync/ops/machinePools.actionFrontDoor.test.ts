@@ -6,16 +6,15 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, type MachinePoolViewV1
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage, storage } from '@/sync/domains/state/storage';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
-import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import '@/sync/syncEngine';
-import { sync } from '@/sync/sync';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { renderScreen } from '@/dev/testkit';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
@@ -30,7 +29,6 @@ import {
 installApprovalCommonModuleMocks({ storage: (importOriginal) => importOriginal() });
 
 const initialStorageState = getStorage().getState();
-const initialSyncCredentials = sync.getCredentials();
 const boundary = { serverId: '', requests: [] as string[] };
 const features = {
     features: { machines: { enabled: true, pools: { enabled: true } } },
@@ -54,11 +52,12 @@ const created = {
 
 function setActionsSettings(actions: Record<string, unknown>): void {
     const current = storage.getState().settings ?? {};
-    storage.setState({ settings: { ...current, actionsSettingsV1: { v: 1, actions } } as never });
+    storage.setState({ settings: settingsParse({ ...current, actionsSettingsV1: { v: 1, actions } }) });
 }
 
 describe('machine pool Action front door', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         retireActiveServerAccountScopeLifetime();
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
@@ -69,22 +68,17 @@ describe('machine pool Action front door', () => {
         getStorage().setState({ settingsScope: { serverId: boundary.serverId, accountId: 'alice' } });
         getStorage().setState({ machinePoolListByServerId: {}, machinePoolListStatusByServerId: {} });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: `e30.${btoa(JSON.stringify({ sub: 'alice' }))}.signature` });
-        // Seed the authenticated singleton fixture without starting unrelated background sync.
-        // All approval, artifact encoding, HTTP and store behavior remains real.
-        Reflect.set(sync, 'credentials', { token: `e30.${btoa(JSON.stringify({ sub: 'alice' }))}.signature` });
         vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
         await getServerFeaturesSnapshot({ serverId: boundary.serverId, force: true });
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
         setRuntimeFetch(async (url, init) => {
             const value = String(url);
             const pathname = new URL(value).pathname;
             if (pathname === '/v1/auth/ping' || pathname === '/health') return Response.json({ ok: true });
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (pathname === '/v1/artifacts' && init?.method === 'POST') {
-                // This fixture is the HTTP server boundary for the actual artifact request.
-                const request = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                return Response.json({ ...request, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-            }
+            const artifactResponse = artifacts.handle(pathname + new URL(value).search, init);
+            if (artifactResponse) return await artifactResponse;
             boundary.requests.push(pathname);
             if (pathname === '/v1/machines/pools/list') return Response.json({ pools: [created] });
             if (pathname === '/v1/machines/pools/create') return Response.json(created);
@@ -97,7 +91,6 @@ describe('machine pool Action front door', () => {
         resetRuntimeFetch();
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
-        Reflect.set(sync, 'credentials', initialSyncCredentials);
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
     });
@@ -171,7 +164,7 @@ describe('machine pool Action front door', () => {
         }));
         getStorage().setState({ settingsScope: { serverId: homeA, accountId: 'alice' } });
         setActionsSettings({ [`machines.pools.${operation}`]: { enabled: false } });
-        const artifacts = new Map<string, ArtifactCreateRequest & { headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number }>();
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'bob', encryptionMode: 'plain' });
         const effects: string[] = [];
         const requests: Array<{ host: string; authorization: string | null }> = [];
         setRuntimeFetch(async (url, init) => {
@@ -184,23 +177,8 @@ describe('machine pool Action front door', () => {
             if (pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 actionsSettingsV1: { v: 1, actions: { [`machines.pools.${operation}`]: { approvalRequiredSurfaces: ['ui'] } } },
             } }, version: 1 });
-            if (pathname === '/v1/artifacts' && init?.method === 'POST') {
-                const request = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                const artifact = { ...request, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-                artifacts.set(request.id, artifact);
-                return Response.json(artifact);
-            }
-            if (pathname.startsWith('/v1/artifacts/')) {
-                const artifact = artifacts.get(pathname.split('/').at(-1)!);
-                if (!artifact) return Response.json({}, { status: 404 });
-                if (init?.method === 'POST') {
-                    const update = JSON.parse(String(init.body));
-                    if (update.header !== undefined) { artifact.header = update.header; artifact.headerVersion++; }
-                    if (update.body !== undefined) { artifact.body = update.body; artifact.bodyVersion++; }
-                    return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
-                }
-                return Response.json(artifact);
-            }
+            const artifactResponse = artifacts.handle(pathname + target.search, init);
+            if (artifactResponse) return await artifactResponse;
             if (pathname === `/v1/machines/pools/${operation}`) {
                 effects.push(pathname);
                 return Response.json(operation === 'create' ? created : { poolId: created.pool.id, deleted: true });
@@ -228,9 +206,7 @@ describe('machine pool Action front door', () => {
             artifactId: pending.artifactId, decision: 'approve',
         }, { serverId: homeB, surface: 'ui' });
         expect(effects).toEqual([`/v1/machines/pools/${operation}`]);
-        const stored = artifacts.get(pending.artifactId)!;
-        const body = decodePlainArtifactStoredContent(stored.body!) as { body: string };
-        expect(JSON.parse(body.body)).toMatchObject({
+        expect(JSON.parse(artifacts.readPlainBody(pending.artifactId) ?? 'null')).toMatchObject({
             status: 'executed',
             actionId: `machines.pools.${operation}`,
             executionOriginV1: { serverId: homeB, accountId: 'bob' },

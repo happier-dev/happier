@@ -2,13 +2,16 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, renderScreen as renderBaseScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderHook, renderScreen as renderBaseScreen, standardCleanup } from '@/dev/testkit';
 import { AppSessionTranscriptSourceProvider, useTranscriptMachineId } from '../source/appSessionTranscriptSource';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSession } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { MetadataSchema } from '@happier-dev/session-core/state';
 import type { SessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
 
 import { AgentTransitionDividerRow } from './AgentTransitionDividerRow';
+import { TranscriptSeparatorRow } from '../separators/TranscriptSeparatorRow';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,7 +34,7 @@ const DIVIDER: SessionAgentTransitionDividerV1 = {
     fromAgentId: 'claude',
     toAgentId: 'codex',
     sourceCutoffSeqInclusive: 41,
-} as SessionAgentTransitionDividerV1;
+};
 
 /**
  * Layout v1, because that is what the row actually reads: the machine id lives
@@ -40,13 +43,13 @@ const DIVIDER: SessionAgentTransitionDividerV1 = {
  * would let a selector that reads raw `metadata` pass while still answering
  * `null` for every real layout-v1 session.
  */
-function seedSession(patch: Record<string, unknown>): void {
+function seedSession(patch: Partial<Session>): void {
     storage.setState((state) => ({
         ...state,
         isDataReady: true,
         sessions: {
             ...state.sessions,
-            [SESSION_ID]: {
+            [SESSION_ID]: createSessionFixture({
                 id: SESSION_ID,
                 serverId: SERVER_ID,
                 seq: 1,
@@ -58,12 +61,12 @@ function seedSession(patch: Record<string, unknown>): void {
                 accessLevel: 'admin',
                 canApprovePermissions: true,
                 metadataLayoutVersion: 1,
-                metadata: { v: 1 },
+                metadata: MetadataSchema.parse({ v: 1 }),
                 ownerMetadataView: { path: '/w', host: 'h', machineId: 'machine-owner' },
                 agentState: null,
                 agentStateVersion: 0,
                 ...patch,
-            } as never,
+            }),
         },
     }));
 }
@@ -144,6 +147,11 @@ describe('Agent transition divider subscription width', () => {
             </>,
         );
 
+        // Catalog identity leaves settle their credential/loading state on mount.
+        // Measure only commits caused by the following Session writes.
+        dividerUpdates = 0;
+        controlUpdates = 0;
+
         await act(async () => {
             seedSession({ thinking: true, agentState: {}, agentStateVersion: 1, updatedAt: 1, seq: 2 });
         });
@@ -169,23 +177,35 @@ describe('Agent transition divider subscription width', () => {
     it('re-renders when the machine the card must address actually changes', async () => {
         seedSession({});
 
-        let dividerUpdates = 0;
-        const screen = await renderScreen(
+        const committedTitles: React.ReactNode[] = [];
+        let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+        screen = await renderScreen(
             <React.Profiler
-                id="agent-transition-divider"
-                onRender={(_id, phase) => {
-                    if (phase === 'update') dividerUpdates += 1;
+                    id="agent-transition-divider"
+                    onRender={(_id, phase) => {
+                        if (phase === 'update' && screen) {
+                            committedTitles.push(screen.root.findByType(TranscriptSeparatorRow).props.titleContent);
+                        }
                 }}
             >
                 <AgentTransitionDividerRow divider={DIVIDER} sessionId={SESSION_ID} />
             </React.Profiler>,
         );
 
+        const mountedTitle = screen.root.findByType(TranscriptSeparatorRow).props.titleContent;
+        committedTitles.length = 0;
+
         await act(async () => {
             seedSession({ ownerMetadataView: { path: '/w', host: 'h', machineId: 'machine-moved' } });
         });
 
-        expect(dividerUpdates).toBe(1);
+        // The row creates this element on each own render. Its catalog icon
+        // leaves also commit their loading projection after the machine changes
+        // without credentials; those leaf commits preserve the row's element.
+        expect(new Set([mountedTitle, ...committedTitles]).size - 1).toBe(1);
+        expect(committedTitles).toHaveLength(2);
+        expect(committedTitles[0]).not.toBe(mountedTitle);
+        expect(committedTitles[1]).toBe(committedTitles[0]);
         screen.pressByTestId('transcript-agent-transition-divider-chip');
         expect(machineIdsPassedToCard()).toEqual(['machine-moved']);
     });

@@ -29,7 +29,7 @@ describe('commitConnectedServiceQuotaLifecycleSessionEvents', () => {
       eventId: expect.stringContaining('agent-quota-wait'),
       data: {
         type: 'agent-quota-wait',
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         profileId: 'primary',
         groupId: 'main',
         resetAtMs: 1_900_000,

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Message } from "@happier-dev/session-core/messages";
 import {
     findTestInstanceByTypeWithProps,
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
@@ -60,13 +60,14 @@ vi.mock('@/components/sessions/transcript/ChainTranscriptList', () => ({
     ChainTranscriptList: (props: any) => React.createElement('ChainTranscriptList', props, props.footer),
 }));
 
+const { ToolFullView } = await import('./ToolFullView');
+
 describe('ToolFullView (jumpChildId)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('scrolls to the child message when jumpChildId is provided', async () => {
-        const { ToolFullView } = await import('./ToolFullView');
 
         const messages: Message[] = [
             {

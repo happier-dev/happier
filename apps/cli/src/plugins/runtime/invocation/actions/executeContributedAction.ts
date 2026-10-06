@@ -571,6 +571,17 @@ export async function executeContributedAction(params: Readonly<{
     ? runtimeRegistry.targetActionInvocations
     : undefined;
   if (runtimeRegistry && targetActionInvocations?.expects(pluginId, action.definition.id)) {
+    // Occurrence admission precedes activation: a retired handle must not
+    // activate its replacement or be reported as a missing handler.
+    if (expectedContributorOccurrenceId !== undefined
+      && !(await isExpectedPluginCurrent({
+        runtimeRegistry,
+        pluginId,
+        expectedOccurrenceId: expectedContributorOccurrenceId,
+        requireMaterialization: false,
+      }))) {
+      return { matched: true, result: admittedContributorOccurrenceRetired() };
+    }
     if (!targetActionInvocations.has(pluginId, action.definition.id)) {
       let activationFailure: PluginActionExecutorResult | null;
       try {
@@ -673,7 +684,7 @@ export async function executeContributedAction(params: Readonly<{
         ),
       };
     }
-    // One admission fence for the host-stamped contributor and targeted
+    // Final admission fence for the host-stamped contributor and targeted
     // operation, after every await above (demand activation, execution
     // origin, replay placement) and immediately before the target registry
     // admits the handler. The registry's post-approval re-check covers the

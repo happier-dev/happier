@@ -1,83 +1,68 @@
 import * as React from 'react';
-import renderer from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-            },
-            View: (props: any) => React.createElement('View', props, props.children),
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-            ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-        });
-    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async (importOriginal) => {
-        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-        return {
-            ...actual,
-            useSettings: () => ({}),
-        };
-    },
 });
 
-vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
-    SessionRepositoryTreeBrowserView: (props: any) => React.createElement('SessionRepositoryTreeBrowserView', props),
-}));
-
-const suspendPromise = new Promise<void>(() => {
-    // never resolves: we want to verify the Suspense fallback path
+const moduleAdmission = vi.hoisted(() => {
+    let release: () => void = () => {};
+    let admitted: () => void = () => {};
+    return {
+        pending: new Promise<void>((resolve) => { release = resolve; }),
+        loaded: new Promise<void>((resolve) => { admitted = resolve; }),
+        release: () => release(),
+        admitted: () => admitted(),
+    };
 });
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitView', () => ({
-    SessionRightPanelGitView: () => {
-        throw suspendPromise;
-    },
-}));
 
-const scopeState: any = {
-    right: {
-        isOpen: true,
-        activeTabId: 'git',
-    },
-};
+// Metro/module admission is the boundary: retain the real module and its view behavior.
+vi.mock('@/components/sessions/collaboration/SessionCollaborationSurface', async (importOriginal) => {
+    await moduleAdmission.pending;
+    try {
+        return await importOriginal<typeof import('@/components/sessions/collaboration/SessionCollaborationSurface')>();
+    } finally {
+        moduleAdmission.admitted();
+    }
+});
 
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => {
-        const [, bump] = React.useState(0);
-        return {
-            scopeState,
-            openRight: vi.fn(),
-            setRightTab: (tabId: string) => {
-                scopeState.right.activeTabId = tabId;
-                bump((v) => v + 1);
-            },
-            closeRight: vi.fn(),
-            openDetailsTab: vi.fn(),
-        };
-    },
-}));
+const runtime = installSessionPaneRuntimeTestHarness({
+    features: () => createRootLayoutFeaturesResponse({
+        features: { sharing: { session: { enabled: true }, public: { enabled: false } } },
+    }),
+});
 
-describe('SessionRightPanel (suspense fallback)', () => {
-    it('renders a loading fallback when the active tab suspends', async () => {
+describe('SessionRightPanel (module admission fallback)', () => {
+    it('keeps loading chrome while the admitted Collaboration module loads, then renders its real surface', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />)).tree;
-
-        // When the active tab suspends, we should still render the loading fallback content.
-        const textNodes = tree!.findAllByType('Text' as any);
-        const hasLoading = textNodes.some((n) => String(n.props.children).includes('common.loading'));
-        expect(hasLoading).toBe(true);
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionRightPanel sessionId="s1" scopeId="session:s1" />
+        </runtime.Wrapper>);
+        try {
+            expect(screen.findHostByTestId('session-rightpanel-tab:collaboration')).not.toBeNull();
+            await act(async () => runtime.pane.openRight({ tabId: 'collaboration' }));
+            const panel = screen.findHostByTestId('session-rightpanel-surface-collaboration');
+            expect(panel).not.toBeNull();
+            expect(screen.findHostByTestId('session-collaboration-loading')).not.toBeNull();
+            expect(screen.getTextContent()).toContain('common.loading');
+            expect(screen.findHostByTestId('session-collaboration-surface')).toBeNull();
+            await act(async () => {
+                moduleAdmission.release();
+                await moduleAdmission.loaded;
+            });
+            expect(screen.findHostByTestId('session-collaboration-loading')).toBeNull();
+            expect(screen.findHostByTestId('session-collaboration-surface')).not.toBeNull();
+            expect(screen.findHostByTestId('session-rightpanel-surface-collaboration')).toBe(panel);
+        } finally {
+            moduleAdmission.release();
+        }
     });
 });

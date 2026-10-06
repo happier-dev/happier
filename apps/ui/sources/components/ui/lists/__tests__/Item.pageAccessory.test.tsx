@@ -8,29 +8,9 @@ import { installUiListsCommonModuleMocks } from '../uiListsTestHelpers';
 
 installUiListsCommonModuleMocks();
 
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroupSelectionContext: React.createContext(null),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => ({
-    useItemGroupRowPosition: () => 'middle',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
 }));
-
-vi.mock('@/sync/store/hooks', async () => {
-    const { createUseLocalSettingMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return {
-        useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }),
-        useSetting: createUseSettingMock({ values: { visualEffectsLevel: 'minimal' } }),
-    };
-});
 
 afterEach(() => {
     standardCleanup();
@@ -216,9 +196,12 @@ describe('Item leading mark on a page', () => {
         expect(box.minWidth as number).toBeLessThan(36);
     });
 
-    it('keeps the fixed glyph box outside page presentation (menus, pickers)', async () => {
+    it('lets an oversized identity mark fit outside page presentation too', async () => {
         vi.resetModules();
         const box = await leadingBox('grouped');
-        expect(typeof box.width).toBe('number');
+        expect(box.width).toBe('auto');
+        expect(box.height).toBe('auto');
+        expect(typeof box.minWidth).toBe('number');
+        expect(box.minWidth as number).toBeLessThan(36);
     });
 });

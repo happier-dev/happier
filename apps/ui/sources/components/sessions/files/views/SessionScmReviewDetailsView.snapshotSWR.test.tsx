@@ -1,693 +1,205 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen } from '@/dev/testkit';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewCommentV1 } from '@happier-dev/protocol';
-import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
-import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
-import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
+import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 
-// Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
-// graph before this file's mocks and per-test setup have run.
-const loadActivitySpinner = async () => (await import('@/components/ui/feedback/ActivitySpinner')).ActivitySpinner;
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let mockSnapshot: any = null;
-let mockProject: Readonly<{ id: string }> | null = null;
-let reviewCommentsFeatureEnabled = false;
-let scmWriteOperationsFeatureEnabled = false;
-let mockScmCommitStrategy: 'atomic' | 'git_staging' = 'atomic';
-const changedFilesReviewSpy = vi.fn();
-const useSessionRealtimeScmTranscriptConsumerMock = vi.hoisted(() => vi.fn());
-const invalidateFromAutoRefreshSpy = vi.hoisted(() => vi.fn());
-const invalidateFromAutoRefreshAndAwaitSpy = vi.hoisted(() => vi.fn());
-const invalidateFromMutationAndAwaitSpy = vi.hoisted(() => vi.fn());
-const invalidateFromUserSpy = vi.hoisted(() => vi.fn());
-const reviewCommentsSurfaceSpy = vi.hoisted(() => vi.fn());
-let homeRequests: ServedHomeRequest[] = [];
+installSessionFilesViewBoundaries();
+let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let servedReviewComments: readonly ReviewCommentV1[] = [];
-let disposeHome: (() => void) | null = null;
-let servedHomeId = '';
-
-const mockSession = {
-    id: 'session-1',
-    seq: 0,
-    createdAt: 0,
-    updatedAt: 0,
-    active: false,
-    activeAt: 0,
-    metadata: { path: '/tmp/repo', host: '' },
-    metadataVersion: 0,
-    agentState: null,
-    agentStateVersion: 0,
-    thinking: false,
-    thinkingAt: 0,
-    presence: 0,
-} satisfies Session;
-
-installSessionFilesViewCommonModuleMocks({
-    storage: async (importOriginal) =>
-        createPartialStorageModuleMock(importOriginal, {
-            useSession: (_id: string) => mockSession,
-            useSessionWorkspacePath: () => '/tmp/repo',
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionProjectScmSnapshot: () => mockSnapshot,
-            useSessionProjectScmSnapshotError: () => null,
-            useSessionRealtimeScmTranscriptConsumer: useSessionRealtimeScmTranscriptConsumerMock,
-            useWorkspaceScmTouchedPathsForSession: () => [],
-            useSessionProjectScmOperationLog: () => [],
-            useSessionProjectScmCommitSelectionPaths: () => [],
-            useSessionProjectScmCommitSelectionPatches: () => [],
-            useProjectForSession: () => mockProject,
-            useProjectSessions: () => [],
-            useSetting: (key: string) => key === 'scmCommitStrategy' ? mockScmCommitStrategy : 25,
-            useWorkspaceReviewCommentsDrafts: () => [{ id: 'draft-1' }],
-        }),
+let requests: Array<{ path: string; method: string; accountId: string | null }> = [];
+let pane: AppPaneScopeApi;
+let pendingSnapshotResponses: Array<() => void> = [];
+const tabKey = 'scmReview:working';
+beforeAll(prepareSessionFilesViewTestkit);
+beforeEach(async () => {
+    standardCleanup();
+    servedReviewComments = [];
+    requests = [];
+    pendingSnapshotResponses = [];
+    fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo',
+        // Hold only the network response; store-driven cases keep the refresh owner real.
+        rpc: (request) => request.method === 'scm.status.snapshot' ? new Promise((resolve) => {
+            pendingSnapshotResponses.push(() => resolve({ success: true, snapshot: fileViewSnapshot({ rootPath: '/tmp/repo' }) }));
+        }) : undefined,
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/reviews/comments') {
+                const bearer = new Headers(init?.headers).get('authorization')?.split(' ')[1];
+                const accountId = bearer ? (JSON.parse(Buffer.from(bearer.split('.')[1]!, 'base64url').toString()) as { sub: string }).sub : null;
+                requests.push({ path, method: init?.method ?? 'GET', accountId });
+                return Response.json({ items: servedReviewComments.map(storePlainReviewCommentFixture), cursor: null });
+            }
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            return new Response('{}', { status: 404 });
+        },
+    });
+    fixture.setSnapshot(fileViewSnapshot({ rootPath: '/tmp/repo' }));
+});
+afterEach(async () => {
+    vi.useRealTimers();
+    for (const complete of pendingSnapshotResponses) complete();
+    await flushHookEffects({ cycles: 20 });
+    standardCleanup();
+    await fixture?.dispose();
 });
 
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
-}));
-
-vi.mock('@/components/reviews/ReviewCommentsSessionSurface', () => ({
-    ReviewCommentsSessionSurface: (props: any) => {
-        reviewCommentsSurfaceSpy(props);
-        return React.createElement('ReviewCommentsSessionSurface', props);
-    },
-}));
-
-const mockPaneScope = {
-    openDetailsTab: vi.fn(),
-    setDetailsTabState: vi.fn(),
-    scopeState: null as null | { details: { tabState: Record<string, unknown> } },
-};
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => mockPaneScope,
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => {
-        if (featureId === 'files.reviewComments') return reviewCommentsFeatureEnabled;
-        if (featureId === 'scm.writeOperations') return scmWriteOperationsFeatureEnabled;
-        return false;
-    },
-}));
-
-vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
-    useWorkspaceScopeForSession: (sessionId?: string | null) => (
-        sessionId === 's1'
-            ? { serverId: 'server-1', machineId: 'machine-1', rootPath: '/tmp/repo' }
-            : null
-    ),
-}));
-
-const reviewDraftHandlers = {
-    onUpsertReviewCommentDraft: vi.fn(),
-    onDeleteReviewCommentDraft: vi.fn(),
-    onReviewCommentError: vi.fn(),
-};
-
-vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers', () => ({
-    useWorkspaceReviewCommentDraftHandlers: () => reviewDraftHandlers,
-}));
-
-vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
-    useChangedFilesData: () => ({
-        sessionAttribution: { confidence: 'unknown', reason: 'unavailable' },
-        sessionCheckpointOverlap: 'unknown',
-        allRepositoryChangedFiles: [],
-        turnAttributedFiles: [],
-        turnRepositoryOnlyFiles: [],
-        sessionAttributedFiles: [],
-        repositoryOnlyFiles: [],
-
-        showTurnViewToggle: false,
-        showSessionViewToggle: false,
-    }),
-}));
-
-vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () => ({
-    useDerivedSessionChangeSet: () => ({
-        turnChangeSets: [],
-        latestTurnChangeSet: null,
-        latestTurnScopedChangeSet: null,
-        sessionChangeSet: null,
-        latestTurnDiffByPath: null,
-        providerDiffByPath: null,
-    }),
-}));
-
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: {
-        invalidateFromAutoRefresh: invalidateFromAutoRefreshSpy,
-        invalidateFromAutoRefreshAndAwait: invalidateFromAutoRefreshAndAwaitSpy,
-        invalidateFromMutationAndAwait: invalidateFromMutationAndAwaitSpy,
-        invalidateFromUser: invalidateFromUserSpy,
-    },
-}));
-
-vi.mock('@/scm/diffCache/useScmDiffCacheLimits', () => ({
-    useScmDiffCacheLimits: () => {},
-}));
-
-vi.mock('@/scm/refresh/useScmAdaptivePolling', () => ({
-    useScmAdaptivePolling: () => {},
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        visibility: { top: false, bottom: false, left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
-    }),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: () => null,
-}));
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
-    ScrollEdgeIndicators: () => null,
-}));
-
-vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
-    ChangedFilesReview: (props: any) => {
-        changedFilesReviewSpy(props);
-        return React.createElement('ChangedFilesReview', props);
-    },
-}));
-
-function reviewComment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
-    return {
-        v: 1,
-        id: overrides.id ?? 'comment-1',
-        accountId: 'account-1',
-        projectId: overrides.projectId ?? 'project-1',
-        workspaceId: overrides.workspaceId,
-        runId: overrides.runId,
-        engineId: overrides.engineId,
-        anchor: overrides.anchor ?? { kind: 'file', filePath: 'src/a.ts' },
-        snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
-        body: overrides.body ?? 'body',
-        bodyVersion: 1,
-        edits: [],
-        author: overrides.author ?? { kind: 'plugin', pluginId: 'review-coderabbit' },
-        state: overrides.state ?? 'open',
-        flags: overrides.flags ?? {},
-        dispositions: {},
-        threadId: overrides.threadId ?? overrides.id ?? 'comment-1',
-        transitions: [
-            {
-                transitionId: 'transition-1',
-                toState: overrides.state ?? 'open',
-                transitionedAt: 1,
-                transitionedBy: { kind: 'plugin', pluginId: 'review-coderabbit' },
-                serverRevision: 1,
-            },
-        ],
-        createdAt: 1,
-        updatedAt: overrides.updatedAt ?? 1,
-        serverRevision: overrides.serverRevision ?? 1,
-        ...overrides,
-    };
+async function render(tick = 0) {
+    const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    function Probe() { pane = useAppPaneScope('session:s1'); return null; }
+    const element = (nextTick: number) => <React.Fragment><Probe /><Tick tick={nextTick} /><SessionScmReviewDetailsView serverId={fixture.home.id} sessionId="s1" scopeId="session:s1" /></React.Fragment>;
+    const screen = await fixture.render(element(tick));
+    return { ...screen, update: (nextTick: number) => screen.update(fixture.wrap(element(nextTick))) };
 }
+function Tick(_props: Readonly<{ tick: number }>) { return null; }
+async function reviewProps(screen: Awaited<ReturnType<typeof render>>) {
+    const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
+    return screen.tree.root.findByType(ChangedFilesReview).props as React.ComponentProps<typeof ChangedFilesReview>;
+}
+function enableReviewComments() {
+    const state = fixture.storage.getState();
+    state.applySettingsLocal({ featureToggles: { ...state.settings.featureToggles, 'files.reviewComments': true } });
+}
+function scrollTop() { return (pane.scopeState?.details.tabState[tabKey] as { scrollTop?: number } | undefined)?.scrollTop; }
 
 describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
-    beforeEach(async () => {
-        servedReviewComments = [];
-        const served = await serveActionHomes({
-            homes: [{ key: 'scm', serverUrl: 'https://scm-review.test', accountId: 'account-1' }],
-            route: (request) => request.path === '/v1/reviews/comments'
-                ? Response.json({ items: servedReviewComments.map(storePlainReviewCommentFixture), cursor: null })
-                : undefined,
-        });
-        homeRequests = served.requests;
-        servedHomeId = served.homes.scm!.id;
-        disposeHome = served.dispose;
-        mockProject = null;
-        reviewCommentsFeatureEnabled = false;
-        scmWriteOperationsFeatureEnabled = false;
-        mockScmCommitStrategy = 'atomic';
-        changedFilesReviewSpy.mockClear();
-        mockPaneScope.openDetailsTab.mockClear();
-        mockPaneScope.setDetailsTabState.mockClear();
-        mockPaneScope.scopeState = null;
-        useSessionRealtimeScmTranscriptConsumerMock.mockClear();
-        invalidateFromAutoRefreshSpy.mockClear();
-        invalidateFromAutoRefreshAndAwaitSpy.mockClear();
-        invalidateFromMutationAndAwaitSpy.mockClear();
-        invalidateFromUserSpy.mockClear();
-        reviewCommentsSurfaceSpy.mockClear();
-        reviewDraftHandlers.onUpsertReviewCommentDraft.mockClear();
-        reviewDraftHandlers.onDeleteReviewCommentDraft.mockClear();
-        reviewDraftHandlers.onReviewCommentError.mockClear();
-    });
-
-    afterEach(() => {
-        disposeHome?.();
-        disposeHome = null;
-        retireActiveServerAccountScopeLifetime();
-        invalidateAccountEncryptionModeCache();
-    });
-
     it('registers the mounted review surface as a realtime SCM transcript consumer', async () => {
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-
-        await renderScreen(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1', serverId: 'home-a' }));
-
-        // The exact Home travels with the registration: another Home hosting the same Session
-        // id must not receive this surface's realtime SCM routing.
-        expect(useSessionRealtimeScmTranscriptConsumerMock)
-            .toHaveBeenCalledWith({ serverId: 'home-a', sessionId: 's1' }, mockSnapshot);
+        await render();
+        const { readMountedSessionRealtimeScmConsumerScopes } = await import('@/sync/runtime/sessionRealtimeScmConsumers');
+        expect(readMountedSessionRealtimeScmConsumerScopes()).toEqual(expect.arrayContaining([expect.objectContaining({
+            serverId: fixture.home.id, sessionId: 's1', machineScopeId: 'm1', repoRoot: '/tmp/repo',
+        })]));
+        expect(readMountedSessionRealtimeScmConsumerScopes().every((scope) => scope.serverId === fixture.home.id)).toBe(true);
     }, 120_000);
 
     it('keeps last-known review content visible while snapshot is revalidating', async () => {
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-
-        function Wrapper(props: Readonly<{ tick: number }>) {
-            return React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` });
-        }
-
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(Wrapper, { tick: 0 }))).tree;
-
-        expect(tree.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
-
-        mockSnapshot = null;
-        await act(async () => {
-            tree.update(React.createElement(Wrapper, { tick: 1 }));
-        });
-
-        expect(tree.findAllByType('ChangedFilesReview' as any)).toHaveLength(1);
-        expect(tree.findAllByType(await loadActivitySpinner())).toHaveLength(0);
+        const screen = await render();
+        expect(screen.findHostByTestId('scm-review-list')).not.toBeNull();
+        await act(async () => { fixture.setSnapshot(null); await screen.update(1); });
+        expect(screen.findHostByTestId('scm-review-list')).not.toBeNull();
+        const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
+        expect(screen.tree.root.findAllByType(ActivitySpinner)).toHaveLength(0);
     });
 
     it('uses the auto-refresh lease for the initial review snapshot warm-up', async () => {
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-        await renderScreen(<SessionScmReviewDetailsView sessionId="s1" scopeId="session:s1" />);
-
-        expect(invalidateFromAutoRefreshSpy).toHaveBeenCalledTimes(1);
-        expect(invalidateFromAutoRefreshSpy.mock.calls[0]?.[0]).toBe('s1');
-        expect(invalidateFromUserSpy).not.toHaveBeenCalled();
-    });
-
-    it('enables review comments for SCM review diffs when the session has a workspace scope', async () => {
-        reviewCommentsFeatureEnabled = true;
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-
-        await renderScreen(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1:0' }));
-
-        expect(changedFilesReviewSpy).toHaveBeenCalledWith(expect.objectContaining({
-            reviewCommentsEnabled: true,
-            reviewCommentDrafts: [{ id: 'draft-1' }],
-            onUpsertReviewCommentDraft: reviewDraftHandlers.onUpsertReviewCommentDraft,
-            onDeleteReviewCommentDraft: reviewDraftHandlers.onDeleteReviewCommentDraft,
-            onReviewCommentError: reviewDraftHandlers.onReviewCommentError,
-        }));
-    });
-
-    it.each([{ id: 'project-1' }, null])('mounts durable review comments with optional Project %j', async (selectedProject) => {
-        reviewCommentsFeatureEnabled = true;
-        mockProject = selectedProject;
-        servedReviewComments = [reviewComment({ body: 'Durable session review comment.', workspace: { machineId: 'machine-1', path: '/tmp/repo' } })];
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-
-        const screen = await renderScreen(<SessionScmReviewDetailsView serverId={servedHomeId} sessionId="s1" scopeId="session:s1:0" />);
-        expect(screen.getTextContent()).not.toContain('Durable session review comment.');
-
-        expect(reviewCommentsSurfaceSpy).toHaveBeenCalledWith(expect.objectContaining({
-            projectId: selectedProject?.id,
-            workspace: { machineId: 'machine-1', path: '/tmp/repo' },
-            sessionId: 's1',
-            directWriteGrants: [],
-            pendingDirectWriteGrantRequests: [],
-            defaultPanelOpen: false,
-            testID: 'review-comments-session',
-            execute: expect.any(Function),
-        }));
-
-        const surfaceProps = reviewCommentsSurfaceSpy.mock.calls.at(-1)?.[0];
-        await expect(surfaceProps.execute('reviews.comments.list', {
-            projectId: surfaceProps.projectId,
-            workspace: surfaceProps.workspace,
-            includeHistory: true,
-        })).resolves.toEqual({
-            items: [expect.objectContaining({ body: 'Durable session review comment.' })],
-            cursor: null,
-        });
-        expect(homeRequests.filter((request) => request.path === '/v1/reviews/comments')).toEqual([
-            expect.objectContaining({ home: 'scm', accountId: 'account-1', method: 'GET' }),
+        await render();
+        expect(fixture.requests.filter((request) => request.method === 'scm.status.snapshot')).toEqual([
+            expect.objectContaining({ targetId: 'm1', payload: expect.objectContaining({ cwd: '/tmp/repo' }) }),
         ]);
     });
 
-    it('keeps review callbacks stable across unrelated parent rerenders', async () => {
-        scmWriteOperationsFeatureEnabled = true;
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+    it('enables review comments for SCM review diffs when the session has a workspace scope', async () => {
+        enableReviewComments();
+        const { buildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
+        const draft = { id: 'draft-1', filePath: 'src/a.ts', source: 'file' as const, anchor: { kind: 'fileLine' as const, startLine: 1 },
+            snapshot: { selectedLines: ['line'], beforeContext: [], afterContext: [] }, body: 'Please revise this line.', createdAt: 1 };
+        fixture.storage.getState().upsertWorkspaceReviewCommentDraft(buildWorkspaceCacheKey(fixture.scope), draft);
+        const screen = await render();
+        const props = await reviewProps(screen);
+        expect(props.reviewCommentsEnabled).toBe(true);
+        expect(props.reviewCommentDrafts).toEqual([draft]);
+        expect(props.onUpsertReviewCommentDraft).toEqual(expect.any(Function));
+        expect(props.onDeleteReviewCommentDraft).toEqual(expect.any(Function));
+        expect(props.onReviewCommentError).toEqual(expect.any(Function));
+        await act(async () => { props.onDeleteReviewCommentDraft?.('draft-1'); });
+        expect((await reviewProps(screen)).reviewCommentDrafts).toEqual([]);
+    });
 
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 0,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 0,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-
-        function Wrapper(props: Readonly<{ tick: number }>) {
-            return React.createElement(
-                React.Fragment,
-                null,
-                React.createElement('TickMarker', { value: props.tick }),
-                React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: `session:s1:${props.tick}` }),
-            );
+    it.each([true, false])('mounts durable review comments with optional Project %j', async (hasProject) => {
+        enableReviewComments();
+        servedReviewComments = [buildReviewCommentFixture({ accountId: 'alice', sessionId: 's1', body: 'Durable session review comment.',
+            workspace: { machineId: 'm1', path: '/tmp/repo' } })];
+        const screen = await render();
+        if (!hasProject) {
+            const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+            await act(async () => { projectManager.clear(); fixture.storage.setState({ sessions: { ...fixture.storage.getState().sessions } }); });
         }
-
-        const { tree } = await renderScreen(React.createElement(Wrapper, { tick: 0 }));
-        const firstProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-        const firstCallCount = changedFilesReviewSpy.mock.calls.length;
-
-        await act(async () => {
-            tree.update(React.createElement(Wrapper, { tick: 1 }));
+        const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
+        const surface = screen.tree.root.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
+        const project = fixture.storage.getState().getProjectForSession('s1', fixture.home.id);
+        expect(Boolean(project)).toBe(hasProject);
+        expect(surface).toEqual(expect.objectContaining({ projectId: project?.id, workspace: { machineId: 'm1', path: '/tmp/repo' }, sessionId: 's1',
+            directWriteGrants: [], pendingDirectWriteGrantRequests: [], defaultPanelOpen: false, testID: 'review-comments-session', execute: expect.any(Function) }));
+        expect(screen.getTextContent()).not.toContain('Durable session review comment.');
+        await expect(surface.execute('reviews.comments.list', { projectId: surface.projectId, workspace: surface.workspace, includeHistory: true })).resolves.toEqual({
+            items: [expect.objectContaining({ body: 'Durable session review comment.' })], cursor: null,
         });
+        expect(requests).toEqual([{ path: '/v1/reviews/comments', method: 'GET', accountId: 'alice' }]);
+    });
 
-        const nextProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-        expect(changedFilesReviewSpy.mock.calls.length).toBeGreaterThan(firstCallCount);
-        expect(nextProps.onFilePress).toBe(firstProps.onFilePress);
-        expect(nextProps.onFilePressPinned).toBe(firstProps.onFilePressPinned);
-        expect(nextProps.renderFileTrailingActions).toBe(firstProps.renderFileTrailingActions);
+    it('keeps review callbacks stable across unrelated parent rerenders', async () => {
+        const screen = await render();
+        const first = await reviewProps(screen);
+        await screen.update(1);
+        const next = await reviewProps(screen);
+        expect(next.onFilePress).toBe(first.onFilePress);
+        expect(next.onFilePressPinned).toBe(first.onFilePressPinned);
+        expect(next.renderFileTrailingActions).toBe(first.renderFileTrailingActions);
     });
 
     it('offers the canonical per-file staging action directly in the session review list', async () => {
-        scmWriteOperationsFeatureEnabled = true;
-        mockScmCommitStrategy = 'git_staging';
-        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        fixture.storage.getState().applySettingsLocal({ scmCommitStrategy: 'git_staging' });
+        const snapshot = fileViewSnapshot({ rootPath: '/tmp/repo', capabilities: { writeCommit: true, writeInclude: true, writeExclude: true } });
+        fixture.setSnapshot(snapshot);
         const { ScmCommitSelectionToggleButton } = await import('@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton');
-
-        mockSnapshot = {
-            fetchedAt: 1,
-            projectKey: 'm1:/repo',
-            repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-            capabilities: { readLog: true, writeCommit: true, writeInclude: true, writeExclude: true },
-            branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-            stashCount: 0,
-            hasConflicts: false,
-            entries: [],
-            totals: {
-                includedFiles: 1,
-                pendingFiles: 0,
-                untrackedFiles: 0,
-                includedAdded: 1,
-                includedRemoved: 0,
-                pendingAdded: 0,
-                pendingRemoved: 0,
-            },
-        };
-        const file = {
-            fullPath: 'src/staged.ts',
-            fileName: 'staged.ts',
-            isIncluded: true,
-        } as any;
-
-        await renderScreen(<SessionScmReviewDetailsView sessionId="s1" scopeId="session:s1" />);
-
-        const reviewProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-        expect(typeof reviewProps.renderFileActions).toBe('function');
-        const action = reviewProps.renderFileActions(file);
+        const { selectScmChangedFiles } = await import('@/scm/scmStatusFiles');
+        const staged = fileViewSnapshot({ entries: [{ path: 'src/staged.ts', kind: 'modified', includeStatus: 'modified', pendingStatus: 'unmodified',
+            hasIncludedDelta: true, hasPendingDelta: false, previousPath: null,
+            stats: { includedAdded: 1, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0, isBinary: false } }] });
+        const file = selectScmChangedFiles(staged)[0]!;
+        const screen = await render();
+        const action = (await reviewProps(screen)).renderFileActions?.(file);
+        if (!React.isValidElement<React.ComponentProps<typeof ScmCommitSelectionToggleButton>>(action)) throw new Error('No per-file staging action');
         expect(action.type).toBe(ScmCommitSelectionToggleButton);
-        expect(action.props).toEqual(expect.objectContaining({
-            sessionId: 's1',
-            sessionPath: '/tmp/repo',
-            snapshot: mockSnapshot,
-            scmWriteEnabled: true,
-            commitStrategy: 'git_staging',
-            file,
-            selectedForCommit: true,
-            surface: 'files',
-        }));
+        expect(action.props).toEqual(expect.objectContaining({ sessionId: 's1', sessionPath: '/tmp/repo', snapshot,
+            scmWriteEnabled: true, commitStrategy: 'git_staging', file, selectedForCommit: true, surface: 'files' }));
     });
 
     it('debounces review scroll persistence while scrolling', async () => {
+        const screen = await render();
+        const props = await reviewProps(screen);
         vi.useFakeTimers();
-        try {
-            const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-            mockSnapshot = {
-                fetchedAt: 1,
-                projectKey: 'm1:/repo',
-                repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-                capabilities: { readLog: true },
-                branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-                stashCount: 0,
-                hasConflicts: false,
-                entries: [],
-                totals: {
-                    includedFiles: 0,
-                    pendingFiles: 0,
-                    untrackedFiles: 0,
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                },
-            };
-
-            await renderScreen(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1:0' }));
-            const reviewProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-
-            act(() => {
-                reviewProps.onScrollTopChange(128);
-            });
-
-            expect(mockPaneScope.setDetailsTabState).not.toHaveBeenCalled();
-
-            act(() => {
-                vi.advanceTimersByTime(249);
-            });
-            expect(mockPaneScope.setDetailsTabState).not.toHaveBeenCalled();
-
-            act(() => {
-                vi.advanceTimersByTime(1);
-            });
-
-            expect(mockPaneScope.setDetailsTabState).toHaveBeenCalledWith('scmReview:working', { scrollTop: 128 });
-        } finally {
-            vi.useRealTimers();
-        }
+        act(() => { props.onScrollTopChange?.(128); });
+        expect(scrollTop()).toBeUndefined();
+        act(() => { vi.advanceTimersByTime(249); });
+        expect(scrollTop()).toBeUndefined();
+        act(() => { vi.advanceTimersByTime(1); });
+        expect(scrollTop()).toBe(128);
     });
 
     it('flushes pending review scroll persistence on unmount', async () => {
+        const screen = await render();
+        const props = await reviewProps(screen);
         vi.useFakeTimers();
-        try {
-            const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-            mockSnapshot = {
-                fetchedAt: 1,
-                projectKey: 'm1:/repo',
-                repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-                capabilities: { readLog: true },
-                branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-                stashCount: 0,
-                hasConflicts: false,
-                entries: [],
-                totals: {
-                    includedFiles: 0,
-                    pendingFiles: 0,
-                    untrackedFiles: 0,
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                },
-            };
-
-            const { tree } = await renderScreen(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1:0' }));
-            const reviewProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-
-            act(() => {
-                reviewProps.onScrollTopChange(96);
-            });
-            expect(mockPaneScope.setDetailsTabState).not.toHaveBeenCalled();
-
-            act(() => {
-                tree.unmount();
-            });
-
-            expect(mockPaneScope.setDetailsTabState).toHaveBeenCalledWith('scmReview:working', { scrollTop: 96 });
-        } finally {
-            vi.useRealTimers();
-        }
+        act(() => { props.onScrollTopChange?.(96); });
+        expect(scrollTop()).toBeUndefined();
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        function Probe() { pane = useAppPaneScope('session:s1'); return null; }
+        // The pane owner remains mounted to receive its child's unmount flush.
+        await screen.update(fixture.wrap(<Probe />));
+        expect(scrollTop()).toBe(96);
     });
 
     it('keeps the mounted review initial scroll position stable after persistence updates', async () => {
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        function Probe() { pane = useAppPaneScope('session:s1'); return null; }
+        const screen = await fixture.render(<Probe />);
+        act(() => { pane.setDetailsTabState(tabKey, { scrollTop: 120 }); });
+        const element = (tick: number) => <React.Fragment><Probe /><Tick tick={tick} /><SessionScmReviewDetailsView serverId={fixture.home.id} sessionId="s1" scopeId="session:s1" /></React.Fragment>;
+        await screen.update(fixture.wrap(element(0)));
+        await flushHookEffects({ cycles: 20 });
+        const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
+        const first = screen.tree.root.findByType(ChangedFilesReview).props;
+        expect(first.initialScrollTop).toBe(120);
         vi.useFakeTimers();
-        try {
-            mockPaneScope.scopeState = {
-                details: {
-                    tabState: {
-                        'scmReview:working': {
-                            scrollTop: 120,
-                        },
-                    },
-                },
-            };
-            const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
-
-            mockSnapshot = {
-                fetchedAt: 1,
-                projectKey: 'm1:/repo',
-                repo: { isRepo: true, rootPath: '/tmp/repo', backendId: 'git', mode: '.git' },
-                capabilities: { readLog: true },
-                branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
-                stashCount: 0,
-                hasConflicts: false,
-                entries: [],
-                totals: {
-                    includedFiles: 0,
-                    pendingFiles: 0,
-                    untrackedFiles: 0,
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                },
-            };
-
-            const { tree } = await renderScreen(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1:0' }));
-            const firstProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-            expect(firstProps.initialScrollTop).toBe(120);
-
-            act(() => {
-                firstProps.onScrollTopChange(360);
-                vi.advanceTimersByTime(250);
-            });
-
-            expect(mockPaneScope.setDetailsTabState).toHaveBeenCalledWith('scmReview:working', {
-                scrollTop: 360,
-            });
-
-            mockPaneScope.scopeState = {
-                details: {
-                    tabState: {
-                        'scmReview:working': {
-                            scrollTop: 360,
-                        },
-                    },
-                },
-            };
-
-            await act(async () => {
-                tree.update(React.createElement(SessionScmReviewDetailsView, { sessionId: 's1', scopeId: 'session:s1:1' }));
-            });
-
-            const nextProps = changedFilesReviewSpy.mock.calls.at(-1)?.[0];
-            expect(nextProps.initialScrollTop).toBe(120);
-        } finally {
-            vi.useRealTimers();
-        }
+        act(() => { first.onScrollTopChange(360); vi.advanceTimersByTime(250); });
+        expect(scrollTop()).toBe(360);
+        await screen.update(fixture.wrap(element(1)));
+        expect(screen.tree.root.findByType(ChangedFilesReview).props.initialScrollTop).toBe(120);
     });
 });

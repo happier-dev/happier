@@ -2,12 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-  return { ...actual, backoff: immediate, backoffForever: immediate };
-});
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -15,20 +9,14 @@ afterEach(() => {
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-  vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-      serverId: 'test',
-      serverUrl: 'https://api.example.test',
-      kind: 'custom',
-      generation: 1,
-    }),
-  }));
+async function activateTestHome() {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 }
 
 describe('apiConnectedServicesV3 legacy read compatibility', () => {
   it('reads a plaintext credential record without exposing a write API', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const record = {
       v: 1,
       serviceId: 'openai-codex',

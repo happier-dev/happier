@@ -425,7 +425,8 @@ vi.mock('@/voice/session/VoiceSessionRuntime', () => ({
 }));
 
 
-vi.mock('react-native-safe-area-context', () => ({
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 

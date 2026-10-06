@@ -205,7 +205,7 @@ describe('LegacyProfileMigrationReview', () => {
     it('keeps a preview transport failure typed and retries the exact preview action', async () => {
         const fingerprint = `legacy-profile-migration-source:v1:${'d'.repeat(43)}`;
         preview
-            .mockRejectedValueOnce(new Error('offline'))
+            .mockRejectedValueOnce(Object.assign(new Error('offline'), { code: 'machine_offline' }))
             .mockResolvedValueOnce({ status: 'success', sourceProfileId: 'legacy-a', sourceFingerprint: fingerprint });
         const { LegacyProfileMigrationReview } = await import('./LegacyProfileMigrationReview');
         const screen = await renderScreen(<LegacyProfileMigrationReview
@@ -283,7 +283,7 @@ describe('LegacyProfileMigrationReview', () => {
             status: 'success', sourceProfileId: 'legacy-a', connectionId: 'pc_result', settingsVersion: 18,
         });
         const onConfirmed = vi.fn()
-            .mockRejectedValueOnce(new Error('settings rehydrate unavailable'))
+            .mockRejectedValueOnce(Object.assign(new Error('settings rehydrate unavailable'), { code: 'ENETUNREACH' }))
             .mockResolvedValueOnce(undefined);
         const onClose = vi.fn();
         const { LegacyProfileMigrationReview } = await import('./LegacyProfileMigrationReview');

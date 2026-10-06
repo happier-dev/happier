@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
@@ -29,11 +29,6 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
         return boundary.request(url.origin, url.pathname, init);
     },
 }));
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (target: { endpointUrl: string; signal?: AbortSignal }) => (path: string, init?: RequestInit) =>
-        boundary.request(target.endpointUrl, path, { ...init, signal: init?.signal ?? target.signal }),
-}));
 vi.mock('@/components/systemTasks/systemTasksRuntime', () => ({
     getSystemTasksRunner: () => ({ start: boundary.startSystemTask }),
 }));
@@ -44,13 +39,16 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let restoreStorage: (() => void) | undefined;
+let restoreLocks: (() => void) | undefined;
 afterEach(async () => {
     await screen?.unmount();
+    restoreLocks?.();
     restoreStorage?.();
     vi.unstubAllGlobals();
 });
 
 it('Back before service authentication preserves an offered empty Personal Home while another Home is focused', async () => {
+    restoreLocks = installWebLockManagerMock().restore;
     const storage = installLocalStorageMock();
     vi.stubGlobal('sessionStorage', globalThis.localStorage);
     storage.restore();

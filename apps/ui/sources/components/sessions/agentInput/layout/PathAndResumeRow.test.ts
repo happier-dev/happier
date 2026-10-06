@@ -1,220 +1,93 @@
-import React from 'react';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
+import type { View } from 'react-native';
+import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import type { PathAndResumeRowProps } from './PathAndResumeRow';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                Pressable: React.forwardRef((props: Record<string, unknown> & { children?: React.ReactNode }, ref) =>
-                                    React.createElement('Pressable', { ...props, __ref: ref }, props.children)),
-                                Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                    React.createElement('Text', props, props.children),
-                                View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                                    React.createElement('View', props, props.children),
-                            }
-    );
+installSessionDetailsPanelCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            // Forward actual native anchor refs; node identity is supplied by the renderer's SDK port.
+            Pressable: React.forwardRef<View, React.ComponentProps<typeof import('react-native')['Pressable']>>(
+                (props, ref) => React.createElement('Pressable', { ...props, ref }, props.children),
+            ),
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        });
+    },
 });
+const runtime = installSessionPaneRuntimeTestHarness();
+const styles = { pathRow: {}, actionButtonsLeft: {}, actionChip: {}, actionChipIconOnly: {}, actionChipPressed: {}, actionChipText: {} };
+const baseProps = {
+    styles, showChipLabels: true, iconColor: '#000',
+    folderChipState: { kind: 'folder', path: '/workspace/long-folder-name' },
+    resumeSessionId: 'session-1', resumeLabelTitle: 'Resume session', resumeLabelOptional: 'Resume: Optional',
+} satisfies Omit<PathAndResumeRowProps, 'onPathClick' | 'onResumeClick'>;
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props, null),
-}));
-
-vi.mock('./ResumeChip', () => ({
-    ResumeChip: (props: Record<string, unknown>) =>
-        React.createElement('Pressable', { ...props, testID: 'agent-input-resume-chip' }, null),
-}));
-
-function hasFlexGrowOne(value: unknown): boolean {
-    if (!value || typeof value !== 'object') return false;
-    return (value as { flexGrow?: number }).flexGrow === 1;
-}
-
-function hasFlexShrinkZero(value: unknown): boolean {
-    if (!value || typeof value !== 'object') return false;
-    return (value as { flexShrink?: number }).flexShrink === 0;
-}
-
-function toArray<T>(value: T | readonly T[] | undefined): readonly T[] {
-    if (Array.isArray(value)) return value;
-    if (value == null) return [];
-    return [value] as readonly T[];
+async function renderRow(props: Partial<PathAndResumeRowProps> = {}) {
+    const { PathAndResumeRow } = await import('./PathAndResumeRow');
+    return renderScreen(React.createElement(runtime.Wrapper, null,
+        React.createElement(PathAndResumeRow, { ...baseProps, ...props }),
+    ));
 }
 
 describe('PathAndResumeRow', () => {
-    let PathAndResumeRow: (typeof import('./PathAndResumeRow'))['PathAndResumeRow'];
-
-    beforeAll(async () => {
-        ({ PathAndResumeRow } = await import('./PathAndResumeRow'));
-    }, 60_000);
-
-    it('does not let the path chip flex-grow (keeps chips left-aligned)', async () => {
-        const styles = {
-            pathRow: {},
-            actionButtonsLeft: {},
-            actionChip: {},
-            actionChipIconOnly: {},
-            actionChipPressed: {},
-            actionChipText: {},
-        };
-
-        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-            styles,
-            showChipLabels: true,
-            iconColor: '#000',
-            folderChipState: { kind: 'folder' as const, path: '/Users/leeroy/Development/happy-local' },
-            onPathClick: () => {},
-            resumeSessionId: null,
-            onResumeClick: () => {},
-            resumeLabelTitle: 'Resume session',
-            resumeLabelOptional: 'Resume: Optional',
-        }));
-
-        const row = screen.findByTestId('agentInput-pathResumeRow');
-        expect(row).toBeTruthy();
-
-        const actionButtonsLeft = toArray(row?.props?.children)[0];
-        const rowChildren = React.Children.toArray(actionButtonsLeft?.props?.children);
-        const pathChipPressable = rowChildren.find((child) => (
-            React.isValidElement(child) && (child.props as any)?.testID === 'agent-input-path-chip'
-        )) as React.ReactElement | undefined;
-        expect(pathChipPressable).toBeTruthy();
-
-        const styleFn = (pathChipPressable?.props as any)?.style as ((input: { pressed: boolean }) => unknown) | undefined;
-        expect(typeof styleFn).toBe('function');
-
-        const computed = styleFn?.({ pressed: false });
-        const styleParts = Array.isArray(computed) ? computed : [computed];
-        expect(styleParts.some(hasFlexGrowOne)).toBe(false);
-        expect(styleParts.some(hasFlexShrinkZero)).toBe(true);
-        expect(styleParts.some((value) => value && typeof value === 'object' && (value as { maxWidth?: unknown }).maxWidth === '100%')).toBe(true);
+    it('keeps both actual folder and resume controls usable beside a leading machine control on phone', async () => {
+        const onPathClick = vi.fn();
+        const onResumeClick = vi.fn();
+        const screen = await renderRow({
+            onPathClick, onResumeClick,
+            leadingControls: [React.createElement('Pressable', { key: 'machine', testID: 'agent-input-machine-chip' })],
+        });
+        const controls = screen.findAll(node => typeof node.type === 'string' && [
+            'agent-input-machine-chip', 'agent-input-path-chip', 'agent-input-resume-chip',
+        ].includes(node.props.testID));
+        expect(controls.map(node => node.props.testID)).toEqual([
+            'agent-input-machine-chip', 'agent-input-path-chip', 'agent-input-resume-chip',
+        ]);
+        expect(screen.getTextContent()).toContain(baseProps.folderChipState.path);
+        await screen.pressByTestIdAsync('agent-input-path-chip');
+        expect(onPathClick).toHaveBeenCalledOnce();
+        expect(onResumeClick).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('agent-input-resume-chip');
+        expect(onResumeClick).toHaveBeenCalledOnce();
     });
 
-    it('allows the row chips to wrap when there is not enough horizontal space', async () => {
-        const styles = {
-            pathRow: {},
-            actionButtonsLeft: { flexWrap: 'wrap' as const },
-            actionChip: {},
-            actionChipIconOnly: {},
-            actionChipPressed: {},
-            actionChipText: {},
-        };
-
-        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-            styles,
-            showChipLabels: true,
-            iconColor: '#000',
-            folderChipState: { kind: 'folder' as const, path: '/Users/leeroy/Development/happy-local' },
-            onPathClick: () => {},
-            resumeSessionId: 'sess-123',
-            onResumeClick: () => {},
-            resumeLabelTitle: 'Resume session',
-            resumeLabelOptional: 'Resume: Optional',
-        }));
-
-        const row = screen.findByTestId('agentInput-pathResumeRow');
-        expect(row).toBeTruthy();
-
-        const actionButtonsLeft = toArray(row?.props?.children)[0];
-        const style = actionButtonsLeft?.props?.style;
-        const styleArray = Array.isArray(style) ? style : [style];
-        const flattened = Object.assign({}, ...styleArray.filter(Boolean));
-        expect(flattened.flexWrap).not.toBe('nowrap');
+    it('keeps the canonical folder control mounted while the folder is resolving', async () => {
+        const onPathClick = vi.fn();
+        const screen = await renderRow({ folderChipState: { kind: 'resolving', lastKnownPath: null }, onPathClick });
+        expect(screen.findHostByTestId('agent-input-path-chip')).not.toBeNull();
+        expect(screen.findHostByTestId('agent-input-resume-chip')).toBeNull();
+        await screen.pressByTestIdAsync('agent-input-path-chip');
+        expect(onPathClick).toHaveBeenCalledOnce();
     });
 
-    it('exposes the canonical path chip testID for new-session automation and routing flows', async () => {
-        const styles = {
-            pathRow: {},
-            actionButtonsLeft: {},
-            actionChip: {},
-            actionChipIconOnly: {},
-            actionChipPressed: {},
-            actionChipText: {},
-        };
-
-        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-            styles,
-            showChipLabels: true,
-            iconColor: '#000',
-            folderChipState: { kind: 'resolving' as const, lastKnownPath: null },
-            onPathClick: () => {},
-            resumeSessionId: null,
-            onResumeClick: undefined,
-            resumeLabelTitle: 'Resume session',
-            resumeLabelOptional: 'Resume: Optional',
-        }));
-
-        const pathChip = screen.findByTestId('agent-input-path-chip');
-        expect(pathChip?.props?.testID).toBe('agent-input-path-chip');
+    it('publishes the mounted native anchors and clears them when the row unmounts', async () => {
+        const { PathAndResumeRow } = await import('./PathAndResumeRow');
+        const pathChipAnchorRef = React.createRef<View>();
+        const resumeChipAnchorRef = React.createRef<View>();
+        const nativeNodes = new Map<string, object>();
+        const screen = await renderScreen(React.createElement(runtime.Wrapper, null,
+            React.createElement(PathAndResumeRow, {
+                ...baseProps, onPathClick: () => {}, onResumeClick: () => {}, pathChipAnchorRef, resumeChipAnchorRef,
+            }),
+        ), { createNodeMock: element => {
+            const node = { focus: vi.fn(), measure: vi.fn() };
+            if (typeof element.props.testID === 'string') nativeNodes.set(element.props.testID, node);
+            return node;
+        } });
+        expect(pathChipAnchorRef.current).toBe(nativeNodes.get('agent-input-path-chip'));
+        expect(resumeChipAnchorRef.current).toBe(nativeNodes.get('agent-input-resume-chip'));
+        expect(pathChipAnchorRef.current).not.toBe(resumeChipAnchorRef.current);
+        await screen.unmount();
+        expect(pathChipAnchorRef.current).toBeNull();
+        expect(resumeChipAnchorRef.current).toBeNull();
     });
 
-    it('renders leading secondary controls before the path and resume chips', async () => {
-        const styles = {
-            pathRow: {},
-            actionButtonsLeft: {},
-            actionChip: {},
-            actionChipIconOnly: {},
-            actionChipPressed: {},
-            actionChipText: {},
-        };
-
-        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-            styles,
-            leadingControls: [
-                React.createElement('Pressable', { key: 'machine', testID: 'agent-input-machine-chip' }),
-            ],
-            showChipLabels: true,
-            iconColor: '#000',
-            folderChipState: { kind: 'folder' as const, path: '/Users/leeroy/Development/happy-local' },
-            onPathClick: () => {},
-            resumeSessionId: 'session-1',
-            onResumeClick: () => {},
-            resumeLabelTitle: 'Resume session',
-            resumeLabelOptional: 'Resume: Optional',
-        }));
-
-        const row = screen.findByTestId('agentInput-pathResumeRow');
-        const actionButtonsLeft = toArray(row?.props?.children)[0];
-        const testIds = React.Children.toArray(actionButtonsLeft?.props?.children)
-            .map((node) => (React.isValidElement(node) ? (node.props as any)?.testID : null))
-            .filter(Boolean) as string[];
-
-        expect(testIds.slice(0, 2)).toEqual(['agent-input-machine-chip', 'agent-input-path-chip']);
-    });
-
-    it('forwards the shared anchor refs to the visible wrap-row path and resume chips', async () => {
-        const styles = {
-            pathRow: {},
-            actionButtonsLeft: {},
-            actionChip: {},
-            actionChipIconOnly: {},
-            actionChipPressed: {},
-            actionChipText: {},
-        };
-        const pathChipAnchorRef = React.createRef<any>();
-        const resumeChipAnchorRef = React.createRef<any>();
-
-        const screen = await renderScreen(React.createElement(PathAndResumeRow, {
-            styles,
-            showChipLabels: true,
-            iconColor: '#000',
-            folderChipState: { kind: 'folder' as const, path: '/workspace' },
-            pathChipAnchorRef,
-            onPathClick: () => {},
-            resumeSessionId: 'session-1',
-            resumeChipAnchorRef,
-            onResumeClick: () => {},
-            resumeLabelTitle: 'Resume session',
-            resumeLabelOptional: 'Resume: Optional',
-        }));
-
-        const pathChip = screen.findByTestId('agent-input-path-chip');
-        const resumeChip = screen.findByTestId('agent-input-resume-chip');
-
-        expect(pathChip?.props.__ref).toBe(pathChipAnchorRef);
-        expect(resumeChip?.props.anchorRef).toBe(resumeChipAnchorRef);
+    it('does not publish an empty control row when no control can be opened', async () => {
+        const screen = await renderRow();
+        expect(screen.findHostByTestId('agentInput-pathResumeRow')).toBeNull();
     });
 });

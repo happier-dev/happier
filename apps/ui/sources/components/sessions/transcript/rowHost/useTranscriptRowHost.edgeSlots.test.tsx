@@ -10,11 +10,6 @@ import {
 
 import { useTranscriptItemsEdgeSlots } from './useTranscriptRowHost';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-    const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-    return emptyBundledPluginUiAssetsModule;
-});
-
 describe('useTranscriptItemsEdgeSlots', () => {
     it('keeps retained underfilled history reachable through the canonical older pager', async () => {
         // A sidechain-only initial-fill page can leave a short transcript with a live older
@@ -46,11 +41,13 @@ describe('useTranscriptItemsEdgeSlots', () => {
         }));
 
         const overlay = hook.getCurrent().olderLoadOverlay;
-        expect(React.isValidElement(overlay)).toBe(true);
-        expect((overlay as React.ReactElement).type).toBe(OlderLoadContinuationOverlay);
+        if (!React.isValidElement<React.ComponentProps<typeof OlderLoadContinuationOverlay>>(overlay)) {
+            throw new Error('Expected the canonical older pager continuation');
+        }
+        expect(overlay.type).toBe(OlderLoadContinuationOverlay);
 
         await act(async () => {
-            ((overlay as React.ReactElement<{ onContinue: () => void }>).props.onContinue)();
+            overlay.props.onContinue();
         });
         expect(onContinueOlderPagination).toHaveBeenCalledTimes(1);
         await hook.unmount();

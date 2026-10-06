@@ -15,6 +15,11 @@ import {
     installAccountSettingsRouteModuleMocks,
 } from './accountSettingsRouteTestHelpers';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
+import 'fake-indexeddb/auto';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,7 +27,18 @@ vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     return createReanimatedModuleMock();
 });
-installAccountSettingsRouteModuleMocks();
+installAccountSettingsRouteModuleMocks({ storageModule: (importOriginal) => importOriginal() });
+installDisconnectedServerSocketBoundary();
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
+await loadSyncSingletonForTests();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+let restoreExecutor: (() => void) | undefined;
 
 const routerMockRef = getAccountSettingsRouteRouterMockRef();
 const modalMockRef = getAccountSettingsRouteModalMockRef();
@@ -42,48 +58,25 @@ vi.mock('expo-camera', () => ({
     },
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
-        logout: vi.fn(),
-    }),
-}));
+async function restoreAccount() {
+    account = await createSecretSettingsTestHarness();
+    restoreExecutor = await installRealActionExecutorModuleLoader();
+    storage.setState({ isDataReady: true, profileScope: account.scope });
+}
 
-vi.mock('@/hooks/auth/useConnectAccount', () => ({
-    useConnectAccount: () => ({
-        connectAccount: vi.fn(),
-        isLoading: false,
-    }),
-}));
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => true,
-}));
-
-vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
-    useFriendsIdentityReadiness: () => ({
-        isReady: false,
-        isLoadingFeatures: false,
-        reason: 'needsUsername',
-        requiredProviderId: null,
-        requiredProviderDisplayName: null,
-        requiredProviderConnected: false,
-        requiredProviderLogin: null,
-        gate: { isReady: false, gateVariant: 'username' },
-    }),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
-}));
-
-vi.mock('@/components/account/ProviderIdentityItems', () => ({
-    ProviderIdentityItems: () => null,
-}));
+async function renderAccount() {
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+    return await renderSettingsView(<InjectedAuthProvider credentials={account!.credentials}><AccountScreen /></InjectedAuthProvider>);
+}
 
 describe('Settings → Account (username)', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        standardCleanup();
+        await account?.dispose();
+        account = undefined;
+        restoreExecutor?.();
+        restoreExecutor = undefined;
         resetRuntimeFetch();
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
@@ -96,38 +89,35 @@ describe('Settings → Account (username)', () => {
     });
 
     it('offers choosing a username from the identity header and saves it when friendsAllowUsername is enabled', async () => {
+        await restoreAccount();
         storage.getState().applyProfile({ ...profileDefaults, linkedProviders: [], username: null });
 
+        let usernameOnHome: string | null = null;
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => ({}),
-                } as unknown as Response;
+                return Response.json({});
             }
             if (isFeaturesRequest(url)) {
-                return {
-                    ok: true,
-                    json: async () => createAccountFeaturesResponse(),
-                };
+                return Response.json(createAccountFeaturesResponse());
             }
             if (isUsernameRequest(url)) {
-                return {
-                    ok: true,
-                    json: async () => ({ username: 'alice' }),
-                };
+                const body: unknown = JSON.parse(String(init?.body));
+                if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'username') !== 'string') throw new Error('Invalid username request');
+                usernameOnHome = String(Reflect.get(body, 'username'));
+                return Response.json({ username: usernameOnHome });
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            if (new URL(url).pathname === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain',
+                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+            return account!.request(input, init);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
         setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await import('@/modal');
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-        const screen = await renderSettingsView(<AccountScreen />);
+        const screen = await renderAccount();
+        await vi.waitFor(() => expect(screen.findRowByTitle('settingsAccount.chooseUsername')).not.toBeNull());
         expect(screen.findRowByTitle('settingsAccount.chooseUsername')?.props.testID).toBe('settings-account-username');
 
         await act(async () => {
@@ -143,9 +133,12 @@ describe('Settings → Account (username)', () => {
             expect.stringContaining('/v1/account/username'),
             expect.objectContaining({ method: 'POST' }),
         );
+        expect(usernameOnHome).toBe('alice');
+        expect(storage.getState().profile.username).toBe('alice');
     }, 40_000);
 
     it('keeps connectedServicesV2 projections out of Account while the canonical Connected Accounts route remains available', async () => {
+        await restoreAccount();
         storage.getState().applyProfile({
             ...profileDefaults,
             linkedProviders: [],
@@ -171,34 +164,29 @@ describe('Settings → Account (username)', () => {
             username: null,
         });
 
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => ({}),
-                } as unknown as Response;
+                return Response.json({});
             }
             if (isFeaturesRequest(url)) {
-                return {
-                    ok: true,
-                    json: async () => createAccountFeaturesResponse(),
-                };
+                return Response.json(createAccountFeaturesResponse());
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            if (new URL(url).pathname === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain',
+                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+            return account!.request(input, init);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
         setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-        const screen = await renderSettingsView(<AccountScreen />);
+        const screen = await renderAccount();
 
         expect(screen.findRowByTitle('connectedServices.serviceNames.openaiCodex')).toBeNull();
         expectCanonicalConnectedAccountsRoute();
     }, 40_000);
 
     it('keeps retryable connectedServicesV2 projections out of Account while the canonical Connected Accounts route remains available', async () => {
+        await restoreAccount();
         storage.getState().applyProfile({
             ...profileDefaults,
             linkedProviders: [],
@@ -244,28 +232,22 @@ describe('Settings → Account (username)', () => {
             username: null,
         });
 
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = getRequestUrl(input);
             if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => ({}),
-                } as unknown as Response;
+                return Response.json({});
             }
             if (isFeaturesRequest(url)) {
-                return {
-                    ok: true,
-                    json: async () => createAccountFeaturesResponse(),
-                };
+                return Response.json(createAccountFeaturesResponse());
             }
-            throw new Error(`Unexpected fetch: ${url}`);
+            if (new URL(url).pathname === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain',
+                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+            return account!.request(input, init);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
         setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
-        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-        const screen = await renderSettingsView(<AccountScreen />);
+        const screen = await renderAccount();
 
         expect(screen.findRowByTitle('connectedServices.serviceNames.openaiCodex')).toBeNull();
         expectCanonicalConnectedAccountsRoute();

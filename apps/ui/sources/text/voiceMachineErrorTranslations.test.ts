@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { VOICE_MACHINE_ERROR_TRANSLATION_KEYS } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 
 import { ca } from './translations/ca';
+import { de } from './translations/de';
 import { en } from './translations/en';
 import { es } from './translations/es';
+import { fr } from './translations/fr';
 import { it as itLocale } from './translations/it';
 import { ja } from './translations/ja';
 import { pl } from './translations/pl';
@@ -15,6 +17,8 @@ import { zhHant } from './translations/zh-Hant';
 
 const supportedLocales = [
     { code: 'en', root: en },
+    { code: 'de', root: de },
+    { code: 'fr', root: fr },
     { code: 'ru', root: ru },
     { code: 'pl', root: pl },
     { code: 'es', root: es },
@@ -41,8 +45,14 @@ describe('voice machine error translations', () => {
                 VOICE_MACHINE_ERROR_TRANSLATION_KEYS,
             )) {
                 const translation = readTranslation(root, translationKey);
-                expect(translation, `${code}.${kind}`).toEqual(expect.any(String));
-                expect((translation as string).trim(), `${code}.${kind}`).not.toHaveLength(0);
+                const label: unknown = typeof translation === 'function'
+                    ? translation({ service: 'SERVICE' })
+                    : translation;
+                expect(label, `${code}.${kind}`).toEqual(expect.any(String));
+                expect(typeof label === 'string' ? label.trim() : '', `${code}.${kind}`).not.toHaveLength(0);
+                if (kind === 'provider_setup_required') {
+                    expect(label, `${code}.${kind}`).toContain('SERVICE');
+                }
             }
         }
     });

@@ -51,7 +51,7 @@ import { createSettingsDomain } from './settings';
 
 type ScopedSettingsDomain = ReturnType<typeof createSettingsDomain> & Readonly<{
     settingsScope: AccountSettingsScope | null;
-    activateSettingsScope?: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => void;
+    activateSettingsScope?: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => Promise<void>;
     applySettingsForScope?: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     clearSettingsScope?: () => void;
 }>;
@@ -114,26 +114,26 @@ describe('createSettingsDomain scoped account settings', () => {
         clearPersistence();
     });
 
-    it('hydrates the active projection when switching to a lower-version settings scope', () => {
+    it('hydrates the active projection when switching to a lower-version settings scope', async () => {
         saveAccountSettings(scopeA, { ...settingsDefaults, analyticsOptOut: true }, 9);
         saveAccountSettings(scopeB, { ...settingsDefaults, analyticsOptOut: false, crashReportsOptOut: true }, 4);
 
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
         expect(getState().settingsScope).toEqual(scopeA);
         expect(getState().settingsVersion).toBe(9);
         expect(getState().settings.analyticsOptOut).toBe(true);
 
-        getState().activateSettingsScope(scopeB);
+        await getState().activateSettingsScope(scopeB);
         expect(getState().settingsScope).toEqual(scopeB);
         expect(getState().settingsVersion).toBe(4);
         expect(getState().settings.analyticsOptOut).toBe(false);
         expect(getState().settings.crashReportsOptOut).toBe(true);
     });
 
-    it('migrates local-only legacy cache and preserves legacy pending edits on first scoped activation', () => {
+    it('migrates local-only legacy cache and preserves legacy pending edits on first scoped activation', async () => {
         store.set('settings', JSON.stringify({
             settings: {
                 ...settingsDefaults,
@@ -148,7 +148,7 @@ describe('createSettingsDomain scoped account settings', () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
 
         expect(getState().settingsScope).toEqual(scopeA);
         expect(getState().settingsVersion).toBeNull();
@@ -168,7 +168,7 @@ describe('createSettingsDomain scoped account settings', () => {
         expect(loadPendingAccountSettings(scopeA)).toEqual({ analyticsOptOut: true, viewInline: true });
     });
 
-    it('forwards explicit legacy identity scopes without reviving retired organization settings', () => {
+    it('forwards explicit legacy identity scopes without reviving retired organization settings', async () => {
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
         saveAccountSettings(legacyScope, {
             ...settingsDefaults,
@@ -178,13 +178,13 @@ describe('createSettingsDomain scoped account settings', () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA, [legacyScope]);
+        await getState().activateSettingsScope(scopeA, [legacyScope]);
 
         expect(getState().settings.lastUsedAgent).toBe('codex');
         expect(loadPendingAccountSettings(scopeA)).toEqual({});
     });
 
-    it('hydrates purchases from explicit legacy identity scopes during scoped activation', () => {
+    it('hydrates purchases from explicit legacy identity scopes during scoped activation', async () => {
         const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
         saveAccountPurchases(legacyScope, {
             ...purchasesDefaults,
@@ -195,7 +195,7 @@ describe('createSettingsDomain scoped account settings', () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA, [legacyScope]);
+        await getState().activateSettingsScope(scopeA, [legacyScope]);
 
         expect(getState().purchases).toEqual({
             ...purchasesDefaults,
@@ -209,7 +209,7 @@ describe('createSettingsDomain scoped account settings', () => {
         });
     });
 
-    it('does not re-migrate legacy settings over an existing scoped settings cache', () => {
+    it('does not re-migrate legacy settings over an existing scoped settings cache', async () => {
         store.set('settings', JSON.stringify({
             settings: {
                 ...settingsDefaults,
@@ -221,7 +221,7 @@ describe('createSettingsDomain scoped account settings', () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
         expect(getState().settings.lastUsedAgent).toBe('codex');
 
         store.set('settings', JSON.stringify({
@@ -234,7 +234,7 @@ describe('createSettingsDomain scoped account settings', () => {
         }));
         store.set('pending-settings', JSON.stringify({ analyticsOptOut: true }));
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
 
         expect(getState().settings.lastUsedAgent).toBe('codex');
         expect(getState().settings.analyticsOptOut).toBe(settingsDefaults.analyticsOptOut);
@@ -249,11 +249,11 @@ describe('createSettingsDomain scoped account settings', () => {
         });
     });
 
-    it('ignores older remote settings only within the same scope', () => {
+    it('ignores older remote settings only within the same scope', async () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
         getState().applySettingsForScope(scopeA, { ...settingsDefaults, analyticsOptOut: true }, 5);
         getState().applySettingsForScope(scopeA, { ...settingsDefaults, analyticsOptOut: false }, 4);
 
@@ -261,11 +261,11 @@ describe('createSettingsDomain scoped account settings', () => {
         expect(getState().settings.analyticsOptOut).toBe(true);
     });
 
-    it('does not let a stale different-scope update mutate the active projection', () => {
+    it('does not let a stale different-scope update mutate the active projection', async () => {
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
         getState().applySettingsForScope(scopeA, { ...settingsDefaults, analyticsOptOut: true }, 5);
         getState().applySettingsForScope(scopeB, { ...settingsDefaults, analyticsOptOut: false, crashReportsOptOut: true }, 10);
 
@@ -278,13 +278,13 @@ describe('createSettingsDomain scoped account settings', () => {
         });
     });
 
-    it('persists local settings writes only to the active settings scope', () => {
+    it('persists local settings writes only to the active settings scope', async () => {
         saveAccountSettings(scopeB, { ...settingsDefaults, analyticsOptOut: false }, 2);
 
         const { getState } = createTestStore();
         requireScopedMethods(getState());
 
-        getState().activateSettingsScope(scopeA);
+        await getState().activateSettingsScope(scopeA);
         getState().applySettingsLocal({ analyticsOptOut: true });
 
         expect(loadAccountSettings(scopeA)).toMatchObject({

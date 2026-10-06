@@ -87,8 +87,8 @@ describe('mounted declarative drag controls', () => {
         const screen = await renderScreen(<PluginUiHostPresentationScope environment={environment} presentationHost={presentationHost}>
             <DeclarativePluginSurface pluginId={pluginId} model={model} environment={environment} interactionEnabled daemonInteractionEnabled
                 dispatchAction={async () => null} actionAvailable={false} openSurface={async () => null} openSurfaceAvailable={false} authorityGeneration={1} />
-        </PluginUiHostPresentationScope>, { createNodeMock: node => React.isValidElement<{ testID?: string }>(node) && node.props.testID === 'plugin-declarative-drag-source:root.children[0]' ? row
-            : React.isValidElement<{ testID?: string }>(node) && node.props.testID === 'plugin-declarative-drop-target:root.children[1]' ? tray : null });
+        </PluginUiHostPresentationScope>, { createNodeMock: node => node.props.testID === 'plugin-declarative-drag-source:root.children[0]' ? row
+            : node.props.testID === 'plugin-declarative-drop-target:root.children[1]' ? tray : null });
         try {
             await act(async () => { row.dispatchEvent(dragEvent('dragstart')); });
             expect(runtime.getSnapshot().item).toMatchObject({ kind: 'plugin', contribution: sourceIdentity, reference: { cardId: '42' } });

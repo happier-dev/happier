@@ -7,7 +7,7 @@ const committed = buildConnectedServiceAuthGroupCommittedGenerationFact({
   decisionId: 'decision-b',
   provenance: 'reconciliation',
   decisionCommittedTarget: {
-    serviceId: 'openai-codex', groupId: 'team', profileId: 'profile-b', generation: 2,
+    serviceId: 'happier.agent.codex/openai-codex', groupId: 'team', profileId: 'profile-b', generation: 2,
     credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
   },
 });
@@ -23,12 +23,12 @@ describe('mapCommittedGenerationApplyResult', () => {
         mode: 'hot_apply',
         providerApplication: 'applied',
         verificationByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             status: 'verified',
             proofStrength: 'exact',
             providerAccountId: 'acct-b',
             generationApplication: {
-              serviceId: 'openai-codex',
+              serviceId: 'happier.agent.codex/openai-codex',
               groupId: 'team',
               profileId: 'profile-b',
               generation: 2,
@@ -42,7 +42,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       reconciliationDisposition: 'converged',
       errorCode: null,
       providerAdoptedTarget: {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'team',
         profileId: 'profile-b',
         generation: 2,
@@ -68,7 +68,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       authoritativeGeneration: expect.objectContaining({
         provenance: 'reconciliation',
         decisionCommittedTarget: {
-          serviceId: 'openai-codex',
+          serviceId: 'happier.agent.codex/openai-codex',
           groupId: 'team',
           profileId: 'profile-c',
           generation: 3,
@@ -85,7 +85,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       decisionId: 'decision-b-revision-only',
       provenance: 'reconciliation',
       decisionCommittedTarget: {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'team',
         profileId: 'profile-b',
         generation: 2,
@@ -108,7 +108,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       errorCode: null,
       authoritativeGeneration: {
         decisionCommittedTarget: {
-          serviceId: 'openai-codex',
+          serviceId: 'happier.agent.codex/openai-codex',
           groupId: 'team',
           profileId: 'profile-b',
           generation: 2,
@@ -186,7 +186,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       decisionId: 'decision-b-revision',
       provenance: 'reconciliation',
       decisionCommittedTarget: {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'team',
         profileId: 'profile-b',
         generation: 2,
@@ -202,7 +202,7 @@ describe('mapCommittedGenerationApplyResult', () => {
         mode: 'hot_apply',
         providerApplication: 'applied',
         verificationByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             status: 'verified',
             proofStrength: 'exact',
             sharedAuthSurfaceId: 'surface-b',
@@ -210,7 +210,7 @@ describe('mapCommittedGenerationApplyResult', () => {
             credentialFingerprint: 'sha256:abcdef12',
             source: 'shared_auth_surface',
             generationApplication: {
-              serviceId: 'openai-codex',
+              serviceId: 'happier.agent.codex/openai-codex',
               groupId: 'team',
               profileId: 'profile-b',
               generation: 2,
@@ -237,7 +237,7 @@ describe('mapCommittedGenerationApplyResult', () => {
   it.each([
     ['missing generation application', undefined],
     ['mismatched credential revision', {
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'team',
       profileId: 'profile-b',
       generation: 2,
@@ -250,7 +250,7 @@ describe('mapCommittedGenerationApplyResult', () => {
       decisionId: 'decision-b-aba',
       provenance: 'reconciliation',
       decisionCommittedTarget: {
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         groupId: 'team',
         profileId: 'profile-b',
         generation: 2,
@@ -281,7 +281,7 @@ describe('mapCommittedGenerationApplyResult', () => {
         mode: 'hot_apply',
         providerApplication: 'applied',
         verificationByServiceId: {
-          'openai-codex': verification,
+          'happier.agent.codex/openai-codex': verification,
         },
       },
     })).toEqual({

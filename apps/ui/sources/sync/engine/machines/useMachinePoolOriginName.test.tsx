@@ -60,7 +60,6 @@ describe('useMachinePoolOriginName', () => {
                     },
                 });
             }
-            if (String(url).endsWith('/v1/account/encryption')) return Response.json({ mode: 'plain', updatedAt: 1 });
             return Response.json({ pools: [pool] });
         });
         retireActiveServerAccountScopeLifetime();
@@ -90,7 +89,6 @@ describe('useMachinePoolOriginName', () => {
 
         await vi.waitFor(() => expect(hook.getCurrent()).toBe('Development'));
         expect(boundary.requests.filter((url) => !url.endsWith('/v1/features'))).toEqual([
-            'https://session-origin-pools.test/v1/account/encryption',
             'https://session-origin-pools.test/v1/machines/pools/list',
         ]);
         await act(async () => {
@@ -100,7 +98,7 @@ describe('useMachinePoolOriginName', () => {
             }
         });
         expect(hook.getCurrent()).toBeNull();
-        expect(boundary.requests.filter((url) => !url.endsWith('/v1/features'))).toHaveLength(2);
+        expect(boundary.requests.filter((url) => !url.endsWith('/v1/features'))).toHaveLength(1);
         await hook.unmount();
     });
 
@@ -125,7 +123,6 @@ describe('useMachinePoolOriginName', () => {
         await vi.waitFor(() => expect(boundary.requests).toContain('https://session-origin-pools.test/v1/machines/pools/list'));
         expect(hook.getCurrent()).toBeNull();
         expect(boundary.requests.filter((url) => !url.endsWith('/v1/features'))).toEqual([
-            'https://session-origin-pools.test/v1/account/encryption',
             'https://session-origin-pools.test/v1/machines/pools/list',
         ]);
         await hook.unmount();

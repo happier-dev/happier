@@ -4,7 +4,12 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { storage } from '@/sync/domains/state/storageStore';
+import type { SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -33,32 +38,8 @@ const endpointConnectivityState = vi.hoisted(() => ({
 }));
 const paneScopeSeed = vi.hoisted(() => ({
     activeTabId: null as string | null,
-    selectedDestination: null as unknown,
+    selectedDestination: null as SelectedPaneDestinationV1 | null,
 }));
-/**
- * AppPane state is app-lifetime shared state keyed by scope id, not per-hook
- * component state. The app-scope right-sidebar navigation owner and the sidebar
- * leaf read the SAME scope from different places in the tree, so this boundary
- * mock has to share it the way the real provider does.
- */
-type PaneRightState = Readonly<{
-    isOpen: boolean;
-    activeTabId: string | null;
-    selectedDestination: unknown;
-    tabState: Readonly<Record<string, unknown>>;
-}>;
-const paneScopeStore = vi.hoisted(() => {
-    const scopes = new Map<string, unknown>();
-    const listeners = new Set<() => void>();
-    return {
-        scopes,
-        listeners,
-        commit(scopeId: string, next: unknown) {
-            scopes.set(scopeId, next);
-            for (const listener of [...listeners]) listener();
-        },
-    };
-});
 const accountLifetimeState = vi.hoisted(() => ({
     lifetime: null as ActiveServerAccountScopeLifetime | null,
 }));
@@ -76,53 +57,44 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-const mountedSurfaceProps = vi.hoisted(() => [] as any[]);
-
-vi.mock('@/components/plugins/surfaces', () => ({
-    PluginSurfacePlacementHost: (props: any) => {
-        mountedSurfaceProps.push(props);
-        return React.createElement(
-            'View',
-            {
-                testID: `plugin-host-renderer-${props.placement?.renderer?.rendererId ?? props.placement?.descriptorId ?? 'unknown'}`,
-            },
-        );
-    },
-}));
-
 /** The last props the mount received for a given placement descriptor. */
-function latestMountFor(descriptorId: string): any {
-    for (let index = mountedSurfaceProps.length - 1; index >= 0; index -= 1) {
-        if (mountedSurfaceProps[index]?.placement?.descriptorId === descriptorId) {
-            return mountedSurfaceProps[index];
-        }
-    }
-    return null;
+const runtime = installSessionPaneRuntimeTestHarness({ scopeId: APP_PANE_SCOPE_ID });
+let mountedScreen: Awaited<ReturnType<typeof renderPanelScreen>> | null = null;
+let ActualSurfaceHost: typeof import('@/components/plugins/surfaces')['PluginSurfacePlacementHost'];
+type SurfaceMountProps = React.ComponentProps<typeof import('@/components/plugins/surfaces')['PluginSurfacePlacementHost']>;
+
+function latestMountFor(descriptorId: string): SurfaceMountProps | null {
+    // React TestRenderer's untyped SDK props are narrowed at this fixture query boundary.
+    return mountedScreen?.tree.findAllByType(ActualSurfaceHost)
+        .find(node => node.props.placement?.descriptorId === descriptorId)?.props ?? null;
 }
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/state/storage')>(),
-    useEndpointStatus: () => endpointConnectivityState.status,
-}));
+function AppScopeTestWrapper({ children }: React.PropsWithChildren) {
+    return <runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current',
+        interactionEnabled: true, machineId: 'machine-a', serverId: runtime.serverId, platform: 'web',
+        clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+        reloadConnectedAccountProjection: () => {},
+    }}>{children}</AppShellPluginUiProjectionValueProvider></runtime.Wrapper>;
+}
+
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderPanelScreen(<React.Fragment />, { wrapper: AppScopeTestWrapper });
+    await act(async () => {
+        if (paneScopeSeed.activeTabId) runtime.pane.openRight({ tabId: paneScopeSeed.activeTabId });
+        if (paneScopeSeed.selectedDestination) runtime.pane.selectRightDestination(paneScopeSeed.selectedDestination);
+    });
+    mountedScreen = screen;
+    await screen.update(element);
+    return screen;
+}
+
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
 });
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useAppShellPluginUiProjection: () => ({
-        pluginUiProjection: null,
-        interactionEnabled: true,
-        machineId: null,
-        serverId: null,
-        platform: 'web',
-    }),
-}));
 
 const routerState = vi.hoisted(() => ({ pathname: '/settings/plugins' }));
 
@@ -130,66 +102,6 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: () => routerState.pathname }).module;
 });
-
-function readPaneRight(scopeId: string): PaneRightState {
-    return (paneScopeStore.scopes.get(scopeId) as PaneRightState | undefined) ?? {
-        isOpen: true,
-        activeTabId: paneScopeSeed.activeTabId,
-        selectedDestination: paneScopeSeed.selectedDestination,
-        tabState: {},
-    };
-}
-
-// The app-lifetime navigation owner writes selection through the AppPane
-// dispatch owner, above any mounted pane host.
-vi.mock('@/components/appShell/panes/AppPaneProvider', () => ({
-    useOptionalAppPaneContext: () => ({
-        // No page with a right sidebar is on screen: an App panel opens as its own page.
-        state: { activeScopeId: null },
-        dispatch: (action: Readonly<{ type: string; scopeId: string; destination?: unknown }>) => {
-            if (action.type !== 'selectRightDestination') return;
-            paneScopeStore.commit(action.scopeId, {
-                ...readPaneRight(action.scopeId),
-                isOpen: true,
-                selectedDestination: action.destination,
-            });
-        },
-    }),
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: (scopeId: string) => {
-        const [, refresh] = React.useReducer((revision: number) => revision + 1, 0);
-        React.useEffect(() => {
-            paneScopeStore.listeners.add(refresh);
-            return () => { paneScopeStore.listeners.delete(refresh); };
-        }, []);
-        const right = readPaneRight(scopeId);
-        const commit = (next: PaneRightState) => { paneScopeStore.commit(scopeId, next); };
-        return {
-            scopeState: {
-                right,
-                details: { isOpen: false, tabState: {}, tabs: [], activeTabKey: null },
-                bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
-            },
-            openRight: ({ tabId }: Readonly<{ tabId?: string }> = {}) => {
-                commit({
-                    ...right,
-                    isOpen: true,
-                    activeTabId: tabId ?? right.activeTabId,
-                    selectedDestination: tabId ? { kind: 'builtin', id: tabId } : right.selectedDestination,
-                });
-            },
-            selectRightDestination: (destination: unknown) => {
-                commit({ ...right, isOpen: true, selectedDestination: destination });
-            },
-        };
-    },
-}));
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => accountLifetimeState.lifetime,
-}));
 
 function createAppSidebarPlacement(input: Readonly<{
     descriptorId: string;
@@ -228,7 +140,7 @@ function executionOrigin(input: Readonly<{
     materializationId: string;
 }>): PluginMachineExecutionOriginV1 {
     return {
-        serverIdentityId: 'srv_account_one',
+        serverIdentityId: runtime.serverId,
         materializationRef: {
             pluginId: 'acme.preview',
             machineId: input.machineId,
@@ -248,7 +160,7 @@ function withSelectedContributionOrigin(
     return Object.freeze({
         ...placement,
         hostOrigin: Object.freeze({
-            serverId: 'server-1',
+            serverId: runtime.serverId,
             machineId: input.machineId,
             generation: input.generation,
             phase: 'current',
@@ -258,34 +170,6 @@ function withSelectedContributionOrigin(
     });
 }
 
-function createTestAccountLifetime(accountId: string): Readonly<{
-    lifetime: ActiveServerAccountScopeLifetime;
-    retire: () => void;
-}> {
-    let current = true;
-    const retireListeners = new Set<() => void>();
-    const lifetime: ActiveServerAccountScopeLifetime = {
-        scope: { serverId: 'server-1', accountId },
-        isCurrent: () => current,
-        onRetire: (listener) => {
-            if (!current) {
-                listener();
-                return Object.freeze({ dispose() {} });
-            }
-            retireListeners.add(listener);
-            return Object.freeze({ dispose: () => retireListeners.delete(listener) });
-        },
-    };
-    return Object.freeze({
-        lifetime,
-        retire: () => {
-            if (!current) return;
-            current = false;
-            for (const listener of [...retireListeners]) listener();
-            retireListeners.clear();
-        },
-    });
-}
 
 const appSidebarPlacement = createAppSidebarPlacement({
     descriptorId: 'app-panel',
@@ -357,6 +241,7 @@ function AppTargetNavigationScope(props: React.PropsWithChildren<Readonly<{
 async function createMountedHostApiClient(descriptorId: string) {
     const mount = latestMountFor(descriptorId);
     expect(mount?.binding, 'the sidebar must hand its facts to the bound controller').toBeTruthy();
+    if (!mount?.binding) throw new Error('Expected an actual mounted plugin surface binding');
     const { createBoundPluginSurfaceController } = await import(
         '@/components/plugins/surfaces/boundPluginSurfaceController'
     );
@@ -399,15 +284,15 @@ async function createMountedHostApiClient(descriptorId: string) {
 }
 
 describe('AppScopeRightSidebar', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         endpointConnectivityState.status = 'online';
-        mountedSurfaceProps.length = 0;
+        mountedScreen = null;
         paneScopeSeed.activeTabId = null;
         paneScopeSeed.selectedDestination = null;
-        paneScopeStore.scopes.clear();
-        paneScopeStore.listeners.clear();
         routerState.pathname = '/settings/plugins';
-        accountLifetimeState.lifetime = createTestAccountLifetime('account-a').lifetime;
+        accountLifetimeState.lifetime = captureActiveServerAccountScopeLifetime();
+        ({ PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces'));
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', activeAt: Date.now() })]);
     });
 
     it('mounts an available app-scope plugin tab surface through the canonical host', async () => {
@@ -428,7 +313,7 @@ describe('AppScopeRightSidebar', () => {
         );
 
         expect(screen.findByTestId('app-scope-right-sidebar-tab:plugin:acme.preview:app-panel')).toBeTruthy();
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeTruthy();
+        expect(latestMountFor('app-panel')).toBeTruthy();
     });
 
     it('does not construct a fallback app-target navigation binding outside the shell host', async () => {
@@ -447,7 +332,7 @@ describe('AppScopeRightSidebar', () => {
             />,
         );
 
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeTruthy();
+        expect(latestMountFor('app-panel')).toBeTruthy();
         expect(latestMountFor('app-panel')?.binding?.openSurface).toBeUndefined();
     });
 
@@ -474,8 +359,8 @@ describe('AppScopeRightSidebar', () => {
             />,
         );
 
-        expect(screen.findByTestId('plugin-host-renderer-detail-panel')).toBeTruthy();
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeNull();
+        expect(latestMountFor('detail-panel')).toBeTruthy();
+        expect(latestMountFor('app-panel')).toBeNull();
     });
 
     // §3.1: connectivity is no longer this sidebar's decision. The bound
@@ -522,7 +407,7 @@ describe('AppScopeRightSidebar', () => {
         );
 
         expect(screen.findByTestId('app-scope-right-sidebar-empty')).toBeTruthy();
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeNull();
+        expect(latestMountFor('app-panel')).toBeNull();
     });
 
     it('keeps a restored app plugin destination pending, then tombstones it when the settled catalog lacks it', async () => {
@@ -557,7 +442,7 @@ describe('AppScopeRightSidebar', () => {
 
         expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
         expect(screen.getTextContent()).not.toContain('pluginSurfaces.appScopeRightSidebar.empty');
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeNull();
+        expect(latestMountFor('app-panel')).toBeNull();
     });
 
     it('does not mount a fallback/unavailable plugin tab surface (fail-closed)', async () => {
@@ -576,7 +461,7 @@ describe('AppScopeRightSidebar', () => {
         );
 
         // The disabled-by-default tab is hidden, so the surface renders the empty state.
-        expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeNull();
+        expect(latestMountFor('app-panel')).toBeNull();
     });
 
     describe('openSurface launch input (EU-5a)', () => {
@@ -620,7 +505,7 @@ describe('AppScopeRightSidebar', () => {
                 await caller.api.openSurface({ pluginId: 'acme.preview', localId: 'detail-panel' }, { itemId: 'item-7' });
             });
 
-            expect(screen.findByTestId('plugin-host-renderer-detail-panel')).toBeTruthy();
+            expect(latestMountFor('detail-panel')).toBeTruthy();
             expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'item-7' });
         });
 
@@ -712,7 +597,7 @@ describe('AppScopeRightSidebar', () => {
             expect(latestMountFor('detail-panel')).toBeNull();
         });
 
-        it('does not deliver a previous generation launch input after generation replacement', async () => {
+        it('retains launch input across a projection refresh from the same exact producer', async () => {
             const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
             const sidebarAtGeneration = (generation: number) => {
                 const projection = {
@@ -753,11 +638,9 @@ describe('AppScopeRightSidebar', () => {
 
             await screen.update(sidebarAtGeneration(5));
 
-            // The tab id survives a generation replacement, but the argument
-            // belongs to the generation that was opened with it: the replacement
-            // mounts the same selected tab with no launch input.
+            // Projection generation is freshness, not a new Account, occurrence, or materialization.
             expect(latestMountFor('detail-panel')).toBeTruthy();
-            expect(latestMountFor('detail-panel')?.launchInput).toBeUndefined();
+            expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'item-7' });
         });
 
         it('does not deliver a same-machine input after the selected materialization changes', async () => {
@@ -805,9 +688,8 @@ describe('AppScopeRightSidebar', () => {
         });
 
         it('retires tab launch input synchronously when the Account changes at the same server and machine', async () => {
-            const accountA = createTestAccountLifetime('account-a');
-            const accountB = createTestAccountLifetime('account-b');
-            accountLifetimeState.lifetime = accountA.lifetime;
+            const accountA = captureActiveServerAccountScopeLifetime();
+            expect(accountA?.isCurrent()).toBe(true);
             await renderTwoTabSidebar();
             const caller = await createMountedHostApiClient('app-panel');
 
@@ -816,10 +698,13 @@ describe('AppScopeRightSidebar', () => {
             });
             expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'account-a' });
 
+            const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
             await act(async () => {
-                accountLifetimeState.lifetime = accountB.lifetime;
-                accountA.retire();
+                await restoreConnectionToActiveServer({ token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-b' })).toString('base64url')}.signature` });
+                accountLifetimeState.lifetime = captureActiveServerAccountScopeLifetime();
             });
+            expect(accountA?.isCurrent()).toBe(false);
+            expect(accountLifetimeState.lifetime?.scope.accountId).toBe('account-b');
 
             expect(latestMountFor('detail-panel')?.launchInput).toBeUndefined();
         });
@@ -886,7 +771,7 @@ describe('AppScopeRightSidebar', () => {
             });
 
             expect(router.push).toHaveBeenCalledWith('/plugins/panels?pluginId=acme.preview&destinationId=detail-panel');
-            expect(paneScopeStore.scopes.get(APP_PANE_SCOPE_ID)).toMatchObject({
+            expect(runtime.pane.scopeState?.right).toMatchObject({
                 selectedDestination: {
                     kind: 'plugin',
                     destination: { pluginId: 'acme.preview', localId: 'detail-panel' },
@@ -897,7 +782,7 @@ describe('AppScopeRightSidebar', () => {
             // together with the launch input that rode across the navigation.
             routerState.pathname = '/plugins/panels';
             await act(async () => {
-                screen.tree.update(
+                await screen.update(
                     <AppTargetNavigationScope
                         projection={projection}
                         onBinding={(next) => { binding = next; }}
@@ -912,7 +797,7 @@ describe('AppScopeRightSidebar', () => {
                 );
             });
 
-            expect(screen.findByTestId('plugin-host-renderer-detail-panel')).toBeTruthy();
+            expect(latestMountFor('detail-panel')).toBeTruthy();
             expect(latestMountFor('detail-panel')?.launchInput).toEqual({ itemId: 'cold-open' });
 
             // A second open of the same destination remains a single owner and a

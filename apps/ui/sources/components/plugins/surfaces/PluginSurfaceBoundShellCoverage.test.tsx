@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -18,6 +18,10 @@ import {
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices/LocalServicesSurfaceHost';
 import { PluginDetailsPaneOverlay } from '@/components/appShell/panes/details/surfaces/PluginDetailsPaneOverlay';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+// The application entry point loads this real owner before mounting surfaces.
+beforeEach(async () => { await loadSyncSingletonForTests(); });
 
 // React Native and responsive layout are platform boundaries. Keep their
 // observed environment deterministic while the real Services stack, Details

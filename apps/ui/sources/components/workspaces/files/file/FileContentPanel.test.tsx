@@ -288,6 +288,7 @@ describe('FileContentPanel', () => {
 
     it('lets saved markdown review comments be edited from the markdown source range', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 
         markdownViewPropsState.current = null;
 
@@ -330,10 +331,16 @@ describe('FileContentPanel', () => {
         };
         const savedComment = await renderScreen(<>{markdownViewPropsState.current?.renderAfterSourceRange(action)}</>);
 
-        expect(savedComment.findByTestId('review-comment-draft-edit:markdown-draft-1')).toBeTruthy();
+        expect(savedComment.findHostByTestId('review-comment-draft-edit:markdown-draft-1')).toBeNull();
+        await savedComment.pressByTestIdAsync('review-comment-draft-menu:markdown-draft-1');
+        const menu = savedComment.findByType(DropdownMenu);
+        expect(menu.props.open).toBe(true);
+        expect(menu.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'edit', testID: 'review-comment-draft-edit:markdown-draft-1' }),
+        ]));
 
         await act(async () => {
-            await savedComment.pressByTestIdAsync('review-comment-draft-edit:markdown-draft-1');
+            menu.props.onSelect('edit');
         });
 
         await act(async () => {

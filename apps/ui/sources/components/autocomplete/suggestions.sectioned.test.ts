@@ -1,4 +1,5 @@
-import * as React from 'react';
+import { storage } from '@/sync/domains/state/storage';
+import { seedAutocompleteSessions } from './autocompleteTestFixtures';
 import type { ReactElement } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -41,23 +42,7 @@ const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unk
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
 const logMock = vi.hoisted(() => vi.fn((_message: string) => {}));
 
-const storageStateMock = vi.hoisted(() => ({
-    sessions: {} as Record<string, { id?: string; active?: boolean; metadata?: Record<string, unknown> }>,
-    machines: {} as Record<string, unknown>,
-    artifacts: {} as Record<string, { body?: string }>,
-    getProjectForSession: vi.fn(),
-    applySessions: vi.fn(),
-    updateArtifact: vi.fn(),
-}));
-
 vi.mock('@/log', () => ({ log: { log: logMock } }));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: { getState: () => storageStateMock },
-    });
-});
 
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     searchFiles: searchFilesMock,
@@ -65,36 +50,6 @@ vi.mock('@/sync/domains/input/suggestionFile', () => ({
 
 vi.mock('@/sync/domains/input/suggestionCommands', () => ({
     searchCommands: searchCommandsMock,
-}));
-
-// The registry imports this eagerly and deliberately (a lazy first-party import is a
-// network chunk fetch on native — see `composerSuggestionKinds.moduleLoad.native.test.ts`),
-// so its whole artifact-store graph would be transformed for a suite that never invokes
-// `applySelection`. Stubbed as the boundary it is; the module-loading contract has its
-// own owner.
-vi.mock('@/sync/domains/input/slashCommands/promptInvocationSuggestion', () => ({
-    resolvePromptInvocationAutocompleteSelection: vi.fn(async () => ({ handled: false as const })),
-}));
-
-// These resolver tests never mount candidate rows. Keep the registry's eager
-// production imports intact while replacing only their visual leaves; otherwise
-// Vite transforms the complete file-preview icon graph before the dispatcher
-// module can load and the test never reaches its first behavior assertion.
-vi.mock('@/components/sessions/agentInput/components/AgentInputSuggestionView', () => ({
-    FileMentionSuggestion: () => null,
-}));
-
-// Session rows carry the canonical machine-qualified catalog mark. Stubbed for the
-// same reason as the visual leaves above: the rows here are asserted by the props
-// the registry hands it (identity + machine/server scope), not by what it paints.
-vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
-    SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
-        React.createElement('SessionAgentCatalogIdentityIcon', props),
-}));
-
-vi.mock('@/components/ui/icons/Icon', () => ({
-    Icon: () => null,
-    ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
 }));
 
 vi.mock(
@@ -113,16 +68,6 @@ vi.mock(
         const { installServerScopedMachineRpcModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
         return installServerScopedMachineRpcModuleMock({
             machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params) as never,
-        })(importOriginal);
-    },
-);
-
-vi.mock(
-    '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId',
-    async (importOriginal) => {
-        const { installResolvePreferredServerIdForSessionIdModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-        return installResolvePreferredServerIdForSessionIdModuleMock({
-            resolvePreferredServerIdForSessionId: () => 'server-a',
         })(importOriginal);
     },
 );
@@ -147,9 +92,9 @@ function file(fullPath: string): FileItem {
 }
 
 function seedSession(metadata?: Record<string, unknown>) {
-    storageStateMock.sessions = {
+    seedAutocompleteSessions({
         s1: { id: 's1', active: true, metadata: { path: '/repo', ...metadata } },
-    };
+    });
 }
 
 function seedCatalogs(options?: Readonly<{ vendorPlugins?: unknown[]; skills?: unknown[] }>) {
@@ -195,19 +140,20 @@ function composerReferenceProjection(entries: readonly Readonly<{
                     qualifiedId: `${entry.pluginId}/${entry.localId}`,
                     localId: entry.localId,
                 },
+                occurrenceId: '7',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: {
                     requirement: 'required',
                     state: entry.registrationState ?? 'bound',
                     ...(entry.registrationState === 'bound' || entry.registrationState === undefined
-                        ? { occurrenceId: entry.registrationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` }
+                        ? { occurrenceId: entry.registrationOccurrenceId ?? '7' }
                         : {}),
                 },
                 activation: entry.activationState === 'dormant'
                     ? { state: 'dormant' }
                     : entry.activationState === 'unavailable'
                         ? { state: 'unavailable', reason: 'test unavailable' }
-                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? `fixture-occurrence:${entry.pluginId}` },
+                        : { state: 'active', occurrenceId: entry.activationOccurrenceId ?? '7' },
                 projection: { state: 'projected' },
                 consumer: 'composer-reference-host',
                 platforms: ['cli', 'web'],
@@ -245,8 +191,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
         machineRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockResolvedValue({});
         logMock.mockReset();
-        storageStateMock.applySessions.mockReset();
-        storageStateMock.machines = {};
+        storage.setState({ machines: {} });
         seedCatalogs();
     });
 
@@ -1223,12 +1168,6 @@ describe('sectioned composer suggestions (EU-3)', () => {
         // is the contract on which the two shapes are required to agree.)
         it('settles a cold query on the first ready section and still warms the catalog for the next one', async () => {
             seedSession();
-            // The real hydration write-back, which the default no-op stub suppresses.
-            storageStateMock.applySessions.mockImplementation((sessions: { id?: string }[]) => {
-                for (const session of sessions) {
-                    if (session.id) storageStateMock.sessions[session.id] = session;
-                }
-            });
             let releaseFiles!: (files: FileItem[]) => void;
             searchFilesMock.mockReturnValue(new Promise<FileItem[]>((resolve) => {
                 releaseFiles = resolve;
@@ -1249,7 +1188,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
             releaseCatalog({ vendorPlugins: [GMAIL_PLUGIN] });
             vi.useRealTimers();
             await vi.waitFor(() => {
-                expect(storageStateMock.sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeDefined();
+                expect(storage.getState().sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeDefined();
             });
 
             searchFilesMock.mockResolvedValue([file('src/gmail.ts')]);
@@ -1267,11 +1206,6 @@ describe('sectioned composer suggestions (EU-3)', () => {
             // server-scoped RPC operation timeout both the catalog hydration and the
             // file index bottom out on. Past it nothing in flight is merely slow.
             seedSession();
-            storageStateMock.applySessions.mockImplementation((sessions: { id?: string }[]) => {
-                for (const session of sessions) {
-                    if (session.id) storageStateMock.sessions[session.id] = session;
-                }
-            });
             searchFilesMock.mockImplementation(() => new Promise(() => {}));
             let releaseCatalog!: (response: unknown) => void;
             sessionRpcWithServerScopeMock.mockReturnValue(new Promise((resolve) => {
@@ -1308,7 +1242,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
             releaseCatalog({ vendorPlugins: [GMAIL_PLUGIN] });
             vi.useRealTimers();
             await vi.waitFor(() => {
-                expect(storageStateMock.sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeDefined();
+                expect(storage.getState().sessions.s1?.metadata?.sessionVendorPluginCatalogV1).toBeDefined();
             });
         });
 
@@ -1416,7 +1350,7 @@ describe('sectioned composer suggestions (EU-3)', () => {
         });
 
         it('tolerates a session id with no session record (new-session composer)', async () => {
-            storageStateMock.sessions = {};
+            seedAutocompleteSessions({});
             searchCommandsMock.mockResolvedValue([{ command: 'goal' }]);
             const { getSuggestions } = await importSuggestions();
 

@@ -1,284 +1,120 @@
 import * as React from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
+import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { createExpoRouterMock, type StackScreenOptionsInput } from '@/dev/testkit/mocks/router';
+import { installSessionRouteCommonModuleMocks } from '../../session/[id]/sessionRouteTestHelpers';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { storage } from '@/sync/domains/state/storageStore';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const setOptionsSpy = vi.hoisted(() => vi.fn());
-const stackListeners = vi.hoisted(() => new Set<() => void>());
-
-let deviceType: 'phone' | 'tablet' | 'desktop' = 'phone';
-let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'cockpit';
-let scopeState: any = {
-    right: { isOpen: true, activeTabId: 'git', tabState: {} },
-    details: {
-        isOpen: true,
-        tabs: [{ key: 'file:a', kind: 'file', resource: { kind: 'file', path: '/repo/a.ts' } }],
-        activeTabKey: 'file:a',
-        tabState: {},
-    },
-};
-const paneScopeMock = {
-    get scopeState() {
-        return scopeState;
-    },
-    openRight: vi.fn(),
-    closeRight: vi.fn(),
-    setRightTab: vi.fn(),
-    closeDetails: vi.fn(),
-    openDetailsTab: vi.fn(),
-};
-
-const routerMock = createExpoRouterMock({
-    params: { workspaceRefId: 'wr_1' },
-    navigation: { canGoBack: () => true },
-    router: {
-        push: vi.fn(),
-        back: vi.fn(),
-        replace: vi.fn(),
-        setParams: vi.fn(),
-    },
-});
-const nativeNavigationMock = {
-    canGoBack: () => true,
-};
-const setMobileWorkspaceExperienceMock = vi.hoisted(() => vi.fn());
-const localSettingSetters = vi.hoisted(() => new Map<string, (value: unknown) => void>());
-let localSettingsMock: Record<string, unknown> = {};
-let holdLocalSettingsWrites = false;
-
-const workspaceRefMock = {
-    id: 'wr_1',
-    serverId: 'server-1',
-    machineId: 'machine-1',
-    rootPath: '/repo',
-    label: 'Project Alpha',
-    createdAtMs: 1,
-};
-
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => true,
-    useNavigation: () => ({
-        canGoBack: nativeNavigationMock.canGoBack,
+const setOptions = vi.fn();
+const listeners = new Set<() => void>();
+let phone = true;
+let cockpit = true;
+const router = createExpoRouterMock({ params: { workspaceRefId: 'wr_1' }, navigation: { canGoBack: () => true } });
+installSessionRouteCommonModuleMocks({
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }, {
+        useWindowDimensions: () => ({ width: phone ? 390 : 1280, height: phone ? 844 : 900, scale: 1, fontScale: 1 }),
     }),
-}));
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    });
-});
-
-vi.mock('expo-router', () => {
-    const baseModule = routerMock.module;
-        return {
-            ...baseModule,
-            Stack: {
-                Screen: ({ options }: { options: Record<string, unknown> | (() => Record<string, unknown>) }) => {
-                React.useEffect(() => {
-                    setOptionsSpy(typeof options === 'function' ? options() : options);
-                    stackListeners.forEach((notify) => notify());
-                }, [options]);
-                    return null;
-                },
-            },
-            useRouter: () => ({
-                push: routerMock.spies.push,
-                back: routerMock.spies.back,
-                replace: routerMock.spies.replace,
-                setParams: routerMock.spies.setParams,
-            }),
-            useNavigation: () => {
-                const [, force] = React.useReducer((value) => value + 1, 0);
-                React.useLayoutEffect(() => {
-                stackListeners.add(force);
-                return () => {
-                    stackListeners.delete(force);
-                };
-            }, [force]);
-            return {
-                canGoBack: () => true,
-            };
-        },
-    };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => paneScopeMock,
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => deviceType,
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useSetting: (key: string) => {
-            if (key === 'mobileWorkspaceExperienceV1') {
-                return mobileWorkspaceExperience;
-            }
+    router: () => ({
+        ...router.module,
+        Stack: { Screen: ({ options }: { options: StackScreenOptionsInput }) => {
+            React.useEffect(() => {
+                setOptions(typeof options === 'function' ? options() : options);
+                for (const notify of listeners) notify();
+            }, [options]);
             return null;
+        } },
+        useNavigation: () => {
+            const [, force] = React.useReducer((value) => value + 1, 0);
+            React.useLayoutEffect(() => { listeners.add(force); return () => { listeners.delete(force); }; }, [force]);
+            return { canGoBack: () => true };
         },
-        useSettingMutable: (key: string) => {
-            if (key === 'mobileWorkspaceExperienceV1') {
-                return [mobileWorkspaceExperience, setMobileWorkspaceExperienceMock];
-            }
-            return [null, vi.fn()];
-        },
-        useLocalSetting: (key: string) => localSettingsMock[key],
-        useLocalSettingMutable: (key: string) => [
-            localSettingsMock[key],
-            getLocalSettingSetter(key),
-        ],
+    }),
+});
+const snapshot: ScmWorkingSnapshot = {
+    fetchedAt: 1, projectKey: 'machine-1:/repo',
+    repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', remotes: [],
+        worktrees: [
+            { id: 'gitwt_main', path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+            { id: 'gitwt_feature', path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+        ] },
+    capabilities: createScmCapabilities({ readStatus: true }),
+    branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+    stashCount: 0, hasConflicts: false, entries: [],
+    totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+};
+function configureSocket(socket: import('socket.io-client').Socket) {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
     });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+        if (event !== 'rpc-call' || !payload || typeof payload !== 'object' || !('method' in payload)
+            || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Unexpected Socket RPC envelope');
+        const method = payload.method.slice(payload.method.indexOf(':') + 1);
+        return { ok: true, result: method === RPC_METHODS.SCM_STATUS_SNAPSHOT
+            ? { success: true, snapshot } : { success: false, errorCode: 'FEATURE_UNSUPPORTED' } };
+    });
+}
+const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'project:wr_1', configureSocket });
+beforeEach(() => {
+    phone = true; cockpit = true; listeners.clear(); setOptions.mockClear();
+    router.resetParams();
+    router.state.router.setParams({ workspaceRefId: 'wr_1' });
+    router.spies.push.mockClear(); router.spies.back.mockClear(); router.spies.replace.mockClear(); router.spies.setParams.mockClear();
 });
 
-vi.mock('@/components/projects/detail/useWorkspaceRefById', () => ({
-    useWorkspaceRefById: () => workspaceRefMock,
-}));
-
-vi.mock('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController', () => ({
-    useWorkspaceScmSnapshotController: () => ({
-        snapshot: {
-            repo: {
-                isRepo: true,
-                worktrees: [
-                    { id: 'gitwt_main', path: '/repo', branch: 'main', isCurrent: true, isMain: true },
-                    { id: 'gitwt_feature', path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
-                ],
-            },
-        },
-        loading: false,
-        error: null,
-        refresh: vi.fn(async () => {}),
-    }),
-}));
-
-vi.mock('@/components/projects/detail/ProjectDetailsMainPanel', () => ({
-    ProjectDetailsMainPanel: (props: Record<string, unknown>) => React.createElement('ProjectDetailsMainPanelStub', props),
-}));
-
-vi.mock('@/components/projects/detail/surfaces/ProjectBrowseFilesSurface', () => ({
-    ProjectBrowseFilesSurface: (props: Record<string, unknown>) => React.createElement('ProjectBrowseFilesSurfaceStub', props),
-}));
-
-vi.mock('@/components/projects/detail/surfaces/ProjectGitSurface', () => ({
-    ProjectGitSurface: (props: Record<string, unknown>) => React.createElement('ProjectGitSurfaceStub', props),
-}));
-
-vi.mock('@/components/projects/detail/surfaces/ProjectTerminalSurface', () => ({
-    ProjectTerminalSurface: (props: Record<string, unknown>) => React.createElement('ProjectTerminalSurfaceStub', props),
-}));
-
-vi.mock('@/components/projects/detail/useProjectSurfaceActions', () => ({
-    useProjectSurfaceActions: () => ({
-        openFileInDetails: vi.fn(),
-        openFileInDetailsPinned: vi.fn(),
-        openReviewAllChanges: vi.fn(),
-        openStashDetails: vi.fn(),
-        openCreateWorktreeFlow: vi.fn(),
-        openCommitInDetails: vi.fn(),
-        revealInFilesTree: vi.fn(),
-    }),
-}));
-
-vi.mock('@/sync/domains/workspaces/workspaceScope', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/workspaces/workspaceScope')>();
-    return {
-        ...actual,
-        buildWorkspaceCacheKey: () => 'workspace-cache-key',
-    };
-});
+async function renderRoute(kind: 'details' | 'terminal') {
+    storage.getState().applySettingsLocal({
+        mobileWorkspaceExperienceV1: cockpit ? 'cockpit' : 'classic',
+        workspaceRefsV1: [WorkspaceRefV1Schema.parse({
+            id: 'wr_1', serverId: runtime.serverId, machineId: 'machine-1',
+            rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1,
+        })],
+    });
+    storage.getState().applyMachines([createMachineFixture({ storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
+    storage.getState().updateWorkspaceScmSnapshot({ serverId: runtime.serverId, machineId: 'machine-1', rootPath: '/repo' }, snapshot);
+    const Screen = kind === 'details'
+        ? (await import('@/app/(app)/projects/[workspaceRefId]/details')).default
+        : (await import('@/app/(app)/projects/[workspaceRefId]/terminal')).default;
+    const { createProjectFileDetailsTab } = await import('@/components/projects/detail/projectDetailsTabBuilders');
+    const screen = await renderScreen(<runtime.Wrapper />);
+    await act(async () => {
+        runtime.pane.openRight({ tabId: 'git' });
+        runtime.pane.openDetailsTab(createProjectFileDetailsTab('/repo/a.ts'), { intent: 'pinned' });
+    });
+    await screen.update(<runtime.Wrapper><Screen /></runtime.Wrapper>);
+    return { screen, rerender: () => screen.update(<runtime.Wrapper><Screen /></runtime.Wrapper>) };
+}
 
 describe('project details route stack options stability', () => {
-    beforeEach(() => {
-        deviceType = 'phone';
-        mobileWorkspaceExperience = 'cockpit';
-        scopeState = {
-            right: { isOpen: true, activeTabId: 'git', tabState: {} },
-            details: {
-                isOpen: true,
-                tabs: [{ key: 'file:a', kind: 'file', resource: { kind: 'file', path: '/repo/a.ts' } }],
-                activeTabKey: 'file:a',
-                tabState: {},
-            },
-        };
-        localSettingsMock = {};
-        holdLocalSettingsWrites = false;
-        localSettingSetters.clear();
-        setOptionsSpy.mockClear();
-        setMobileWorkspaceExperienceMock.mockClear();
-        setMobileWorkspaceExperienceMock.mockImplementation((value: 'classic' | 'cockpit') => {
-            mobileWorkspaceExperience = value;
-        });
-        routerMock.spies.push.mockClear();
-        routerMock.spies.back.mockClear();
-        routerMock.spies.replace.mockClear();
-        routerMock.spies.setParams.mockClear();
-        routerMock.state.router.setParams({ workspaceRefId: 'wr_1' });
-        stackListeners.clear();
+    it('keeps native screen options stable when the actual cockpit details route rerenders', async () => {
+        const { rerender } = await renderRoute('details');
+        await rerender();
+        expect(setOptions).toHaveBeenCalledTimes(1);
     });
 
-    afterEach(() => {
-        standardCleanup();
+    it('keeps native screen options stable when the actual classic details route rerenders', async () => {
+        phone = false; cockpit = false;
+        const { rerender } = await renderRoute('details');
+        await rerender();
+        expect(setOptions).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps Stack.Screen options stable when the cockpit details route re-renders', async () => {
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
-        const screen = await renderScreen(<Screen />);
-
-        await screen.update(<Screen />);
-
-        expect(setOptionsSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps Stack.Screen options stable when the classic details route re-renders', async () => {
-        deviceType = 'desktop';
-        mobileWorkspaceExperience = 'classic';
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default as React.ComponentType;
-        const screen = await renderScreen(<Screen />);
-
-        await screen.update(<Screen />);
-
-        expect(setOptionsSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('canonicalizes stale project terminal activeRootPath params once across route rerenders', async () => {
-        holdLocalSettingsWrites = true;
-        routerMock.state.router.setParams({
-            workspaceRefId: 'wr_1',
-            activeRootPath: '/repo/.worktrees/feature-auth',
-            worktreeId: undefined,
-        });
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/terminal')).default as React.ComponentType;
-        const screen = await renderScreen(<Screen />);
-
-        await screen.update(<Screen />);
-
-        expect(routerMock.spies.replace).toHaveBeenCalledTimes(1);
-        expect(routerMock.spies.replace).toHaveBeenCalledWith('/projects/wr_1/terminal?worktreeId=gitwt_feature');
+    it('canonicalizes a stale terminal activeRootPath once without suppressing real preference writes', async () => {
+        router.state.router.setParams({ workspaceRefId: 'wr_1', activeRootPath: '/repo/.worktrees/feature-auth', worktreeId: undefined });
+        const { rerender } = await renderRoute('terminal');
+        await rerender();
+        expect(router.spies.replace).toHaveBeenCalledTimes(1);
+        expect(router.spies.replace).toHaveBeenCalledWith('/projects/wr_1/terminal?worktreeId=gitwt_feature');
+        expect(storage.getState().localSettings.projectLastActiveWorktreeIdByWorkspaceRefId.wr_1).toBe('gitwt_feature');
     });
 });
-
-function getLocalSettingSetter(key: string): (value: unknown) => void {
-    const existing = localSettingSetters.get(key);
-    if (existing) return existing;
-    const setter = (value: unknown) => {
-        if (!holdLocalSettingsWrites) {
-            localSettingsMock[key] = value;
-        }
-    };
-    localSettingSetters.set(key, setter);
-    return setter;
-}

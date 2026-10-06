@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installScmOperationsCommonModuleMocks } from './scmOperationsTestHelpers';
 
 const sessionScmChangeInclude = vi.hoisted(() => vi.fn());
@@ -104,6 +105,10 @@ describe('applyBulkFileStageAction', () => {
         storage.setState({
             sessions: { same: a },
             sessionListRowsByServerId: { a: { same: a }, b: { same: b } },
+            machineListByServerId: {
+                a: [createMachineFixture({ id: 'machine-1' })],
+                b: [createMachineFixture({ id: 'machine-1' })],
+            },
         });
         await applyBulkFileStageAction({
             sessionId: 'same', serverId: 'b', sessionPath: '/repo', snapshot: null,

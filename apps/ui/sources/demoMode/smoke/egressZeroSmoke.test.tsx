@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import type {
     OnboardingWizardController,
     OnboardingWizardSurfaceProps,
@@ -10,7 +12,7 @@ import type {
 import { JourneyConfigSlot } from '@/components/onboarding/tour/config/JourneyConfigSlot';
 import { stageSurfaceById } from '@/components/onboarding/tour/stage/stageSurfaces';
 import { DEMO_RICH_SESSION_ID } from '@/demoMode/world/buildDemoWorld';
-import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { ExpoRouterParams } from '@/dev/testkit/mocks/router';
 import { getDemoFirewallDenyLog, installDemoFirewall, resetDemoFirewallForTests, uninstallDemoFirewall } from '@/demoMode/guards/demoFirewall';
 import { clearDemoWorld, seedDemoWorld } from '@/demoMode/seed/seedDemoWorld';
@@ -21,18 +23,6 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerState = vi.hoisted(() => ({
     pathname: '/',
     params: {} as ExpoRouterParams,
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    AuthProvider: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: 'demo-token', secret: 'demo-secret' },
-        login: vi.fn(),
-        loginWithCredentials: vi.fn(),
-        logout: vi.fn(),
-        refreshFromActiveServer: vi.fn(),
-    }),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
@@ -274,7 +264,11 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
 }));
 
 const AppPaneProviderWrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => (
-    <AppPaneProvider>{children ?? null}</AppPaneProvider>
+    <InjectedAuthProvider credentials={null}>
+        <AppPaneProvider>
+            <CommandPaletteProvider>{children ?? null}</CommandPaletteProvider>
+        </AppPaneProvider>
+    </InjectedAuthProvider>
 );
 
 async function mountSeededSurface(element: React.ReactElement): Promise<Awaited<ReturnType<typeof renderScreen>>> {
@@ -304,7 +298,14 @@ async function settleAndPressControl(
     testID: string,
 ): Promise<void> {
     await flushHookEffects({ cycles: 4, turns: 3, frames: 1 });
-    await pressTestInstanceAsync(screen.findByTestId(testID), testID);
+    const control = screen.findByTestId(testID);
+    if (typeof control?.props.onClick === 'function') {
+        await act(async () => {
+            invokeTestInstanceHandler(control, 'onClick', { stopPropagation: vi.fn() }, testID);
+        });
+    } else {
+        await pressTestInstanceAsync(control, testID);
+    }
     await flushHookEffects({ cycles: 4, turns: 3, frames: 1 });
 }
 
@@ -551,7 +552,7 @@ describe('demo mode egress-zero smoke', () => {
         const { SessionView } = await import('@/components/sessions/shell/SessionView');
 
         await expectNoEgressAfterMountAndInteraction(
-            <SessionView id={DEMO_RICH_SESSION_ID} surfaceFocusedOverride routeAnchorOverride />,
+            <SessionView id={DEMO_RICH_SESSION_ID} surfaceFocusedOverride surfaceVisibleOverride routeAnchorOverride />,
             'session-header-action-menu-trigger',
         );
     });
@@ -624,7 +625,7 @@ describe('demo mode egress-zero smoke', () => {
         routerState.pathname = `/session/${DEMO_REVIEW_SESSION_ID}`;
         const { SessionView } = await import('@/components/sessions/shell/SessionView');
         const screen = await mountSeededSurface(
-            <SessionView id={DEMO_REVIEW_SESSION_ID} surfaceFocusedOverride routeAnchorOverride />,
+            <SessionView id={DEMO_REVIEW_SESSION_ID} surfaceFocusedOverride surfaceVisibleOverride routeAnchorOverride />,
         );
         await settleAndPressControl(screen, 'session-header-action-menu-trigger');
         expectZeroFirewallEgress();

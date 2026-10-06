@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
-import { resolveLockedSessionTitle } from './sessionUtils';
+import { getSessionName, resolveLockedSessionTitle } from './sessionUtils';
 
 describe('resolveLockedSessionTitle', () => {
     it('keeps a safe cached title while encrypted access is still pending', () => {
@@ -12,8 +13,14 @@ describe('resolveLockedSessionTitle', () => {
     });
 
     it('names an encrypted Session instead of reporting it as unknown', () => {
-        // The generic unknown label reads as a defect; this row is simply locked.
-        expect(resolveLockedSessionTitle(t('status.unknown'))).toBe(t('session.access.lockedTitleFallback'));
+        // Use the display owner's actual fallback, not a runtime-status label.
+        const unnamedSession = createSessionFixture({
+            encryptionMode: 'e2ee',
+            encryptedContentAvailability: 'encrypted_access_pending',
+            metadata: null,
+        });
+        expect(resolveLockedSessionTitle(getSessionName(unnamedSession)))
+            .toBe(t('session.access.lockedTitleFallback'));
         expect(resolveLockedSessionTitle('   ')).toBe(t('session.access.lockedTitleFallback'));
         expect(resolveLockedSessionTitle('')).toBe(t('session.access.lockedTitleFallback'));
     });

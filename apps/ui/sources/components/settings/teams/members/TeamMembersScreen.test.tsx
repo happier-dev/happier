@@ -43,8 +43,9 @@ vi.mock('@/components/ui/lists/virtualized', () => ({
 
 vi.mock('@react-navigation/native', async () => {
     const ReactModule = await import('react');
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return {
-        useIsFocused: () => true,
+        ...createReactNavigationNativeMock(),
         useFocusEffect: (effect: () => void | (() => void)) => {
             ReactModule.useEffect(() => {
                 navigationState.focusEffects.push(effect);
@@ -65,11 +66,10 @@ installSettingsViewCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ getPreferredLanguage: () => languageMock.current });
     },
-    router: async () => ({
-        useRouter: () => ({ push: routerPush, back: vi.fn() }),
-        useNavigation: () => ({ setOptions: vi.fn() }),
-        useLocalSearchParams: () => ({}),
-    }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: routerPush } }).module;
+    },
 });
 
 const harness = createHomeGovernanceHarness();

@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-    const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-    return emptyBundledPluginUiAssetsModule;
-});
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
+import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
+
+installDisconnectedServerSocketBoundary();
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -16,7 +19,7 @@ import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/se
 import { storage } from '@/sync/domains/state/storage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
@@ -25,6 +28,12 @@ import { buildVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/
 import { createVoiceTranscriptProjector } from '@/voice/transcript/VoiceTranscriptProjector';
 
 const HISTORY_SESSION_ID = 'voice-history-stale-shell';
+const SECRET_BYTES = new Uint8Array(32).fill(7);
+let accountContentKey: Uint8Array;
+
+function installCredentialBoundary(credentials: AuthCredentials) {
+    return vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
+}
 
 function buildToken(accountId: string): string {
     const encode = (value: unknown) =>
@@ -85,54 +94,56 @@ function installRuntimeRequest(
                 headers: { 'Content-Type': 'application/json' },
             });
         }
+        if (url.endsWith('/v1/account/encryption/currentness')) return Response.json({
+            mode: 'e2ee', version: 1, updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+            signingKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(deriveAccountSigningPublicKey(SECRET_BYTES)),
+            contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(accountContentKey),
+        });
         return await request(input, init);
     });
 }
 
 describe('sync.persistSessionTranscriptMessage', () => {
-    const originalEncryption = sync.encryption;
-    const originalCredentials = Reflect.get(sync, 'credentials');
     let activeServerId: string;
     let credentials: AuthCredentials;
     let activeEncryption: Encryption;
+    let credentialsForServer: ReturnType<typeof installCredentialBoundary>;
+    let localStorage: ReturnType<typeof installLocalStorageMock>;
+    let webLocks: ReturnType<typeof installWebLockManagerMock>;
 
     beforeEach(async () => {
         await resetServerReachabilitySupervisors();
         storage.setState(storage.getInitialState(), true);
+        localStorage = installLocalStorageMock();
+        webLocks = installWebLockManagerMock();
+        const expectedEncryption = await Encryption.create(SECRET_BYTES);
+        accountContentKey = expectedEncryption.contentDataKey;
+        installRuntimeRequest(async () => Response.json({}, { status: 404 }));
+        await loadSyncSingletonForTests();
         activeServerId = (await upsertServerProfile({
             serverUrl: 'https://voice-history-owner.example.test',
             name: 'Voice History owner',
         })).id;
         await setActiveServerId(activeServerId, { scope: 'device' });
-        // Publish the selected Home through its real runtime owner before mounting the Account.
-        const credentialsForServer = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
-        await switchConnectionToActiveServer();
-        storage.getState().activateProfileScope({
-            serverId: activeServerId,
-            accountId: 'voice-account-a',
-        });
-
-        const secretBytes = new Uint8Array(32).fill(7);
         credentials = {
             token: buildToken('voice-account-a'),
-            secret: encodeBase64(secretBytes, 'base64url'),
+            secret: encodeBase64(SECRET_BYTES, 'base64url'),
         };
-        activeEncryption = await Encryption.create(secretBytes);
-        Reflect.set(sync, 'credentials', credentials);
-        sync.encryption = activeEncryption;
-        credentialsForServer.mockResolvedValue(credentials);
-        vi.spyOn(apiSocket, 'request').mockRejectedValue(
-            new Error('dynamic active request must not own transcript persistence'),
-        );
+        credentialsForServer = installCredentialBoundary(credentials);
+        await restoreConnectionToActiveServer(credentials);
+        if (!sync.encryption) throw new Error('Encrypted Account did not install its canonical encryption');
+        activeEncryption = sync.encryption;
+        vi.spyOn(apiSocket, 'request');
     });
 
     afterEach(async () => {
+        await disconnectActiveServerConnection();
         await resetServerReachabilitySupervisors();
         resetRuntimeFetch();
-        sync.encryption = originalEncryption;
-        Reflect.set(sync, 'credentials', originalCredentials);
         vi.restoreAllMocks();
         storage.setState(storage.getInitialState(), true);
+        webLocks.restore();
+        localStorage.restore();
     });
 
     it('rehydrates a missing inactive history carrier before the canonical encrypted write and ACK commit', async () => {
@@ -569,7 +580,10 @@ describe('sync.persistSessionTranscriptMessage', () => {
         const postResponse = new Promise<Response>((resolve) => {
             resolvePost = resolve;
         });
-        const request = vi.fn(async () => await postResponse);
+        const request = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+            if (String(input).endsWith(`/v2/sessions/${HISTORY_SESSION_ID}/messages`) && init?.method === 'POST') return await postResponse;
+            return Response.json({}, { status: 404 });
+        });
         installRuntimeRequest(request);
 
         const persistence = sync.persistSessionTranscriptMessage(createTranscriptInput(
@@ -578,15 +592,9 @@ describe('sync.persistSessionTranscriptMessage', () => {
         ));
         await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
 
-        storage.getState().activateProfileScope({
-            serverId: activeServerId,
-            accountId: 'voice-account-b',
-        });
-        storage.setState((state) => ({
-            ...state,
-            sessions: {},
-            sessionMessages: {},
-        }));
+        const replacement = { token: buildToken('voice-account-b'), secret: encodeBase64(SECRET_BYTES, 'base64url') };
+        credentialsForServer.mockResolvedValue(replacement);
+        await restoreConnectionToActiveServer(replacement);
         resolvePost(createAckResponse(
             'voice-realtime:stale-attempt:user:spoken-question',
             'stale-server-user-final',

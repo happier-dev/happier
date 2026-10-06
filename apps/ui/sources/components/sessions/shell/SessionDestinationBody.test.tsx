@@ -29,6 +29,8 @@ vi.mock('react-native-safe-area-context', () => ({
 afterEach(standardCleanup);
 
 async function withSessionFixture(run: (serverId: string) => Promise<void>) {
+    // The app entry registers this implementation before mounting routed Session surfaces.
+    await import('@/sync/syncEngine');
     const serverId = getActiveServerSnapshot().serverId;
     const previousState = storage.getState();
     const frameGlobals = ['requestAnimationFrame', 'cancelAnimationFrame'] as const;

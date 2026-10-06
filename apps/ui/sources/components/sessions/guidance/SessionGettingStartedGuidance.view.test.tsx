@@ -51,6 +51,7 @@ vi.mock('./SessionGettingStartedSummary', async (importOriginal) => {
 });
 
 installSessionGuidanceCommonModuleMocks({
+  storage: () => vi.importActual('@/sync/domains/state/storage'),
   router: async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
@@ -216,7 +217,7 @@ describe('SessionGettingStartedGuidanceView', () => {
       expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
       routerPushSpy.mockClear();
       await screen.pressByTestIdAsync('session-getting-started-open-setup');
-      expect(routerPushSpy).toHaveBeenCalledWith('/setup/wizard?action=local&step=setup_this_computer&scope=machine');
+      expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
       expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     } finally {
       mockEnv.iconsRenderAsText = false;

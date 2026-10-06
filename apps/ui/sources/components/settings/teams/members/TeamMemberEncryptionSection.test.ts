@@ -481,7 +481,7 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
         await act(async () => { screen.findByTestId('team-member-encryption-check-again')?.props.onPress(); });
 
         expect(screen.findByTestId('team-member-encryption-setup-required')).not.toBeNull();
-        expect(screen.findByTestId('team-member-encryption-setup-required')?.props.loading).toBe(true);
+        expect(screen.findByTestId('team-member-encryption-setup-required')?.props.accessibilityState?.busy).toBe(true);
 
         await act(async () => {
             retry.resolve(new Response(JSON.stringify({

@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+    MACHINE_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -16,9 +17,35 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: (input: unknown) => machineRpcWithServerScope(input),
-}));
+// Record daemon requests at Socket.IO; scoped routing, codecs and Action owners run normally.
+vi.mock('socket.io-client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+    const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+    return { ...actual, io: (serverUrl: string) => {
+        const { socket } = createSocketIoBoundaryStub();
+        socket.emitWithAck.mockImplementation(async (event, payload) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object') {
+                return { v: 1, ok: true, admittedSessionIds: [] };
+            }
+            const request = payload as { method: string; params: unknown };
+            const separator = request.method.indexOf(':');
+            try {
+                return { ok: true, result: await machineRpcWithServerScope({
+                    machineId: request.method.slice(0, separator),
+                    method: request.method.slice(separator + 1),
+                    payload: request.params,
+                    serverUrl,
+                }) };
+            } catch (error) {
+                if (!(error instanceof Error)) throw error;
+                const errorCode: unknown = Reflect.get(error, 'rpcErrorCode');
+                return { ok: false, error: error.message, ...(typeof errorCode === 'string' ? { errorCode } : {}) };
+            }
+        });
+        return socket;
+    } };
+});
 
 import {
     resolveWorkspaceSyncConflict,
@@ -64,13 +91,10 @@ const features = {
 
 describe('workspace sync UI operations', () => {
     let actionServerId: string;
-    const artifacts = new Map<string, ArtifactCreateRequest & {
-        headerVersion: number;
-        bodyVersion: number;
-        seq: number;
-        createdAt: number;
-        updatedAt: number;
-    }>();
+    const artifacts = createArtifactStoreBoundary({
+        ownerAccountId: () => 'workspace-sync-account',
+        encryptionMode: 'plain',
+    });
 
     beforeEach(async () => {
         getStorage().setState(initialStorageState, true);
@@ -87,40 +111,12 @@ describe('workspace sync UI operations', () => {
             const pathname = new URL(String(url)).pathname;
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (pathname === '/v1/artifacts' && init?.method === 'POST') {
-                const request = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                const artifact = {
-                    ...request,
-                    headerVersion: 1,
-                    bodyVersion: 1,
-                    seq: 1,
-                    createdAt: 1,
-                    updatedAt: 1,
-                };
-                artifacts.set(request.id, artifact);
-                return Response.json(artifact);
+            if (pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (pathname === '/v1/machines/machine-controller') {
+                return Response.json({ machine: { id: 'machine-controller', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
             }
-            if (pathname.startsWith('/v1/artifacts/')) {
-                const artifact = artifacts.get(pathname.split('/').at(-1)!);
-                if (!artifact) return Response.json({}, { status: 404 });
-                if (init?.method === 'POST') {
-                    const update = JSON.parse(String(init.body)) as Partial<ArtifactCreateRequest>;
-                    if (update.header !== undefined) {
-                        artifact.header = update.header;
-                        artifact.headerVersion += 1;
-                    }
-                    if (update.body !== undefined) {
-                        artifact.body = update.body;
-                        artifact.bodyVersion += 1;
-                    }
-                    return Response.json({
-                        success: true,
-                        headerVersion: artifact.headerVersion,
-                        bodyVersion: artifact.bodyVersion,
-                    });
-                }
-                return Response.json(artifact);
-            }
+            const artifactResponse = artifacts.handle(pathname, init);
+            if (artifactResponse) return await artifactResponse;
             throw new Error(`Unexpected workspace sync Action request: ${pathname}`);
         });
         machineRpcWithServerScope.mockReset();
@@ -147,7 +143,7 @@ describe('workspace sync UI operations', () => {
             .resolves.toMatchObject({ classification: 'retired_v1', schemaVersion: 1 });
         expect(machineRpcWithServerScope).toHaveBeenCalledWith({
             machineId: 'machine-controller',
-            serverId: undefined,
+            serverUrl: 'https://workspace-sync-action.test',
             method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LEGACY_INSPECT,
             payload: {},
         });
@@ -160,23 +156,23 @@ describe('workspace sync UI operations', () => {
 
         await expect(listWorkspaceSyncStatuses({
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
         })).resolves.toEqual([status]);
         await expect(getWorkspaceSyncStatus({
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
             relationshipId: 'relationship-1',
         })).resolves.toEqual(status);
 
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(1, {
             machineId: 'machine-controller',
-            serverId: 'server-1',
+            serverUrl: 'https://workspace-sync-action.test',
             method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST,
             payload: {},
         });
         expect(machineRpcWithServerScope).toHaveBeenNthCalledWith(2, {
             machineId: 'machine-controller',
-            serverId: 'server-1',
+            serverUrl: 'https://workspace-sync-action.test',
             method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET,
             payload: { relationshipId: 'relationship-1' },
         });
@@ -205,7 +201,7 @@ describe('workspace sync UI operations', () => {
 
         await expect(listWorkspaceSyncConflicts({
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
             relationshipId: 'relationship-1',
         })).resolves.toMatchObject({ status: 'page', totalCount: 1, nextCursor: null });
         await expect(resolveWorkspaceSyncConflict({
@@ -233,7 +229,7 @@ describe('workspace sync UI operations', () => {
         const conflictRpc = machineRpcWithServerScope.mock.calls[1]?.[0];
         expect(conflictRpc).toMatchObject({
             machineId: 'machine-controller',
-            serverId: actionServerId,
+            serverUrl: 'https://workspace-sync-action.test',
             method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
             payload: {
                 actionReceiptId: expect.any(String),
@@ -248,7 +244,7 @@ describe('workspace sync UI operations', () => {
                 },
             },
         });
-        const persistedApproval = artifacts.get(conflictRpc.payload.actionReceiptId);
+        const persistedApproval = artifacts.read(conflictRpc.payload.actionReceiptId);
         expect(persistedApproval).toBeDefined();
         const persistedBodyEnvelope = decodePlainArtifactStoredContent(persistedApproval!.body);
         expect(persistedBodyEnvelope).toMatchObject({ body: expect.any(String) });
@@ -311,7 +307,7 @@ describe('workspace sync UI operations', () => {
         };
         machineRpcWithServerScope.mockResolvedValueOnce(metadata);
         await expect(inspectWorkspaceSyncConflict({
-            controllerMachineId: 'machine-controller', serverId: 'server-1',
+            controllerMachineId: 'machine-controller', serverId: actionServerId,
             request: { workspaceRefId: 'workspace-beta', path: 'README.md' },
         })).resolves.toEqual(metadata);
         expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
@@ -333,7 +329,7 @@ describe('workspace sync UI operations', () => {
 
         await expect(readWorkspaceSyncFile({
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
             request: {
                 relationshipId: 'relationship-1',
                 side: 'alpha',
@@ -343,14 +339,14 @@ describe('workspace sync UI operations', () => {
         })).resolves.toMatchObject({ status: 'text', text: 'hello' });
         await expect(listWorkspaceSyncStatuses({
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
         })).rejects.toThrow('Unsupported response');
     });
 
     it('routes each lifecycle intent through exactly one daemon operation', async () => {
         const scope = {
             controllerMachineId: 'machine-controller',
-            serverId: 'server-1',
+            serverId: actionServerId,
             relationshipId: 'relationship-1',
         };
         machineRpcWithServerScope

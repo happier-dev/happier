@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 import { logger } from '@/ui/logger';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
@@ -8,7 +9,6 @@ import {
 
 const mocks = vi.hoisted(() => ({
     ensureSessionDirectory: vi.fn(),
-    validateEnvVarRecordStrict: vi.fn(),
 }));
 
 vi.mock('@/ui/logger', () => ({
@@ -22,10 +22,6 @@ vi.mock('@/ui/logger', () => ({
 
 vi.mock('./ensureSessionDirectory', () => ({
     ensureSessionDirectory: mocks.ensureSessionDirectory,
-}));
-
-vi.mock('@/terminal/runtime/envVarSanitization', () => ({
-    validateEnvVarRecordStrict: mocks.validateEnvVarRecordStrict,
 }));
 
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -116,8 +112,8 @@ function mapPrivateExternalTakeoverPlan() {
 describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.validateEnvVarRecordStrict.mockReturnValue({ ok: true, env: {} });
     });
+    afterEach(() => vi.restoreAllMocks());
 
     it('keeps private External Sessions takeover launch facts out of persistent diagnostics', async () => {
         const validationError = `Invalid environment variable ${PRIVATE_ENVIRONMENT_KEY}=${PRIVATE_ENVIRONMENT_VALUE}`;
@@ -187,12 +183,10 @@ describe('prepareExecuteSpawnSessionRequest logging privacy', () => {
         const privateError = new Error(
             `Unexpected failure for ${PRIVATE_DIRECTORY} and ${PRIVATE_ENVIRONMENT_VALUE}`,
         );
-        // Injected at the first pre-spawn step, before the daemon acquires any
-        // launch resource. A throw after that point is retired and reported by
-        // the launch scope instead of escaping.
-        mocks.validateEnvVarRecordStrict.mockImplementationOnce(() => {
-            throw privateError;
-        });
+        // The profile Artifact inventory is an external HTTP boundary before
+        // admission acquires launch resources. Keep the real profile reader and
+        // diagnostic catch path beneath that boundary.
+        vi.spyOn(axios, 'get').mockRejectedValueOnce(privateError);
 
         await expect(executeSpawnSessionRequest({
             options: {

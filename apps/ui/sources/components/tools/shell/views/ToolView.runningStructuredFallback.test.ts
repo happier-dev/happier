@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { collectHostText, installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
@@ -115,13 +115,14 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromFlavor: () => null,
 }));
 
+const { ToolView } = await import('./ToolView');
+
 describe('ToolView (running tools)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('renders structured stdout/stderr while running when a tool streams output', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'SomeUnknownTool',

@@ -60,7 +60,13 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
     const request = { actionId: 'browser.automation.cancelActive', input: { browserSessionId: 'mounted-session', viewId: 'mounted-view' },
       context: { surface: 'agent', authority: 'present_user', defaultSessionId: 'happier-session' } } as const;
     expect(await execute(request)).toEqual({ v: 1, outcome: 'no_active', canceledCount: 0 });
-    expect(payloads).toEqual([{ v: 1, actionId: request.actionId, input: request.input, authority: 'present_user' }]);
+    expect(payloads).toEqual([{
+      v: 1,
+      actionId: request.actionId,
+      input: request.input,
+      authority: 'present_user',
+      sessionId: 'happier-session',
+    }]);
     api.setBrowserUiAutomationProvider(null);
     expect(await execute(request)).toMatchObject({ errorCode: 'runtime_action_disabled' });
     expect(provision).not.toHaveBeenCalled();

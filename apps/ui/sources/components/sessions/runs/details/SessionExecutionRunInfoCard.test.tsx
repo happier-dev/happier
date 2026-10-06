@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExecutionRunDetailsTestHelpers';
-import { SessionExecutionRunInfoCard } from './SessionExecutionRunInfoCard';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -68,6 +67,8 @@ vi.mock('@/components/ui/popover', () => ({
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: { children: React.ReactNode }) => React.createElement('FloatingOverlay', null, props.children),
 }));
+
+const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
 
 /** The run's facts live behind ⋯ → Run details; open the menu and read the whole card. */
 async function openRunMenu(screen: Awaited<ReturnType<typeof renderScreen>>): Promise<string> {
@@ -244,8 +245,8 @@ describe('SessionExecutionRunInfoCard', () => {
         expect(screen.findByTestId('session-run-header-elapsed')?.props.children).toBe('6:40');
         const facts = screen.findByTestId('session-run-header.subtitle');
         expect(facts).not.toBeNull();
-        expect(JSON.stringify(facts?.props.children)).toContain('Read only');
-        expect(JSON.stringify(facts?.props.children)).not.toContain('read-only');
+        expect(screen.getTextContent()).toContain('Read only');
+        expect(screen.getTextContent()).not.toContain('read-only');
     });
 
     it('renders a user-facing title and labeled facts instead of a raw run-id header', async () => {

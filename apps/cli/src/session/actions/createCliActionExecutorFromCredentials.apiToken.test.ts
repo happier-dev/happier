@@ -11,6 +11,7 @@ import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@
 import { configuration, reloadConfiguration } from '@/configuration';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
 import { installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
+import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signedRootActionControl';
 
 const {
   createCliActionExecutor,
@@ -20,7 +21,7 @@ const {
   importHistoricalSessionTranscript,
   lookupSessionsByTags,
   readSettings,
-  requestDaemonSignedRootActionExecution,
+  daemonPost,
   resolveCurrentAccountMachineTarget,
   resolveLiveDaemonControlTargetForServer,
 } = vi.hoisted(() => ({
@@ -31,7 +32,7 @@ const {
   importHistoricalSessionTranscript: vi.fn(),
   lookupSessionsByTags: vi.fn(),
   readSettings: vi.fn(),
-  requestDaemonSignedRootActionExecution: vi.fn(),
+  daemonPost: vi.fn(),
   resolveCurrentAccountMachineTarget: vi.fn(),
   resolveLiveDaemonControlTargetForServer: vi.fn(),
 }));
@@ -60,8 +61,10 @@ vi.mock('@/api/machine/resolveCurrentAccountMachineTarget', () => ({
   resolveCurrentAccountMachineTarget,
 }));
 
-vi.mock('@/daemon/controlClient', () => ({
-  requestDaemonSignedRootActionExecution,
+// Keep daemon control parsing and publication inspection real beneath the HTTP boundary.
+vi.mock('@/daemon/controlHttp', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlHttp')>(),
+  daemonPost,
 }));
 
 vi.mock('@/daemon/multiDaemon', async (importOriginal) => ({
@@ -245,7 +248,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     importHistoricalSessionTranscript.mockReset();
     lookupSessionsByTags.mockReset();
     readSettings.mockReset();
-    requestDaemonSignedRootActionExecution.mockReset();
+    daemonPost.mockReset();
     resolveLiveDaemonControlTargetForServer.mockReset();
     resolveCurrentAccountMachineTarget.mockReset();
     readSettings.mockResolvedValue({ machineId: 'machine-selected' });
@@ -342,7 +345,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('routes only attested stored-session root clients through signed daemon control', async () => {
-    requestDaemonSignedRootActionExecution.mockResolvedValue({
+    daemonPost.mockResolvedValue({
       ok: true,
       result: { machines: [] },
     });
@@ -363,16 +366,16 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       { surface: 'api', authority: 'account_automation', actionRequestId: 'request-signed' },
     )).resolves.toEqual({ ok: true, result: { machines: [] } });
 
-    expect(requestDaemonSignedRootActionExecution).toHaveBeenCalledWith({
+    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
       actionId: 'machines.list',
       input: { limit: 10 },
       target: { kind: 'machine', machineId: 'machine-local' },
       actionRequestId: 'request-signed',
-    }, {});
+    }, expect.objectContaining({ mutation: false }));
   });
 
   it('keeps present-user Actions on signed daemon control while PAT transport refuses them', async () => {
-    requestDaemonSignedRootActionExecution.mockResolvedValue({
+    daemonPost.mockResolvedValue({
       ok: true,
       result: { installed: true },
     });
@@ -391,10 +394,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       { source: '/workspace/plugin' },
       { surface: 'cli', authority: 'present_user' },
     )).resolves.toEqual({ ok: true, result: { installed: true } });
-    expect(requestDaemonSignedRootActionExecution).toHaveBeenCalledWith({
+    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
       actionId: 'plugins.install',
       input: { source: '/workspace/plugin' },
-    }, {});
+    }, expect.objectContaining({ mutation: true }));
 
     const pat = createCliActionExecutorFromCredentials({
       credentials: {
@@ -414,7 +417,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   it('pins a fixed-Home stored-session root client to that Home daemon and fails closed when it is unavailable', async () => {
     const daemonTarget = { pid: 42, httpPort: 4949, controlToken: 'control-home-b' };
     resolveLiveDaemonControlTargetForServer.mockResolvedValueOnce(daemonTarget);
-    requestDaemonSignedRootActionExecution.mockResolvedValueOnce({
+    daemonPost.mockResolvedValueOnce({
       ok: true,
       result: { actionSpecs: [] },
     });
@@ -437,10 +440,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       { surface: 'cli' },
     )).resolves.toEqual({ ok: true, result: { actionSpecs: [] } });
     expect(resolveLiveDaemonControlTargetForServer).toHaveBeenCalledWith('home-b');
-    expect(requestDaemonSignedRootActionExecution).toHaveBeenCalledWith({
+    expect(daemonPost).toHaveBeenCalledWith(SIGNED_ROOT_ACTION_EXECUTE_PATH, {
       actionId: 'action.spec.search',
       input: { limit: 10 },
-    }, { target: daemonTarget });
+    }, expect.objectContaining({ target: daemonTarget, mutation: false }));
 
     resolveLiveDaemonControlTargetForServer.mockResolvedValueOnce(null);
     await expect(executor.execute(
@@ -452,7 +455,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       errorCode: 'daemon_unavailable',
       error: 'daemon_unavailable',
     });
-    expect(requestDaemonSignedRootActionExecution).toHaveBeenCalledTimes(1);
+    expect(daemonPost).toHaveBeenCalledTimes(1);
   });
 
   it('keeps an API Token on public HTTP even when a caller supplies a non-CLI surface', async () => {
@@ -479,7 +482,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       result: { actionSpecs: [] },
     });
 
-    expect(requestDaemonSignedRootActionExecution).not.toHaveBeenCalled();
+    expect(daemonPost).not.toHaveBeenCalled();
     expect(createCliActionExecutor).not.toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledOnce();
   });

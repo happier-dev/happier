@@ -4,18 +4,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     createSessionSurfaceNoteDocumentV1,
+    SessionBoardMutationV1Schema,
     type SessionBoardLayoutV1,
-    type SessionBoardMutationV1,
     type SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
 
 import { renderScreen } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import {
     projectSessionBoard,
-    type SessionBoardActionOutcome,
     type SessionBoardActionsPort,
-    type SessionBoardMutationResult,
     type SessionBoardSnapshot,
 } from '@/sync/domains/session/board';
 
@@ -26,6 +26,12 @@ import {
 } from '@/components/appShell/panes/paneHeaderSlot';
 import { SessionBoardSurface } from './SessionBoardSurface';
 import { useSessionBoardController } from './useSessionBoardController';
+import { realBoardActions } from './sessionBoardActionsTestkit';
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    return createReactNativeWebMock();
+});
 
 /**
  * The shared Board surface, rendered.
@@ -46,11 +52,10 @@ function note(title: string): SessionSurfaceItemV1 {
     } as SessionSurfaceItemV1;
 }
 
-const OK_ACTIONS: SessionBoardActionsPort = {
-    upsertItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    removeItem: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-    updateLayout: async () => ({ status: 'unavailable', reason: 'board_actions_unavailable' }),
-};
+const ADDRESS = { serverId: 'home-1', sessionId: 'session-1' };
+const REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+const NEXT_REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
+const OK_ACTIONS = realBoardActions(async () => new Response(null, { status: 404 }), undefined, ADDRESS);
 
 function snapshot(input: Readonly<{
     layout?: SessionBoardLayoutV1 | null;
@@ -60,10 +65,10 @@ function snapshot(input: Readonly<{
 }>): SessionBoardSnapshot {
     return projectSessionBoard({
         layout: input.layout
-            ? { revision: 'rev-layout', outcome: { status: 'ready', value: input.layout } }
+            ? { revision: REVISION, outcome: { status: 'ready', value: input.layout } }
             : undefined,
         items: new Map((input.items ?? []).map(({ itemId, item }) => [itemId, {
-            revision: `rev-${itemId}`,
+            revision: REVISION,
             outcome: { status: 'ready' as const, value: item },
         }] as const)),
         capabilities: { readTranscript: true, editSessionRecords: input.canEdit ?? true },
@@ -96,6 +101,7 @@ function Harness(props: Readonly<{
     return (
         <SessionBoardSurface
             sessionId="session-1"
+            serverId="home-1"
             controller={controller}
             host={props.host ?? 'details'}
             resolvePrimaryHost={() => props.host ?? 'details'}
@@ -243,45 +249,22 @@ describe('SessionBoardSurface', () => {
     });
 
     it('keeps an ambiguous mutation visible and blocked until refresh enables a deliberate retry', async () => {
-        const mutationRequest: SessionBoardMutationV1 = {
-            operation: 'update_layout',
-            expectedLayoutRevision: 'rev-layout',
-            layoutContent: { t: 'plain', v: mutableLayout(POPULATED) },
-        };
         let attempts = 0;
-        const actions: SessionBoardActionsPort = {
-            upsertItem: OK_ACTIONS.upsertItem,
-            removeItem: OK_ACTIONS.removeItem,
-            updateLayout: async (
-                input,
-            ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> => {
-                attempts += 1;
-                if (attempts === 1) {
-                    return {
-                        status: 'outcome_unknown',
-                        recovery: {
-                            v: 1,
-                            actionId: 'session.board.layout.update',
-                            serverId: 'home-1',
-                            sessionId: 'session-1',
-                            requestBody: JSON.stringify(mutationRequest),
-                            mutationRequest,
-                            intent: input,
-                        },
-                    };
-                }
-                return {
-                    status: 'ok',
-                    value: {
-                        v: 1,
-                        serverId: 'home-1',
-                        sessionId: 'session-1',
-                        result: { operation: 'update_layout', outcome: 'updated', layoutRevision: 'rev-layout-2' },
-                        destination: null,
-                    },
-                };
-            },
-        };
+        const actions = realBoardActions(async (_path, init) => {
+            if (init?.method !== 'PUT') return Response.json({ record: {
+                id: 'layout-row', address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' },
+                content: { t: 'plain', v: mutableLayout(POPULATED) }, revision: REVISION,
+                createdAt: '2026-09-26T00:00:00.000Z', updatedAt: '2026-09-26T00:00:00.000Z',
+            } });
+            const mutation = SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body)));
+            expect(mutation.operation).toBe('update_layout');
+            attempts += 1;
+            // The server may have committed; losing only the acknowledgement
+            // exercises the adapter's canonical outcome-unknown classification.
+            return attempts === 1 ? new Response('acknowledgement lost') : Response.json({
+                operation: 'update_layout', outcome: 'updated', layoutRevision: NEXT_REVISION,
+            });
+        }, undefined, ADDRESS);
         const refresh = vi.fn();
         const initial = snapshot({ layout: POPULATED, items: [{ itemId: 'note-1', item: note('Plan') }] });
         const screen = await renderScreen(
@@ -466,8 +449,9 @@ describe('SessionBoardSurface', () => {
         expect(screen.findByTestId('session-board-add-trigger')).not.toBeNull();
         expect(screen.findHostByTestId('session-board-add-note')).toBeNull();
         const popover = await openAddPopover(screen, 'session-board-add-trigger');
-        // Only the sources with a producer: a note to make, and the agent to ask; no plugins here.
-        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['note']);
+        // Built-in Notes and session walkthroughs have real producers; plugin
+        // and hosted-HTML choices require their corresponding mounted runtime.
+        expect(popover.sections.flatMap((section) => section.entries.map((entry) => entry.id))).toEqual(['walkthrough', 'note']);
         expect(popover.ask).toBeDefined();
         await act(async () => { popover.ask?.onPick(); });
         expect(onAskAgent).toHaveBeenCalledOnce();
@@ -475,6 +459,12 @@ describe('SessionBoardSurface', () => {
     });
 
     it('starts direct manipulation only from a visible move handle', async () => {
+        const serverUrl = 'https://board-drag.example.test';
+        await upsertServerProfile({ serverUrl, name: 'Board drag Home' });
+        await setServerProfileIdentityForUrl(serverUrl, 'home-1');
+        expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: 'home-1' }, {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: 'board-editor' })).toString('base64url')}.signature`,
+        })).toBe(true);
         const screen = await renderScreen(
             <Harness snapshot={snapshot({
                 layout: MOVABLE,
@@ -485,30 +475,37 @@ describe('SessionBoardSurface', () => {
             })} />,
         );
 
+        await vi.waitFor(() => expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull());
         const firstHandle = screen.findHostByTestId('session-board-item-note-1-move-handle');
         const secondHandle = screen.findHostByTestId('session-board-item-note-2-move-handle');
         expect(firstHandle).not.toBeNull();
         expect(secondHandle).not.toBeNull();
         expect(firstHandle?.props.accessibilityLabel).toContain('Plan');
-        // The value is an authored phrase, not "1 / 2": a screen reader reads a
-        // slash aloud, and no locale ever saw that shape.
-        expect(firstHandle?.props.accessibilityValue).toEqual({
-            text: t('sessionBoard.item.movePosition', { position: 1, total: 2 }),
-        });
-        expect(secondHandle?.props.accessibilityValue).toEqual({
-            text: t('sessionBoard.item.movePosition', { position: 2, total: 2 }),
-        });
+        expect(secondHandle?.props.accessibilityLabel).toContain('Review');
+        expect(firstHandle?.props.accessibilityRole).toBe('button');
+        expect(secondHandle?.props.accessibilityRole).toBe('button');
+        expect(firstHandle?.props.onKeyDown).toBeTypeOf('function');
+        expect(secondHandle?.props.onKeyDown).toBeTypeOf('function');
+        expect(firstHandle?.props.tabIndex).toBe(0);
+        expect(secondHandle?.props.tabIndex).toBe(0);
+        expect(firstHandle?.props['aria-grabbed']).toBe(false);
+        expect(secondHandle?.props['aria-grabbed']).toBe(false);
+        expect(firstHandle?.parent?.props.gesture).toBeDefined();
+        expect(secondHandle?.parent?.props.gesture).toBeDefined();
         expect(screen.findHostByTestId('session-board-item-note-1-body')?.props.gesture).toBeUndefined();
     });
 
-    it('renders no Add control for a source this build cannot create', async () => {
+    it('withholds hosted HTML creation when the mounted caller has no HTML runtime', async () => {
         const screen = await renderScreen(<Harness snapshot={snapshot({})} />);
 
-        // The empty state still invites the person in, with the one source this build can create…
+        // The empty state still offers the native Note producer.
         expect(screen.findByTestId('session-board-empty-action')).not.toBeNull();
         expect(screen.getTextContent()).toContain(t('sessionBoard.empty.editor.addNote'));
-        // …and no chooser for sources whose producer does not exist.
-        expect(screen.findByTestId('session-board-add-trigger')).toBeNull();
+        // The chooser includes the built-in walkthrough producer, but withholds
+        // hosted HTML because this owner has no caller HTML runtime.
+        expect(screen.findByTestId('session-board-add-trigger')).not.toBeNull();
+        const popover = await openAddPopover(screen, 'session-board-add-trigger');
+        expect(popover.sections.flatMap(section => section.entries.map(entry => entry.id))).toEqual(['walkthrough', 'note']);
         expect(screen.getTextContent()).not.toContain(t('sessionBoard.add.interactiveView'));
     });
 
@@ -811,7 +808,7 @@ describe('SessionBoardSurface', () => {
         expect(openBoard).toHaveBeenCalledOnce();
     });
 
-    it('opens a tapped sidebar card on the Details board and marks the ones kept in Companion', async () => {
+    it('opens a tapped sidebar card on the Details board without duplicating Companion chrome', async () => {
         const openItem = vi.fn();
         const screen = await renderScreen(
             <PaneHarness
@@ -825,7 +822,7 @@ describe('SessionBoardSurface', () => {
             />,
         );
 
-        expect(screen.findHostByTestId('session-board-item-note-1-companion-mark')).not.toBeNull();
+        expect(screen.findHostByTestId('session-board-item-note-1-companion-mark')).toBeNull();
         expect(screen.findHostByTestId('session-board-item-note-2-companion-mark')).toBeNull();
         await screen.pressByTestIdAsync('session-board-item-note-2-open');
         expect(openItem).toHaveBeenCalledWith('note-2');
@@ -847,12 +844,8 @@ describe('SessionBoardSurface', () => {
 
     it('leads an empty editable Board with Ask the agent and keeps Add a note as the quiet second way', async () => {
         const onAskAgent = vi.fn();
-        const actions: SessionBoardActionsPort = {
-            ...OK_ACTIONS,
-            upsertItem: vi.fn(async () => ({ status: 'unavailable' as const, reason: 'board_actions_unavailable' as const })),
-        };
         const screen = await renderScreen(
-            <Harness snapshot={snapshot({})} actions={actions} onAskAgent={onAskAgent} />,
+            <Harness snapshot={snapshot({})} onAskAgent={onAskAgent} />,
         );
 
         await screen.pressByTestIdAsync('session-board-empty-action');

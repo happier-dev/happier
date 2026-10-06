@@ -92,17 +92,26 @@ describe('createSpawnAttemptKeyForFreshSpawnOptions', () => {
         }, 'C:\\Users\\alice'));
     });
 
-    it('fails canonical custody closed before raw environment material can enter identity', () => {
-        expect(() => createSpawnAttemptKeyForSessionSpawnNewInput({
+    it('does not include direct-to-daemon raw environment material in custody identity', () => {
+        const input = {
             creationKey: SessionCreationKeyV1Schema.parse('manual:attempt-a'),
             executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
             directory: { kind: 'path', path: '/repo' },
             agentTarget: {
-                kind: 'agent',
+                kind: 'agent' as const,
                 identity: { pluginId: 'happier.claude', localId: 'claude' },
             },
+        } as const;
+        const key = createSpawnAttemptKeyForSessionSpawnNewInput(input, '/Users/alice');
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({
+            ...input,
             environmentVariables: { SECRET_TOKEN: 'must-not-enter-custody' },
-        }, '/Users/alice')).toThrow(/raw environment variables/u);
+        }, '/Users/alice')).toBe(key);
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({
+            ...input,
+            environmentVariables: { SECRET_TOKEN: 'different-secret' },
+        }, '/Users/alice')).toBe(key);
+        expect(key).not.toContain('must-not-enter-custody');
     });
 
     it('keys a no-folder attempt by its own creation key, never by a folder, and never throws for it', () => {

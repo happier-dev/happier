@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-    IrohMachineHandshakeV1Schema,
-} from '@happier-dev/protocol';
-
-import {
-    MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR,
-} from './machineCarrierHttpLease';
+import { DirectRouteGrantRequestV2Schema, IrohMachineHandshakeV1Schema, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { storage } from '@/sync/domains/state/storage';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR } from './machineCarrierHttpLease';
 import {
     MACHINE_CARRIER_STREAM_PREAMBLE_BYTE,
     type MachineCarrierBrowserStreamLease,
@@ -15,105 +15,34 @@ import {
     acquireBrowserMachineCarrierStreamLease,
 } from './machineCarrierBrowserStream';
 
-const boundaries = vi.hoisted(() => {
-    const focus = { activeServerId: 'server-1' };
-    const serverUrls: Record<string, string> = {
-        'server-1': 'https://server.example.test',
-    };
-    const endpointsByServerId: Record<string, {
-        endpointId: string;
-        directAddresses: string[];
-        relayUrls: string[];
-    }> = {};
-    const resetEndpoints = () => {
-        endpointsByServerId['server-1'] = {
-            endpointId: 'a'.repeat(64),
-            directAddresses: ['127.0.0.1:48123'],
-            relayUrls: ['https://relay.example.test'],
-        };
-    };
-    resetEndpoints();
-    return {
-        getCredentials: vi.fn(),
-        requestGrant: vi.fn(),
-        captureAuthority: vi.fn(),
-        releaseAuthority: vi.fn(),
-        resolveTargetServer: vi.fn((requestedServerId?: string | null) => {
-            const requested = typeof requestedServerId === 'string' && requestedServerId.trim().length > 0
-                ? requestedServerId.trim()
-                : focus.activeServerId;
-            const serverUrl = serverUrls[requested];
-            return serverUrl ? { serverId: requested, serverUrl } : null;
-        }),
-        focusActiveServer: (serverId: string) => {
-            focus.activeServerId = serverId;
-        },
-        resetEndpoints,
-        replaceEndpoint: (serverId: string, endpoint: typeof endpointsByServerId[string]) => {
-            endpointsByServerId[serverId] = endpoint;
-        },
-        readEndpoint: (serverId: string) => endpointsByServerId[serverId],
-    };
-});
-
+const SERVER_URL = 'https://server.example.test';
 const targetToken = 'header.eyJzdWIiOiJhY2NvdW50LWIifQ.signature';
 const BROWSER_ENDPOINT_ID = 'b'.repeat(64);
 const TARGET_ENDPOINT_ID = 'a'.repeat(64);
+let serverId: string;
+const grantRequests: Array<ReturnType<typeof DirectRouteGrantRequestV2Schema.parse>> = [];
+const originalMachineState = {
+    machines: storage.getState().machines,
+    machineListByServerId: storage.getState().machineListByServerId,
+};
+const previousStorageScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
 
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({
-        importOriginal: importOriginal as <T = typeof import('@/auth/storage/tokenStorage')>() => Promise<T>,
-        tokenStorage: {
-            getCredentialsForServerUrl: (...args: unknown[]) => boundaries.getCredentials(...args),
-        },
+function publishEndpoint(endpoint: IrohEndpointDescriptorV1 | null) {
+    // The accepted Machine capability projection owns identity and dial hints.
+    const machine = createMachineFixture({
+        id: 'machine-1',
+        operationProtocolCapabilities: endpoint ? {
+            irohMachineEndpoint: { protocolVersions: [1], ...endpoint },
+        } : {},
+        operationProtocolCapabilitiesRevision: 1,
     });
-});
-vi.mock('@/sync/domains/machines/peer/mediation/stream/productionRouteHttp', () => ({
-    resolveTargetServer: (requestedServerId?: string | null) => boundaries.resolveTargetServer(requestedServerId),
-    requestPeerRouteGrantV2: (...args: unknown[]) => boundaries.requestGrant(...args),
-}));
-vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
-    getReadyServerFeatures: async () => ({ features: {} }),
-}));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
-    captureServerRequestAuthorityForServerAccountScope: (...args: unknown[]) => boundaries.captureAuthority(...args),
-}));
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            machineListByServerId: {
-                'server-1': [
-                    {
-                        id: 'machine-1',
-                        daemonState: {
-                            peerMediation: {
-                                iroh: {
-                                    endpoint: boundaries.readEndpoint('server-1'),
-                                },
-                            },
-                        },
-                    },
-                ],
-            },
-            machines: {},
-        }),
-    },
-}));
-vi.mock('@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle', () => ({
-    getIrohApplicationEndpoint: async () => ({ endpointId: 'e'.repeat(64) }),
-    isIrohMachineTransferLifecycleAvailable: () => true,
-    probeIrohMachineTransferLifecycleAvailability: async () => true,
-    startIrohMachineTransferTunnel: vi.fn(),
-}));
+    storage.setState((state) => ({
+        machines: { ...state.machines, [machine.id]: machine },
+        machineListByServerId: { ...state.machineListByServerId, [serverId]: [machine] },
+    }));
+}
 
-function grantedResponse(request: Readonly<{
-    ephemeralPublicKeyBase64Url: string;
-    machineId: string;
-    scope: unknown;
-    iroh: unknown;
-    endpointFingerprint: string;
-}>) {
+function grantedResponse(request: ReturnType<typeof DirectRouteGrantRequestV2Schema.parse>) {
     return {
         ok: true as const,
         value: {
@@ -246,7 +175,7 @@ async function acquireWith(
     const lease = await acquireBrowserMachineCarrierStreamLease({
         operationId: 'prepared-browser-1',
         machineId: 'machine-1',
-        serverId: 'server-1',
+        serverId,
         acquireEndpointLease: endpointLease.acquireEndpointLease,
         openMachineCarrierStream: machineStream.open,
         ...overrides,
@@ -255,23 +184,38 @@ async function acquireWith(
 }
 
 describe('acquireBrowserMachineCarrierStreamLease', () => {
-    beforeEach(() => {
-        boundaries.resolveTargetServer.mockClear();
-        boundaries.focusActiveServer('server-1');
-        boundaries.resetEndpoints();
-        boundaries.getCredentials.mockReset();
-        boundaries.requestGrant.mockReset();
-        boundaries.captureAuthority.mockReset();
-        boundaries.releaseAuthority.mockReset();
-        boundaries.getCredentials.mockResolvedValue({ token: targetToken });
-        boundaries.captureAuthority.mockResolvedValue({
-            scope: { serverId: 'server-1', accountId: 'account-b' },
-            request: vi.fn(),
-            release: boundaries.releaseAuthority,
+    beforeEach(async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = 'browser_machine_carrier_test';
+        serverId = (await upsertServerProfile({ serverUrl: SERVER_URL })).id;
+        expect(await TokenStorage.setCredentialsForServerUrl(SERVER_URL, { serverId }, { token: targetToken })).toBe(true);
+        publishEndpoint({
+            endpointId: TARGET_ENDPOINT_ID,
+            directAddresses: ['127.0.0.1:48123'],
+            relayUrls: ['https://relay.example.test'],
         });
-        boundaries.requestGrant.mockImplementation(async ({ request }: {
-            request: Parameters<typeof grantedResponse>[0];
-        }) => grantedResponse(request));
+        grantRequests.length = 0;
+        // Only the Home HTTP edge is replaced; scope, credentials, grant
+        // decoding, proof and canonical handshake minting remain real.
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
+            expect(url.origin).toBe(SERVER_URL);
+            expect(url.pathname).toBe('/v1/machines/peer/mediation/route-grants');
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${targetToken}`);
+            const request = DirectRouteGrantRequestV2Schema.parse(JSON.parse(String(init?.body)));
+            grantRequests.push(request);
+            return new Response(JSON.stringify({ ok: true, grant: grantedResponse(request).value }), {
+                status: 200, headers: { 'Content-Type': 'application/json' },
+            });
+        });
+    });
+
+    afterEach(async () => {
+        await TokenStorage.removeCredentialsForServerUrl(SERVER_URL, { serverId });
+        storage.setState(originalMachineState);
+        resetRuntimeFetch();
+        if (previousStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousStorageScope;
     });
 
     it('opens happier/machine/1 to the exact signed target and writes the canonical framed handshake exactly once', async () => {
@@ -309,16 +253,15 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         // The initiator is the actual shared browser endpoint from the lease,
         // minted through the one canonical grant owner with the V2 shape.
         expect(endpointLease.acquireEndpointLease).toHaveBeenCalledWith(['https://relay.example.test']);
-        const grantCall = boundaries.requestGrant.mock.calls[0]?.[0] as {
-            request: { routeKind: string; scope: Record<string, unknown>; iroh: { initiator: unknown; target: unknown } };
-        };
-        expect(grantCall.request.routeKind).toBe('iroh_peer');
-        expect(grantCall.request.scope).toMatchObject({
+        const grantRequest = grantRequests[0];
+        if (!grantRequest?.iroh) throw new Error('Expected a canonical Iroh grant request');
+        expect(grantRequest.routeKind).toBe('iroh_peer');
+        expect(grantRequest.scope).toMatchObject({
             kind: 'bounded_transfer',
             mode: 'carrier',
         });
-        expect(grantCall.request.iroh.initiator).toEqual({ kind: 'account_client', endpointId: BROWSER_ENDPOINT_ID });
-        expect(grantCall.request.iroh.target).toEqual({ machineId: 'machine-1', endpointId: TARGET_ENDPOINT_ID });
+        expect(grantRequest.iroh.initiator).toEqual({ kind: 'account_client', endpointId: BROWSER_ENDPOINT_ID });
+        expect(grantRequest.iroh.target).toEqual({ machineId: 'machine-1', endpointId: TARGET_ENDPOINT_ID });
 
         expect(lease.kind).toBe('browser_stream');
         expect(lease.remoteEndpointId).toBe(TARGET_ENDPOINT_ID);
@@ -333,7 +276,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         await expect(acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-mismatch',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: mismatched.open,
         })).rejects.toMatchObject({ errorCode: 'machine_carrier_transport_failed' });
@@ -352,7 +295,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         await expect(acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-reject',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: rejected.open,
         })).rejects.toMatchObject({
@@ -390,17 +333,19 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         const promise = acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-abort',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             signal: controller.signal,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: hanging.open,
         });
+        // Attach the rejection observer before awaiting admission readiness.
+        const rejected = expect(promise).rejects.toMatchObject({ errorCode: 'machine_carrier_transport_failed' });
         // The handshake frame is written, then the caller aborts while the
         // decision byte is outstanding.
         await vi.waitFor(() => expect(hanging.writes).toHaveLength(1));
         controller.abort();
 
-        await expect(promise).rejects.toMatchObject({ errorCode: 'machine_carrier_transport_failed' });
+        await rejected;
         expect(hanging.cancelCount()).toBe(1);
         expect(endpointLease.release).toHaveBeenCalledTimes(1);
     });
@@ -424,7 +369,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         const lease = await acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-release-retry',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: failingClose.open,
         });
@@ -455,7 +400,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         const lease = await acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-lease-retry',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: machineStream.open,
         });
@@ -486,7 +431,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         const lease = await acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-coalesce',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: machineStream.open,
         });
@@ -520,7 +465,7 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
         const acquisition = acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-custody',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: refusedOpen,
         });
@@ -530,20 +475,15 @@ describe('acquireBrowserMachineCarrierStreamLease', () => {
     });
 
     it('fails like the native lease owner when no signed target exists and never opens a stream', async () => {
-        // An unparseable endpoint descriptor is not a target the grant owner
-        // could bind, exactly as for the native lease owner.
-        boundaries.replaceEndpoint('server-1', {
-            endpointId: '',
-            directAddresses: [],
-            relayUrls: [],
-        });
+        // Missing current endpoint authority cannot be bound by the grant owner.
+        publishEndpoint(null);
         const missing = createFakeMachineStream();
         const endpointLease = createEndpointLeaseBoundary();
 
         await expect(acquireBrowserMachineCarrierStreamLease({
             operationId: 'prepared-browser-missing-target',
             machineId: 'machine-1',
-            serverId: 'server-1',
+            serverId,
             acquireEndpointLease: endpointLease.acquireEndpointLease,
             openMachineCarrierStream: missing.open,
         })).rejects.toThrow('A direct machine connection is required for this transfer.');

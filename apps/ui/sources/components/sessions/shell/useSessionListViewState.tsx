@@ -2222,6 +2222,8 @@ export function useSessionListViewStateFromPaneState(
                     item,
                     node: {
                         id,
+                        kind: item.type,
+                        ...(item.type === 'header' ? { headerKind: item.headerKind } : {}),
                         isGroupTail,
                     },
                 };

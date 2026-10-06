@@ -105,9 +105,8 @@ describe('parseServerSettingsRouteParams', () => {
         expect(buildServerSettingsGroupEditorHref({
             initialGroupServerIds: [' home-a ', 'home-b', 'home-a'],
         })).toEqual({
-            pathname: '/settings/server',
+            pathname: '/settings/server/groups/new',
             params: {
-                groupEditor: '1',
                 groupServerIds: JSON.stringify(['home-a', 'home-b']),
             },
         });

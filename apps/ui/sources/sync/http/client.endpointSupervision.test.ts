@@ -1,20 +1,26 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+const token = createAccountTokenForTests('endpoint-account');
+beforeEach(async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Endpoint Home' });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+});
 
 afterEach(async () => {
     delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS;
-    try {
-        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
-        await stopAllEndpointSupervisorsForTests();
-    } catch {
-        // ignore
-    }
-
-    const { resetRuntimeFetch } = await import('./client');
+    vi.useRealTimers();
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
     resetRuntimeFetch();
 
     vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
 });
 
 describe('serverFetch endpoint supervision', () => {
@@ -22,20 +28,6 @@ describe('serverFetch endpoint supervision', () => {
         vi.useFakeTimers();
         vi.setSystemTime(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
-
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
 
         const client = await import('./client');
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -45,13 +37,13 @@ describe('serverFetch endpoint supervision', () => {
             }
             return new Response(null, { status: 200, headers: new Headers() });
         });
-        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(runtimeFetchMock as unknown as typeof fetch);
+        setRuntimeFetch(runtimeFetchMock);
 
         const { acquireEndpointSupervisor } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
         const lease = await acquireEndpointSupervisor({
-            serverId: 'server-a',
+            serverId: getActiveServerSnapshot().serverId,
             endpoint: 'https://api.example.test',
-            tokenOverride: 'token-a',
+            tokenOverride: token,
         });
 
         expect(lease.supervisor.getState().phase).toBe('offline');
@@ -59,7 +51,7 @@ describe('serverFetch endpoint supervision', () => {
 
         const promise = client.serverFetch('/v1/sessions', {
             headers: {
-                Authorization: 'Bearer token-a',
+                Authorization: `Bearer ${token}`,
             },
         }, { includeAuth: false });
         const assertion = expect(promise).rejects.toMatchObject({
@@ -76,20 +68,6 @@ describe('serverFetch endpoint supervision', () => {
     });
 
     it('reports failures to the endpoint supervisor when runtimeFetch throws during an online phase', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => null),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-
         const client = await import('./client');
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
@@ -100,20 +78,20 @@ describe('serverFetch endpoint supervision', () => {
                 'Request failed: https://user:pass@api.example.test/v1/sessions?access_token=secret Authorization: Bearer very-secret-token',
             );
         });
-        (client as unknown as { setRuntimeFetch: (fn: typeof fetch) => void }).setRuntimeFetch(runtimeFetchMock as unknown as typeof fetch);
+        setRuntimeFetch(runtimeFetchMock);
 
         const { acquireEndpointSupervisor } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
         const lease = await acquireEndpointSupervisor({
-            serverId: 'server-a',
+            serverId: getActiveServerSnapshot().serverId,
             endpoint: 'https://api.example.test',
-            tokenOverride: 'token-a',
+            tokenOverride: token,
         });
 
         expect(lease.supervisor.getState().phase).toBe('online');
 
         await expect(client.serverFetch('/v1/sessions', {
             headers: {
-                Authorization: 'Bearer token-a',
+                Authorization: `Bearer ${token}`,
             },
         }, { includeAuth: false })).rejects.toThrow(
             'Request failed',

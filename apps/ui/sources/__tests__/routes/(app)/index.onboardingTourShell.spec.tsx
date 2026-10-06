@@ -3,7 +3,6 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    createExpoRouterMock,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -112,14 +111,17 @@ vi.mock('@/demoMode/seed/seedDemoWorld', () => ({
     clearDemoWorld: vi.fn(async () => {}),
 }));
 
-const expoRouterMock = createExpoRouterMock({
-    router: {
+const expoRouterMock = vi.hoisted(() => ({
+    spies: {
         push: vi.fn(),
         replace: vi.fn(),
         back: vi.fn(),
     },
+}));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: expoRouterMock.spies }).module;
 });
-vi.mock('expo-router', () => expoRouterMock.module);
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');

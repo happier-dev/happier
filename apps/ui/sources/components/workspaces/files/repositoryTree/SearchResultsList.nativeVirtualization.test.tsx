@@ -54,12 +54,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: 'Item',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 describe('SearchResultsList native virtualization', () => {
     it('keeps native search results in the virtualized list during refinement', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');

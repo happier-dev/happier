@@ -82,10 +82,6 @@ export function installSessionDetailsPanelCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
-    vi.mock('@/components/ui/media/FileIcon', () => ({
-        FileIcon: 'FileIcon',
-    }));
-
     vi.mock('@/text', async () => {
         const activeOptions = sessionDetailsPanelModuleState.options;
         if (activeOptions.text) {
@@ -102,7 +98,6 @@ export function installSessionDetailsPanelCommonModuleMocks(
             return await activeOptions.storage(importOriginal);
         }
 
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {});
+        return importOriginal<typeof import('@/sync/domains/state/storage')>();
     });
 }

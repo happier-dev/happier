@@ -17,6 +17,33 @@ const DELETED_LEGACY_CHAT_LIST_HARNESS_EXPORTS = [
 ];
 
 describe('chatListHarness', () => {
+    it('preserves real DOM event lifetime and mutable scroller layout measurements', async () => {
+        const { createChatListHarnessWebScroller, withChatListHarnessWebScrollerDom } = await import('./chatListHarness');
+        const previousDocument = globalThis.document;
+        const previousWindow = globalThis.window;
+        const geometry = createChatListHarnessWebScroller({ clientHeight: 400, scrollHeight: 1200, scrollTop: 200 });
+        const onKeyDown = vi.fn();
+        await withChatListHarnessWebScrollerDom(geometry, async () => {
+            const element = document.querySelector('div');
+            expect(element).toBeInstanceOf(HTMLElement);
+            expect(document.body.contains(element)).toBe(true);
+            expect(element?.scrollTop).toBe(200);
+            geometry.scrollTop = 300;
+            expect(element?.scrollTop).toBe(300);
+            if (!element) throw new Error('Expected genuine scroll element');
+            element.scrollTop = 5000;
+            expect(geometry.scrollTop).toBe(800);
+            document.addEventListener('keydown', onKeyDown);
+            document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End' }));
+            expect(onKeyDown).toHaveBeenCalledOnce();
+            document.removeEventListener('keydown', onKeyDown);
+            document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Home' }));
+            expect(onKeyDown).toHaveBeenCalledOnce();
+        });
+        expect(globalThis.document).toBe(previousDocument);
+        expect(globalThis.window).toBe(previousWindow);
+    });
+
     it('does not export deleted legacy ChatList harness compatibility aliases', async () => {
         const harnessModule = await import('./chatListHarness');
 

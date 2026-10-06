@@ -6,7 +6,6 @@ type InstallSourceControlCommitSelectionCommonModuleMocksOptions = Readonly<{
     icons?: SourceControlCommitSelectionModuleFactory;
     reactNative?: SourceControlCommitSelectionModuleFactory;
     text?: SourceControlCommitSelectionModuleFactory;
-    typography?: SourceControlCommitSelectionModuleFactory;
     uiText?: SourceControlCommitSelectionModuleFactory;
     unistyles?: SourceControlCommitSelectionModuleFactory;
 }>;
@@ -16,7 +15,6 @@ const sourceControlCommitSelectionModuleState = vi.hoisted(() => ({
         icons: undefined as SourceControlCommitSelectionModuleFactory | undefined,
         reactNative: undefined as SourceControlCommitSelectionModuleFactory | undefined,
         text: undefined as SourceControlCommitSelectionModuleFactory | undefined,
-        typography: undefined as SourceControlCommitSelectionModuleFactory | undefined,
         uiText: undefined as SourceControlCommitSelectionModuleFactory | undefined,
         unistyles: undefined as SourceControlCommitSelectionModuleFactory | undefined,
     },
@@ -29,7 +27,6 @@ export function installSourceControlCommitSelectionCommonModuleMocks(
         icons: options.icons,
         reactNative: options.reactNative,
         text: options.text,
-        typography: options.typography,
         uiText: options.uiText,
         unistyles: options.unistyles,
     };
@@ -73,20 +70,6 @@ export function installSourceControlCommitSelectionCommonModuleMocks(
         return {
             Text: 'Text',
             TextInput: 'TextInput',
-        };
-    });
-
-    vi.mock('@/constants/Typography', async () => {
-        const activeOptions = sourceControlCommitSelectionModuleState.options;
-        if (activeOptions.typography) {
-            return await activeOptions.typography();
-        }
-
-        return {
-            Typography: {
-                default: () => ({}),
-                mono: () => ({}),
-            },
         };
     });
 

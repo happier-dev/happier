@@ -133,6 +133,7 @@ function writeRuntimeBackedRunnerFixture(root: string): Readonly<{
   fingerprint: string;
 }> {
   const distDir = join(root, 'dist');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', version: '0.0.0' }), 'utf8');
   mkdirSync(distDir, { recursive: true });
   writeFileSync(join(distDir, 'chunk.mjs'), 'export const runner = true;\n', 'utf8');
   const entrypoint = join(distDir, 'index.mjs');

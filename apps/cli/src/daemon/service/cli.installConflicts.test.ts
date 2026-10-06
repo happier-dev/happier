@@ -1,231 +1,141 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-import type { DaemonRunningInspection } from '@/daemon/controlClient';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
+import { mockCurrentProcessAsDaemonLifecycleOwner } from '@/testkit/process/daemonLifecycleOwner';
+import type { DaemonServiceInstallPlan } from './plan';
 
-const {
-  installDaemonServiceMock,
-  previewDaemonServiceInstallMock,
-  resolveDaemonServiceInstallRuntimeTargetMock,
-  inspectDaemonRunningStateMock,
-} = vi.hoisted(() => ({
-  installDaemonServiceMock: vi.fn(async () => undefined),
-  previewDaemonServiceInstallMock: vi.fn(async () => ({
-    exactTargetExists: true,
-    exactTargetIsConverged: true,
-    exactTargetMatchesExpectedDefinition: true,
-    strategy: 'add' as const,
-    conflictPlan: {
-      exactTargetExists: true,
-      exactTargetIsConverged: true,
-      competingServices: [],
-      foreignHomeConflicts: [],
-      servicesToRemove: [],
-    },
-    plan: { files: [], commands: [] },
-  })),
-  resolveDaemonServiceInstallRuntimeTargetMock: vi.fn(async () => ({
-    nodePath: '/managed/node',
-    entryPath: '/opt/happier/package-dist/index.mjs',
-  })),
-  inspectDaemonRunningStateMock: vi.fn<() => Promise<DaemonRunningInspection>>(async () => ({ status: 'not-running' as const })),
+type Preview = Readonly<{
+  ok: boolean;
+  plan: DaemonServiceInstallPlan;
+  installConflict?: Readonly<{
+    blocking: boolean;
+    competingServices: readonly Readonly<{ label: string }>[];
+  }>;
+}>;
+
+// Only the service manager is outside the process. Files, inventory, conflict
+// policy, runtime target resolution and the install planner remain real.
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawnSync: vi.fn(() => ({ status: 0, stdout: Buffer.from('active'), stderr: Buffer.from('') })),
 }));
 
-vi.mock('./installer', () => ({
-  installDaemonService: installDaemonServiceMock,
-  previewDaemonServiceInstall: previewDaemonServiceInstallMock,
-  uninstallDaemonService: vi.fn(async () => undefined),
-}));
+async function withInstallFixture(
+  platform: 'linux' | 'darwin',
+  run: (cli: typeof import('./cli'), home: string) => Promise<void>,
+) {
+  await withTempDir('happier-service-install-conflict-', async (home) => {
+    const env = createEnvKeyScope([
+      'HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_PLATFORM',
+      'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR', 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+      'HAPPIER_DAEMON_SERVICE_INSTANCE_ID', 'HAPPIER_DAEMON_SERVICE_CHANNEL',
+      'HAPPIER_DAEMON_SERVICE_TARGET_MODE', 'HAPPIER_DAEMON_SERVICE_NODE_PATH',
+      'HAPPIER_DAEMON_SERVICE_ENTRY_PATH', 'HAPPIER_PUBLIC_RELEASE_CHANNEL',
+      'HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY',
+    ]);
+    try {
+      env.patch({
+        HAPPIER_HOME_DIR: join(home, '.happier'),
+        HAPPIER_DAEMON_SERVICE_PLATFORM: platform,
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: home,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(home, '.happier'),
+        HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
+        HAPPIER_DAEMON_SERVICE_CHANNEL: 'preview',
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_DAEMON_SERVICE_NODE_PATH: '/usr/local/bin/happier',
+        HAPPIER_DAEMON_SERVICE_ENTRY_PATH: '',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+        HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY: undefined,
+      });
+      vi.resetModules();
+      mockCurrentProcessAsDaemonLifecycleOwner();
+      await run(await import('./cli'), home);
+    } finally {
+      env.restore();
+    }
+  });
+}
 
-vi.mock('./resolveDaemonServiceInstallRuntimeTarget', () => ({
-  resolveDaemonServiceInstallRuntimeTarget: resolveDaemonServiceInstallRuntimeTargetMock,
-}));
+async function installDefinition(
+  cli: typeof import('./cli'), channel: 'stable' | 'preview',
+  targetMode: 'pinned' | 'default-following',
+) {
+  const runtime = cli.resolveDaemonServiceCliRuntimeFromEnv({ channel, targetMode, processEnv: process.env });
+  const { planDaemonServiceInstall } = await import('./plan');
+  const plan = planDaemonServiceInstall({ ...runtime, uid: runtime.uid ?? undefined });
+  for (const file of plan.files) {
+    mkdirSync(dirname(file.path), { recursive: true });
+    writeFileSync(file.path, file.content, 'utf8');
+  }
+  const paths = cli.resolveDaemonServicePaths(runtime);
+  return { ...paths, label: runtime.platform === 'linux' ? paths.unitName : paths.label };
+}
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>();
-  return {
-    ...actual,
-    spawnSync: vi.fn(() => ({ status: 0, stdout: Buffer.from('active'), stderr: Buffer.from('') })),
-  };
-});
-
-vi.mock('@/daemon/controlClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
-  return {
-    ...actual,
-    inspectDaemonRunningStateAndCleanupStaleState: inspectDaemonRunningStateMock,
-  };
-});
+async function previewInstall(cli: typeof import('./cli'), flags: readonly string[] = []) {
+  const output = captureStdoutJsonOutput<Preview>();
+  try {
+    await cli.runDaemonServiceCliCommand({ argv: ['install', '--dry-run', '--json', ...flags] });
+    return output.json();
+  } finally {
+    output.restore();
+  }
+}
 
 describe('runDaemonServiceCliCommand install conflict preflight', () => {
-  const envKeys = [
-    'HAPPIER_DAEMON_SERVICE_PLATFORM',
-    'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
-    'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
-    'HAPPIER_DAEMON_SERVICE_INSTANCE_ID',
-    'HAPPIER_DAEMON_SERVICE_CHANNEL',
-    'HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY',
-    'HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS',
-    'HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS',
-    'HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS',
-  ] as const;
-  let envScope = createEnvKeyScope(envKeys);
-
   afterEach(() => {
-    envScope.restore();
-    envScope = createEnvKeyScope(envKeys);
-    vi.clearAllMocks();
-    previewDaemonServiceInstallMock.mockClear();
-    inspectDaemonRunningStateMock.mockReset();
-    inspectDaemonRunningStateMock.mockImplementation(async () => ({ status: 'not-running' }));
+    vi.restoreAllMocks();
     vi.resetModules();
+    process.exitCode = undefined;
   });
 
   it('fails closed by default when another verified background service is already installed', async () => {
-    envScope.patch({
-      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
-      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
-      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/home/tester/.happier',
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
-      HAPPIER_DAEMON_SERVICE_CHANNEL: 'publicdev',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '10',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '1',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '0',
+    await withInstallFixture('linux', async (cli) => {
+      const existing = await installDefinition(cli, 'stable', 'pinned');
+      const result = await previewInstall(cli);
+      expect(result.installConflict).toMatchObject({
+        blocking: true,
+        competingServices: [expect.objectContaining({ label: existing.label })],
+      });
     });
-
-    const output = captureStdoutJsonOutput<{ ok: boolean; error?: string; message?: string }>();
-    try {
-      const { runDaemonServiceCliCommand } = await import('./cli.js');
-      installDaemonServiceMock.mockRejectedValueOnce(Object.assign(
-        new Error('Competing background services detected: happier-daemon.default. Re-run with --yes or --replace-existing=ring|all.'),
-        {
-          code: 'daemon_service_conflict',
-          conflicts: [{ label: 'happier-daemon.default' }],
-        },
-      ));
-
-      await runDaemonServiceCliCommand({ argv: ['install', '--json'] });
-
-      expect(output.json()).toEqual(expect.objectContaining({
-        ok: false,
-        error: 'daemon_service_conflict',
-        message: expect.stringContaining('--replace-existing=ring|all'),
-      }));
-      expect(resolveDaemonServiceInstallRuntimeTargetMock).toHaveBeenCalledWith(expect.objectContaining({
-        targetMode: 'default-following',
-      }));
-      expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
-        strategy: undefined,
-      }));
-    } finally {
-      output.restore();
-    }
   });
 
   it('allows explicit add semantics when --yes is provided', async () => {
-    envScope.patch({
-      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
-      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
-      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/home/tester/.happier',
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
-      HAPPIER_DAEMON_SERVICE_CHANNEL: 'publicdev',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '10',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '1',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '0',
+    await withInstallFixture('linux', async (cli) => {
+      const existing = await installDefinition(cli, 'stable', 'pinned');
+      const result = await previewInstall(cli, ['--yes']);
+      expect(result.installConflict).toMatchObject({
+        blocking: false,
+        competingServices: [expect.objectContaining({ label: existing.label })],
+      });
+      expect(result.plan.commands.some(command => command.args.includes('disable') && command.args.includes(existing.label))).toBe(false);
     });
-
-    const { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, runDaemonServiceCliCommand } = await import('./cli.js');
-    const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
-    const paths = resolveDaemonServicePaths(runtime);
-    inspectDaemonRunningStateMock.mockResolvedValue({
-      status: 'running',
-      state: {
-        pid: process.pid,
-        httpPort: 43122,
-        startedAt: Date.now(),
-        startedWithCliVersion: '0.0.0-other',
-        startedWithPublicReleaseChannel: 'dev',
-        startupSource: 'background-service',
-        serviceLabel: paths.label,
-      },
-    });
-    await expect(runDaemonServiceCliCommand({ argv: ['install', '--yes', '--json'] })).rejects.toThrow(/active daemon for the selected Home/i);
-    expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
-      strategy: 'add',
-    }));
   });
 
-  it('passes replace-all to the installer when explicitly requested', async () => {
-    envScope.patch({
-      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
-      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
-      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/home/tester/.happier',
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
-      HAPPIER_DAEMON_SERVICE_CHANNEL: 'publicdev',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '10',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '1',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '0',
+  it('plans removal of the competing service when replace-all is explicitly requested', async () => {
+    await withInstallFixture('linux', async (cli) => {
+      const existing = await installDefinition(cli, 'stable', 'pinned');
+      const result = await previewInstall(cli, ['--replace-existing=all', '--yes']);
+      expect(result.installConflict?.blocking).toBe(false);
+      expect(result.plan.commands.some(command => command.args.includes('disable') && command.args.includes(existing.label))).toBe(true);
     });
-
-    const { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, runDaemonServiceCliCommand } = await import('./cli.js');
-    const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
-    const paths = resolveDaemonServicePaths(runtime);
-    inspectDaemonRunningStateMock.mockResolvedValue({
-      status: 'running',
-      state: {
-        pid: process.pid,
-        httpPort: 43122,
-        startedAt: Date.now(),
-        startedWithCliVersion: '0.0.0-other',
-        startedWithPublicReleaseChannel: 'dev',
-        startupSource: 'background-service',
-        serviceLabel: paths.label,
-      },
-    });
-    await expect(runDaemonServiceCliCommand({ argv: ['install', '--replace-existing=all', '--yes', '--json'] })).rejects.toThrow(/did not become the active daemon/i);
-    expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.objectContaining({
-      strategy: 'replace-all',
-    }));
   });
 
   it('uses the same stale-daemon restart decision for install dry-run planning', async () => {
-    envScope.patch({
-      HAPPIER_DAEMON_SERVICE_PLATFORM: 'darwin',
-      HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/home/tester',
-      HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/home/tester/.happier',
-      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'default',
-      HAPPIER_DAEMON_SERVICE_CHANNEL: 'publicdev',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '10',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '1',
-      HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '0',
+    await withInstallFixture('darwin', async (cli) => {
+      const paths = await installDefinition(cli, 'preview', 'default-following');
+      const { writeDaemonState } = await import('@/persistence');
+      await writeDaemonState({
+        pid: process.pid, httpPort: 43122, startedAt: Date.now(),
+        startedWithCliVersion: '0.0.0-other', startedWithPublicReleaseChannel: 'dev',
+        startupSource: 'background-service', serviceLabel: paths.label,
+      });
+      const result = await previewInstall(cli);
+      expect(result.ok).toBe(true);
+      expect(result.plan.commands.some(command => command.args[0] === 'bootstrap')).toBe(true);
     });
-
-    const { resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths, runDaemonServiceCliCommand } = await import('./cli.js');
-    const runtime = resolveDaemonServiceCliRuntimeFromEnv({ processEnv: process.env });
-    const paths = resolveDaemonServicePaths(runtime);
-    inspectDaemonRunningStateMock.mockResolvedValue({
-      status: 'running',
-      state: {
-        pid: process.pid,
-        httpPort: 43122,
-        startedAt: Date.now(),
-        startedWithCliVersion: '0.0.0-other',
-        startedWithPublicReleaseChannel: 'dev',
-        startupSource: 'background-service',
-        serviceLabel: paths.label,
-      },
-    });
-
-    const output = captureStdoutJsonOutput<{ ok: boolean }>();
-    try {
-      await runDaemonServiceCliCommand({ argv: ['install', '--dry-run', '--json'] });
-      expect(output.json().ok).toBe(true);
-      expect(previewDaemonServiceInstallMock).toHaveBeenCalledWith(expect.objectContaining({
-        restartRunningDaemon: true,
-      }));
-    } finally {
-      output.restore();
-    }
   });
 });

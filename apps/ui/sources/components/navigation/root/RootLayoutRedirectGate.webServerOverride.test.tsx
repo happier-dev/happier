@@ -6,6 +6,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 
 installTokenStorageWebPlatformMocks();
 const navigation = vi.hoisted(() => ({ pathname: '/', params: {} as Record<string, string>, replace: vi.fn() }));
@@ -33,6 +34,7 @@ vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
 }));
 
 // Warm the real graph during collection; individual cases still reset domain state.
+await initializeTerminalRouteRuntimeForTests();
 await import('./RootLayoutRedirectGate');
 
 describe('supplied Home admission before shell mount', () => {
@@ -40,7 +42,6 @@ describe('supplied Home admission before shell mount', () => {
     let locks: ReturnType<typeof installWebLockManagerMock>;
 
     beforeEach(() => {
-        vi.resetModules();
         storage = installLocalStorageMock();
         locks = installWebLockManagerMock();
         runtimeFetch.mockReset();

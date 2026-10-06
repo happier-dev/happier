@@ -1,9 +1,8 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type { PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
-import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
+import { standardCleanup } from '@/dev/testkit';
+import { installTerminalRouteCommonModuleMocks, initializeTerminalRouteRuntimeForTests, renderTerminalRoute } from './terminalRouteTestHelpers';
 import { TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY } from '@/utils/path/terminalConnectWebBootstrap';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -11,40 +10,17 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
-const getPendingTerminalConnectMock = vi.fn<() => PendingTerminalConnect | null>(() => null);
 const globalWindow = globalThis as unknown as { window?: Window };
 const originalWindow = globalWindow.window;
 
 installTerminalRouteCommonModuleMocks();
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    setPendingTerminalConnect: vi.fn(),
-    clearPendingTerminalConnect: vi.fn(),
-    getPendingTerminalConnect: getPendingTerminalConnectMock,
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerUrl: () => 'https://api.happier.dev',
-    loadHomeViewState: () => null,
-}));
-
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-    normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
-    upsertActivateAndSwitchServer: vi.fn(async () => true),
-}));
-
-vi.mock('@/hooks/session/useConnectTerminal', () => ({
-    useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
-}));
+await initializeTerminalRouteRuntimeForTests();
 
 describe('TerminalConnectScreen hash parsing', () => {
-    beforeEach(() => {
-        vi.resetModules();
-        getPendingTerminalConnectMock.mockReset();
+    beforeEach(async () => {
+        const { clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+        clearPendingTerminalConnect();
         globalWindow.window = {
             location: {
                 hash: '#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop',
@@ -68,11 +44,12 @@ describe('TerminalConnectScreen hash parsing', () => {
     it('parses key even when it is not the first hash parameter', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
-        expect(globalWindow.window?.history.replaceState).toHaveBeenCalled();
+        // Anonymous legacy links cannot prove resumable Home identity for scrubbing.
+        expect(globalWindow.window?.history.replaceState).not.toHaveBeenCalled();
     });
 
     it('shows invalid-link state when hash contains no key parameter', async () => {
@@ -87,7 +64,7 @@ describe('TerminalConnectScreen hash parsing', () => {
         } as unknown as Window;
 
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         const textContent = screen.getTextContent();
@@ -96,7 +73,10 @@ describe('TerminalConnectScreen hash parsing', () => {
     });
 
     it('restores key from pending terminal connect when hash is empty (dev strict-mode remount safety)', async () => {
-        getPendingTerminalConnectMock.mockReturnValue({
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://example.test', source: 'manual' });
+        const { setPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+        setPendingTerminalConnect({
             publicKeyB64Url: 'abcdefghijklmnop',
             serverUrl: 'https://example.test',
             serverIdentityId: 'srv_example_test',
@@ -114,7 +94,7 @@ describe('TerminalConnectScreen hash parsing', () => {
 
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
@@ -133,14 +113,13 @@ describe('TerminalConnectScreen hash parsing', () => {
 
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
     });
 
     it('parses key from bootstrapped sessionStorage when the hash was stripped before router init', async () => {
-        getPendingTerminalConnectMock.mockReturnValue(null);
 
         const storage = new Map<string, string>();
         storage.set(TERMINAL_CONNECT_WEB_BOOTSTRAP_STORAGE_KEY, '#server=https%3A%2F%2Fexample.test&key=abcdefghijklmnop');
@@ -162,7 +141,7 @@ describe('TerminalConnectScreen hash parsing', () => {
 
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();

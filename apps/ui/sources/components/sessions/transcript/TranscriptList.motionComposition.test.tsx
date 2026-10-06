@@ -2,6 +2,8 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createUseSettingMock, createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Message } from '@happier-dev/session-core/messages';
 import { installTranscriptCommonModuleMocks } from './transcriptTestHelpers';
 
@@ -41,6 +43,9 @@ vi.mock('@legendapp/list/react-native', async () => {
     const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
     return createCapturingLegendListMock().module;
 });
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 describe('TranscriptList motion composition', () => {
     afterEach(() => {

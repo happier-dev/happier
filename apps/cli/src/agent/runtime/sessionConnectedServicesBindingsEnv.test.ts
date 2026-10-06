@@ -6,17 +6,18 @@ import {
 } from './sessionConnectedServicesBindingsEnv';
 
 describe('session connected-services bindings env', () => {
-  it('serializes and reloads the exact current team-resource authority', () => {
+  it('serializes and reloads the current team-resource selection and disclosed member', () => {
     const bindings = {
       v: 2 as const,
       bindingsByServiceId: {
         'plugin.acme/service': {
           source: 'team_resource' as const,
-          teamId: 'team-1',
           resourceId: 'resource-1',
-          expectedResourceRevision: 7,
-          sourceMemberKey: 'member-1',
-          sourceVersion: 'version-1',
+          deliveryMode: 'direct' as const,
+          disclosedMember: {
+            service: { pluginId: 'plugin.acme', localId: 'service' },
+            accountId: 'member-1',
+          },
         },
       },
     };

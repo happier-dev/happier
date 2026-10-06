@@ -1,130 +1,44 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '../../domains/state/storageTypes';
 
+import { storage } from '@/sync/domains/state/storage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../../engine/pending/pendingQueueV2.testHelpers';
+
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'server_1', accountId: 'account_a' });
+});
+
 afterEach(() => {
-    vi.resetModules();
+    storage.setState(storage.getInitialState(), true);
     vi.clearAllMocks();
     vi.restoreAllMocks();
 });
 
-function mockSessionsDomainBoundaries() {
-    vi.doMock('../../domains/state/persistence', () => ({
-        loadSettings: vi.fn(() => ({
-            settings: {},
-            version: null,
-        })),
-        loadLocalSettings: vi.fn(() => ({})),
-        loadPendingSettings: vi.fn(() => ({})),
-        loadPurchases: vi.fn(() => ({})),
-        loadProfile: vi.fn(() => ({ id: 'account_a' })),
-        loadSessionDrafts: vi.fn(() => ({})),
-        loadSessionLastViewed: vi.fn(() => ({})),
-        loadSessionModelModeUpdatedAts: vi.fn(() => ({})),
-        loadSessionModelModes: vi.fn(() => ({})),
-        loadSessionPermissionModeUpdatedAts: vi.fn(() => ({})),
-        loadSessionPermissionModes: vi.fn(() => ({})),
-        loadSessionActionDrafts: vi.fn(() => ({})),
-        loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
-        loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
-        saveSessionDrafts: vi.fn(),
-        saveSessionLastViewed: vi.fn(),
-        saveSessionModelModeUpdatedAts: vi.fn(),
-        saveSessionModelModes: vi.fn(),
-        saveSessionPermissionModeUpdatedAts: vi.fn(),
-        saveSessionPermissionModes: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
-        saveSessionReviewCommentsDrafts: vi.fn(),
-        saveWorkspaceReviewCommentsDrafts: vi.fn(),
-        saveSettings: vi.fn(),
-        saveLocalSettings: vi.fn(),
-        savePendingSettings: vi.fn(),
-        savePurchases: vi.fn(),
-        saveProfile: vi.fn(),
-    }));
-    vi.doMock('../../domains/state/warmCachePersistence', () => ({
-        resolveWarmCacheAccountScope: vi.fn(() => null),
-        peekSessionListWarmCacheEntries: vi.fn(() => null),
-        saveSessionListWarmCacheEntries: vi.fn(),
-    }));
-    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
-        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
-        return {
-            ...actual,
-            buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
-        };
-    });
-    vi.doMock('../../domains/session/listing/applyReachableTargetsToSessionListRenderables', () => ({
-        applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
-    }));
-    vi.doMock('../sessionListIndex/buildSessionListIndexWithServerScope', () => ({
-        buildActiveServerSessionListIndex: vi.fn(() => []),
-    }));
-    vi.doMock('../../domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
-    }));
-    vi.doMock('../../runtime/orchestration/projectManager', () => ({
-        projectManager: {
-            updateSessions: vi.fn(),
-        },
-    }));
-    vi.doMock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
-        options?.find?.((option: any) => option.value === effectiveModelId)
-            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
-            ?? null,
-        isModelSelectableForSession: vi.fn(() => true),
-    }));
-    vi.doMock('@/agents/registry/registryCore', () => ({
-        AGENT_IDS: [],
-        CANONICAL_AGENT_IDS: [],
-        DEFAULT_AGENT_ID: 'openai',
-        resolveAgentIdFromFlavor: vi.fn(() => null),
-    }));
-}
-
-function createHarness(createSessionsDomain: any, createReducer: any, initialStateOverrides: Record<string, unknown> = {}) {
-    let state: any = {
-        sessions: {},
-        sessionListRowsByServerId: {},
-        ordinarySessionListMembershipByServerId: {},
-        archivedSessionListMembershipByServerId: {},
-        concurrentSessionListCacheByServerId: {},
-        sessionScmStatus: {},
-        sessionLastViewed: {},
-        sessionRepositoryTreeExpandedPathsBySessionId: {},
-        reviewCommentsDraftsBySessionId: {},
-        sessionActionDraftsByAddressKey: {},
-        isDataReady: false,
-        machines: {},
-        machineDisplayById: {},
+function createHarness(_createSessionsDomain: unknown, createReducer: typeof import('@happier-dev/session-core/reducer').createReducer, initialStateOverrides: Record<string, unknown> = {}) {
+    storage.setState({
         sessionMessages: {
             s1: {
-                messages: [],
+                messageIdsOldestFirst: [],
+                messagesById: {},
                 messagesMap: {},
                 reducerState: createReducer(),
+                latestThinkingMessageId: null,
+                latestThinkingMessageActivityAtMs: null,
+                messagesVersion: 0,
                 isLoaded: true,
             },
         },
-        profile: { id: 'account_a' },
-        settings: {},
         ...initialStateOverrides,
-    };
-
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
-
-    const domain = createSessionsDomain({ get, set } as any);
-    return { get, domain };
+    });
+    return { get: storage.getState, domain: storage.getState() };
 }
 
 describe('sessions domain: thinking grace', () => {
     it('owns a bounded resuming marker until genuine post-attach activity settles it', async () => {
-        mockSessionsDomainBoundaries();
-
         const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');

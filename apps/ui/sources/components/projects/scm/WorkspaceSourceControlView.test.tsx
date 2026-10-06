@@ -9,17 +9,11 @@ import type { ScmStashListResponse } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 import { publishActiveReviewFile, readActiveReviewFile, resetActiveReviewFilesForTests } from '@/components/workspaces/scm/review/activeReviewFile';
-import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const markWorkspaceScmCommitSelectionPathsSpy = vi.fn();
-const unmarkWorkspaceScmCommitSelectionPathsSpy = vi.fn();
-const removeWorkspaceScmCommitSelectionPatchSpy = vi.fn();
-const clearWorkspaceScmCommitSelectionPathsSpy = vi.fn();
-const clearWorkspaceScmCommitSelectionPatchesSpy = vi.fn();
 const refreshSpy = vi.fn(async () => {});
-const scrollToIndexSpy = vi.fn();
+const scrollToIndexSpy = vi.hoisted(() => vi.fn());
 const setScmRemoteConfirmPolicySpy = vi.fn();
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const modalAlertAsyncSpy = vi.hoisted(() => vi.fn(async (...args: Parameters<import('@/modal').IModal['alertAsync']>) => {
@@ -128,18 +122,10 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: React.forwardRef((props: any, ref) => {
-        React.useImperativeHandle(ref, () => ({ scrollToIndex: scrollToIndexSpy }));
-        const data = Array.isArray(props.data) ? props.data : [];
-        const items = data.map((item: unknown, index: number) => React.createElement(
-            'FlatListItem',
-            { key: props.keyExtractor?.(item, index) ?? String(index) },
-            props.renderItem?.({ item, index }),
-        ));
-        return React.createElement('FlatList', props, props.ListHeaderComponent, ...items);
-    }),
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ refHandle: { scrollToIndex: scrollToIndexSpy } }).module;
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => scmWriteEnabledMock,
@@ -173,21 +159,7 @@ let scmWriteEnabledMock = true;
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-
-    const state = {
-        markWorkspaceScmCommitSelectionPaths: (...args: any[]) => markWorkspaceScmCommitSelectionPathsSpy(...args),
-        unmarkWorkspaceScmCommitSelectionPaths: (...args: any[]) => unmarkWorkspaceScmCommitSelectionPathsSpy(...args),
-        removeWorkspaceScmCommitSelectionPatch: (...args: any[]) => removeWorkspaceScmCommitSelectionPatchSpy(...args),
-        clearWorkspaceScmCommitSelectionPaths: (...args: any[]) => clearWorkspaceScmCommitSelectionPathsSpy(...args),
-        clearWorkspaceScmCommitSelectionPatches: (...args: any[]) => clearWorkspaceScmCommitSelectionPatchesSpy(...args),
-        beginWorkspaceScmOperation: () => ({ started: true, operation: { id: 'op-1', startedAt: 1, sessionId: 's', operation: 'commit' } }),
-        finishWorkspaceScmOperation: () => true,
-        appendWorkspaceScmOperation: () => {},
-    };
-
     return createPartialStorageModuleMock(importOriginal, {
-        storage: createStorageStoreMock(state as any),
         useSetting: (key: any) => {
             if (key === 'scmCommitStrategy') return scmCommitStrategySetting;
             if (key === 'scmRemoteConfirmPolicy') return scmRemoteConfirmPolicySetting;
@@ -337,9 +309,18 @@ function createLargeChangedFilesSnapshot(count = 30): ScmWorkingSnapshot {
 }
 
 const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+const { storage } = await import('@/sync/domains/state/storage');
+const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+// Observe the real mutations without replacing the canonical operation/selection owner.
+const markWorkspaceScmCommitSelectionPathsSpy = vi.spyOn(storage.getState(), 'markWorkspaceScmCommitSelectionPaths');
+const unmarkWorkspaceScmCommitSelectionPathsSpy = vi.spyOn(storage.getState(), 'unmarkWorkspaceScmCommitSelectionPaths');
+const removeWorkspaceScmCommitSelectionPatchSpy = vi.spyOn(storage.getState(), 'removeWorkspaceScmCommitSelectionPatch');
+const clearWorkspaceScmCommitSelectionPathsSpy = vi.spyOn(storage.getState(), 'clearWorkspaceScmCommitSelectionPaths');
+const clearWorkspaceScmCommitSelectionPatchesSpy = vi.spyOn(storage.getState(), 'clearWorkspaceScmCommitSelectionPatches');
 
 describe('WorkspaceSourceControlView', () => {
     beforeEach(() => {
+        projectManager.clear();
         resetActiveReviewFilesForTests();
         scrollToIndexSpy.mockClear();
         markWorkspaceScmCommitSelectionPathsSpy.mockClear();
@@ -363,6 +344,7 @@ describe('WorkspaceSourceControlView', () => {
     });
 
     it('reveals Review’s active workspace file and routes a list tap to Review only while shown', async () => {
+        const { ScmChangeRow } = await import('@/components/workspaces/scm/changes/ScmChangeRow');
         workspaceSnapshotMock = createMultiFileSnapshot();
         commitSelectionPaths = [];
         commitSelectionPatches = [];
@@ -422,7 +404,8 @@ describe('WorkspaceSourceControlView', () => {
             />
         )).tree;
 
-        const changedFilesList = tree.findByType('LegendList');
+        const { VirtualizedList } = await import('@/components/ui/lists/virtualized/VirtualizedList');
+        const changedFilesList = tree.findByType(VirtualizedList);
 
         expect(changedFilesList.props.initialNumToRender).toBe(12);
         expect(changedFilesList.props.maxToRenderPerBatch).toBe(12);

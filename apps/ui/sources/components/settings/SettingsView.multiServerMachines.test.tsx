@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -121,9 +122,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: () => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({ useFocusEffect: () => {} });
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -151,9 +153,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/track', () => ({
     trackPaywallButtonClicked: vi.fn(),
@@ -215,7 +214,7 @@ describe('SettingsView (multi-server machines)', () => {
         const { SettingsView } = await import('./SettingsView');
 
         let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(React.createElement(SettingsView))).tree;
+        tree = (await renderScreen(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>)).tree;
 
         const items = tree!.findAllByType('Item' as any);
         const itemTitles = items.map((item: any) => String(item.props.title ?? ''));

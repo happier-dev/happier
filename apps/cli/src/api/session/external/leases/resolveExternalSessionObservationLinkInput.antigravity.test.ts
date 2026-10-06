@@ -4,24 +4,13 @@ import { join } from 'node:path';
 import {
     buildLinkedExternalSessionQualifiedIdentityV1,
 } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { resolveBackendEngineAdapterResolution } from '@/agent/runtime/registry/engineRegistry';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
-import {
-    resolveExecutablePluginRuntimeRegistry,
-} from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
-
-const runtimeLeaseMocks = vi.hoisted(() => ({
-    acquire: vi.fn(),
-}));
-
-vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
-    acquireAuthoritativePluginRuntimeRegistryLease: runtimeLeaseMocks.acquire,
-}));
 
 import {
     createExternalSessionObservationDaemonProjection,
@@ -39,10 +28,6 @@ function line(value: unknown): string {
 }
 
 describe('Antigravity production observation admission', () => {
-    afterEach(() => {
-        runtimeLeaseMocks.acquire.mockReset();
-    });
-
     it('projects filesystem-read authority and admits only the canonical linked transcript', async () => {
         await withTempDir('happier-antigravity-observation-admission-', async (directory) => {
             const home = join(directory, 'home');
@@ -75,22 +60,14 @@ describe('Antigravity production observation admission', () => {
 
             const envScope = createEnvKeyScope(['HOME', 'USERPROFILE']);
             envScope.patch({ HOME: home, USERPROFILE: undefined });
-            let runtimeRegistry: Awaited<
-                ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
-            > | null = null;
+            let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
             try {
-                runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
-                    contributes: createResolvedContributionRegistry(
-                        resolveBuiltInContributions(),
-                    ),
+                fixture = await createAdmittedPluginRuntimeFixture({
+                    controller: pluginReloadController,
                     happyHomeDir: join(directory, 'happier-home'),
-                    pluginIds: [ANTIGRAVITY_PLUGIN_ID],
+                    runtimeOptions: { pluginIds: [ANTIGRAVITY_PLUGIN_ID] },
                 });
-                runtimeLeaseMocks.acquire.mockImplementation(async () => ({
-                    registry: runtimeRegistry,
-                    source: 'active',
-                    release: async () => {},
-                }));
+                const runtimeRegistry = fixture.registry;
 
                 const resolution = await resolveBackendEngineAdapterResolution(
                     ANTIGRAVITY_AGENT_ID,
@@ -257,7 +234,7 @@ describe('Antigravity production observation admission', () => {
                 ).rejects.toThrow('unauthorized file set');
                 await outsideProjection.dispose();
             } finally {
-                await runtimeRegistry?.dispose();
+                await fixture?.dispose();
                 envScope.restore();
             }
         });

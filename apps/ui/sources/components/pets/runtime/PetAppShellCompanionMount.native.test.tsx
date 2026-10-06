@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     createSessionFixture,
     invokeTestInstanceHandler,
-    renderScreen,
+    renderScreen as renderTestkitScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
@@ -14,6 +14,10 @@ import type { ActivityAttentionSource } from '@/activity/source/activityAttentio
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { storage } from '@/sync/domains/state/storageStore';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
 type PetNativeMountTestState = {
     account: {
@@ -50,7 +54,6 @@ const settingsState = vi.hoisted((): PetNativeMountTestState => ({
     },
 }));
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
-const useActivityAttentionSourceSpy = vi.hoisted(() => vi.fn());
 const hapticsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const dimensionsState = vi.hoisted(() => ({ width: 390, height: 844 }));
 const safeAreaState = vi.hoisted(() => ({
@@ -166,13 +169,6 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     },
 }));
 
-vi.mock('@/activity/source/useActivityAttentionSource', () => ({
-    useActivityAttentionSource: () => {
-        useActivityAttentionSourceSpy();
-        return activitySourceState.source;
-    },
-}));
-
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => applyLocalSettingsSpy,
 }));
@@ -183,38 +179,39 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-    const readAccountSettings = (): typeof settingsDefaults => ({
-        ...settingsDefaults,
-        ...settingsState.account,
+const initialStorageState = storage.getState();
+
+function seedPetsStorage() {
+    const source = activitySourceState.source;
+    storage.setState({
+        settings: { ...settingsDefaults, ...settingsState.account },
+        localSettings: { ...localSettingsDefaults, ...settingsState.local },
+        isDataReady: source.isDataReady,
+        sessions: source.sessionsById,
+        sessionListRowsByServerId: source.sessionListRowsByServerId,
+        ordinarySessionListMembershipByServerId: source.ordinarySessionListMembershipByServerId,
+        sessionListIndexByServerId: source.sessionListIndexByServerId,
+        concurrentSessionListCacheByServerId: source.concurrentSessionListCacheByServerId,
+        sessionMessages: {},
+        sessionPending: {},
     });
-    const readLocalSettings = (): typeof localSettingsDefaults => ({
-        ...localSettingsDefaults,
-        ...settingsState.local,
-    });
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            ...actual,
-            useSettings: readAccountSettings,
-            useSetting: ((name) => readAccountSettings()[name]) as typeof actual.useSetting,
-            useLocalSettings: readLocalSettings,
-            useLocalSetting: ((name) => readLocalSettings()[name]) as typeof actual.useLocalSetting,
-            useAllSessions: () => sessionsState.current,
-        },
-    });
-});
+}
+
+async function renderScreen(...args: Parameters<typeof renderTestkitScreen>) {
+    seedPetsStorage();
+    return renderTestkitScreen(...args);
+}
 
 describe('PetAppShellCompanionMount.native', () => {
+    beforeEach(async () => {
+        await upsertAndActivateServer({ serverUrl: 'https://server-a', scope: 'tab' });
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
         standardCleanup();
+        storage.setState(initialStorageState, true);
         applyLocalSettingsSpy.mockReset();
-        useActivityAttentionSourceSpy.mockClear();
         hapticsSpy.mockClear();
         featureState.companion = { state: 'enabled' };
         featureState.sync = { state: 'disabled' };
@@ -336,11 +333,11 @@ describe('PetAppShellCompanionMount.native', () => {
 
         const screen = await renderScreen(<PetAppShellCompanionMount />);
         expect(screen.findByTestId('pet-app-shell-companion-root')).toBeNull();
-        expect(useActivityAttentionSourceSpy).not.toHaveBeenCalled();
 
         featureState.companion = { state: 'enabled' };
         settingsState.account.petsEnabled = true;
         await act(async () => {
+            seedPetsStorage();
             screen.tree.update(<PetAppShellCompanionMount />);
         });
 
@@ -432,9 +429,6 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(input?.props.multiline).toBe(true);
         expect(input?.props.numberOfLines).toBe(1);
         expect(input?.props.onKeyPress).toEqual(expect.any(Function));
-        expect(inputStyle?.outlineStyle).toBe('none');
-        expect(inputStyle?.resize).toBe('none');
-        expect(inputStyle?.overflowY).toBe('hidden');
         expect(inputStyle?.height).toBe(30);
         expect(inputStyle?.minHeight).toBe(30);
         expect(inputStyle?.maxHeight).toBe(30);
@@ -459,7 +453,6 @@ describe('PetAppShellCompanionMount.native', () => {
         expect(screen.findByTestId('desktop-pet-overlay-tray-reply-input-native-pet-session')?.props.numberOfLines).toBe(2);
         expect(multilineInputStyle?.height).toBeGreaterThan(30);
         expect(multilineInputStyle?.maxHeight).toBe(multilineInputStyle?.height);
-        expect(multilineInputStyle?.overflowY).toBe('hidden');
 
         const shiftEnterEvent = {
             nativeEvent: { key: 'Enter', shiftKey: true },

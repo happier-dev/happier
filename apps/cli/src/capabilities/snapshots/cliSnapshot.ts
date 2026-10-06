@@ -180,20 +180,26 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
     const happierHomeDir = String(process.env.HAPPIER_HOME_DIR ?? '');
     const sourcePrefs = String(process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON ?? '');
     const registry = readCurrentContributionRegistry();
-    const authEnvKeys = new Set<string>();
-    if (params.includeLoginStatus === true) {
-        for (const agent of registry.agents) {
-            if (params.requestedCliNames?.length && !params.requestedCliNames.includes(agent.id)) continue;
-            for (const key of agent.cliMetadata?.auth.environmentVariables ?? []) authEnvKeys.add(key);
+    const probeEnvKeys = new Set<string>();
+    for (const agent of registry.agents) {
+        if (params.requestedCliNames?.length && !params.requestedCliNames.includes(agent.id)) continue;
+        // Executable lookup consumes these manifest facts even without an auth probe.
+        for (const directory of agent.cliMetadata?.executable.knownEnvironmentBinDirs ?? []) {
+            probeEnvKeys.add(directory.envVar);
+        }
+        const alternativeFallbackEnvVar = agent.cliMetadata?.executable.alternativeBinaryFallbackEnabledEnvVar;
+        if (alternativeFallbackEnvVar) probeEnvKeys.add(alternativeFallbackEnvVar);
+        if (params.includeLoginStatus === true) {
+            for (const key of agent.cliMetadata?.auth.environmentVariables ?? []) probeEnvKeys.add(key);
             // Declared process environment includes status-command homes such as CODEX_HOME.
             for (const request of [...(agent.hostAccess?.required ?? []), ...(agent.hostAccess?.optional ?? [])]) {
                 if (request.capability === 'process') {
-                    for (const key of request.scope.envKeys ?? []) authEnvKeys.add(key);
+                    for (const key of request.scope.envKeys ?? []) probeEnvKeys.add(key);
                 }
             }
         }
     }
-    const authEnvFingerprint = JSON.stringify([...authEnvKeys].sort().map((key) => [key, process.env[key] ?? '']));
+    const probeEnvFingerprint = JSON.stringify([...probeEnvKeys].sort().map((key) => [key, process.env[key] ?? '']));
 
     // Include all HAPPIER_*_PATH overrides for known agents
     const agentIds = Object.keys(AGENTS);
@@ -204,7 +210,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}`;
+    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${probeEnvFingerprint}:${pathOverrides}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {

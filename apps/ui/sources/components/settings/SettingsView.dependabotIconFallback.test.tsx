@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
@@ -91,9 +92,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_cb: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({ useFocusEffect: () => {} });
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -113,9 +115,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
         React.createElement('Item', props, props.icon, props.children),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: Record<string, unknown>) => React.createElement('Avatar', props),
@@ -158,7 +157,7 @@ describe('SettingsView (Dependabot icon fallback)', () => {
 
     it('renders the real settings shell when react-native-svg omits the default export', async () => {
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRowByTitle('subAgentGuidance.settings.groupTitle')).toBeTruthy();
         // The System section arrives in a deferred stage after the first paint.

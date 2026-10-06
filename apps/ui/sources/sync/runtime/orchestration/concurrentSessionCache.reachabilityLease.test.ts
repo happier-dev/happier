@@ -1,257 +1,152 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createServerProfilesModuleMock } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
-type DeferredLease = Readonly<{
-    release: ReturnType<typeof vi.fn<() => Promise<void>>>;
-    resolve: () => void;
-}>;
-
-async function flushPromiseContinuations(): Promise<void> {
-    await Promise.resolve();
-    await Promise.resolve();
-}
-
-function createDeferredLease(): Readonly<{
-    lease: DeferredLease;
-    promise: Promise<{ release: () => Promise<void> }>;
-}> {
-    let resolvePromise!: (lease: { release: () => Promise<void> }) => void;
-    const release = vi.fn(async () => {});
-    const promise = new Promise<{ release: () => Promise<void> }>((resolve) => {
-        resolvePromise = resolve;
-    });
-    return {
-        lease: {
-            release,
-            resolve: () => resolvePromise({ release }),
-        },
-        promise,
-    };
-}
+let cleanup: (() => Promise<void>) | null = null;
 
 async function installHarness() {
-    let profiles = [
-        { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
-        { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
-    ];
-    let credentials = { token: 'token-b-old', secret: 'secret-b-old' };
-    const profileListeners = new Set<(generation: number) => void>();
-    const credentialListeners = new Set<(event: {
-        kind: 'credentials_set';
-        serverId: string;
-        serverUrl: string;
-    }) => void>();
-    let networkAllowedListener: ((allowed: boolean) => void) | null = null;
-    const pendingAcquires: DeferredLease[] = [];
-    const createSocketTransport = vi.fn();
-
-    vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', () => ({
-        acquireServerReachabilitySupervisor: vi.fn(() => {
-            const deferred = createDeferredLease();
-            pendingAcquires.push(deferred.lease);
-            return deferred.promise;
-        }),
-        subscribeServerReachabilityNetworkAllowed: (listener: (allowed: boolean) => void) => {
-            networkAllowedListener = listener;
-            listener(true);
-            return () => {
-                if (networkAllowedListener === listener) networkAllowedListener = null;
-            };
-        },
-        subscribeServerReachabilityState: () => () => {},
-        setServerReachabilityNetworkAllowed: () => {},
-        reportServerUnreachable: () => {},
-        resetServerReachabilitySupervisors: async () => {},
-    }));
-    vi.doMock('@/auth/storage/tokenStorage', () => ({
-        ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS: 10 * 60 * 1000,
-        accountDirectoryAuthCredentials: {
-            read: async () => ({ kind: 'absent' }),
-            get: async () => null,
-            set: async () => true,
-            remove: async () => true,
-            clear: async () => true,
-            logout: async () => true,
-        },
-        TokenStorage: {
-            getCredentialsForServerUrl: vi.fn(async () => credentials),
-        },
-        subscribeHomeCredentialMutations: (listener: (event: {
-            kind: 'credentials_set';
-            serverId: string;
-            serverUrl: string;
-        }) => void) => {
-            credentialListeners.add(listener);
-            return () => credentialListeners.delete(listener);
-        },
-        isLegacyAuthCredentials: () => true,
-        isDataKeyAuthCredentials: () => false,
-        isTokenOnlyAuthCredentials: () => false,
-    }));
-    vi.doMock('@/sync/domains/server/serverProfiles', () => createServerProfilesModuleMock({
-        listServerProfiles: () => profiles,
-        overrides: {
-            loadHomeViewState: () => null,
-            subscribeHomeViewState: () => () => {},
-            subscribeServerProfiles: (listener) => {
-                profileListeners.add(listener);
-                return () => profileListeners.delete(listener);
-            },
-        },
-    }));
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({
-            serverId: 'server-a',
-            serverUrl: 'https://stack-a.example.test',
-            kind: 'stack',
-            generation: 1,
-        }),
-        subscribeActiveServer: () => () => {},
-    }));
-    vi.doMock('./concurrentServerConnections/createConcurrentServerSocketTransport', () => ({
-        createConcurrentServerSocketTransport: (...args: unknown[]) => createSocketTransport(...args),
-    }));
-    vi.doMock('@/sync/engine/account/syncAccount', () => ({
-        schedulePushTokenReconciliation: () => {},
-        startPushTokenReconciliation: () => {},
-        stopPushTokenReconciliation: () => {},
-    }));
-    vi.doMock('@/utils/runtime/isRuntimeActive', () => ({
-        startRuntimeActiveGatedInterval: () => () => {},
-    }));
-    vi.doMock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
-        invalidateCachedTransferRoutesForMachine: () => {},
-        invalidateCachedTransferRoutesForServer: () => {},
-    }));
-
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-    storage.setState((state) => ({
+    const network = await installSessionOpsNetworkBoundary();
+    const homeA = await network.addHome('https://lease-a.example.test', 'account-a');
+    const homeB = await network.addHome('https://lease-b.example.test', 'account-b');
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    await profiles.setActiveServerId(homeA.id, { scope: 'device' });
+    await profiles.updateHomeViewState((state) => ({
         ...state,
-        settings: {
-            ...state.settings,
-            ...settingsDefaults,
-            serverSelectionGroups: [{
-                id: 'group-main',
-                name: 'Main',
-                serverIds: ['server-a', 'server-b'],
-                presentation: 'grouped',
-            }],
-            serverSelectionActiveTargetKind: 'group',
-            serverSelectionActiveTargetId: 'group-main',
-        },
+        groups: [{ id: 'main', name: 'Main', serverIds: [homeA.id, homeB.id], presentation: 'grouped' }],
+        activeTargetKind: 'group', activeTargetId: 'main',
     }));
-
-    const cache = await import('./concurrentSessionCache');
-    cache.startConcurrentSessionCacheSync();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(pendingAcquires).toHaveLength(1);
-
-    return {
-        ...cache,
-        createSocketTransport,
-        pendingAcquires,
-        removeSecondaryProfile: async () => {
-            profiles = profiles.filter((profile) => profile.id !== 'server-b');
-            for (const listener of profileListeners) listener(1);
-            await vi.advanceTimersByTimeAsync(0);
-        },
-        replaceSecondaryCredentials: async () => {
-            credentials = { token: 'token-b-new', secret: 'secret-b-new' };
-            for (const listener of credentialListeners) listener({
-                kind: 'credentials_set',
-                serverId: 'server-b',
-                serverUrl: 'https://stack-b.example.test',
+    const socketModule = await import('socket.io-client');
+    const io = vi.spyOn(socketModule, 'io');
+    const pendingPings: Array<{ token: string | null; respond(): void }> = [];
+    network.setHttpResponder(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/auth/ping') {
+            return await new Promise<Response>((resolve) => {
+                pendingPings.push({
+                    token: new Headers(init?.headers).get('authorization'),
+                    respond: () => resolve(Response.json({})),
+                });
             });
-            await vi.advanceTimersByTimeAsync(0);
-        },
-        resumeNetworkTwice: () => {
-            networkAllowedListener?.(true);
-            networkAllowedListener?.(true);
-        },
+        }
+        if (path === '/v1/features' || path === '/v1/features/authenticated') {
+            return Response.json(createRootLayoutFeaturesResponse());
+        }
+        if (path === '/v1/account/encryption/currentness') {
+            return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        }
+        if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+        if (path === '/v1/machines') return Response.json([]);
+        return null;
+    });
+    const pool = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    pool.setServerReachabilityNetworkAllowed(true);
+    const cache = await import('./concurrentSessionCache');
+    cleanup = async () => {
+        cache.stopConcurrentSessionCacheSync();
+        for (const ping of pendingPings) ping.respond();
+        await vi.advanceTimersByTimeAsync(1);
+        await pool.resetServerReachabilitySupervisors();
+        pool.setServerReachabilityNetworkAllowed(true);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        await TokenStorage.removeCredentialsForServerUrl(homeB.serverUrl, { serverId: homeB.id });
+        network.dispose();
+        io.mockRestore();
+        for (const home of [homeB, homeA]) await profiles.removeServerProfile(home.id);
     };
+    cache.startConcurrentSessionCacheSync();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(pendingPings).toHaveLength(1));
+    return { ...cache, network, homeB, profiles, pool, pendingPings, io };
 }
 
-describe('concurrentSessionCache reachability lease fencing', () => {
-    beforeEach(() => {
-        vi.resetModules();
-        vi.useFakeTimers();
-        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+});
+afterEach(async () => {
+    await cleanup?.();
+    cleanup = null;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.resetModules();
+    delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
+});
+
+describe('concurrent session cache reachability lease fencing', () => {
+    it('retires a held authenticated probe after the cache stops without constructing a socket', async () => {
+        const h = await installHarness();
+        h.stopConcurrentSessionCacheSync();
+        h.pendingPings[0].respond();
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(h.io).not.toHaveBeenCalled();
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.isConcurrentOrdinarySessionListHome(h.homeB.id)).toBe(false);
     });
 
-    afterEach(() => {
-        vi.useRealTimers();
-        vi.clearAllMocks();
-        delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
+    it('retires a held authenticated probe after its secondary Home is removed', async () => {
+        const h = await installHarness();
+        await h.profiles.removeServerProfile(h.homeB.id);
+        await vi.advanceTimersByTimeAsync(1);
+        h.pendingPings[0].respond();
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(h.io).not.toHaveBeenCalled();
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.isConcurrentOrdinarySessionListHome(h.homeB.id)).toBe(false);
     });
 
-    it('releases an acquire that resolves after the cache stops without starting authenticated supervision', async () => {
-        const harness = await installHarness();
-        const [staleAcquire] = harness.pendingAcquires;
+    it('retires the old credential probe and retains only the replacement Account runtime', async () => {
+        const h = await installHarness();
+        h.network.setAccount(h.homeB.serverUrl, 'account-b-new');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const newToken = createAccountTokenForTests('account-b-new');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        expect(await TokenStorage.setCredentialsForServerUrl(h.homeB.serverUrl, { serverId: h.homeB.id }, { token: newToken })).toBe(true);
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.waitFor(() => expect(h.pendingPings).toHaveLength(2));
 
-        harness.stopConcurrentSessionCacheSync();
-        staleAcquire.resolve();
-        await flushPromiseContinuations();
+        h.pendingPings[1].respond();
+        await vi.advanceTimersByTimeAsync(1);
+        h.pendingPings[0].respond();
+        await vi.advanceTimersByTimeAsync(1);
 
-        expect(staleAcquire.release).toHaveBeenCalledTimes(1);
-        expect(harness.createSocketTransport).not.toHaveBeenCalled();
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, newToken)?.phase).toBe('online');
+        expect(h.io).toHaveBeenCalledTimes(1);
+        expect(h.io).toHaveBeenCalledWith(h.homeB.serverUrl, expect.objectContaining({
+            auth: expect.objectContaining({ token: newToken }),
+        }));
+        h.stopConcurrentSessionCacheSync();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, newToken)?.phase).toBe('shutting_down');
     });
 
-    it('releases an acquire that resolves after its secondary profile is removed', async () => {
-        const harness = await installHarness();
-        const [staleAcquire] = harness.pendingAcquires;
+    it('coalesces overlapping resumes and releases every cache lease without stopping another owner', async () => {
+        const h = await installHarness();
+        h.pool.setServerReachabilityNetworkAllowed(false);
+        h.pool.setServerReachabilityNetworkAllowed(true);
+        h.pool.setServerReachabilityNetworkAllowed(false);
+        h.pool.setServerReachabilityNetworkAllowed(true);
+        await vi.advanceTimersByTimeAsync(1);
+        // The real pool shares the pending start for this exact Home/Account;
+        // fabricated independently-resolvable owner leases are not network behavior.
+        expect(h.pendingPings).toHaveLength(1);
+        const observerPromise = h.pool.acquireServerReachabilitySupervisor({
+            serverUrl: h.homeB.serverUrl, token: h.homeB.token,
+        });
+        h.pendingPings[0].respond();
+        const observer = await observerPromise;
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.io).toHaveBeenCalledTimes(1);
 
-        await harness.removeSecondaryProfile();
-        staleAcquire.resolve();
-        await flushPromiseContinuations();
-
-        expect(staleAcquire.release).toHaveBeenCalledTimes(1);
-        expect(harness.createSocketTransport).not.toHaveBeenCalled();
-        harness.stopConcurrentSessionCacheSync();
-    });
-
-    it('releases the old acquire after credential replacement and retains only the replacement lease', async () => {
-        const harness = await installHarness();
-        const [staleAcquire] = harness.pendingAcquires;
-
-        await harness.replaceSecondaryCredentials();
-        expect(harness.pendingAcquires).toHaveLength(2);
-        const replacementAcquire = harness.pendingAcquires[1];
-
-        staleAcquire.resolve();
-        replacementAcquire.resolve();
-        await flushPromiseContinuations();
-        expect(staleAcquire.release).toHaveBeenCalledTimes(1);
-        expect(replacementAcquire.release).not.toHaveBeenCalled();
-
-        harness.stopConcurrentSessionCacheSync();
-        await flushPromiseContinuations();
-        expect(replacementAcquire.release).toHaveBeenCalledTimes(1);
-        expect(harness.createSocketTransport).not.toHaveBeenCalled();
-    });
-
-    it('releases an older repeated-resume acquire when a newer acquire completes first', async () => {
-        const harness = await installHarness();
-        const initialAcquire = harness.pendingAcquires[0];
-        initialAcquire.resolve();
-        await Promise.resolve();
-
-        harness.resumeNetworkTwice();
-        expect(harness.pendingAcquires).toHaveLength(3);
-        const olderResumeAcquire = harness.pendingAcquires[1];
-        const newestResumeAcquire = harness.pendingAcquires[2];
-
-        newestResumeAcquire.resolve();
-        await flushPromiseContinuations();
-        expect(initialAcquire.release).toHaveBeenCalledTimes(1);
-        olderResumeAcquire.resolve();
-        await flushPromiseContinuations();
-        expect(olderResumeAcquire.release).toHaveBeenCalledTimes(1);
-        expect(newestResumeAcquire.release).not.toHaveBeenCalled();
-
-        harness.stopConcurrentSessionCacheSync();
-        await flushPromiseContinuations();
-        expect(newestResumeAcquire.release).toHaveBeenCalledTimes(1);
+        h.stopConcurrentSessionCacheSync();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('online');
+        await observer.release();
+        expect(h.pool.peekServerReachabilityState(h.homeB.serverUrl, h.homeB.token)?.phase).toBe('shutting_down');
     });
 });

@@ -1384,7 +1384,7 @@ describe('workflow editor body', () => {
                 { sessionId: 'there', machineId: 'machine-2', label: 'Elsewhere' },
             ],
         }, { wrapper: ({ children }) => <><Realm />{children}</>, createNodeMock: element =>
-            React.isValidElement<{ testID?: string }>(element) && element.props.testID === 'workflow-editor-step-analyze-session-drop'
+            element.props.testID === 'workflow-editor-step-analyze-session-drop'
                 ? { getBoundingClientRect: () => ({ x: 10, y: 10, left: 10, top: 10, width: 500, height: 200 }) } : null });
         let sessionId = 'there';
         const retireSource = runtime!.registerSource({ id: 'workflow-source', scope, isCurrent: () => true,

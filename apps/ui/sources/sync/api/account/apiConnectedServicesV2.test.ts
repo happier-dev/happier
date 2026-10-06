@@ -2,12 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-  const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-  return { ...actual, backoff: immediate, backoffForever: immediate };
-});
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.resetModules();
@@ -15,20 +9,14 @@ afterEach(() => {
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-  vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-      serverId: 'test',
-      serverUrl: 'https://api.example.test',
-      kind: 'custom',
-      generation: 1,
-    }),
-  }));
+async function activateTestHome() {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 }
 
 describe('apiConnectedServicesV2 legacy read compatibility', () => {
   it('fetches a sealed credential record without exposing a write API', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (String(input) === 'https://api.example.test/health') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -61,7 +49,7 @@ describe('apiConnectedServicesV2 legacy read compatibility', () => {
   });
 
   it('classifies the released unfenced read shape explicitly', async () => {
-    mockServerConfig();
+    await activateTestHome();
     const fetchMock = vi.fn(async (input: unknown) => {
       if (String(input) === 'https://api.example.test/health') {
         return { ok: true, status: 200, json: async () => ({ ok: true }) };

@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPartialStorageModuleMock, renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
@@ -139,6 +139,8 @@ const PAINTING_STRUCTURED_TOOL_MESSAGE = createToolCallMessage({
         },
     },
 });
+
+await import('./MessageView');
 
 async function renderToolRow(message: any) {
     const { MessageView } = await import('./MessageView');

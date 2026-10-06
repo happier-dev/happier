@@ -326,7 +326,7 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
     expect(tree.root.findAllByProps({ testID: 'connected-services-provider-state-sharing-agent-pi-state' })).toHaveLength(0);
   });
 
-  it('refuses legacy default-auth recovery routing without a projected qualified owner', async () => {
+  it('withholds legacy default-auth recovery without a projected qualified owner', async () => {
     useFeatureEnabledSpy.mockReturnValue(true);
     useSettingsSpy.mockReturnValue({
       connectedServicesDefaultProfileByServiceId: { anthropic: 'work' },
@@ -348,15 +348,9 @@ describe('ConnectedServicesAgentSignInView sharing and legacy routing', () => {
     const { ConnectedServicesAgentSignInView } = await import('./collection/ConnectedServicesAgentSignInView');
     const { tree } = await renderScreen(<ConnectedServicesAgentSignInView />);
 
-    await tree.root
-      .findAllByType('ConnectedServicesDefaultAuthRow' as never)[0]
-      .props.onOpenConnectedServicesSettings('anthropic');
-
+    expect(tree.root.findAllByType('ConnectedServicesDefaultAuthRow' as never)).toHaveLength(0);
     expect(connectedServicesModuleState.routerPushSpy).not.toHaveBeenCalled();
-    expect(modalAlertSpy).toHaveBeenCalledWith(
-      'errors.daemonUnavailableTitle',
-      'errors.daemonUnavailableBody',
-    );
+    expect(modalAlertSpy).not.toHaveBeenCalled();
   });
 
   it('keeps provider state sharing settings available when optional Connected Accounts features are disabled', async () => {

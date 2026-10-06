@@ -9,6 +9,15 @@ import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import {
+  CLI_BINARY_TARGETS,
+  execOrThrow,
+  resolveCurrentBinaryTarget,
+  resolveProcessCustodyRuntimeExecutableName,
+  stageProcessCustodyRuntime,
+  type RunCommand,
+} from '@happier-dev/cli-common/componentArtifacts'
+
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs'
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
@@ -18,6 +27,7 @@ export type CliTestBuildMode = 'none' | 'full'
 type CliTestSetupDependencies = {
   resolveProjectRoot: () => string
   ensureDistBuiltOnce: (projectRoot: string) => Promise<void>
+  runCommand: RunCommand
 }
 
 type CliTestSetupOptions = {
@@ -101,6 +111,24 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
   })
 }
 
+async function ensureNativeCustodyReadyOnce(projectRoot: string, runCommand: RunCommand): Promise<void> {
+  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS })
+  const executablePath = join(projectRoot, 'tools', 'unpacked', resolveProcessCustodyRuntimeExecutableName(target))
+  await ensureBuildArtifactsReadyOnce({
+    lockPath: resolveBuildLockPath(projectRoot),
+    markerPaths: [executablePath],
+    lockLabel: 'CLI native process custody',
+    runBuild: async () => {
+      await stageProcessCustodyRuntime({
+        repoRoot: resolveRepoRoot(projectRoot),
+        payloadDir: projectRoot,
+        target,
+        runCommand,
+      })
+    },
+  })
+}
+
 function readSkipBuildOverride(): boolean {
   const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
   if (typeof raw !== 'string') return false
@@ -113,17 +141,21 @@ export async function setup(options: CliTestSetupOptions = {}) {
 
   const skipBuild = readSkipBuildOverride()
 
-  // Allow global opt-out for low-level setup tests and targeted local debugging.
-  if (skipBuild || options.buildMode === 'none') return
-
   const dependencies: CliTestSetupDependencies = {
     resolveProjectRoot: resolveCliProjectRoot,
     ensureDistBuiltOnce,
+    runCommand: execOrThrow,
     ...options.dependencies,
   }
 
   const buildMode = options.buildMode ?? 'full'
   const projectRoot = dependencies.resolveProjectRoot()
+
+  // Source tests exercise native confinement without publishing the full CLI
+  // dist. Prepare that prerequisite through the same staging owner as releases.
+  await ensureNativeCustodyReadyOnce(projectRoot, dependencies.runCommand)
+
+  if (skipBuild || buildMode === 'none') return
 
   if (buildMode === 'full') {
     await dependencies.ensureDistBuiltOnce(projectRoot)

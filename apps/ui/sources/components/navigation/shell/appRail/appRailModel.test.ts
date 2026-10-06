@@ -53,7 +53,7 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'boards', 'artifacts']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
@@ -101,6 +101,8 @@ describe('app rail model', () => {
         // A Home's console keeps the settings navigation beside its own.
         expect(at('/settings/home/srv%201/people/acc')).toEqual(['settings', 'settings', 'settings']);
         expect(at('/search')).toEqual(['search', 'search', 'none']);
+        expect(at('/artifacts')).toEqual(['artifacts', 'artifacts', 'none']);
+        expect(at('/artifacts/artifact-1')).toEqual(['artifacts', 'artifacts', 'none']);
     });
 
     it("stands a plugin page's own column beside it, and peeks it from its rail icon", () => {

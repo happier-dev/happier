@@ -1,9 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderFixtureScreen } from '@/dev/testkit';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
@@ -18,11 +22,15 @@ import { cancelPendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment
 import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPollingBackoff';
 
 installTokenStorageWebPlatformMocks();
-const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (options: { endpointUrl: string }) => (path: string, init?: RequestInit) => boundary.request(options.endpointUrl, path, init),
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
+const boundary = vi.hoisted(() => ({ request: vi.fn<(endpoint: string, path: string, init?: RequestInit) => Promise<Response>>(
+    async () => new Response('{}', { status: 404 }),
+) }));
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
+    runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
+    },
 }));
 const routerHarness = vi.hoisted(() => ({ replace: null as null | ReturnType<typeof vi.fn> }));
 vi.mock('expo-router', async () => {
@@ -31,27 +39,17 @@ vi.mock('expo-router', async () => {
     return router.module;
 });
 
-/** Lets one test fail the focus switch; every other test runs the real switch. */
-const focusSwitchHarness = vi.hoisted(() => ({ fail: false }));
-vi.mock('@/sync/domains/server/activeServerSwitch', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/activeServerSwitch')>();
-    return { ...actual, setActiveServerAndSwitch: async (...args: Parameters<typeof actual.setActiveServerAndSwitch>) => {
-        if (focusSwitchHarness.fail) throw new Error('focus switch failed');
-        return await actual.setActiveServerAndSwitch(...args);
-    } };
-});
-
-// No AuthProvider is mounted here; opening an already-focused Home refreshes
-// auth through this owner, which the continuation reads from context.
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ refreshFromActiveServer: async () => {} }),
-}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 import { AccountServiceContinuation } from './AccountServiceContinuation';
 import { Modal } from '@/modal';
+
+await initializeTerminalRouteRuntimeForTests();
+function renderScreen(children: React.ReactNode) {
+    return renderFixtureScreen(<AuthProvider initialCredentials={null}>{children}</AuthProvider>);
+}
 
 /** Non-secret binding to the Account credential a continuation was created under. */
 const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
@@ -65,12 +63,21 @@ function actionTitle(testID: string): string | undefined {
 describe('exact invoking-surface continuation', () => {
     let fixture: ReturnType<typeof createDirectoryHttpFixture>;
     let restore: () => void;
+    let locks: ReturnType<typeof installWebLockManagerMock>;
     beforeEach(() => {
         restore = installLocalStorageMock().restore;
+        locks = installWebLockManagerMock();
+        resetServerFeaturesClientForTests();
         fixture = createDirectoryHttpFixture();
         boundary.request.mockImplementation(fixture.request);
     });
-    afterEach(async () => { await screen?.unmount(); screen = undefined; await cancelPendingDirectoryHomeEnrollment(); restore(); vi.unstubAllGlobals(); });
+    afterEach(async () => {
+        await screen?.unmount(); screen = undefined;
+        await cancelPendingDirectoryHomeEnrollment();
+        await disconnectActiveServerConnection();
+        resetServerFeaturesClientForTests();
+        locks.restore(); restore(); vi.unstubAllGlobals();
+    });
 
     it('requests exact service reauthentication rather than treating recovery as Back', async () => {
         const input = { service: fixture.service,
@@ -202,14 +209,20 @@ describe('exact invoking-surface continuation', () => {
         const onBack = vi.fn();
         routerHarness.replace?.mockClear();
         vi.mocked(Modal.alertAsync).mockClear();
-        focusSwitchHarness.fail = true;
+        const readCredentials = TokenStorage.getCredentialsForServerUrl;
+        // Credential persistence is external to the focus owner. Its failed
+        // target read exercises the real switch/rollback and recovery card.
+        const credentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl, options) => {
+            if (serverUrl === fixture.home.canonicalServerUrl) throw new Error('secure storage read failed');
+            return readCredentials(serverUrl, options);
+        });
         try {
             screen = await renderScreen(<AccountServiceContinuation input={input}
                 result={{ kind: 'home_enrolled', homeServerIdentityId: fixture.home.homeServerIdentityId }}
                 onResult={() => {}} onBack={onBack} />);
             await screen.pressByTestIdAsync('account-service-continuation-home_enrolled-action');
         } finally {
-            focusSwitchHarness.fail = false;
+            credentialRead.mockRestore();
         }
 
         // The owner asked whether to retry and the user cancelled: nothing moved and

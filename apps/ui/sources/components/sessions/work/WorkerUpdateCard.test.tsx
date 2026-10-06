@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, type WorkerUpdateV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, createPlainSessionOwnerMetadataEnvelopeV1, encodePlainArtifactStoredContent, projectLegacySessionAccessCapabilitiesV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, type WorkerUpdateV1 } from '@happier-dev/protocol';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -49,13 +50,22 @@ describe('WorkerUpdateCard deliverable readers', () => {
             if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
             expect(target.origin).toBe(home.serverUrl);
             if (target.pathname === '/v1/features') return json({ features: {} });
-            if (target.pathname === '/v1/account/encryption' || target.pathname === '/v1/account/encryption/currentness') return json({ mode: 'plain', updatedAt: 0, version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null });
+            if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (target.pathname === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
             reads.push(target.pathname);
             if (denied) return json({ error: 'PRIVATE_CONTENT' }, 403);
             if (target.pathname === '/v2/sessions/worker') return json({ session: {
                 id: 'worker', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, archivedAt: null,
-                encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0, metadataVersion: 1,
-                metadata: JSON.stringify({ path: '/worker-workspace', machineId: 'worker-machine', host: 'worker-host' }),
+                encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 1, metadataVersion: 1,
+                metadata: JSON.stringify(projectSessionSharedMetadataV1({
+                    metadata: { path: '/worker-workspace', machineId: 'worker-machine', host: 'worker-host' },
+                    agentState: null,
+                })),
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({
+                    v: 1, workspace: { path: '/worker-workspace', machineId: 'worker-machine', host: 'worker-host' },
+                })),
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner', canApprovePermissions: true }) },
+                share: null, responsibleAccountId: null, responsibleAccount: null,
                 agentState: null, agentStateVersion: 0, pendingCount: 0, pendingVersion: 0,
             } });
             if (target.pathname === '/v1/artifacts/report') return json({

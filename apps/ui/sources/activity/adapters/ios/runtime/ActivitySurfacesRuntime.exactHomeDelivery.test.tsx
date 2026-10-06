@@ -4,12 +4,29 @@ import { act } from 'react-test-renderer';
 import { settingsParse } from '@/sync/domains/settings/settings';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { storage } from '@/sync/domains/state/storage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import type { StorageState } from '@/sync/store/types';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ActivitySurfaceSnapshot } from '@/activity/presentation/activitySurfaceSnapshot';
 
 import type { LiveActivitySnapshot } from '../liveActivities/buildLiveActivitySnapshots';
+
+vi.hoisted(async () => {
+    const { mkdirSync, realpathSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const cache = join(realpathSync('node_modules'), '.cache', 'ci03-ios-runtime-exact-home');
+    mkdirSync(cache, { recursive: true });
+    vi.stubEnv('TMPDIR', cache);
+});
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -27,10 +44,6 @@ const platformState = vi.hoisted(() => ({ os: 'ios' as 'ios' | 'web' | 'android'
 const appStateState = vi.hoisted(() => ({
     currentState: 'active' as 'active' | 'inactive' | 'background',
     listeners: new Set<(state: 'active' | 'inactive' | 'background') => void>(),
-}));
-const activeServerState = vi.hoisted(() => ({
-    serverId: 'server-a',
-    generation: 1,
 }));
 const sessionRowsState = vi.hoisted(() => ({
     value: [] as Array<{ serverId: string; session: Session }>,
@@ -61,9 +74,17 @@ const focusWidgetUpdateSnapshot = vi.hoisted(() => vi.fn());
 const sessionsWidgetUpdateSnapshot = vi.hoisted(() => vi.fn());
 const liveActivityUpdate = vi.hoisted(() => vi.fn(async () => {}));
 const liveActivityEnd = vi.hoisted(() => vi.fn(async () => {}));
-const liveActivityInstances = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-const liveActivityStart = vi.hoisted(() => vi.fn((_snapshot: unknown, _route?: string) => {
-    const instance = { update: liveActivityUpdate, end: liveActivityEnd };
+const liveActivityInstances = vi.hoisted(() => [] as Array<{
+    serverId: string | null;
+    update: typeof liveActivityUpdate;
+    end: () => Promise<void>;
+}>);
+const liveActivityStart = vi.hoisted(() => vi.fn((snapshot: LiveActivitySnapshot, _route?: string) => {
+    const instance = {
+        serverId: snapshot.serverId,
+        update: liveActivityUpdate,
+        end: vi.fn(async () => { await liveActivityEnd(); }),
+    };
     liveActivityInstances.push(instance);
     return instance;
 }));
@@ -102,7 +123,7 @@ vi.mock('expo-constants', () => ({
     },
 }));
 
-vi.mock('expo-router', () => ({ router: { push: vi.fn() } }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 vi.mock('expo-widgets', () => ({ addUserInteractionListener: () => ({ remove: vi.fn() }) }));
 
@@ -111,105 +132,32 @@ vi.mock('expo-modules-core', () => ({
     requireOptionalNativeModule: () => null,
 }));
 
-vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
-    createDefaultActionExecutor: () => ({ execute: vi.fn(async () => ({ ok: true })) }),
-}));
-
-vi.mock('@/sync/api/session/apiLiveActivityTargets', () => ({
-    registerLiveActivityTarget: vi.fn(async () => ({ targetId: 'target-1' })),
-    markLiveActivityTargetEnded: vi.fn(async () => undefined),
-}));
-
-vi.mock('@/sync/domains/state/pushTokenRegistration', () => ({
-    loadLastRegisteredExpoPushToken: () => null,
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/features/featureDecisionRuntime')>(),
-    useServerFeaturesMainSelectionSnapshot: () => ({
-        status: 'ready',
-        serverIds: [],
-        snapshotsByServerId: {},
-    }),
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    const profileFor = (serverId: string) => ({
-        id: serverId,
-        name: serverId,
-        serverUrl: `https://${serverId}.example.test`,
-        createdAt: 1,
-        updatedAt: 1,
-        lastUsedAt: 1,
+function seedActivityState(activeServerId = HOME_A): void {
+    const sessionListRowsByServerId: Record<string, Record<string, ReturnType<typeof buildSessionListRenderableFromSession>>> = {};
+    const ordinarySessionListMembershipByServerId: Record<string, string[]> = {};
+    const sessionListIndexByServerId: Record<string, NonNullable<StorageState['sessionListIndexByServerId'][string]>> = {};
+    const sessions: Record<string, Session> = {};
+    for (const { serverId, session } of sessionRowsState.value) {
+        const sessionId = String(session.id);
+        (sessionListRowsByServerId[serverId] ??= {})[sessionId] =
+            buildSessionListRenderableFromSession(session);
+        (ordinarySessionListMembershipByServerId[serverId] ??= []).push(sessionId);
+        (sessionListIndexByServerId[serverId] ??= []).push({ type: 'session', sessionId, serverId });
+        // Only the active Home's copy is hydrated, exactly like the real store.
+        if (serverId === activeServerId) sessions[sessionId] = session;
+    }
+    storage.setState({
+        isDataReady: true,
+        settings: settingsParse(settingsState.value),
+        localSettings: localSettingsParse(localSettingsState.value),
+        sessions,
+        sessionListRowsByServerId,
+        ordinarySessionListMembershipByServerId,
+        sessionMessages: {},
+        sessionListIndexByServerId,
+        concurrentSessionListCacheByServerId: {},
     });
-    return {
-        ...actual,
-        listServerProfiles: () => ['server-a', 'server-b', 'server-c'].map(profileFor),
-        getServerProfileById: (serverId: string) => profileFor(serverId),
-        getServerProfilesGeneration: () => 1,
-        subscribeServerProfiles: () => () => undefined,
-        subscribeActiveServer: () => () => undefined,
-        getActiveServerSnapshot: () => ({
-            serverId: activeServerState.serverId,
-            serverUrl: `https://${activeServerState.serverId}.example.test`,
-            generation: activeServerState.generation,
-        }),
-    };
-});
-
-vi.mock('@/hooks/teams/useSessionAudienceContext', async () => {
-    const { createSessionAudienceContextModuleMock } = await import('@/dev/testkit/mocks/sessionAudienceContext');
-    return createSessionAudienceContextModuleMock();
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    const buildState = () => {
-        const sessionListRowsByServerId: Record<string, Record<string, unknown>> = {};
-        const ordinarySessionListMembershipByServerId: Record<string, string[]> = {};
-        const sessionListIndexByServerId: Record<string, Array<Record<string, unknown>>> = {};
-        const sessions: Record<string, unknown> = {};
-        for (const { serverId, session } of sessionRowsState.value) {
-            const sessionId = String(session.id);
-            (sessionListRowsByServerId[serverId] ??= {})[sessionId] =
-                buildSessionListRenderableFromSession(session);
-            (ordinarySessionListMembershipByServerId[serverId] ??= []).push(sessionId);
-            (sessionListIndexByServerId[serverId] ??= []).push({ type: 'session', sessionId, serverId });
-            // Only the active Home's copy is hydrated, exactly like the real store.
-            if (serverId === activeServerState.serverId) sessions[sessionId] = session;
-        }
-        return {
-            isDataReady: true,
-            settings: { workspacePathDisplayModeV1: 'name', workspaceRefsV1: [], ...settingsState.value },
-            sessions,
-            sessionListRowsByServerId,
-            ordinarySessionListMembershipByServerId,
-            sessionMessages: {},
-            sessionListIndexByServerId,
-            concurrentSessionListCacheByServerId: {},
-        };
-    };
-    const storage = Object.assign(
-        (selector?: (state: ReturnType<typeof buildState>) => unknown) => {
-            const state = buildState();
-            return typeof selector === 'function' ? selector(state) : state;
-        },
-        {
-            getState: buildState,
-            getInitialState: buildState,
-            setState: () => undefined,
-            subscribe: () => () => undefined,
-            destroy: () => undefined,
-        },
-    );
-    return createStorageModuleStub({
-        storage,
-        useSetting: createUseSettingMock({ fallback: (key) => settingsParse(settingsState.value)[key] }),
-        useLocalSettings: () => localSettingsState.value,
-        useIsDataReady: () => true,
-    });
-});
+}
 
 vi.mock('./iosActivityWidgetModules', () => ({
     HappierFocusWidget: { updateSnapshot: focusWidgetUpdateSnapshot },
@@ -255,7 +203,7 @@ async function persistHomeAccountSettings(
 
 function liveActivityStartAddresses(): string[] {
     return liveActivityStart.mock.calls
-        .map((call) => call[0] as unknown as LiveActivitySnapshot)
+        .map((call) => call[0])
         .map((snapshot) => `${snapshot.serverId ?? ''}/${snapshot.sessionId}`)
         .sort();
 }
@@ -276,8 +224,7 @@ function widgetAddresses(): string[] {
  * so each observation point drains both passes.
  */
 async function flushActivitySurfacesRuntime(): Promise<void> {
-    await act(async () => {});
-    await act(async () => {});
+    await flushHookEffects();
 }
 
 async function renderActivitySurfacesRuntime() {
@@ -289,7 +236,22 @@ async function renderActivitySurfacesRuntime() {
 
 describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
     beforeEach(async () => {
-        activeServerState.serverId = HOME_A;
+        resetServerFeaturesClientForTests();
+        setRuntimeFetch(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/auth/ping') return Response.json({});
+            throw new Error(`Unexpected Activity Home request: ${path}`);
+        });
+        for (const serverId of [HOME_A, HOME_B, HOME_UNRESOLVED]) {
+            await upsertServerProfile({ serverUrl: `https://${serverId}`, name: serverId });
+        }
+        await setActiveServerId(HOME_A);
+        // Secure credential storage is the external boundary. Account decoding,
+        // exact-Home binding, persistence and delivery admission remain real.
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) => ({
+            token: createAccountTokenForTests(`account-${new URL(url).hostname}`),
+        }));
         sessionRowsState.value = [
             { serverId: HOME_A, session: createAttentionSession(HOME_A, SHARED_SESSION_ID, 'Home A work') },
             { serverId: HOME_B, session: createAttentionSession(HOME_B, SHARED_SESSION_ID, 'Home B work') },
@@ -297,10 +259,12 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
         // Both Homes have attention, so any absence below can only come from policy.
         await persistHomeAccountSettings(HOME_A, {});
         await persistHomeAccountSettings(HOME_B, {});
+        seedActivityState();
     });
 
     afterEach(() => {
         standardCleanup();
+        vi.restoreAllMocks();
         focusWidgetUpdateSnapshot.mockClear();
         sessionsWidgetUpdateSnapshot.mockClear();
         liveActivityStart.mockClear();
@@ -332,6 +296,7 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
                 session: createAttentionSession(HOME_UNRESOLVED, 'session-unresolved', 'Unresolved Home work'),
             },
         ];
+        seedActivityState();
 
         await renderActivitySurfacesRuntime();
 
@@ -358,8 +323,8 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
         liveActivityEnd.mockClear();
         liveActivityInstances.length = 0;
         focusWidgetUpdateSnapshot.mockClear();
-        activeServerState.serverId = HOME_B;
-        activeServerState.generation += 1;
+        await setActiveServerId(HOME_B);
+        seedActivityState(HOME_B);
         await renderActivitySurfacesRuntime();
 
         expect(beforeSwitch).toEqual([`${HOME_B}/${SHARED_SESSION_ID}`]);
@@ -373,6 +338,8 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
             `${HOME_A}/${SHARED_SESSION_ID}`,
             `${HOME_B}/${SHARED_SESSION_ID}`,
         ]);
+        const homeA = liveActivityInstances.find((instance) => instance.serverId === HOME_A)!;
+        const homeB = liveActivityInstances.find((instance) => instance.serverId === HOME_B)!;
 
         liveActivityStart.mockClear();
         focusWidgetUpdateSnapshot.mockClear();
@@ -384,7 +351,8 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
         await flushActivitySurfacesRuntime();
 
         expect(liveActivityStartAddresses()).toEqual([]);
-        expect(liveActivityEnd).toHaveBeenCalled();
+        expect(homeA.end).not.toHaveBeenCalled();
+        expect(homeB.end).toHaveBeenCalledTimes(1);
     });
 
     it('withholds the title for a Home whose Account permits status only', async () => {
@@ -402,6 +370,8 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
         const homeB = sessions.find((session) => session.serverId === HOME_B);
         expect(homeA?.title).toBe('Home A work');
         expect(homeB?.title).not.toBe('Home B work');
+        expect(homeB?.title).not.toBe('Home A work');
+        expect(homeB?.subtitle).toBeNull();
         expect(homeB?.statusText).toBeNull();
         expect(homeB?.previewText).toBeNull();
     });

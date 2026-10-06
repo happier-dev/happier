@@ -1,235 +1,72 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
+import 'fake-indexeddb/auto';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTestHelpers';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { createAccountFeaturesResponse } from './account.testHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let windowDimensions: { width: number; height: number } = { width: 1440, height: 900 };
-
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        View: 'View',
-        Pressable: 'Pressable',
-        PanResponder: {
-            create: () => ({ panHandlers: {} }),
-        },
-        useWindowDimensions: () => ({
-            width: windowDimensions.width,
-            height: windowDimensions.height,
-            scale: 2,
-            fontScale: 1,
-        }),
-        Dimensions: {
-            get: () => ({
-                width: windowDimensions.width,
-                height: windowDimensions.height,
-                scale: 2,
-                fontScale: 1,
-            }),
-        },
-        Platform: {
-            OS: 'web',
-            select: (options: any) => (options && 'default' in options ? options.default : undefined),
-        },
-    });
-});
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
-        logout: vi.fn(),
-    }),
+installAccountSettingsRouteModuleMocks({ storageModule: (importOriginal) => importOriginal() });
+installDisconnectedServerSocketBoundary();
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    useWindowDimensions: () => ({ width: 1440, height: 900, scale: 2, fontScale: 1 }),
+    Dimensions: { get: () => ({ width: 1440, height: 900, scale: 2, fontScale: 1 }) },
 }));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('expo-camera', () => ({ useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
+    CameraView: { isModernBarcodeScannerAvailable: false, onModernBarcodeScanned: () => ({ remove() {} }), launchScanner() {}, dismissScanner: async () => {} } }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => {}) }));
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
+await loadSyncSingletonForTests();
 
-vi.mock('@/hooks/auth/useConnectAccount', () => ({
-    useConnectAccount: () => ({ connectAccount: vi.fn(), isLoading: false }),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { anonID: 'anon', serverID: 'server' },
-}));
-
-vi.mock('@/utils/platform/platform', () => ({
-    isRunningOnMac: () => false,
-}));
-
-vi.mock('@/sync/domains/state/storageStore', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storageStore')>();
-    return {
-        ...actual,
-        storage: () => vi.fn(),
-    };
-});
-
-vi.mock('@/sync/domains/profiles/profile', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/profiles/profile')>();
-    return {
-        ...actual,
-        getDisplayName: () => null,
-    };
-});
-
-vi.mock('@/hooks/server/useFriendsEnabled', () => ({
-    useFriendsEnabled: () => false,
-}));
-
-vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
-    useFriendsIdentityReadiness: () => ({ isLoadingFeatures: false, gate: { gateVariant: 'disabled' } }),
-}));
-
-vi.mock('expo-clipboard', () => ({
-    setStringAsync: vi.fn(async () => {}),
-}));
-
-vi.mock('expo-camera', () => ({
-    useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
-    CameraView: {
-        isModernBarcodeScannerAvailable: false,
-        onModernBarcodeScanned: () => ({ remove: () => {} }),
-        launchScanner: () => {},
-        dismissScanner: async () => {},
-    },
-}));
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-installAccountSettingsRouteModuleMocks({
-    routerModule: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({
-            pathname: () => '/settings/account',
-            router: {
-                push: vi.fn(),
-                back: vi.fn(),
-                replace: vi.fn(),
-                setParams: vi.fn(),
-            },
-        }).module;
-    },
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-                return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSetting: ((key: string) => {
-                    if (key === 'useProfiles') return false;
-                    return null;
-                }) as any,
-                useLocalSetting: ((key: string) => {
-                    if (key === 'settingsNavSidebarEnabled') return true;
-                    if (key === 'settingsNavSidebarWidthPx') return 230;
-                    if (key === 'settingsNavSidebarWidthBasisPx') return 1200;
-                    if (key === 'uiFontScale') return 1;
-                    if (key === 'devModeEnabled') return false;
-                    return null;
-                }) as any,
-                useLocalSettingMutable: ((key: string) => {
-                    if (key === 'settingsNavSidebarWidthPx') return [230, vi.fn()];
-                    if (key === 'settingsNavSidebarWidthBasisPx') return [1200, vi.fn()];
-                    return [null, vi.fn()];
-                }) as any,
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [false, vi.fn()]),
-                useProfile: () => ({
-                    id: 'p',
-                    timestamp: 0,
-                    firstName: null,
-                    lastName: null,
-                    username: null,
-                    avatar: null,
-                    linkedProviders: [{
-                        id: 'github',
-                        login: 'octocat',
-                        displayName: 'Octocat',
-                        avatarUrl: null,
-                        profileUrl: 'https://github.com/octocat',
-                        showOnProfile: true,
-                    }],
-                    connectedServices: [],
-                    connectedServicesV2: [
-                        {
-                            serviceId: 'openai-codex',
-                            profiles: [{
-                                profileId: 'work',
-                                status: 'connected',
-                                kind: 'oauth',
-                                providerEmail: null,
-                                providerAccountId: null,
-                                expiresAt: null,
-                                lastUsedAt: null,
-                            }],
-                        },
-                        {
-                            serviceId: 'anthropic',
-                            profiles: [{
-                                profileId: 'main',
-                                status: 'connected',
-                                kind: 'token',
-                                providerEmail: null,
-                                providerAccountId: null,
-                                expiresAt: null,
-                                lastUsedAt: null,
-                            }],
-                        },
-                        {
-                            serviceId: 'gemini',
-                            profiles: [{
-                                profileId: 'home',
-                                status: 'connected',
-                                kind: 'oauth',
-                                providerEmail: null,
-                                providerAccountId: null,
-                                expiresAt: null,
-                                lastUsedAt: null,
-                            }],
-                        },
-                    ],
-                }) as any,
-            },
-        });
-    },
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+let restoreExecutor: (() => void) | undefined;
+afterEach(async () => {
+    standardCleanup();
+    await account?.dispose();
+    account = undefined;
+    restoreExecutor?.();
+    restoreExecutor = undefined;
+    vi.restoreAllMocks();
 });
 
 describe('Settings → Account desktop shell', () => {
-    afterEach(() => {
-        vi.restoreAllMocks();
-        vi.unstubAllGlobals();
-        standardCleanup();
-        windowDimensions = { width: 1440, height: 900 };
-    });
-
     it('renders the account route inside the desktop settings shell without crashing', async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-            const url = getRequestUrl(input);
-            if (isFeaturesRequest(url)) {
-                return {
-                    ok: true,
-                    json: async () => createAccountFeaturesResponse(),
-                };
-            }
-            throw new Error(`Unexpected fetch: ${url}`);
+        account = await createSecretSettingsTestHarness();
+        restoreExecutor = await installRealActionExecutorModuleLoader();
+        const originalRequest = account.request.getMockImplementation()!;
+        account.request.mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features') return Response.json(createAccountFeaturesResponse());
+            if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed',
+                nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+            return originalRequest(input, init);
         });
-        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { localSettingsParse } = await import('@/sync/domains/settings/localSettings');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        storage.getState().applyProfile({ ...profileDefaults, id: 'desktop-profile', linkedProviders: [], connectedServices: [],
+            connectedServicesV2: ['openai-codex', 'anthropic', 'gemini'].map((serviceId) => ({ serviceId, groups: [], profiles: [{
+                profileId: 'work', status: 'connected' as const, kind: 'oauth' as const, providerEmail: null,
+                providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+            }] })) });
+        storage.setState({ isDataReady: true, profileScope: account.scope,
+            localSettings: localSettingsParse({ settingsNavSidebarEnabled: true, settingsNavSidebarWidthPx: 230, settingsNavSidebarWidthBasisPx: 1200 }) });
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const { SettingsShell } = await import('@/components/settings/shell/SettingsShell');
         const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-
-        const screen = await renderScreen(
-            <SettingsShell>
-                <AccountScreen />
-            </SettingsShell>,
-        );
+        const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}>
+            <SettingsShell><AccountScreen /></SettingsShell>
+        </InjectedAuthProvider>);
 
         expect(screen.findByTestId('settings-sidebar')).toBeTruthy();
         expect(screen.findByTestId('settings-account-identity')).toBeTruthy();

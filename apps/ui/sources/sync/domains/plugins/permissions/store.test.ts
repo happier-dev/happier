@@ -32,12 +32,8 @@ const subjectB = {
     accessDeclarationDigest: 'a'.repeat(64),
     selectedAuthorityDigest: 'c'.repeat(64),
     selectedRawAccessDigest: 'd'.repeat(64),
-    installedGenerationId: 'generation-1',
-    installReviewPrincipalDigest: 'b'.repeat(64),
 } as const;
 const reorderedSubjectB = {
-    installReviewPrincipalDigest: subjectB.installReviewPrincipalDigest,
-    installedGenerationId: subjectB.installedGenerationId,
     selectedRawAccessDigest: subjectB.selectedRawAccessDigest,
     selectedAuthorityDigest: subjectB.selectedAuthorityDigest,
     accessDeclarationDigest: subjectB.accessDeclarationDigest,

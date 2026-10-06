@@ -65,6 +65,12 @@ const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock, ma
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
+// Metro owns route discovery; Node does not implement require.context.
+vi.mock('expo-router/_ctx', () => ({
+    ctx: Object.assign(() => { throw new Error('Unexpected Metro route load in root-layout fixture'); }, {
+        keys: () => [],
+    }),
+}));
 vi.mock('@react-native-masked-view/masked-view', () => ({
     __esModule: true,
     default: (props: any) => React.createElement('MaskedView', props, props.children),

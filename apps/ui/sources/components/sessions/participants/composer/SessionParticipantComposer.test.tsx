@@ -158,6 +158,7 @@ function currentParticipantDaemonProjection(entriesById: Readonly<Record<string,
             generation: 7,
             contributions: [{
                 version: 1,
+                occurrenceId: '7',
                 contribution: {
                     kind: 'localId',
                     pluginId: 'acme.issues',
@@ -994,7 +995,7 @@ describe('SessionParticipantComposer', () => {
             serverId: 'server-1',
             method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_REFERENCE_SEARCH,
             payload: expect.objectContaining({
-                expectedContributorOccurrenceId: '7',
+                expectedOccurrenceId: '7',
                 reference: { pluginId: 'acme.issues', localId: 'issues' },
                 trigger: '@',
                 query: 'issue',
@@ -1623,13 +1624,11 @@ describe('SessionParticipantComposer', () => {
         const retainedMention = agentInputProps.structuredInputMentions?.[0];
         if (!retainedMention) throw new Error('expected controlled participant mention');
         await act(async () => {
-            agentInputProps.onStructuredInputMentionsChange([{
-                ...retainedMention,
-                start: 18,
-                end: 24,
-            }]);
             agentInputProps.onChangeText('Newer participant @issue');
         });
+        expect(readComposerPresentationSnapshot(ref)?.references).toEqual([
+            expect.objectContaining({ ref: 'partner:issue-42', token: '@issue', start: 18, end: 24 }),
+        ]);
         submission.resolve();
         await act(async () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
@@ -1642,7 +1641,7 @@ describe('SessionParticipantComposer', () => {
         });
     });
 
-    it('retains text-bound newer participant references with unchanged accepted text', async () => {
+    it('clears text-bound newer participant references atomically with unchanged accepted text', async () => {
         const submission = createDeferred<void>();
         syncSubmitMessageSpy.mockImplementationOnce(() => submission.promise);
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
@@ -1680,26 +1679,27 @@ describe('SessionParticipantComposer', () => {
             }).status).toBe('applied');
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
-        submission.resolve();
-        await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
         expect(readComposerPresentationSnapshot(participantComposerRef)).toMatchObject({
             text: 'Captured participant @issue @new',
             references: [
                 expect.objectContaining({ ref: 'partner:issue-42', token: '@issue' }),
                 expect.objectContaining({ ref: 'partner:issue-99', token: '@new' }),
             ],
+        });
+        submission.resolve();
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(readComposerPresentationSnapshot(participantComposerRef)).toMatchObject({
+            text: '',
+            references: [],
             attachments: [],
         });
         const currentAgentInputProps = agentInputSpy.mock.lastCall?.[0] as {
             structuredInputMentions?: readonly { ref?: string }[];
         };
-        expect(currentAgentInputProps.structuredInputMentions).toEqual([
-            expect.objectContaining({ ref: 'partner:issue-42', tokenText: '@issue' }),
-            expect.objectContaining({ ref: 'partner:issue-99', tokenText: '@new' }),
-        ]);
+        expect(currentAgentInputProps.structuredInputMentions).toEqual([]);
     });
 
     it('clears unchanged participant text and references when an attachment changes after submission', async () => {

@@ -249,7 +249,7 @@ describe('resolveMergedContributionRegistry', () => {
             definition: expect.objectContaining({
                 id: 'codex',
                 capabilities: expect.objectContaining({
-                    surfaces: ['terminal', 'externalSessions'],
+                    surfaces: ['externalSessions'],
                 }),
             }),
         });
@@ -388,7 +388,7 @@ describe('resolveMergedContributionRegistry', () => {
         ]));
     });
 
-    it('projects review-only execution-run agents without creating catalog entries', async () => {
+    it('projects review-only execution-run agents with a qualified catalog entry but no static CLI runtime', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-review-backend-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-review-backend-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -471,7 +471,11 @@ describe('resolveMergedContributionRegistry', () => {
             pluginId: 'acme.review.coderabbit',
             runtimeSpec: null,
         });
-        expect(registry.catalogEntriesById['acme.review.coderabbit/acme-review']).toBeUndefined();
+        expect(registry.catalogEntriesById['acme.review.coderabbit/acme-review']).toMatchObject({
+            id: 'acme.review.coderabbit/acme-review',
+            cliSubcommand: 'acme.review.coderabbit/acme-review',
+            vendorResumeSupport: 'unsupported',
+        });
         expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.executionRunProfilesById?.get('acme.review.coderabbit/review')).toMatchObject({
             pluginId: 'acme.review.coderabbit',

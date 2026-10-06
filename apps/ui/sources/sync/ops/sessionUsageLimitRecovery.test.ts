@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -491,53 +491,7 @@ describe('sessionUsageLimitRecovery ops', () => {
         });
     });
 
-    it('normalizes nested switch-now daemon envelopes and preserves typed diagnostics', async () => {
-        storageState.current = {
-            sessions: {
-                'session-1': {
-                    active: false,
-                    metadata: {
-                        machineId: 'machine-1',
-                        path: '/repo',
-                    },
-                },
-            },
-            machines: {
-                'machine-1': { id: 'machine-1', active: true },
-            },
-        };
-        const uxDiagnostic = {
-            code: 'recovery_retry_scheduled',
-            failurePhase: 'runtime_auth_recovery',
-            source: 'usage_limit_recovery',
-            serviceId: 'openai',
-            agentId: 'codex',
-            retryable: true,
-            suggestedActions: ['retry'],
-        };
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: true,
-            result: {
-                ok: true,
-                status: 'switch_attempted',
-                result: { status: 'switched' },
-                uxDiagnostic,
-            },
-        });
-        const { sessionUsageLimitSwitchAccountNow } = await import('./sessionUsageLimitRecovery');
-
-        await expect(sessionUsageLimitSwitchAccountNow('session-1', {
-            provider: ' codex ',
-            serverId: 'server-route',
-        })).resolves.toEqual({
-            ok: true,
-            status: 'switch_applied',
-            sessionId: 'session-1',
-            uxDiagnostic,
-        });
-    });
-
-    it('checks stale-inactive live sessions through the session-scoped RPC lane when no daemon machine target exists', async () => {
+   it('checks stale-inactive live sessions through the session-scoped RPC lane when no daemon machine target exists', async () => {
         storageState.current = {
             sessions: {
                 'session-1': {
@@ -761,5 +715,81 @@ describe('sessionUsageLimitRecovery ops', () => {
             issueFingerprint: 'usage-limit:session-1:1',
             armedAtMs: 1_700_000_000_000,
         })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'session-1' });
+    });
+});
+
+describe('session usage-limit recovery (real scoped transport)', () => {
+    let boundary: Awaited<ReturnType<typeof import('@/dev/testkit/harness/sessionOpsNetworkBoundary').installSessionOpsNetworkBoundary>>;
+    let realStorage: typeof import('@/sync/domains/state/storage').storage;
+    let fixtures: typeof import('@/dev/testkit/fixtures/sessionFixtures');
+    let machineFixtures: typeof import('@/dev/testkit/fixtures/machineFixtures');
+    let metadata: typeof import('@happier-dev/session-core/state');
+
+    beforeAll(async () => {
+        vi.doUnmock('@/sync/domains/state/storage');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId');
+        vi.resetModules();
+        const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+        boundary = await installSessionOpsNetworkBoundary();
+        realStorage = (await import('@/sync/domains/state/storage')).storage;
+        fixtures = await import('@/dev/testkit/fixtures/sessionFixtures');
+        machineFixtures = await import('@/dev/testkit/fixtures/machineFixtures');
+        metadata = await import('@happier-dev/session-core/state');
+    });
+
+    beforeEach(() => {
+        realStorage.setState(realStorage.getInitialState(), true);
+        boundary.resetRequests();
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_SPAWN_SESSION_RPC_TIMEOUT_MS', '');
+        // Observe the ACK budget without elapsed wall time; network promises and timers stay real.
+        vi.useFakeTimers({ toFake: ['Date'] });
+    });
+
+    afterEach(() => {
+        for (const sessionId of Object.keys(realStorage.getState().sessions)) {
+            realStorage.getState().clearSessionResuming(sessionId);
+        }
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+    });
+
+    afterAll(() => boundary?.dispose());
+
+    it('normalizes nested switch-now daemon envelopes and preserves typed diagnostics', async () => {
+        const home = await boundary.addHome('https://usage-limit.example.test', 'usage-account');
+        realStorage.setState({
+            sessions: {
+                'session-1': fixtures.createSessionFixture({
+                    id: 'session-1', serverId: home.id, active: false,
+                    metadata: metadata.MetadataSchema.parse({ machineId: 'machine-1', path: '/repo', host: 'host.local' }),
+                }),
+            },
+            machines: { 'machine-1': machineFixtures.createMachineFixture() },
+            machineListByServerId: { [home.id]: [machineFixtures.createMachineFixture()] },
+        });
+        // A released daemon's scalar service id is ingress; the real protocol reader qualifies it.
+        const uxDiagnostic = {
+            code: 'recovery_retry_scheduled', failurePhase: 'runtime_auth_recovery',
+            source: 'usage_limit_recovery', serviceId: 'openai', agentId: 'codex',
+            retryable: true, suggestedActions: ['retry'],
+        };
+        boundary.respond(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, {
+            ok: true, result: { ok: true, status: 'switch_attempted', result: { status: 'switched' }, uxDiagnostic },
+        });
+        const { sessionUsageLimitSwitchAccountNow } = await import('./sessionUsageLimitRecovery');
+
+        await expect(sessionUsageLimitSwitchAccountNow('session-1', {
+            provider: ' codex ', serverId: home.id,
+        })).resolves.toEqual({
+            ok: true, status: 'switch_applied', sessionId: 'session-1',
+            uxDiagnostic: { ...uxDiagnostic, serviceId: 'happier.voice.openai/openai' },
+        });
+        expect(boundary.requests).toEqual([expect.objectContaining({
+            serverUrl: home.serverUrl, token: home.token, targetId: 'machine-1',
+            method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+            payload: { sessionId: 'session-1', provider: 'codex', operation: 'switch_account_now' },
+        })]);
     });
 });

@@ -13,8 +13,19 @@ import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/sessi
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { t } from '@/text';
 import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
+import 'fake-indexeddb/auto';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import type { VoiceAttemptIdleTarget } from './useVoiceAttemptControl';
+
+installDisconnectedServerSocketBoundary();
+// Only native crypto adapters are replaced; the isolated dismissal case below
+// uses the real Account, Home Artifact, Action, store and admission owners.
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
 
 const featureState = vi.hoisted(() => ({ current: {} as Record<string, boolean> }));
 
@@ -510,23 +521,6 @@ describe('useVoiceAttemptControl availability ladder', () => {
 
         expect(routerMock.instance?.spies.push.mock.calls.map((call) => call[0]))
             .toContainEqual(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
-
-        await hook.unmount();
-    });
-
-    it('hides the setup-pose mic once the person dismissed "Set up voice", until Voice is set up', async () => {
-        const { setHomeSetupStepHidden } = await import('@/components/hub/layout/homeHubLayout');
-        const { VOICE_SETUP_STEP_ID } = await import('@/voice/settings/setup/useVoiceSetupItem');
-        seedVoiceSettings({ providerId: null, ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } });
-        getStorage().setState((state: any) => ({
-            ...state,
-            settings: { ...state.settings, homeHubLayoutV1: setHomeSetupStepHidden(state.settings.homeHubLayoutV1, VOICE_SETUP_STEP_ID, true) },
-        }));
-
-        const hook = await renderBothOwners();
-
-        // The same dismissal Home's "Get set up" uses; Settings → Voice stays reachable on its own.
-        expect(hook.getCurrent().control).toMatchObject({ availability: 'unavailable', primaryAction: null });
 
         await hook.unmount();
     });
@@ -1529,5 +1523,97 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
         });
 
         await hook.unmount();
+    });
+});
+
+describe('Voice setup dismissal through the current Home Artifact owner', () => {
+    it('hides the setup-pose mic after the real Home dismissal is persisted', async () => {
+        // Incumbent scenario fixtures above remain a separate P2 mock-family
+        // migration. This changed authority case admits no internal substitutes.
+        const internalModules = [
+            '@/hooks/server/useFeatureEnabled',
+            '@/voice/agent/getVoiceAgentSessionTeleportAvailability',
+            '@/components/appShell/plugins/AppShellPluginUiProjection',
+            '@/hooks/server/useActiveServerSnapshot',
+            '@/sync/domains/server/resolvePortableServerIdentityForRoutingId',
+            '@/voice/credentials/useExecutionMachinePresentation',
+        ] as const;
+        const incumbentModules = await Promise.all(internalModules.map((id) => vi.importMock(id)));
+        internalModules.forEach((id) => vi.doUnmock(id));
+        vi.resetModules();
+        let connection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness')['restoreServerAccountForTest']>> | undefined;
+        let restoreActionLoader: (() => void) | undefined;
+        let unmount: (() => Promise<void>) | undefined;
+        try {
+            const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+            await loadSyncSingletonForTests();
+            const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+            restoreActionLoader = await installRealActionExecutorModuleLoader();
+            const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
+            const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+            const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+            const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+            const { HOME_HUB_DEFAULT_LAYOUT, listHiddenHomeSetupSteps } = await import('@happier-dev/protocol/home');
+            const artifact = createHomeHubArtifactHttpBoundary('voice-dismiss-account');
+            artifact.seed(HOME_HUB_DEFAULT_LAYOUT);
+            const features = createRootLayoutFeaturesResponse();
+            if (!tryWriteServerEnabledBitInPlace(features, 'voice', true)) throw new Error('Voice feature fixture unavailable');
+            connection = await restoreServerAccountForTest({
+                serverUrl: 'https://voice-dismiss.example.test',
+                accountId: 'voice-dismiss-account',
+                request: (input, init) => new URL(String(input)).pathname === '/v1/features'
+                    ? Promise.resolve(Response.json(features))
+                    : artifact.request(input, init),
+            });
+            const { sync } = await import('@/sync/sync');
+            const settingsQueue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
+            await settingsQueue.awaitQueue();
+            const { storage } = await import('@/sync/domains/state/storage');
+            const { settingsParse } = await import('@/sync/domains/settings/settings');
+            const scope = { serverId: connection.home.id, accountId: 'voice-dismiss-account' };
+            storage.setState({
+                isDataReady: true,
+                profileScope: scope,
+                settingsScope: scope,
+                settings: settingsParse({
+                    featureToggles: { voice: true },
+                    voiceSettingsV1: { providerId: null, ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' } },
+                }),
+            });
+            const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+            const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+            const { useVoiceSurfaceModel } = await import('@/components/voice/surface/useVoiceSurfaceModel');
+            const { useHomeSetupDismissals } = await import('@/components/hub/layout/useHomeSetupDismissals');
+            const { VOICE_SETUP_STEP_ID } = await import('@/voice/settings/setup/useVoiceSetupItem');
+            const { renderHook: renderCurrentHook } = await import('@/dev/testkit/hooks/renderHook');
+            const { flushHookEffects } = await import('@/dev/testkit');
+            const credentials = connection.credentials;
+            const hook = await renderCurrentHook(() => ({
+                control: useVoiceAttemptControl(GLOBAL_TARGET),
+                model: useVoiceSurfaceModel({ variant: 'sidebar' }),
+                dismissals: useHomeSetupDismissals(),
+            }), {
+                wrapper: ({ children }) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>,
+            });
+            unmount = hook.unmount;
+            await flushHookEffects({ cycles: 3 });
+            expect(hook.getCurrent().dismissals.hidden.has(VOICE_SETUP_STEP_ID)).toBe(false);
+            expect(hook.getCurrent().control).toMatchObject({ availability: 'setup', primaryAction: 'setup' });
+
+            await act(async () => { await hook.getCurrent().dismissals.dismiss(VOICE_SETUP_STEP_ID); });
+            await flushHookEffects({ cycles: 3 });
+
+            expect(artifact.writes).toHaveLength(1);
+            expect(listHiddenHomeSetupSteps(artifact.layout())).toContain(VOICE_SETUP_STEP_ID);
+            expect(hook.getCurrent().dismissals.hidden.has(VOICE_SETUP_STEP_ID)).toBe(true);
+            expect(hook.getCurrent().control).toMatchObject({ availability: 'unavailable', primaryAction: null });
+            expect(hook.getCurrent().model).toBeNull();
+        } finally {
+            await unmount?.();
+            await connection?.dispose();
+            restoreActionLoader?.();
+            internalModules.forEach((id, index) => vi.doMock(id, () => incumbentModules[index]));
+            vi.resetModules();
+        }
     });
 });

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import * as processInstanceBoundary from '@happier-dev/cli-common/processInstance';
 
 import {
     PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_SERIALIZED_BYTES,
@@ -95,11 +96,19 @@ async function withPlatform<T>(
     run: () => Promise<T>,
 ): Promise<T> {
     const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    // Platform simulation exercises path identity, not a foreign OS process probe.
+    const readProcessStartTime = processInstanceBoundary.readProcessStartTimeMsSync;
+    const currentProcessStartedAt = readProcessStartTime(process.pid);
+    const processStart = vi.spyOn(processInstanceBoundary, 'readProcessStartTimeMsSync')
+        .mockImplementation((pid) => pid === process.pid
+            ? currentProcessStartedAt
+            : readProcessStartTime(pid));
     Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
     try {
         return await run();
     } finally {
         Object.defineProperty(process, 'platform', descriptor);
+        processStart.mockRestore();
     }
 }
 
@@ -1251,7 +1260,7 @@ describe('External Sessions hook installation configuration', () => {
         expect(await readExternalSessionHookInstallationRecord(recordPath(input)))
             .toBeNull();
         expect(JSON.parse(await readFile(targetPath, 'utf8'))).toEqual({
-            hooks: {},
+            hooks: { SessionStart: [], Stop: [] },
         });
     });
 

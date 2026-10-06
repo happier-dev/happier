@@ -1,17 +1,27 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as platformCrypto from 'rn-encryption';
+import { createDeferred } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { storage } from '@/sync/domains/state/storage';
+import { Encryption } from '@/sync/encryption/encryption';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { fetchAndApplyMessages } from './syncSessions';
 import { advanceSessionReceivedMessageCurrentness } from "@happier-dev/session-core/transcript";
 
-function buildApiMessage(params: { id: string; seq: number; updatedAt: number }): SessionMessageV1 {
+let encryption: Encryption;
+
+async function buildApiMessage(params: { id: string; seq: number; updatedAt: number }): Promise<SessionMessageV1> {
     return {
         id: params.id,
         seq: params.seq,
         localId: null,
         sidechainId: null,
-        content: { t: 'encrypted', c: `cipher-${params.id}-${params.updatedAt}` },
+        content: { t: 'encrypted', c: await encryption.getSessionEncryption('s1')!.encryptRawRecord({
+            role: 'user', content: { type: 'text', text: `hello-${params.updatedAt}` },
+        }) },
         createdAt: 1_000 + params.seq,
         updatedAt: params.updatedAt,
     };
@@ -33,32 +43,58 @@ function buildPlainApiMessage(params: { id: string; seq: number; text: string })
 }
 
 describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
+    beforeEach(async () => {
+        storage.setState(storage.getInitialState(), true);
+        storage.getState().applySessions([
+            createSessionFixture({ id: 's1', encryptionMode: 'e2ee' }),
+            createSessionFixture({ id: 's_plain', encryptionMode: 'plain' }),
+        ]);
+        encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        await encryption.initializeSessions(new Map([['s1', new Uint8Array(32).fill(2)]]));
+    });
+
+    function observeAppliedMessages() {
+        return vi.fn((id: string, messages: NormalizedMessage[]) => storage.getState().applyMessages(id, messages));
+    }
+
+    function observeMessagesLoaded() {
+        return vi.fn((id: string) => storage.getState().applyMessagesLoaded(id));
+    }
+
+    function delayPlatformDecryption() {
+        const started = createDeferred<void>();
+        const release = createDeferred<void>();
+        const originalDecrypt = platformCrypto.decryptAsyncAES;
+        // Delay real crypto at its native SDK completion boundary, not the internal decoder.
+        vi.spyOn(platformCrypto, 'decryptAsyncAES').mockImplementationOnce(async (...args) => {
+            const plaintext = await originalDecrypt(...args);
+            started.resolve();
+            await release.promise;
+            return plaintext;
+        });
+        return { started: started.promise, release: () => release.resolve() };
+    }
+
     afterEach(() => {
+        vi.restoreAllMocks();
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
     });
 
     it('re-applies a previously-seen message when updatedAt increases', async () => {
-        const applyMessages = vi.fn();
-        const markMessagesLoaded = vi.fn();
+        const applyMessages = observeAppliedMessages();
+        const markMessagesLoaded = observeMessagesLoaded();
         const request = vi.fn(async () =>
             new Response(
                 JSON.stringify({
-                    messages: [buildApiMessage({ id: 'm1', seq: 1, updatedAt: 3_000 })],
+                    messages: [await buildApiMessage({ id: 'm1', seq: 1, updatedAt: 3_000 })],
                 }),
                 { status: 200, headers: { 'Content-Type': 'application/json' } },
             ),
         );
 
-        const decryptMessages = vi.fn(async (apiMessages: SessionMessageV1[]) =>
-            apiMessages.map((m) => ({
-                id: m.id,
-                seq: m.seq,
-                localId: m.localId ?? null,
-                createdAt: m.createdAt,
-                content: { role: 'user', content: { type: 'text', text: `hello-${m.updatedAt ?? 'unknown'}` } },
-            })),
-        );
+        const decryptMessages = vi.spyOn(encryption.getSessionEncryption('s1')!, 'decryptMessages');
 
         const sessionReceivedMessages = new Map<string, Map<string, number>>();
         sessionReceivedMessages.set('s1', new Map([['m1', 2_000]]));
@@ -72,7 +108,7 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
 
         await fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages } as any),
+            getSessionEncryption: id => encryption.getSessionEncryption(id),
             request,
             sessionReceivedMessages,
             applyMessages,
@@ -107,32 +143,21 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
     });
 
     it('keeps a newer socket watermark when an initial snapshot finishes decrypting later', async () => {
-        const stalePageMessage = buildApiMessage({ id: 'm1', seq: 1, updatedAt: 2_010 });
+        const stalePageMessage = await buildApiMessage({ id: 'm1', seq: 1, updatedAt: 2_010 });
         const request = vi.fn(async () => new Response(
             JSON.stringify({ messages: [stalePageMessage] }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
         ));
-        type DecryptedPageMessage = {
-            id: string;
-            seq: number;
-            localId: string | null;
-            createdAt: number;
-            content: unknown;
-        };
-        let releaseDecryption!: (messages: DecryptedPageMessage[]) => void;
-        const pendingDecryption = new Promise<DecryptedPageMessage[]>((resolve) => {
-            releaseDecryption = resolve;
-        });
-        const decryptMessages = vi.fn((_messages: SessionMessageV1[]) => pendingDecryption);
+        const delayedDecryption = delayPlatformDecryption();
         const sessionReceivedMessages = new Map<string, Map<string, number>>([
             ['s1', new Map([['m1', 2_009]])],
         ]);
-        const applyMessages = vi.fn();
-        const markMessagesLoaded = vi.fn();
+        const applyMessages = observeAppliedMessages();
+        const markMessagesLoaded = observeMessagesLoaded();
 
         const pendingResult = fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages }),
+            getSessionEncryption: id => encryption.getSessionEncryption(id),
             request,
             sessionReceivedMessages,
             applyMessages,
@@ -140,15 +165,9 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
             log: { log: () => {} },
         });
 
-        await vi.waitFor(() => expect(decryptMessages).toHaveBeenCalledWith([stalePageMessage]));
+        await delayedDecryption.started;
         advanceSessionReceivedMessageCurrentness(sessionReceivedMessages, 's1', 'm1', 2_011);
-        releaseDecryption([{
-            id: stalePageMessage.id,
-            seq: stalePageMessage.seq,
-            localId: stalePageMessage.localId ?? null,
-            createdAt: stalePageMessage.createdAt,
-            content: { role: 'user', content: { type: 'text', text: 'older snapshot text' } },
-        }]);
+        delayedDecryption.release();
 
         await pendingResult;
 
@@ -158,34 +177,17 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
     });
 
     it('drops an initial snapshot that loses session visibility during decryption', async () => {
-        const message = buildApiMessage({ id: 'deleted-during-decrypt', seq: 2, updatedAt: 2_012 });
-        let sessionKnown = true;
-        let releaseDecryption!: (messages: Array<{
-            id: string;
-            seq: number;
-            localId: string | null;
-            createdAt: number;
-            content: unknown;
-        }>) => void;
-        const pendingDecryption = new Promise<Array<{
-            id: string;
-            seq: number;
-            localId: string | null;
-            createdAt: number;
-            content: unknown;
-        }>>((resolve) => {
-            releaseDecryption = resolve;
-        });
-        const decryptMessages = vi.fn(() => pendingDecryption);
-        const applyMessages = vi.fn();
-        const markMessagesLoaded = vi.fn();
+        const message = await buildApiMessage({ id: 'deleted-during-decrypt', seq: 2, updatedAt: 2_012 });
+        const delayedDecryption = delayPlatformDecryption();
+        const applyMessages = observeAppliedMessages();
+        const markMessagesLoaded = observeMessagesLoaded();
         const onMessagesPage = vi.fn();
         const sessionReceivedMessages = new Map<string, Map<string, number>>();
 
         const pendingResult = fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({ decryptMessages }),
-            isSessionKnown: () => sessionKnown,
+            getSessionEncryption: id => encryption.getSessionEncryption(id),
+            isSessionKnown: id => Boolean(storage.getState().sessions[id]),
             request: async () => new Response(
                 JSON.stringify({ messages: [message] }),
                 { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -197,15 +199,9 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
             log: { log: () => {} },
         });
 
-        await vi.waitFor(() => expect(decryptMessages).toHaveBeenCalledWith([message]));
-        sessionKnown = false;
-        releaseDecryption([{
-            id: message.id,
-            seq: message.seq,
-            localId: message.localId ?? null,
-            createdAt: message.createdAt,
-            content: { role: 'user', content: { type: 'text', text: 'deleted response' } },
-        }]);
+        await delayedDecryption.started;
+        storage.getState().deleteSession('s1');
+        delayedDecryption.release();
 
         await pendingResult;
 
@@ -216,27 +212,19 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
     });
 
     it('does not mark a transcript loaded after its page apply loses session visibility', async () => {
-        const message = buildApiMessage({ id: 'deleted-after-apply', seq: 3, updatedAt: 2_013 });
-        let sessionKnown = true;
-        const applyMessages = vi.fn(() => {
+        const message = await buildApiMessage({ id: 'deleted-after-apply', seq: 3, updatedAt: 2_013 });
+        const applyMessages = vi.fn((id: string, messages: NormalizedMessage[]) => {
+            storage.getState().applyMessages(id, messages);
             queueMicrotask(() => {
-                sessionKnown = false;
+                storage.getState().deleteSession(id);
             });
         });
-        const markMessagesLoaded = vi.fn();
+        const markMessagesLoaded = observeMessagesLoaded();
 
         await fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({
-                decryptMessages: async () => [{
-                    id: message.id,
-                    seq: message.seq,
-                    localId: message.localId ?? null,
-                    createdAt: message.createdAt,
-                    content: { role: 'user', content: { type: 'text', text: 'page applied before delete' } },
-                }],
-            }),
-            isSessionKnown: () => sessionKnown,
+            getSessionEncryption: id => encryption.getSessionEncryption(id),
+            isSessionKnown: id => Boolean(storage.getState().sessions[id]),
             request: async () => new Response(
                 JSON.stringify({ messages: [message] }),
                 { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -251,39 +239,32 @@ describe('fetchAndApplyMessages (updatedAt dedupe)', () => {
         expect(markMessagesLoaded).not.toHaveBeenCalled();
     });
 
-    it('does not advance row currentness when applying an initial row is rejected', async () => {
-        const message = buildApiMessage({ id: 'apply-rejected', seq: 2, updatedAt: 2_012 });
+    it('does not advance row currentness when the page application does not commit', async () => {
+        const message = await buildApiMessage({ id: 'apply-rejected', seq: 2, updatedAt: 2_012 });
         const sessionReceivedMessages = new Map<string, Map<string, number>>();
 
         await expect(fetchAndApplyMessages({
             sessionId: 's1',
-            getSessionEncryption: () => ({
-                decryptMessages: async () => [{
-                    id: message.id,
-                    seq: message.seq,
-                    localId: message.localId ?? null,
-                    createdAt: message.createdAt,
-                    content: { role: 'user', content: { type: 'text', text: 'initial row' } },
-                }],
-            }),
+            getSessionEncryption: id => encryption.getSessionEncryption(id),
             request: async () => new Response(
                 JSON.stringify({ messages: [message] }),
                 { status: 200, headers: { 'Content-Type': 'application/json' } },
             ),
             sessionReceivedMessages,
-            applyMessages: () => {
-                throw new Error('reducer rejected initial row');
+            applyMessages: (id, messages) => {
+                storage.getState().applyMessages(id, messages);
+                throw new Error('page application did not commit');
             },
             markMessagesLoaded: vi.fn(),
             log: { log: () => {} },
-        })).rejects.toThrow('reducer rejected initial row');
+        })).rejects.toThrow('page application did not commit');
 
         expect(sessionReceivedMessages.get('s1')?.get('apply-rejected')).toBeUndefined();
     });
 
     it('applies plaintext message pages without touching the encryption registry', async () => {
-        const applyMessages = vi.fn();
-        const markMessagesLoaded = vi.fn();
+        const applyMessages = observeAppliedMessages();
+        const markMessagesLoaded = observeMessagesLoaded();
         const getSessionEncryption = vi.fn(() => null);
         const request = vi.fn(async () =>
             new Response(

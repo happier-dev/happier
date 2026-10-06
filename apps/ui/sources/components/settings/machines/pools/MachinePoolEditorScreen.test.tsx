@@ -5,6 +5,7 @@ import { ActionsSettingsV1Schema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSIO
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -16,7 +17,6 @@ import { Modal } from '@/modal';
 import '@/sync/syncEngine';
 import { sync } from '@/sync/sync';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import type { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resetMachinePoolSyncRuntimeForTests } from '@/sync/engine/machines/machinePoolSyncRuntime';
 import { FocusReturnProvider } from '@/keyboard/focusReturn';
@@ -41,12 +41,13 @@ const boundaries = vi.hoisted(() => ({
     setParams: vi.fn(),
     routeStack: ['/settings/machines'] as string[],
     request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
-    artifacts: new Map<string, Artifact>(),
     pressableFocus: vi.fn<(testID: string | null) => void>(),
     textInputFocus: vi.fn<(testID: string | null) => void>(),
     accessibilityFocus: vi.fn<(reactTag: number) => void>(),
     randomUUID: vi.fn(() => '00000000-0000-4000-8000-000000000001'),
 }));
+
+const artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 
 vi.mock('react-native', async () => {
     const {
@@ -201,24 +202,8 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
     if (pathname === '/v1/auth/ping' || pathname === '/health') return Response.json({ ok: true });
     if (pathname === '/v1/features') return Response.json(featureResponse);
     if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-    if (pathname === '/v1/artifacts' && init?.method === 'POST') {
-        const request = input as unknown as ArtifactCreateRequest;
-        const artifact: Artifact = { ...request, ownerAccountId: 'account-a', access: 'owner', encryptionMode: 'plain',
-            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-        boundaries.artifacts.set(request.id, artifact);
-        return Response.json(artifact);
-    }
-    if (pathname.startsWith('/v1/artifacts/')) {
-        const artifact = boundaries.artifacts.get(pathname.split('/').at(-1) ?? '');
-        if (!artifact) return Response.json({}, { status: 404 });
-        if (init?.method === 'POST') {
-            const update = input as ArtifactUpdateRequest;
-            if (update.header !== undefined) { artifact.header = update.header; artifact.headerVersion++; }
-            if (update.body !== undefined) { artifact.body = update.body; artifact.bodyVersion = (artifact.bodyVersion ?? 0) + 1; }
-            return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
-        }
-        return Response.json(artifact);
-    }
+    const artifactResponse = artifactStore.handle(pathname, init);
+    if (artifactResponse) return artifactResponse;
     const action = pathname.split('/').at(-1) ?? '';
     try {
         if (action === 'list') return Response.json({ pools: boundaries.pools ?? [] });
@@ -284,7 +269,7 @@ describe('MachinePoolEditorScreen', () => {
         boundaries.dismissTo.mockReset();
         boundaries.setParams.mockReset();
         boundaries.routeStack = ['/settings/machines'];
-        boundaries.artifacts.clear();
+        artifactStore.clear();
         boundaries.pressableFocus.mockReset();
         boundaries.textInputFocus.mockReset();
         boundaries.accessibilityFocus.mockReset();
@@ -454,7 +439,7 @@ describe('MachinePoolEditorScreen', () => {
         }
         if (action === 'delete') await chooseDelete(screen);
         else await screen.pressByTestIdAsync('settings.machinePools.editor.save');
-        await vi.waitFor(() => expect(boundaries.artifacts.size).toBe(1));
+        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(1));
         expect(boundaries[action === 'create' ? 'create' : action === 'update' ? 'update' : 'remove']).not.toHaveBeenCalled();
 
         await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
@@ -509,9 +494,10 @@ describe('MachinePoolEditorScreen', () => {
     });
 
     it('keeps human Delete confirmation and restores the form after its pending approval is rejected', async () => {
-        boundaries.randomUUID
-            .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
-            .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
+        // Request identities and artifact identities both use the OS randomness
+        // boundary. Mint distinct values without assuming their consumption order.
+        let nextUuid = 0;
+        boundaries.randomUUID.mockImplementation(() => `00000000-0000-4000-8000-${String(++nextUuid).padStart(12, '0')}`);
         boundaries.pools = [poolView(1)];
         await act(async () => publishBoundaryState());
         getStorage().getState().applySettingsLocal({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
@@ -523,17 +509,18 @@ describe('MachinePoolEditorScreen', () => {
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Unsaved change'));
         vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         await chooseDelete(screen);
-        expect(boundaries.artifacts.size).toBe(0);
+        expect(artifactStore.list()).toHaveLength(0);
         expect(boundaries.remove).not.toHaveBeenCalled();
 
         await chooseDelete(screen);
-        await vi.waitFor(() => expect(boundaries.artifacts.size).toBe(1));
+        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(1));
+        const rejectedApprovalId = artifactStore.list()[0]!.id;
         expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
         expect(boundaries.remove).not.toHaveBeenCalled();
         expect(boundaries.back).not.toHaveBeenCalled();
         await act(async () => {
             await createDefaultActionExecutor().execute('approval.request.decide', {
-                artifactId: [...boundaries.artifacts.keys()][0], decision: 'reject',
+                artifactId: rejectedApprovalId, decision: 'reject',
             }, { serverId: boundaries.serverId, surface: 'ui' });
         });
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(false));
@@ -544,10 +531,12 @@ describe('MachinePoolEditorScreen', () => {
         // A rejected delete keeps the Pool. A later Save therefore returns focus to that Pool,
         // not to the stale next-row target computed for the abandoned delete proposal.
         await screen.pressByTestIdAsync('settings.machinePools.editor.save');
-        await vi.waitFor(() => expect(boundaries.artifacts.size).toBe(2));
+        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(2));
+        const nextApprovalId = artifactStore.list().map((artifact) => artifact.id).find((id) => id !== rejectedApprovalId);
+        expect(nextApprovalId).toBeDefined();
         await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
         expect(boundaries.push).toHaveBeenLastCalledWith(
-            `/inbox/approvals/00000000-0000-4000-8000-000000000002?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
+            `/inbox/approvals/${nextApprovalId}?serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`,
         );
     });
 

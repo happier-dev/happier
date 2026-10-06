@@ -250,11 +250,13 @@ describe('SessionCollaborationSurface', () => {
             if (path === '/v1/auth/ping') return new Response('{}');
             if (path === '/v2/account/settings') return new Response(JSON.stringify({ content: null, version: 0 }));
             if (path === '/v1/account/encryption') return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+            if (path === '/v1/public-shares' && init?.method === 'POST') {
+                writes.push('create');
+                publicShare = { id: 'publication', expiresAt: null, maxUses: null, useCount: 0,
+                    isConsentRequired: true, updatedAt: 1, keyDerivation: 'fragment_v1' };
+                return new Response(JSON.stringify({ publicShare, isolatedOrigin: 'https://public-viewer.example.test' }));
+            }
             if (path.endsWith('/public-share')) {
-                if (init?.method === 'POST') {
-                    writes.push('create');
-                    publicShare = { id: 'publication', expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: true, updatedAt: 1 };
-                }
                 if (init?.method === 'DELETE') writes.push('delete');
                 return new Response(JSON.stringify({ publicShare }));
             }
@@ -279,7 +281,7 @@ describe('SessionCollaborationSurface', () => {
         await vi.waitFor(() => expect(screen.findByTestId('session-public-link-url')).not.toBeNull());
         const shownUrl = () => String(screen.findByTestId('session-public-link-url')?.props.children);
         const issuedUrl = shownUrl();
-        expect(issuedUrl).toContain('/share/');
+        expect(issuedUrl).toMatch(/^https:\/\/public-viewer\.example\.test\/s\/[^#]+#k=.+$/);
         expect(writes).toEqual(['create']);
         expect(publicationModal.show).not.toHaveBeenCalled();
 

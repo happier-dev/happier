@@ -79,7 +79,7 @@ describe('fetchAndApplySessionFolderAssignments', () => {
         });
 
         expect(mocks.serverFetch).toHaveBeenCalledWith(
-            '/v2/session-organization?includeFolders=false&includeTags=false&includeLabels=false&assignmentSessionIds=s2',
+            '/v2/session-organization?projectionVersion=2&includeFolders=false&includeTags=false&includeLabels=false&assignmentSessionIds=s2',
             expect.anything(),
             expect.anything(),
         );
@@ -282,7 +282,7 @@ describe('fetchAndApplySessionFolderAssignments', () => {
 
         expect(mocks.serverFetch).toHaveBeenCalledTimes(1);
         expect(mocks.serverFetch).toHaveBeenCalledWith(
-            '/v2/session-organization?includeFolders=false&includeTags=false&includeLabels=false&assignmentSessionIds=s-new',
+            '/v2/session-organization?projectionVersion=2&includeFolders=false&includeTags=false&includeLabels=false&assignmentSessionIds=s-new',
             expect.anything(),
             expect.anything(),
         );

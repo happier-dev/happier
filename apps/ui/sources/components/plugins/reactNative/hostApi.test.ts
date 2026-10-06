@@ -10,6 +10,7 @@ import {
     type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { isPluginError, PluginError, type PluginReference } from '@happier-dev/plugin-sdk';
+import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions';
 import type {
     PluginUiHostApi,
     PluginUiHostMethodV1,
@@ -1305,12 +1306,12 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
     it('projects the literal no-invoke Session draft without an Action result', async () => {
         const serverStartDraft = {
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-            directory: '/workspace',
+            directory: { kind: 'path', path: '/workspace' },
             agentTarget: {
                 kind: 'agent' as const,
                 identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
             },
-        };
+        } satisfies SessionServerStartSpawnDraftV1;
         const adapter = createAdapterOverHost({
             selectActionInput: async () => ({ kind: 'serverStartDraft', draft: serverStartDraft }),
         });

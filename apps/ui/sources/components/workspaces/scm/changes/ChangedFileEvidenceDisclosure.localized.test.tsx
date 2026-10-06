@@ -7,7 +7,6 @@ import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import { installSourceControlChangesCommonModuleMocks } from './sourceControlChangesTestHelpers';
 
 installSourceControlChangesCommonModuleMocks({
-    typography: async () => vi.importActual('@/constants/Typography'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -65,9 +64,12 @@ const unavailableEntry: SessionAttributedFile = {
     }],
 };
 
-async function renderOpenDisclosure(entry: SessionAttributedFile) {
+async function renderOpenDisclosure(entry: SessionAttributedFile, language: 'de' | 'ja') {
     const { ChangedFileEvidenceDisclosure } = await import('./ChangedFileEvidenceDisclosure');
     const { OverlayPortalProvider, OverlayPortalHost } = await import('@/components/ui/popover/OverlayPortal');
+    const i18n = await import('@/text');
+    // Finish importing the store-backed presentation graph before choosing the test locale.
+    i18n.setPreferredLanguageFromSettings(language);
     const screen = await renderScreen(
         <OverlayPortalProvider>
             <ChangedFileEvidenceDisclosure entry={entry} />
@@ -92,12 +94,10 @@ describe('ChangedFileEvidenceDisclosure localization', () => {
     });
 
     it('reads the bounded best-effort evidence in the active locale without falling back to English', async () => {
-        const i18n = await import('@/text');
         const { de } = await import('@/text/translations/de');
         const { en } = await import('@/text/translations/en');
-        i18n.setPreferredLanguageFromSettings('de');
 
-        const screen = await renderOpenDisclosure(boundedEntry);
+        const screen = await renderOpenDisclosure(boundedEntry, 'de');
         const content = screen.getTextContent();
 
         expect(content).toContain(de.changedFileEvidence.content.best_effort);
@@ -119,12 +119,10 @@ describe('ChangedFileEvidenceDisclosure localization', () => {
     });
 
     it('keeps unavailable attribution truthful in the active locale', async () => {
-        const i18n = await import('@/text');
         const { ja } = await import('@/text/translations/ja');
         const { en } = await import('@/text/translations/en');
-        i18n.setPreferredLanguageFromSettings('ja');
 
-        const screen = await renderOpenDisclosure(unavailableEntry);
+        const screen = await renderOpenDisclosure(unavailableEntry, 'ja');
         const content = screen.getTextContent();
 
         expect(content).toContain(ja.changedFileEvidence.attribution.unknown);

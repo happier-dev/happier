@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchBugReportsFeatureFromServer } from './bugReportFeatureClient';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 describe('fetchBugReportsFeatureFromServer', () => {
   afterEach(() => {
+    resetServerFeaturesClientForTests();
     vi.unstubAllGlobals();
   });
 

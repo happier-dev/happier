@@ -1,139 +1,51 @@
-import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { renderHook } from '@/dev/testkit';
+import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfers/runtime/transferRouteCache';
+import { installTransferProjection, resetTransferFixture, transferMachine } from './sessionFileTransferTestkit';
 
-const state = vi.hoisted(() => ({
-    machineRpcTargetAvailableState: { value: true },
-    machineState: { value: null as any },
-    cachedDirectRouteStatusState: { value: 'unknown' as 'unknown' | 'viable' | 'unavailable' },
-}));
-
-function createServerFeaturesResponse(partial?: Readonly<{
-    features?: unknown;
-    capabilities?: unknown;
-}>): FeaturesResponse {
-    return FeaturesResponseSchema.parse({
-        features: {
-            machines: {
-                enabled: true,
-                transfer: {
-                    enabled: true,
-                    directPeer: {
-                        enabled: false,
-                    },
-                    serverRouted: {
-                        enabled: false,
-                    },
-                },
-            },
-            ...(partial?.features ?? {}),
-        },
-        capabilities: {
-            ...(partial?.capabilities ?? {}),
-        },
-    });
-}
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) =>
-    createPartialStorageModuleMock(importOriginal, {
-        useSession: () => ({ active: true }),
-        useSessionRpcAvailabilityState: () => ({
-            sessionExists: true,
-            sessionRpcAvailable: true,
-        }),
-        useMachine: () => state.machineState.value,
-    }),
-);
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({
-        machineReachable: true,
-        machineOnline: true,
-        machineRpcTargetAvailable: state.machineRpcTargetAvailableState.value,
-    }),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => 'server-1',
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
-    useServerFeaturesSnapshotForServerId: () => ({
-        status: 'ready',
-        features: createServerFeaturesResponse({
-            features: {
-                machines: {
-                    enabled: true,
-                    transfer: {
-                        enabled: true,
-                        serverRouted: { enabled: false },
-                    },
-                },
-            },
-        }),
-    }),
-}));
-
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => ({
-        machineId: 'machine-1',
-        basePath: '/tmp',
-    }),
-}));
-
-vi.mock('@/sync/domains/transfers/runtime/transferRouteCache', () => ({
-    readCachedMachineRpcDirectRoute: () => ({
-        status: state.cachedDirectRouteStatusState.value,
-        checkedAt: 0,
-        expiresAt: 0,
-        failureReason: state.cachedDirectRouteStatusState.value === 'unavailable' ? 'nope' : undefined,
-    }),
-    subscribeCachedMachineRpcDirectRoute: () => () => {},
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit');
+    return createReactNativeWebMock();
+});
 
 describe('useSessionFileDownloadAvailability', () => {
-    it('fails closed when server-routed is disabled and machine-rpc-direct viability is unknown', async () => {
-        state.cachedDirectRouteStatusState.value = 'unknown';
-        state.machineRpcTargetAvailableState.value = true;
+    beforeEach(async () => {
+        vi.stubGlobal('SharedWorker', class SharedWorker {});
+        await resetTransferFixture();
+    });
+    afterEach(() => vi.unstubAllGlobals());
 
+    it('fails closed when server-routed is disabled and the current Machine endpoint is unknown', async () => {
+        installTransferProjection({ machine: transferMachine({ operationProtocolCapabilities: { finiteTransferRpc: { protocolVersions: [1] } } }) });
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-1', remoteMachineId: 'machine-1' });
         const { useSessionFileDownloadAvailability } = await import('./useSessionFileDownloadAvailability');
-        const hook = await renderHook(() => useSessionFileDownloadAvailability('session-1'));
-
+        const hook = await renderHook(() => useSessionFileDownloadAvailability('s1'));
         expect(hook.getCurrent()).toBe(false);
         await hook.unmount();
     });
 
-    it('returns true when server-routed is disabled and machine-rpc-direct is confirmed viable', async () => {
-        state.cachedDirectRouteStatusState.value = 'viable';
-        state.machineRpcTargetAvailableState.value = true;
-
+    it('returns true when server-routed is disabled and the current Machine carrier is available', async () => {
+        installTransferProjection();
         const { useSessionFileDownloadAvailability } = await import('./useSessionFileDownloadAvailability');
-        const hook = await renderHook(() => useSessionFileDownloadAvailability('session-1'));
-
+        const hook = await renderHook(() => useSessionFileDownloadAvailability('s1'));
         expect(hook.getCurrent()).toBe(true);
         await hook.unmount();
     });
 
-    it('upload fails closed when server-routed is disabled and machine-rpc-direct viability is unknown', async () => {
-        state.cachedDirectRouteStatusState.value = 'unknown';
-        state.machineRpcTargetAvailableState.value = true;
-
+    it('upload fails closed when server-routed is disabled and the current Machine endpoint is unknown', async () => {
+        installTransferProjection({ machine: transferMachine({ operationProtocolCapabilities: { finiteTransferRpc: { protocolVersions: [1] } } }) });
+        recordCachedMachineRpcDirectRouteViable({ serverId: 'server-1', remoteMachineId: 'machine-1' });
         const { useSessionFileUploadAvailability } = await import('./useSessionFileUploadAvailability');
-        const hook = await renderHook(() => useSessionFileUploadAvailability('session-1'));
-
+        const hook = await renderHook(() => useSessionFileUploadAvailability('s1'));
         expect(hook.getCurrent()).toBe(false);
         await hook.unmount();
     });
 
-    it('upload returns true when server-routed is disabled and machine-rpc-direct is confirmed viable', async () => {
-        state.cachedDirectRouteStatusState.value = 'viable';
-        state.machineRpcTargetAvailableState.value = true;
-
+    it('upload returns true when server-routed is disabled and the current Machine carrier is available', async () => {
+        installTransferProjection();
         const { useSessionFileUploadAvailability } = await import('./useSessionFileUploadAvailability');
-        const hook = await renderHook(() => useSessionFileUploadAvailability('session-1'));
-
+        const hook = await renderHook(() => useSessionFileUploadAvailability('s1'));
         expect(hook.getCurrent()).toBe(true);
         await hook.unmount();
     });

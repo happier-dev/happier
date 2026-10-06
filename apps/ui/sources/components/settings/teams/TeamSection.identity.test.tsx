@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Install the real Home transport harness before importing screens: the testkit
 // barrel's agent catalog otherwise evaluates the transport before its boundary.
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { homeAccountRowFixture, homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import { homeAccountDetailFixture, homeGovernanceProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { teamCapabilitiesFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -57,6 +57,21 @@ async function addHomes() {
 }
 
 describe('exact Home and Team header identity', () => {
+    it('keeps the saved Home overview addressed when a different Home is focused', async () => {
+        const { target, focused } = await addHomes();
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        expect(getActiveServerSnapshot().serverId).toBe(focused);
+        const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
+        const screen = await renderScreen(<TeamOverviewScreen serverId={target} teamId="team-1" />);
+
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-overview-home')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Research Home');
+        expect(screen.getTextContent()).toContain('Shared Team');
+        expect(screen.getTextContent()).not.toContain('Personal Home');
+        expect(harness.requestsFor(TEAM_GET).map((request) => request.serverId)).toEqual([target]);
+        expect(getActiveServerSnapshot().serverId).toBe(focused);
+    });
+
     it.each([false, true])('keeps a generic Team page qualified when native title chrome is %s', async (showsTitle) => {
         const { target, focused } = await addHomes();
         const { TeamSection } = await import('./TeamSection');
@@ -116,7 +131,7 @@ describe('exact Home and Team header identity', () => {
         harness.answer(target, '/v1/teams/members/groups/list', { body: { items: [], nextCursor: null } });
         harness.answer(target, '/v1/teams/groups/get', { body: teamGroupFixture() });
         harness.answer(target, '/v1/teams/groups/members/list', { body: { items: [], nextCursor: null } });
-        harness.answer(target, '/v1/home/accounts/list', { body: { items: [homeAccountRowFixture('ada')], nextCursor: null } });
+        harness.answer(target, '/v1/home/accounts/get', { body: homeAccountDetailFixture('ada') });
         const { TeamMemberDetailScreen } = await import('./members/TeamMemberDetailScreen');
         const { TeamGroupDetailScreen } = await import('./groups/TeamGroupDetailScreen');
         const { HomeAdministrationAccountScreen } = await import('../home/governance/HomeAdministrationAccountScreen');

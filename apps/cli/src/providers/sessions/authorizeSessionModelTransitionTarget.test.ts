@@ -713,6 +713,7 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
               localId: 'account',
             },
             required: true,
+            materializationKinds: ['httpHeaders'],
           }],
           requestAuthUses: [{
             purpose: 'upstream',

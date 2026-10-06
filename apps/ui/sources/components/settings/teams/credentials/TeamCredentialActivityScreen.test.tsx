@@ -81,7 +81,7 @@ afterEach(() => standardCleanup());
 describe('TeamCredentialActivityScreen', () => {
     it.each([
         ['audience_changed', 'audienceChanged'],
-        ['external_key_authorized', 'externalKeyAuthorized'],
+        ['external_key_created', 'externalKeyCreated'],
     ])('renders only the Home-projected administrative metadata for %s', async (kind, label) => {
         const serverId = await addHome();
         harness.answer(serverId, ACTIVITY_LIST_PATH, {

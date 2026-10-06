@@ -1,15 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-    const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-    return {
-        ...actual,
-        backoff: immediate,
-    };
-});
-
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -20,14 +11,8 @@ const credentials: AuthCredentials = { token: 'test-token', secret: 'test-secret
 
 describe('apiUsage v2 analytics query', () => {
     it('queries the v2 analytics endpoint with structured date range and breakdowns', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 
         const fetchMock = vi.fn(async () => ({
             ok: true,
@@ -77,14 +62,8 @@ describe('apiUsage v2 analytics query', () => {
     });
 
     it('falls back to the legacy v1 usage query when the v2 analytics endpoint is unavailable', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 
         const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
@@ -133,14 +112,8 @@ describe('apiUsage v2 analytics query', () => {
     });
 
     it('uses a year-long date range with month granularity for the year filter and downgrades legacy fallback grouping to day', async () => {
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 
         vi.spyOn(Date, 'now').mockReturnValue(1_735_689_600_000);
 

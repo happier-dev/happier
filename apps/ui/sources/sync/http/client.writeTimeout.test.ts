@@ -1,43 +1,31 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+beforeEach(async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Write Home' });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('write-account') });
+});
 
 afterEach(async () => {
     vi.useRealTimers();
-    try {
-        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        await resetServerReachabilitySupervisors();
-    } catch {
-        // Best-effort cleanup when the module did not finish loading.
-    }
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_WRITE_TIMEOUT_MS;
 });
-
-function installActiveServerMocks() {
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({
-            serverId: 'server-a',
-            serverUrl: 'https://api.example.test',
-            kind: 'custom',
-            generation: 1,
-        }),
-    }));
-    vi.doMock('@/auth/storage/tokenStorage', () => ({
-        TokenStorage: {
-            getCredentials: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
-            invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-        },
-    }));
-}
 
 describe('serverFetch write timeout', () => {
     it('aborts a stalled mutating request with a retryable timeout', async () => {
         vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_WRITE_TIMEOUT_MS = '50';
-        installActiveServerMocks();
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        setRuntimeFetch(async (input, init) => {
                 const url = typeof input === 'string' ? input : String(input);
                 if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
                     return new Response('ok', { status: 200 });
@@ -50,10 +38,7 @@ describe('serverFetch write timeout', () => {
                     }, { once: true });
                 });
                 return new Response(null, { status: 200 });
-            }),
-            resetRuntimeFetch: () => {},
-            setRuntimeFetch: () => {},
-        }));
+        });
 
         const { serverFetch } = await import('./client');
         const request = serverFetch(
@@ -70,13 +55,8 @@ describe('serverFetch write timeout', () => {
     });
 
     it('classifies write timeouts as transient and leaves GET reads unbounded', async () => {
-        installActiveServerMocks();
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_WRITE_TIMEOUT_MS = '50';
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch: vi.fn(async () => new Response('body', { status: 200 })),
-            resetRuntimeFetch: () => {},
-            setRuntimeFetch: () => {},
-        }));
+        setRuntimeFetch(async () => new Response('body', { status: 200 }));
 
         const { serverFetch, ServerFetchWriteTimeoutError } = await import('./client');
         const { isTransientConnectivityError } = await import('@/sync/runtime/connectivity/transientConnectivityErrors');

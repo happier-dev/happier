@@ -1,3 +1,4 @@
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import 'fake-indexeddb/auto';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -61,15 +62,6 @@ async function invokeHandleCreateSession(
 
 const routerSearchParamsState = vi.hoisted(() => ({
     value: {} as Record<string, string | string[] | undefined>,
-}));
-const syncSingletonBridge = vi.hoisted(() => ({
-    current: null as typeof import('@/sync/sync').sync | null,
-}));
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => {
-        if (!syncSingletonBridge.current) throw new Error('Test Sync singleton is not loaded');
-        return syncSingletonBridge.current;
-    },
 }));
 
 type SpawnPayloadCapture = SessionSpawnNewInputV2 | null;
@@ -331,6 +323,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
     const persistence = await import('@/sync/domains/state/persistence');
     const clearNewSessionDraftSpy = vi.spyOn(persistence, 'clearNewSessionDraft');
     const saveSessionDraftsSpy = vi.spyOn(persistence, 'saveSessionDrafts');
+    await loadSyncSingletonForTests();
     await selectNewSessionTestHome();
     ({ storage: scopeStorage } = await import('@/sync/domains/state/storageStore'));
     // Automation authoring captures the same canonical Account lifetime that owns
@@ -344,7 +337,6 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
     const upsertPendingMessageSpy = vi.spyOn(scopeStorage.getState(), 'upsertPendingMessage');
     const markSessionOptimisticThinkingSpy = vi.spyOn(scopeStorage.getState(), 'markSessionOptimisticThinking');
     const { sync } = await import('@/sync/syncEngine');
-    syncSingletonBridge.current = sync;
     const secret = new Uint8Array(32).fill(7);
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     const credentials = accountMode === 'plain' ? { token } : { token, secret: Buffer.from(secret).toString('base64url') };
@@ -461,7 +453,6 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
     const defaultSpawn = sessionSpawnNewRpcSpy.getMockImplementation()!;
     return {
         async reset() {
-            syncSingletonBridge.current = sync;
             authoringMemoryHttp.reset();
             captured.value = null;
             spawnActions.length = 0;
@@ -551,7 +542,6 @@ describe('useCreateNewSession permission seeding', () => {
     afterAll(async () => {
         await harness?.dispose();
         harness = null;
-        syncSingletonBridge.current = null;
         const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         resetRuntimeFetch();
         vi.unstubAllGlobals();

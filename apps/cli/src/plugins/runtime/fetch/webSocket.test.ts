@@ -8,6 +8,8 @@ import { constants as zlibConstants, deflateRawSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
+import { createEphemeralTlsServerFixture } from '../../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
+
 import {
     createPluginWebSocketConnection,
     normalizePluginWebSocketOpenInput,
@@ -274,24 +276,35 @@ async function createUntrustedTlsPeer(): Promise<Readonly<{
     url: string;
     close(): Promise<void>;
 }>> {
-    const server = createSecureServer({
-        key: readFileSync(new URL('../../../../../../packages/tests/fixtures/cliproxyapi-mitm/leaf.key', import.meta.url)),
-        cert: readFileSync(new URL('../../../../../../packages/tests/fixtures/cliproxyapi-mitm/leaf.crt', import.meta.url)),
-    });
-    await new Promise<void>((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
-            server.off('error', reject);
-            resolve();
+    const tlsFixture = await createEphemeralTlsServerFixture();
+    let server: ReturnType<typeof createSecureServer>;
+    try {
+        server = createSecureServer({
+            key: readFileSync(tlsFixture.privateKeyPath),
+            cert: readFileSync(tlsFixture.leafCertificatePath),
         });
-    });
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(0, '127.0.0.1', () => {
+                server.off('error', reject);
+                resolve();
+            });
+        });
+    } catch (error) {
+        await tlsFixture.cleanup();
+        throw error;
+    }
     const address = server.address() as AddressInfo;
     return Object.freeze({
         url: `wss://127.0.0.1:${address.port}/fixture`,
         async close() {
-            await new Promise<void>((resolve, reject) => {
-                server.close((error) => (error ? reject(error) : resolve()));
-            });
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    server.close((error) => (error ? reject(error) : resolve()));
+                });
+            } finally {
+                await tlsFixture.cleanup();
+            }
         },
     });
 }

@@ -1,52 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const kvStore = vi.hoisted(() => new Map<string, string>());
-const runtimeFetchMock = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-const createEncryptionFromAuthCredentialsMock = vi.hoisted(() => vi.fn());
-
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: runtimeFetchMock,
-}));
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<
-        typeof import('@/auth/storage/tokenStorage')
-    >();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-        },
-    };
-});
-
-vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
-    createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
-}));
-
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import {
     captureServerRequestAuthorityForServerAccountScope,
     createServerRequestForResolvedServerScope,
@@ -54,280 +14,155 @@ import {
     resolveServerRequestForServerAccountScope,
 } from './createServerRequestWithServerScope';
 
-function tokenForSub(sub: string): string {
-    const payload = globalThis.btoa(JSON.stringify({ sub }))
-        .replaceAll('+', '-')
-        .replaceAll('/', '_')
-        .replaceAll('=', '');
-    return `e30.${payload}.signature`;
-}
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
 
-function expectHeaderValue(headers: HeadersInit | undefined, key: string, value: string) {
-    expect(new Headers(headers).get(key)).toBe(value);
-}
+const credentials = new Map<string, { token: string }>();
+const requests: Array<{ url: string; init: RequestInit }> = [];
+let activeHome: Awaited<ReturnType<typeof upsertAndActivateServer>>;
 
-describe('createServerRequestWithServerScope', () => {
-    beforeEach(() => {
-        kvStore.clear();
-        runtimeFetchMock.mockReset();
-        getCredentialsForServerUrlMock.mockReset();
-        createEncryptionFromAuthCredentialsMock.mockReset();
-    });
-
-    it('captures the actual Account on an explicit Home when the caller has only a Session address', async () => {
-        const first = await upsertServerProfile({ serverUrl: 'https://first.example', name: 'First' });
-        const second = await upsertServerProfile({ serverUrl: 'https://second.example', name: 'Second' });
-        await setActiveServerId(second.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-first'), secret: 'secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
-        const authority = await captureServerRequestAuthorityForServerAccountScope({
-            serverId: first.id,
-            activeRequest: async () => { throw new Error('must not use focused Home'); },
-        });
-        expect(authority.scope).toEqual({ serverId: first.id, accountId: 'account-first' });
-        await setActiveServerId(first.id, { scope: 'device' });
-        await authority.request('/v2/sessions/session/system-records');
-        const call = runtimeFetchMock.mock.calls.find(([input]) => String(input?.url).includes('/system-records'));
-        expect(call?.[0]?.serverUrl).toBe('https://first.example');
-        await authority.release();
-    });
-
-    it('does not turn an empty explicit Home into focused-Home authority', async () => {
-        const active = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        await setActiveServerId(active.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('active-account'), secret: 'secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        await expect(captureServerRequestAuthorityForServerAccountScope({
-            serverId: ' ', activeRequest: async () => new Response(null),
-        })).rejects.toThrow();
-        expect(getCredentialsForServerUrlMock).not.toHaveBeenCalled();
-    });
-
-    it('uses the active request when the target server is already active', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-
-        const activeRequest = vi.fn(async () => new Response(null, { status: 200 }));
-        const request = createServerRequestWithServerScope({
-            serverId: activeServer.id,
-            activeRequest,
-        });
-
-        await request('/v1/sessions/s1/messages', { method: 'GET' });
-
-        expect(activeRequest).toHaveBeenCalledWith('/v1/sessions/s1/messages', { method: 'GET' });
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
-    });
-
-    it('uses runtimeFetch with scoped auth when the target server is not active', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        const ownerServer = await upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-
-        const ownerToken = tokenForSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
-
-        const activeRequest = vi.fn(async () => new Response(null, { status: 200 }));
-        const request = createServerRequestWithServerScope({
-            serverId: ownerServer.id,
-            activeRequest,
-        });
-
-        await request('/v1/sessions/s1/messages?scope=main', { method: 'GET' });
-
-        expect(activeRequest).not.toHaveBeenCalled();
-        const call = runtimeFetchMock.mock.calls.find(([input]) =>
-            String(input?.url).includes('/v1/sessions/s1/messages?scope=main'));
-        expect(call).toBeTruthy();
-        expect(call?.[0]?.init).toEqual(expect.objectContaining({ method: 'GET' }));
-        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
-    });
-
-    it('preserves request body and existing headers for non-GET scoped requests', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        const ownerServer = await upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-
-        const ownerToken = tokenForSub('owner-account');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockImplementation(async () => new Response(null, { status: 200, headers: new Headers() }));
-
-        const activeRequest = vi.fn(async () => new Response(null, { status: 200 }));
-        const request = createServerRequestWithServerScope({
-            serverId: ownerServer.id,
-            activeRequest,
-        });
-
-        await request('/v2/sessions/s1/pending', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Test': '1',
-            },
-            body: JSON.stringify({ hello: 'world' }),
-        });
-
-        expect(activeRequest).not.toHaveBeenCalled();
-        const call = runtimeFetchMock.mock.calls.find(([input]) =>
-            String(input?.url).includes('/v2/sessions/s1/pending'));
-        expect(call).toBeTruthy();
-        expect(call?.[0]?.init).toEqual(expect.objectContaining({
-            method: 'POST',
-            body: JSON.stringify({ hello: 'world' }),
-        }));
-        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
-        expectHeaderValue(call?.[0]?.init?.headers, 'Content-Type', 'application/json');
-        expectHeaderValue(call?.[0]?.init?.headers, 'X-Test', '1');
-    });
-
-    it('binds an outbox action request to the exact persisted server and authenticated account', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        const ownerServer = await upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-        const ownerToken = tokenForSub('account-owner');
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: ownerToken, secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
-
-        const authority = await resolveServerRequestForServerAccountScope({
-            scope: { serverId: ownerServer.id, accountId: 'account-owner' },
-            activeRequest: async () => { throw new Error('must not substitute active authority'); },
-        });
-        try {
-            await authority.request('/v2/sessions/s1/pending', { method: 'POST', body: 'exact-body' });
-        } finally {
-            await authority.release();
+beforeEach(async () => {
+    credentials.clear();
+    requests.length = 0;
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) => credentials.get(url) ?? null);
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/v1/auth/ping') return Response.json({});
+        // The cold Socket.IO boundary publishes no background domain rows.
+        if (['/v1/profile', '/v2/account/settings', '/v2/sessions', '/v1/machines'].includes(url.pathname)) {
+            return Response.json({}, { status: 404 });
         }
-
-        const call = runtimeFetchMock.mock.calls.find(([input]) =>
-            String(input?.url).includes('/v2/sessions/s1/pending'));
-        expect(call).toBeTruthy();
-        expect(call?.[0]?.init).toEqual(expect.objectContaining({ body: 'exact-body' }));
-        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${ownerToken}`);
+        requests.push({ url: url.href, init: init ?? {} });
+        return new Response(null, { status: 200 });
     });
-
-    it('keeps a same-server request bound to the captured account after stored credentials change', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-        const accountAToken = tokenForSub('account-a');
-        const accountBToken = tokenForSub('account-b');
-        getCredentialsForServerUrlMock.mockResolvedValueOnce({
-            token: accountAToken,
-            secret: 'account-a-secret',
-        });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-        runtimeFetchMock.mockResolvedValue(new Response(null, { status: 200 }));
-
-        const authority = await captureServerRequestAuthorityForServerAccountScope({
-            scope: { serverId: activeServer.id, accountId: 'account-a' },
-            activeRequest: async () => {
-                throw new Error('captured account authority must not use the mutable active request');
-            },
-        });
-        getCredentialsForServerUrlMock.mockResolvedValue({
-            token: accountBToken,
-            secret: 'account-b-secret',
-        });
-
-        await authority.request('/v1/sessions/history/messages', { method: 'GET' });
-
-        expect(getCredentialsForServerUrlMock).toHaveBeenCalledTimes(1);
-        const call = runtimeFetchMock.mock.calls.find(([input]) =>
-            String(input?.url).includes('/v1/sessions/history/messages'));
-        expect(call).toBeTruthy();
-        expectHeaderValue(call?.[0]?.init?.headers, 'Authorization', `Bearer ${accountAToken}`);
-        expect(authority.scope).toEqual({
-            serverId: activeServer.id,
-            accountId: 'account-a',
-        });
-    });
-
-    it('rejects credentials whose authenticated account does not match the persisted outbox scope', async () => {
-        const activeServer = await upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
-        const ownerServer = await upsertServerProfile({ serverUrl: 'https://owner.example', name: 'Owner' });
-        await setActiveServerId(activeServer.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('different-account'), secret: 'owner-secret' });
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
-
-        await expect(resolveServerRequestForServerAccountScope({
-            scope: { serverId: ownerServer.id, accountId: 'account-owner' },
-            activeRequest: async () => new Response(null, { status: 200 }),
-        })).rejects.toThrow('authenticated account does not match');
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
-    });
-
-    /**
-     * A Home reached only by a semantic carrier (browser Iroh, Lane 06 A7.3/A7.4)
-     * has NO origin a URL fetch can reach: its canonical URL resolves nowhere.
-     * The scoped-request owner already receives that carrier on its resolved
-     * context, so it must move the bytes over it. Sending the request to the
-     * canonical URL instead is not a degraded path — it cannot arrive at all,
-     * which is what broke every account-scoped call (V2 route grants included)
-     * on an ingress-less Home.
-     */
-    it('carries an account-scoped request over the resolved semantic Home carrier instead of its unreachable URL', async () => {
-        const carried: { url: string; init: RequestInit }[] = [];
-        const homeCarrier = {
-            endpointId: 'a'.repeat(64),
-            readObservedPath: () => 'relay' as const,
-            request: async (url: string, init: RequestInit) => {
-                carried.push({ url, init });
-                return new Response(JSON.stringify({ ok: true }), {
-                    status: 200,
-                    headers: { 'content-type': 'application/json' },
-                });
-            },
-            createWebSocket: () => {
-                throw new Error('the scoped HTTP request must not open a socket');
-            },
-        };
-
-        const request = createServerRequestForResolvedServerScope({
-            context: {
-                scope: 'scoped',
-                timeoutMs: 5_000,
-                targetServerId: 'srv_ingressless',
-                targetServerUrl: 'https://ingressless.happier.invalid',
-                targetAccountId: 'account-a',
-                token: tokenForSub('account-a'),
-                credentials: { token: tokenForSub('account-a') },
-                encryption: null,
-                // Exactly what `resolveServerScopedTransport` returns for a
-                // browser Iroh Home: the canonical URL as the "origin", plus the
-                // carrier that actually owns the bytes.
-                runtimeOrigin: 'https://ingressless.happier.invalid',
-                carrier: 'iroh',
-                homeCarrier,
-            },
-            activeRequest: async () => {
-                throw new Error('a scoped request must not fall back to the active request');
-            },
-        });
-
-        const response = await request('/v1/machines/peer/mediation/route-grants', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ v: 2 }),
-        });
-
-        expect(response.status).toBe(200);
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
-        expect(carried).toHaveLength(1);
-        expect(carried[0]?.url).toBe('https://ingressless.happier.invalid/v1/machines/peer/mediation/route-grants');
-        expect(carried[0]?.init.method).toBe('POST');
-        expectHeaderValue(carried[0]?.init.headers, 'Authorization', `Bearer ${tokenForSub('account-a')}`);
-    });
+    activeHome = await upsertAndActivateServer({ serverUrl: 'https://active.example', name: 'Active' });
+    const activeCredentials = { token: createAccountTokenForTests('active-account') };
+    credentials.set(activeHome.serverUrl, activeCredentials);
+    await restoreConnectionToActiveServer(activeCredentials);
+    requests.length = 0;
 });
 
 afterEach(async () => {
-    try {
-        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        await resetServerReachabilitySupervisors();
-    } catch {
-        // ignore
-    }
+    await disconnectActiveServerConnection();
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
+    resetRuntimeFetch();
+    vi.restoreAllMocks();
+});
+
+async function addHome(url: string, accountId: string) {
+    const home = await upsertServerProfile({ serverUrl: url, name: accountId });
+    const token = createAccountTokenForTests(accountId);
+    credentials.set(home.serverUrl, { token });
+    return { ...home, token };
+}
+const noActiveFallback = async () => { throw new Error('must not substitute focused Home authority'); };
+
+describe('createServerRequestWithServerScope', () => {
+    it('captures the actual Account on an explicit Home when the caller has only a Session address', async () => {
+        const first = await addHome('https://first.example', 'account-first');
+        const second = await addHome('https://second.example', 'account-second');
+        await setActiveServerId(second.id, { scope: 'device' });
+        const authority = await captureServerRequestAuthorityForServerAccountScope({ serverId: first.id, activeRequest: noActiveFallback });
+        expect(authority.scope).toEqual({ serverId: first.id, accountId: 'account-first' });
+        await setActiveServerId(first.id, { scope: 'device' });
+        try { expect((await authority.request('/v2/sessions/session/system-records')).status).toBe(200); }
+        finally { await authority.release(); }
+        const request = requests.find(({ url }) => url.endsWith('/system-records'));
+        expect(request?.url).toBe('https://first.example/v2/sessions/session/system-records');
+        expect(new Headers(request?.init.headers).get('authorization')).toBe(`Bearer ${first.token}`);
+    });
+
+    it('does not turn an empty explicit Home into focused-Home authority', async () => {
+        await expect(captureServerRequestAuthorityForServerAccountScope({ serverId: ' ', activeRequest: noActiveFallback })).rejects.toThrow();
+        expect(requests).toHaveLength(0);
+    });
+
+    it('uses the active request when the target Home has an applied Account lifetime', async () => {
+        const issued: Array<{ path: string; method?: string }> = [];
+        const request = createServerRequestWithServerScope({ serverId: activeHome.id,
+            activeRequest: async (path, init) => { issued.push({ path, method: init?.method }); return new Response(null, { status: 201 }); },
+        });
+        expect((await request('/v1/sessions/s1/messages', { method: 'GET' })).status).toBe(201);
+        expect(issued).toEqual([{ path: '/v1/sessions/s1/messages', method: 'GET' }]);
+        expect(requests).toHaveLength(0);
+    });
+
+    it('uses runtimeFetch with scoped auth when the target Home is not active', async () => {
+        const owner = await addHome('https://owner.example', 'owner-account');
+        const request = createServerRequestWithServerScope({ serverId: owner.id, activeRequest: noActiveFallback });
+        expect((await request('/v1/sessions/s1/messages?scope=main', { method: 'GET' })).status).toBe(200);
+        const sent = requests.find(({ url }) => url.endsWith('/v1/sessions/s1/messages?scope=main'));
+        expect(sent?.url).toBe('https://owner.example/v1/sessions/s1/messages?scope=main');
+        expect(sent?.init.method).toBe('GET');
+        expect(new Headers(sent?.init.headers).get('authorization')).toBe(`Bearer ${owner.token}`);
+    });
+
+    it('preserves request body and existing headers for non-GET scoped requests', async () => {
+        const owner = await addHome('https://owner.example', 'owner-account');
+        const request = createServerRequestWithServerScope({ serverId: owner.id, activeRequest: noActiveFallback });
+        const body = JSON.stringify({ hello: 'world' });
+        expect((await request('/v2/sessions/s1/pending', { method: 'POST', body,
+            headers: { 'Content-Type': 'application/json', 'X-Test': '1' } })).status).toBe(200);
+        const sent = requests.find(({ url }) => url.endsWith('/v2/sessions/s1/pending'));
+        expect(sent?.init).toMatchObject({ method: 'POST', body });
+        const headers = new Headers(sent?.init.headers);
+        expect(headers.get('authorization')).toBe(`Bearer ${owner.token}`);
+        expect(headers.get('content-type')).toBe('application/json');
+        expect(headers.get('x-test')).toBe('1');
+    });
+
+    it('binds an outbox action request to the exact persisted Home and authenticated Account', async () => {
+        const owner = await addHome('https://owner.example', 'account-owner');
+        const authority = await resolveServerRequestForServerAccountScope({ scope: { serverId: owner.id, accountId: 'account-owner' }, activeRequest: noActiveFallback });
+        try { expect((await authority.request('/v2/sessions/s1/pending', { method: 'POST', body: 'exact-body' })).status).toBe(200); }
+        finally { await authority.release(); }
+        const sent = requests.find(({ url }) => url.endsWith('/v2/sessions/s1/pending'));
+        expect(sent?.url).toBe('https://owner.example/v2/sessions/s1/pending');
+        expect(sent?.init.body).toBe('exact-body');
+        expect(new Headers(sent?.init.headers).get('authorization')).toBe(`Bearer ${owner.token}`);
+    });
+
+    it('keeps a same-Home request bound to the captured Account after stored credentials change', async () => {
+        const accountAToken = createAccountTokenForTests('account-a');
+        credentials.set(activeHome.serverUrl, { token: accountAToken });
+        const authority = await captureServerRequestAuthorityForServerAccountScope({ scope: { serverId: activeHome.id, accountId: 'account-a' }, activeRequest: noActiveFallback });
+        credentials.set(activeHome.serverUrl, { token: createAccountTokenForTests('account-b') });
+        try { expect((await authority.request('/v1/sessions/history/messages', { method: 'GET' })).status).toBe(200); }
+        finally { await authority.release(); }
+        const sent = requests.find(({ url }) => url.endsWith('/v1/sessions/history/messages'));
+        expect(new Headers(sent?.init.headers).get('authorization')).toBe(`Bearer ${accountAToken}`);
+        expect(authority.scope).toEqual({ serverId: activeHome.id, accountId: 'account-a' });
+    });
+
+    it('rejects credentials whose authenticated Account does not match the persisted outbox scope', async () => {
+        const owner = await addHome('https://owner.example', 'different-account');
+        await expect(resolveServerRequestForServerAccountScope({ scope: { serverId: owner.id, accountId: 'account-owner' }, activeRequest: noActiveFallback })).rejects.toThrow('authenticated account does not match');
+        expect(requests).toHaveLength(0);
+    });
+
+    it('carries a request over the resolved semantic Home carrier instead of its unreachable URL', async () => {
+        const token = createAccountTokenForTests('account-a');
+        const carried: Array<{ url: string; init: RequestInit }> = [];
+        const homeCarrier = {
+            endpointId: 'a'.repeat(64), readObservedPath: () => 'relay' as const,
+            request: async (url: string, init: RequestInit) => { carried.push({ url, init }); return Response.json({ ok: true }); },
+            createWebSocket: () => { throw new Error('this HTTP request must not open a socket'); },
+        };
+        const request = createServerRequestForResolvedServerScope({ context: {
+            scope: 'scoped', timeoutMs: 5_000, targetServerId: 'srv_ingressless',
+            targetServerUrl: 'https://ingressless.happier.invalid', targetAccountId: 'account-a',
+            token, credentials: { token }, encryption: null, runtimeOrigin: 'https://ingressless.happier.invalid',
+            carrier: 'iroh', homeCarrier,
+        }, activeRequest: noActiveFallback });
+        expect((await request('/v1/machines/peer/mediation/route-grants', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 2 }) })).status).toBe(200);
+        expect(requests).toHaveLength(0);
+        expect(carried).toHaveLength(1);
+        expect(carried[0]?.url).toBe('https://ingressless.happier.invalid/v1/machines/peer/mediation/route-grants');
+        expect(carried[0]?.init.method).toBe('POST');
+        expect(new Headers(carried[0]?.init.headers).get('authorization')).toBe(`Bearer ${token}`);
+    });
 });

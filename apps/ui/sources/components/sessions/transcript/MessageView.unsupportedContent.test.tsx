@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,13 +15,14 @@ installMessageViewCommonModuleMocks({
         });
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                // Account settings are irrelevant to placeholder presentation. This repo types
-                // `useSetting` per settings key, so the blanket stub needs the boundary cast.
-                useSetting: ((_key: string) => null) as never,
+                useSetting: createUseSettingMock({
+                    values: { transcriptMessageSelectionEnabled: true },
+                    fallback: () => null,
+                }),
                 useSessionForkSupportSource: () => null,
                 useSessionWorkspacePath: () => null,
                 useSessionMessagesById: () => ({}),
@@ -97,13 +98,10 @@ vi.mock('@/utils/ui/clipboard', () => ({
     setClipboardStringSafe: (text: string) => setClipboardStringSafeMock(text),
 }));
 
-vi.mock('@/components/sessions/transcript/messageSelection/SelectMessageButton', () => ({
-    SelectMessageButton: (props: any) => React.createElement('SelectMessageButton', props),
-}));
+await import('./MessageView');
 
 describe('MessageView unsupported-content rendering', () => {
     beforeEach(() => {
-        vi.resetModules();
         copyButtonsVisible = false;
         debugState.enabled = true;
     });
@@ -223,24 +221,29 @@ describe('MessageView unsupported-content rendering', () => {
             copyButtonsVisible = true;
             setClipboardStringSafeMock.mockClear();
             const { MessageView } = await import('./MessageView');
+            const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
 
             const screen = await renderScreen(
-                <MessageView
-                    sessionId="s1"
-                    metadata={null}
-                    message={{
-                        kind: 'user-text',
-                        id: 'u2',
-                        localId: 'local-u2',
-                        createdAt: 1,
-                        text: '[Unparsed user message]',
-                        meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
-                    }}
-                />,
+                <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['u2']}>
+                    <MessageView
+                        sessionId="s1"
+                        metadata={null}
+                        message={{
+                            kind: 'user-text',
+                            id: 'u2',
+                            localId: 'local-u2',
+                            createdAt: 1,
+                            text: '[Unparsed user message]',
+                            meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
+                        }}
+                    />
+                </TranscriptMessageSelectionProvider>,
             );
 
-            const selectButton = screen.findByTestId('transcript-message-select:u2');
-            expect(selectButton?.props.previewText).toBe('transcript.unsupportedContent.unparsedUserMessage');
+            await screen.pressByTestIdAsync('transcript-message-select:u2');
+            const selectionPreview = screen.findByTestId('transcript-message-select-checkbox:u2');
+            expect(selectionPreview?.props.accessibilityLabel).toContain('transcript.unsupportedContent.unparsedUserMessage');
+            expect(selectionPreview?.props.accessibilityLabel).not.toContain('[Unparsed user message]');
 
             await screen.pressByTestIdAsync('transcript-message-copy:u2');
             expect(setClipboardStringSafeMock).toHaveBeenCalledWith('transcript.unsupportedContent.unparsedUserMessage');

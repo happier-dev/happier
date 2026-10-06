@@ -1,28 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // C6/D1 (catch-up visibility gate): a loaded session that is not visible and not a
 // full-content consumer must not run catch-up on reconnect. Off-screen catch-up can
 // reset hydrated transcript state while the user is working in another session.
-
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -35,46 +15,41 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
 const requestMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-    },
-}));
-
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import { storage } from './domains/state/storage';
+
+installDisconnectedServerSocketBoundary();
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+
+async function restoreTestHome(serverUrl = 'https://transcript-tests.example'): Promise<void> {
+    await account?.dispose();
+    account = await restoreServerAccountForTest({
+        serverUrl,
+        accountId: 'transcript-account',
+        request: async (url, init) => {
+            const requestUrl = new URL(String(url));
+            const path = requestUrl.pathname + requestUrl.search;
+            if (requestUrl.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (requestUrl.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (requestUrl.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (requestUrl.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (requestUrl.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (requestUrl.pathname.includes('/messages') || requestUrl.pathname === '/v2/sessions/parent') {
+                return await requestMock(path, init);
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        },
+    });
+}
 import {
     markSessionSurfaceHidden,
     markSessionSurfaceVisible,
@@ -84,9 +59,6 @@ import type { Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 
 type SyncCatchUpTestAccess = {
-    encryption: {
-        getSessionEncryption: (sessionId: string) => null;
-    };
     activeServerSessionIds: Set<string>;
     hasFetchedSessionsSnapshotForActiveServer: boolean;
     isForeground: boolean;
@@ -193,13 +165,10 @@ function expectOnlyMainMessagesRequest(params: {
 async function seedLargeGapLoadedSession(): Promise<{ sync: typeof import('./sync').sync }> {
     const { sync } = await import('./syncEngine');
     const syncForTest = sync as unknown as SyncCatchUpTestAccess;
-    sync.disconnectServer();
 
     storage.getState().applySessions([createSession(SESSION_ID, 600)]);
     storage.getState().applyMessages(SESSION_ID, [buildMessage('m10', 10)]);
     storage.getState().applyMessagesLoaded(SESSION_ID);
-
-    syncForTest.encryption = { getSessionEncryption: () => null };
     syncForTest.activeServerSessionIds = new Set<string>([SESSION_ID]);
     syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
     syncForTest.isForeground = true;
@@ -212,10 +181,19 @@ async function seedLargeGapLoadedSession(): Promise<{ sync: typeof import('./syn
 }
 
 describe('sync catch-up visibility gate', () => {
-    beforeEach(() => {
+    afterEach(async () => {
+        await account?.dispose();
+        account = undefined;
+        webLocks.restore();
+        resetSessionSurfaceVisibilityForTests();
+    });
+    beforeEach(async () => {
+        webLocks = installWebLockManagerMock();
+        await loadSyncSingletonForTests();
+        getPersistenceStorage().clearAll();
         storage.setState(initialStorageState, true);
-        kvStore.clear();
         requestMock.mockReset();
+        await restoreTestHome();
         resetSessionSurfaceVisibilityForTests();
     });
 
@@ -247,13 +225,10 @@ describe('sync catch-up visibility gate', () => {
         const syncForTest = sync as unknown as SyncCatchUpTestAccess & {
             markSessionTranscriptDeferred: (sessionId: string, marker: { updateType: 'new-message'; seq: number; messageId: string }) => void;
         };
-        sync.disconnectServer();
 
         storage.getState().applySessions([createSession(CLAUDE_UNIFIED_SESSION_ID, 10)]);
         storage.getState().applyMessages(CLAUDE_UNIFIED_SESSION_ID, [buildMessage('m10', 10)]);
         storage.getState().applyMessagesLoaded(CLAUDE_UNIFIED_SESSION_ID);
-
-        syncForTest.encryption = { getSessionEncryption: () => null };
         syncForTest.activeServerSessionIds = new Set<string>([CLAUDE_UNIFIED_SESSION_ID]);
         syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
         syncForTest.isForeground = true;

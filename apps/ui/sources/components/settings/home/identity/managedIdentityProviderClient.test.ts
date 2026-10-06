@@ -16,7 +16,10 @@ const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
+vi.mock('@/sync/http/client', async () => {
+    const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' });
+    return {
     serverFetch: serverFetchMock,
     createServerFetchAtEndpoint: () => async (path: string, init?: RequestInit) => {
         if (path.startsWith('/v1/account/encryption')) {
@@ -26,19 +29,12 @@ vi.mock('@/sync/http/client', () => ({
             return new Response(JSON.stringify({ content: null, version: 0 }), { status: 200 });
         }
         if (path.startsWith('/v1/features')) return serverFetchMock(path, init);
-        if (path === '/v1/artifacts' && init?.method === 'POST') {
-            return new Response(JSON.stringify({
-                ...JSON.parse(String(init.body)),
-                headerVersion: 1,
-                bodyVersion: 1,
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-            }), { status: 200 });
-        }
+        const artifactResponse = artifacts.handle(path, init);
+        if (artifactResponse) return artifactResponse;
         return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
     },
-}));
+    };
+});
 vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
     runtimeFetchWithServerReachability: runtimeFetchMock,
 }));

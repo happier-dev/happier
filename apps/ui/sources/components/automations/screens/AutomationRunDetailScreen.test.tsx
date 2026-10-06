@@ -1,52 +1,28 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
-const syncSpies = vi.hoisted(() => ({
-    fetchAutomationRuns: vi.fn(async () => {}),
-    getAutomationRunDetailInspection: vi.fn<(automationId: string, runId: string) => Promise<unknown>>(),
-    cancelAutomationRun: vi.fn(async () => null),
-    retryAutomationReplyHandoff: vi.fn(async () => null),
-    deliverAutomationResultAgain: vi.fn(async () => null),
-}));
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
-const runDetailMachinesState = vi.hoisted(() => ({ list: [] as Array<{ id: string; metadata?: { displayName?: string } }> }));
-const runsState = vi.hoisted(() => ({
-    list: [] as any[],
-}));
-const activeServerSnapshot = vi.hoisted(() => ({
-    serverId: 'server-1',
-}));
-const accountScopeState = vi.hoisted(() => ({
-    profileScope: { serverId: 'server-1', accountId: 'account-a' } as null | { serverId: string; accountId: string },
-}));
-
-function inspectRunDetail(detail: Record<string, unknown>, privateContent: Record<string, unknown> = {
-    recipe: { kind: 'absent' },
-    result: { kind: 'absent' },
-}) {
-    return {
-        detail: {
-            // The direct detail response always carries these; the schema owner
-            // makes them required, so a fixture must not silently omit them.
-            executionNativeRunId: null,
-            executionNativeCallId: null,
-            executionNativeSidechainId: null,
-            events: [],
-            ...detail,
-        },
-        privateContent: {
-            failureDetail: { kind: 'absent' },
-            ...privateContent,
-        },
-    };
-}
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
+let serverId: string;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const DETAIL_PATH = '/v3/automations/a1/runs/run-1';
+const LIST_PATH = '/v3/automations/a1/runs?limit=20';
 
 installAutomationScreensCommonModuleMocks({
     router: async () => {
@@ -167,16 +143,7 @@ installAutomationScreensCommonModuleMocks({
             return key;
         },
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            // The screen resolves its Run from the one Account-scoped row owner
-            // by exact `runId`, so the stub answers by identity too.
-            useAutomationRunById: (runId: string | null | undefined) =>
-                runsState.list.find((entry: { id: string }) => entry.id === runId) ?? null,
-            useAllMachines: () => runDetailMachinesState.list,
-        });
-    },
+    storage: async (importOriginal) => await importOriginal(),
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
@@ -190,14 +157,6 @@ installAutomationScreensCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => activeServerSnapshot,
-}));
-
-vi.mock('@/sync/domains/state/storageStateReaderBridge', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/state/storageStateReaderBridge')>(),
-    readRegisteredStorageState: () => accountScopeState,
-}));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: any) => React.createElement('ItemList', props, props.children),
@@ -227,984 +186,339 @@ vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
     ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
 }));
 
-vi.mock('@/sync/sync', () => ({
-    sync: syncSpies,
-}));
+
+function run(overrides: Partial<AutomationV3RunListItem> = {}) {
+    return createAutomationRunFixture({ automationId: 'a1', state: 'failed', attempt: 1,
+        errorCode: 'executor_unavailable', executionDispatchState: 'settled', executionAttempt: 1,
+        createdAt: 10, updatedAt: 11, ...overrides });
+}
+
+function detail(row: AutomationV3RunListItem, overrides: Partial<AutomationV3RunDetail> = {}) {
+    return AutomationV3RunDetailSchema.parse({ ...row, triggerEvidenceEnvelope: null,
+        executionInputEnvelope: null, resultEnvelope: null, errorDetailEnvelope: null,
+        legacySummaryCiphertext: null, executionNativeRunId: null, executionNativeCallId: null,
+        executionNativeSidechainId: null, events: [], ...overrides });
+}
+
+/** Producer-owned codecs create stored bytes; the screen opens them through real Sync. */
+function privateDetail(row = run(), prefix = 'The admitted issue') {
+    const evidence = { v: 1 as const, kind: 'pluginEvent' as const,
+        eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
+        sourceSelectorId: '11111111-1111-4111-8111-111111111111', occurrenceId: 'occurrence-1',
+        occurredAt: 10, payload: { issue: { number: 42 } }, sourceInstanceId: 'repository-acme-example',
+        sourceContractVersion: 1, observationReceivedAt: 11, filter: { version: 1 as const, result: 'matched' as const } };
+    const cause = { kind: 'trigger' as const, triggerId: 'trigger-1', triggerRevision: 3,
+        triggerKind: 'pluginEvent' as const, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence }),
+        occurredAt: 10, evidence: { eventRef: evidence.eventRef, sourceSelectorId: evidence.sourceSelectorId } };
+    const recipe = serializeAutomationRunExecutionRecipeV1({ v: 1, templateVersion: 4,
+        template: { t: 'plain', v: { v: 1, prompt: prefix + ' private recipe' } },
+        triggerEvidence: { t: 'plain', v: evidence },
+        target: { kind: 'existingSession', sessionId: 'session-private-target' }, assignmentMachineIds: [] });
+    if (recipe.kind !== 'available') throw new Error('Invalid producer recipe fixture');
+    return detail({ ...row, triggerId: 'trigger-1', cause }, {
+        executionInputEnvelope: recipe.serialized,
+        triggerEvidenceEnvelope: createCanonicalJsonSigningInput({ t: 'plain', v: evidence }),
+        resultEnvelope: JSON.stringify(sealAutomationRunResultStoredEnvelopeV1({ mode: 'plain',
+            correspondence: { accountId: 'account-a', automationId: row.automationId, runId: row.id },
+            result: { v: 1, kind: 'text', text: prefix + ' private result' } })),
+        errorDetailEnvelope: JSON.stringify(sealAutomationRunFailureDetailStoredEnvelopeV1({ mode: 'plain',
+            correspondence: { automationId: row.automationId, runId: row.id }, detail: prefix + ' private failure' })),
+    });
+}
+
+async function cache(rows: AutomationV3RunListItem[]) {
+    const { storage } = await import('@/sync/domains/state/storage');
+    await act(async () => storage.getState().setAutomationRuns('a1', rows, null));
+}
+async function open(row: AutomationV3RunListItem | null = run()) {
+    await cache(row ? [row] : []);
+    const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+    return renderScreen(<AutomationRunDetailScreen />);
+}
+async function respond(row: AutomationV3RunListItem, overrides: Partial<AutomationV3RunDetail> = {}) {
+    harness.answer(serverId, DETAIL_PATH, { body: detail(row, overrides) });
+    const screen = await open(row);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Admitted details'));
+    return screen;
+}
+
+async function connectAccount(accountId: string) {
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://run-detail.test', accountId });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+    storage.setState({ profileScope: { serverId, accountId }, profile: { ...profileDefaults, id: accountId } });
+}
 
 describe('AutomationRunDetailScreen', () => {
-    beforeEach(() => {
-        retireActiveServerAccountScopeLifetime();
-        activeServerSnapshot.serverId = 'server-1';
-        accountScopeState.profileScope = { serverId: 'server-1', accountId: 'account-a' };
+    beforeEach(async () => {
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        serverId = await harness.addHome({ name: 'Run detail', serverUrl: 'https://run-detail.test', accountId: 'account-a' });
+        await connectAccount('account-a');
         routeParamsState.id = 'a1';
         routeParamsState.runId = 'run-1';
-        runsState.list = [{
-            id: 'run-1',
-            automationId: 'a1',
-            revision: 1,
-            triggerId: 'trigger-1',
-            triggerRetired: false,
-            state: 'failed',
-            cause: {
-                kind: 'trigger',
-                triggerId: 'trigger-1',
-                triggerRevision: 3,
-                triggerKind: 'pluginEvent',
-                occurrenceKey: 'occurrence-1',
-                occurredAt: 10,
-                evidence: {
-                    eventRef: { pluginId: 'happier.scm.github', localId: 'pull-request-opened-v1' },
-                    sourceSelectorId: 'selector-1',
-                },
-            },
-            dueAt: 10,
-            claimedAt: null,
-            startedAt: null,
-            finishedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 1,
-            errorCode: 'executor_unavailable',
-            producedSessionId: null,
-            executionDispatchState: 'settled',
-            executionAttempt: 1,
-            replyHandoffState: 'none',
-            replyHandoffAttempt: 0,
-            replyHandoffDueAt: null,
-            createdAt: 10,
-            updatedAt: 11,
-        }];
-        syncSpies.fetchAutomationRuns.mockReset();
-        syncSpies.fetchAutomationRuns.mockResolvedValue(undefined);
-        syncSpies.getAutomationRunDetailInspection.mockReset();
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        syncSpies.cancelAutomationRun.mockReset();
-        syncSpies.cancelAutomationRun.mockResolvedValue({
-            ...runsState.list[0],
-            state: 'cancelled',
-            finishedAt: 12,
-            updatedAt: 12,
-        });
-        syncSpies.deliverAutomationResultAgain.mockReset();
-        syncSpies.deliverAutomationResultAgain.mockResolvedValue({
-            ...runsState.list[0],
-            replyHandoffState: 'ready',
-            replyHandoffDueAt: 12,
-            revision: 8,
-            updatedAt: 12,
-        });
-        syncSpies.retryAutomationReplyHandoff.mockReset();
-        syncSpies.retryAutomationReplyHandoff.mockResolvedValue({
-            ...runsState.list[0],
-            replyHandoffState: 'ready',
-            replyHandoffDueAt: 12,
-            updatedAt: 12,
-        });
+        routerPushSpy.mockReset();
+        modalConfirmSpy.mockReset();
+        modalConfirmSpy.mockResolvedValue(false);
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+        const features = createRootLayoutFeaturesResponse();
+        tryWriteServerEnabledBitInPlace(features, 'automations', true);
+        harness.answer(serverId, '/v1/features', { body: features });
+        harness.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        harness.answer(serverId, DETAIL_PATH, { body: detail(run()) });
+        harness.answer(serverId, LIST_PATH, { body: { runs: [], nextCursor: null } });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ machines: {}, machineListByServerId: {}, workflowRunsById: {}, automationRunIdsByAutomationId: {} });
+    });
+    afterEach(async () => {
+        await connection?.dispose();
+        connection = null;
+        await harness.reset();
     });
 
-    it('surfaces the Run lifecycle times and keeps the produced Session reachable', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'succeeded',
-            startedAt: 20,
-            finishedAt: 30,
-            errorCode: null,
-            producedSessionId: 'session-produced-1',
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await act(async () => {
-            await Promise.resolve();
-        });
-
-        const text = screen.getTextContent();
-        expect(text).toContain('Started');
-        expect(text).toContain('Finished');
-        expect(text).toContain('session-produced-1');
-
-        const producedSession = screen.findAllByProps({ testID: 'automation-run-detail-produced-session' })[0];
-        expect(producedSession).toBeTruthy();
-        producedSession?.props.onPress?.();
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/session-produced-1');
+    it('surfaces lifecycle times and keeps the produced Session reachable', async () => {
+        const screen = await respond(run({ state: 'succeeded', startedAt: 20, finishedAt: 30, errorCode: null, producedSessionId: 'session-produced-1' }));
+        expect(screen.getTextContent()).toContain('Started');
+        expect(screen.getTextContent()).toContain('Finished');
+        screen.pressByTestId('automation-run-detail-produced-session');
+        expect(routerPushSpy).toHaveBeenCalledWith(expect.stringContaining('/session/session-produced-1'));
     });
 
-    it('uses the built-in run cache before attempting a root-page refresh', async () => {
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
+    it('uses the built-in exact Run cache without refreshing the root page', async () => {
+        const row = privateDetail().cause;
+        const screen = await respond(run({ triggerId: 'trigger-1', cause: row }));
         expect(screen.getTextContent()).toContain('Failed');
         expect(screen.getTextContent()).toContain('Error: executor_unavailable');
-        expect(screen.getTextContent()).toContain('Occurred:');
-        expect(screen.getTextContent()).toContain('Admitted:');
-        expect(screen.getTextContent()).toContain('Occurrence');
-        expect(screen.getTextContent()).toContain('occurrence-1');
-        expect(screen.getTextContent()).toContain('Observation source');
-        expect(screen.getTextContent()).toContain('selector-1');
-        expect(screen.getTextContent()).toContain('happier.scm.github/pull-request-opened-v1');
-        const cause = screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'Cause');
-        expect(cause?.props.detail).toBe('Event: pull-request-opened-v1');
         expect(screen.getTextContent()).toContain('trigger-1 · revision 3');
-        expect(syncSpies.fetchAutomationRuns).not.toHaveBeenCalled();
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
+        expect(screen.getTextContent()).toContain('Observation source');
+        expect(screen.getTextContent()).toContain('happier.scm.github/pull-request-opened-v1');
+        expect(harness.requestsFor(LIST_PATH)).toHaveLength(0);
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1);
     });
 
-    it('renders retired exact-turn history entirely from the immutable cause projection', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            triggerId: 'turn-trigger-retired',
-            triggerRetired: true,
-            cause: {
-                kind: 'trigger',
-                triggerId: 'turn-trigger-retired',
-                triggerRevision: 7,
-                triggerKind: 'sessionLifecycle',
-                occurrenceKey: 'turn:session-source:turn-exact',
-                occurredAt: 10,
-                evidence: {
-                    event: 'parentTurnCompleted',
-                    sourceSessionId: 'session-source',
-                    sourceTurnId: 'turn-exact',
-                    policy: { kind: 'currentTurn' },
-                },
-            },
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        expect(screen.findByProps({ title: 'Cause', detail: 'Turn completed successfully · Current turn only' })).toBeTruthy();
-        expect(screen.getTextContent()).toContain('turn-trigger-retired · revision 7');
+    it('renders retired exact-turn history from the immutable cause', async () => {
+        const screen = await respond(run({ triggerId: 'turn-trigger-retired', triggerRetired: true, cause: {
+            kind: 'trigger', triggerId: 'turn-trigger-retired', triggerRevision: 7, triggerKind: 'sessionLifecycle',
+            occurrenceKey: 'turn:session-source:turn-exact', occurredAt: 10,
+            evidence: { event: 'parentTurnCompleted', sourceSessionId: 'session-source', sourceTurnId: 'turn-exact', policy: { kind: 'currentTurn' } },
+        } }));
         expect(screen.getTextContent()).toContain('Trigger retired');
-        expect(screen.getTextContent()).toContain('session-source');
-        expect(screen.getTextContent()).toContain('turn-exact');
-        for (const [title, expectedCopy] of [
-            ['Source session', 'session-source'],
-            ['Exact source turn', 'turn-exact'],
-        ] as const) {
-            const copyRow = screen.findByProps({ title });
-            expect(copyRow.props.copy).toBe(expectedCopy);
-            expect(copyRow.props.mode).not.toBe('info');
-            expect(copyRow.props.subtitleLines).toBe(0);
-        }
+        expect(screen.findByProps({ title: 'Cause', detail: 'Turn completed successfully · Current turn only' })).toBeTruthy();
+        expect(screen.findByProps({ title: 'Source session' }).props.copy).toBe('session-source');
+        expect(screen.findByProps({ title: 'Exact source turn' }).props.copy).toBe('turn-exact');
     });
 
-    it('keeps the bounded Run cache visible when its private detail read fails', async () => {
-        syncSpies.getAutomationRunDetailInspection.mockRejectedValueOnce(new Error('detail unavailable'));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
+    it('retains cached status, announces failed refresh, and retries the direct read', async () => {
+        harness.answer(serverId, DETAIL_PATH, { status: 503, body: { error: 'unavailable' } });
+        const screen = await open();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-stale-refresh-error')).toBeTruthy());
         expect(screen.getTextContent()).toContain('Failed');
+        const notice = screen.findAllByProps({ testID: 'automation-run-detail-stale-refresh-error' }).find(node => node.type === 'Item');
+        expect(notice?.props.accessibilityRole).toBe('alert');
+        expect(notice?.props.accessibilityLiveRegion).toBe('assertive');
         expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
+        harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'succeeded', updatedAt: 12 })) });
+        await screen.pressByTestIdAsync('automation-run-detail-stale-refresh-retry');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Succeeded'));
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(2);
     });
 
-    it('marks a cached Run stale and offers retry when its refresh fails', async () => {
-        syncSpies.getAutomationRunDetailInspection.mockRejectedValueOnce(new Error('detail unavailable'));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('automation-run-detail-stale-refresh-error')).toBeTruthy();
-        });
-
-        // The cached projection stays on screen, but it must not be presented
-        // as current: a silent failure leaves the reader believing a finished
-        // Run is still running.
-        expect(screen.getTextContent()).toContain('Failed');
-        // The notice is an AttentionBanner; the announced row it renders is what assistive tech reads.
-        const staleNotice = screen.findAllByProps({ testID: 'automation-run-detail-stale-refresh-error' })
-            .find((node) => (node.type as unknown) === 'Item');
-        expect(staleNotice?.props.accessibilityRole).toBe('alert');
-        expect(staleNotice?.props.accessibilityLiveRegion).toBe('assertive');
-        expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
-
-        await act(async () => {
-            screen.pressByTestId('automation-run-detail-stale-refresh-retry');
-            await Promise.resolve();
-        });
-        expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledTimes(2);
-    });
-
-    it('uses fresher direct status while rendering the typed route-local unavailable state', async () => {
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            updatedAt: 12,
-            errorCode: 'direct-status-error',
-            triggerEvidenceEnvelope: 'sealed-trigger-evidence',
-            executionInputEnvelope: 'sealed-execution-recipe',
-            resultEnvelope: 'sealed-result',
-            legacySummaryCiphertext: null,
-        }, {
-            recipe: { kind: 'unavailable', reason: 'currentnessUnavailable' },
-            result: { kind: 'unavailable', reason: 'currentnessUnavailable' },
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('Error: direct-status-error');
-        });
+    it('keeps fresher direct status when Account currentness is unavailable and never paints retained bytes', async () => {
+        const sealed = privateDetail(run({ updatedAt: 12, errorCode: 'direct-status-error' }));
+        harness.answer(serverId, DETAIL_PATH, { body: sealed });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { status: 503, body: { error: 'unavailable' } });
+        const screen = await open();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Error: direct-status-error'));
         expect(screen.getTextContent()).toContain('Private Run detail is temporarily unavailable while account encryption changes.');
-
-        const rendered = JSON.stringify(screen.tree.toJSON());
-        expect(rendered).not.toContain('sealed-trigger-evidence');
-        expect(rendered).not.toContain('sealed-execution-recipe');
-        expect(rendered).not.toContain('sealed-result');
+        expect(screen.getTextContent()).not.toContain('The admitted issue private');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain(sealed.executionInputEnvelope);
     });
 
-    it('renders only the canonically opened admitted content and never sealed Run envelopes', async () => {
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue({
-            detail: {
-                ...runsState.list[0],
-                updatedAt: 12,
-                triggerEvidenceEnvelope: 'sealed-trigger-evidence',
-                executionInputEnvelope: 'sealed-execution-recipe',
-                resultEnvelope: 'sealed-result',
-                legacySummaryCiphertext: null,
-                executionNativeRunId: null,
-                executionNativeCallId: null,
-                executionNativeSidechainId: null,
-                events: [],
-            },
-            privateContent: {
-                recipe: {
-                    kind: 'available',
-                    templateVersion: 4,
-                    evidence: {
-                        v: 1,
-                        kind: 'pluginEvent',
-                        eventRef: { pluginId: 'com.example.github', localId: 'issue-opened' },
-                        sourceSelectorId: 'selector-1',
-                        occurrenceId: 'occurrence-1',
-                        occurredAt: 10,
-                        payload: { issue: { number: 42 } },
-                        sourceInstanceId: 'repository-acme-example',
-                        sourceContractVersion: 1,
-                        observationReceivedAt: 11,
-                        filter: { version: 1, result: 'matched' },
-                    },
-                    target: {
-                        kind: 'existingSession',
-                        sessionId: 'session-1',
-                        prompt: 'Review the admitted issue.',
-                    },
-                },
-                result: {
-                    kind: 'available',
-                    correspondence: {
-                        accountId: 'account-1',
-                        automationId: 'a1',
-                        runId: 'run-1',
-                    },
-                    result: { v: 1, kind: 'text', text: 'The admitted issue was reviewed.' },
-                },
-                failureDetail: {
-                    kind: 'available',
-                    correspondence: { automationId: 'a1', runId: 'run-1' },
-                    detail: 'The worker could not open /private/project.',
-                },
-            },
-        });
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
-        expect(screen.findAllByType('ItemGroup' as any).find((group: any) => (
-            group.props.title === 'Admitted details'
-        ))).toBeTruthy();
-        expect(screen.getTextContent()).toContain('Template version');
-        expect(screen.getTextContent()).toContain('Review the admitted issue.');
-        expect(screen.getTextContent()).toContain('The admitted issue was reviewed.');
-        expect(screen.getTextContent()).toContain('Failure detail');
-        expect(screen.getTextContent()).toContain('The worker could not open /private/project.');
-        for (const [title, expectedCopy] of [
-            ['Trigger identity', 'trigger-1@3'],
-            ['Occurrence', 'occurrence-1'],
-            ['Observation source', 'selector-1'],
-            ['Event reference', 'happier.scm.github/pull-request-opened-v1'],
-            ['Source instance', 'repository-acme-example'],
-            ['Frozen target', 'Existing session: session-1'],
-            ['Payload', '{"issue":{"number":42}}'],
-            ['Frozen prompt', 'Review the admitted issue.'],
-            ['Final result', 'The admitted issue was reviewed.'],
-            ['Failure detail', 'The worker could not open /private/project.'],
-        ] as const) {
-            const copyRow = screen.findByProps({ title });
-            expect(copyRow.props.copy).toBe(expectedCopy);
-            expect(copyRow.props.mode).not.toBe('info');
-            expect(copyRow.props.subtitleLines).toBe(0);
+    it('opens admitted recipe, evidence, result and failure through canonical codecs and keeps them route-local', async () => {
+        const sealed = privateDetail(run({ updatedAt: 12 }));
+        harness.answer(serverId, DETAIL_PATH, { body: sealed });
+        const screen = await open();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('The admitted issue private result'));
+        for (const [title, value] of [
+            ['Source instance', 'repository-acme-example'], ['Payload', '{"issue":{"number":42}}'],
+            ['Frozen prompt', 'The admitted issue private recipe'], ['Final result', 'The admitted issue private result'],
+            ['Failure detail', 'The admitted issue private failure'],
+        ]) {
+            const row = screen.findByProps({ title });
+            expect(row.props.copy).toBe(value);
+            expect(row.props.subtitleLines).toBe(0);
+            expect(row.props.mode).not.toBe('info');
         }
-        const rendered = JSON.stringify(screen.tree.toJSON());
-        expect(rendered).not.toContain('sealed-trigger-evidence');
-        expect(rendered).not.toContain('sealed-execution-recipe');
-        expect(rendered).not.toContain('sealed-result');
+        const { storage } = await import('@/sync/domains/state/storage');
+        expect(JSON.stringify(storage.getState().workflowRunsById)).not.toContain('The admitted issue private');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain(sealed.executionInputEnvelope);
     });
 
-    it('retires Account A direct detail when the same route switches to Account B and B reads fail', async () => {
-        const accountAInspection = inspectRunDetail({
-            ...runsState.list[0],
-            state: 'running',
-            updatedAt: 12,
-            errorCode: 'account-a-direct-status',
-            triggerEvidenceEnvelope: 'sealed-trigger-evidence',
-            executionInputEnvelope: 'sealed-execution-recipe',
-            resultEnvelope: 'sealed-result',
-            legacySummaryCiphertext: null,
-        }, {
-            recipe: {
-                kind: 'available',
-                templateVersion: 4,
-                evidence: {
-                    v: 1,
-                    kind: 'pluginEvent',
-                    eventRef: { pluginId: 'com.example.github', localId: 'issue-opened' },
-                    sourceSelectorId: 'account-a-selector',
-                    occurrenceId: 'account-a-occurrence',
-                    occurredAt: 10,
-                    payload: { issue: { title: 'Account A private evidence' } },
-                    sourceInstanceId: 'account-a-private-source',
-                    sourceContractVersion: 1,
-                    observationReceivedAt: 11,
-                    filter: { version: 1, result: 'matched' },
-                },
-                target: {
-                    kind: 'existingSession',
-                    sessionId: 'account-a-private-target',
-                    prompt: 'Account A private recipe',
-                },
-            },
-            result: {
-                kind: 'available',
-                correspondence: {
-                    accountId: 'account-a',
-                    automationId: 'a1',
-                    runId: 'run-1',
-                },
-                result: { v: 1, kind: 'text', text: 'Account A private result' },
-            },
-        });
-        syncSpies.getAutomationRunDetailInspection
-            .mockResolvedValueOnce(accountAInspection)
-            .mockRejectedValueOnce(new Error('account-b detail unavailable'));
-        syncSpies.fetchAutomationRuns.mockRejectedValueOnce(new Error('account-b list unavailable'));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('Account A private result');
-        });
-        expect(screen.getTextContent()).toContain('Error: account-a-direct-status');
-
-        accountScopeState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
-        runsState.list = [];
+    it('retires Account A private detail when the same route switches to Account B and B reads fail', async () => {
+        harness.answer(serverId, DETAIL_PATH, { body: privateDetail(run({ state: 'running', updatedAt: 12, errorCode: 'account-a-direct-status' }), 'Account A') });
+        const screen = await open();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Account A private result'));
+        harness.answer(serverId, DETAIL_PATH, { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, LIST_PATH, { status: 503, body: { error: 'unavailable' } });
         await act(async () => {
-            retireActiveServerAccountScopeLifetime();
-            await Promise.resolve();
+            await harness.switchAccount(serverId, 'account-b');
+            await connection?.dispose();
+            await connectAccount('account-b');
         });
-        await screen.update(React.createElement(AutomationRunDetailScreen));
-
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledTimes(2);
-            expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(1);
-        });
-        expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy();
-        const rendered = screen.getTextContent();
-        expect(rendered).not.toContain('Running');
-        expect(rendered).not.toContain('account-a-direct-status');
-        expect(rendered).not.toContain('Account A private evidence');
-        expect(rendered).not.toContain('account-a-private-source');
-        expect(rendered).not.toContain('account-a-private-target');
-        expect(rendered).not.toContain('Account A private recipe');
-        expect(rendered).not.toContain('Account A private result');
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+        await screen.update(<AutomationRunDetailScreen />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy());
+        expect(screen.getTextContent()).not.toContain('Account A');
+        expect(screen.getTextContent()).not.toContain('account-a-direct-status');
+        expect(screen.getTextContent()).not.toContain('Running');
     });
 
-    it('keeps invalid templates, uncertain dispatch, and retained-content failures distinct', async () => {
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            updatedAt: 12,
-            errorCode: 'invalid_template',
-            executionDispatchState: 'outcomeUnknown',
-            triggerEvidenceEnvelope: 'sealed-trigger-evidence',
-            executionInputEnvelope: 'sealed-execution-recipe',
-            resultEnvelope: 'sealed-result',
-            legacySummaryCiphertext: null,
-        }, {
-            recipe: { kind: 'invalid', reason: 'contentInvalid' },
-            result: { kind: 'invalid', reason: 'modeMismatch' },
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('The admitted template was invalid. This Run will not dispatch or retry.');
+    it('distinguishes invalid templates, uncertain dispatch and retained mode mismatch', async () => {
+        const screen = await respond(run({ updatedAt: 12, errorCode: 'invalid_template', executionDispatchState: 'outcomeUnknown' }), {
+            executionInputEnvelope: 'invalid-recipe', resultEnvelope: JSON.stringify({ t: 'encrypted', c: 'sealed-private-result' }),
         });
+        expect(screen.getTextContent()).toContain('The admitted template was invalid. This Run will not dispatch or retry.');
         expect(screen.getTextContent()).toContain('Dispatch outcome is unknown. Happier will not dispatch the frozen target again.');
         expect(screen.getTextContent()).toContain('Retained private detail is invalid.');
         expect(screen.getTextContent()).toContain('Retained private detail uses a different Account encryption mode.');
-        const rendered = JSON.stringify(screen.tree.toJSON());
-        expect(rendered).not.toContain('sealed-trigger-evidence');
-        expect(rendered).not.toContain('sealed-execution-recipe');
-        expect(rendered).not.toContain('sealed-result');
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('sealed-private-result');
     });
 
-    it('names every Run state in product language instead of painting the raw state token', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'outcome_uncertain',
-            errorCode: 'execution_run_cancelled_outcome_unknown',
-            executionDispatchState: 'outcomeUnknown',
-            finishedAt: 12,
-            updatedAt: 12,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
+    it('names uncertain state, native identity, and ordered transition history in product language', async () => {
+        const screen = await respond(run({ state: 'outcome_uncertain', executionDispatchState: 'outcomeUnknown', errorCode: null }), {
+            executionNativeRunId: 'native-run-9', executionNativeCallId: 'native-call-9', executionNativeSidechainId: 'native-sidechain-9',
+            events: [ { at: 10, type: 'run_started', machineId: 'machine-1', errorCode: null, executionAttempt: null, outcome: null, reason: null },
+                { at: 20, type: 'run_outcome_uncertain', machineId: null, errorCode: null, executionAttempt: null, outcome: null, reason: 'cancelled_after_dispatch_permitted' } ],
         });
-
-        const rendered = screen.getTextContent();
-        expect(rendered).toContain('Outcome uncertain');
-        expect(rendered).not.toContain('OUTCOME_UNCERTAIN');
-        expect(rendered).not.toContain('outcome_uncertain');
-        // The ratified uncertain-outcome sentence stays the only explanation of this state.
-        expect(rendered).toContain('Dispatch outcome is unknown. Happier will not dispatch the frozen target again.');
+        const text = screen.getTextContent();
+        for (const value of ['Outcome uncertain', 'native-run-9', 'Call native-call-9', 'Sidechain native-sidechain-9', 'Started running', 'Cancelled after the external execution had already been permitted']) expect(text).toContain(value);
+        expect(text.indexOf('Started running')).toBeLessThan(text.indexOf('Cancelled after'));
+        expect(text).not.toContain('outcome_uncertain');
+        expect(text).not.toContain('run_started');
+        expect(text).not.toContain('cancelled_after_dispatch_permitted');
     });
 
-    it('surfaces the assignment, attempt, dispatch and reply-handoff facts the Run already carries', async () => {
-        runDetailMachinesState.list = [{ id: 'machine-1', metadata: { displayName: 'Build box' } }];
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'running',
-            errorCode: null,
-            attempt: 2,
-            claimedAt: 20,
-            claimedByMachineId: 'machine-1',
-            leaseExpiresAt: 30,
-            startedAt: 21,
-            executionDispatchState: 'retryWaiting',
-            executionAttempt: 3,
-            replyHandoffState: 'awaitingResult',
-            replyHandoffAttempt: 1,
-            replyHandoffDueAt: 40,
-            updatedAt: 22,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+    it('explains cancellation while the assigned machine could still be executing', async () => {
+        const screen = await respond(run({ state: 'outcome_uncertain' }), { events: [{ at: 20, type: 'run_outcome_uncertain', machineId: null, errorCode: null, executionAttempt: null, outcome: null, reason: 'cancelled_while_running' }] });
+        expect(screen.getTextContent()).toContain('Cancelled while the assigned machine could still have been executing');
+        expect(screen.getTextContent()).not.toContain('cancelled_while_running');
+    });
 
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
-        const rendered = screen.getTextContent();
-        expect(rendered).toContain('Attempt');
-        expect(rendered).toContain('Claimed by');
-        expect(rendered).toContain('Claim lease expires:');
-        expect(rendered).toContain('Execution dispatch');
-        expect(rendered).toContain('Dispatch attempt 3');
-        expect(rendered).toContain('Reply handoff');
-        expect(rendered).toContain('Handoff attempt 1');
-        expect(rendered).toContain('Next handoff attempt:');
-        // Values ride the row `detail`, which the text projection does not read.
+    it('surfaces assignment, attempt, dispatch and reply handoff facts without raw tokens', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', metadata: { displayName: 'Build box', host: 'build', platform: 'linux', happyCliVersion: '0.3', happyHomeDir: '/home/test', homeDir: '/home/test' } })]);
+        const screen = await respond(run({ state: 'running', errorCode: null, attempt: 2, claimedAt: 20, claimedByMachineId: 'machine-1', leaseExpiresAt: 30, startedAt: 21, executionDispatchState: 'retryWaiting', executionAttempt: 3, replyHandoffState: 'awaitingResult', replyHandoffAttempt: 1, replyHandoffDueAt: 40 }));
         const tree = JSON.stringify(screen.tree.toJSON());
-        expect(tree).toContain('Attempt 2');
-        expect(tree).toContain('Build box');
-        expect(tree).toContain('Waiting to retry');
-        expect(tree).toContain('Awaiting result');
-        // Raw enum tokens are never painted at the user.
+        for (const value of ['Attempt 2', 'Build box', 'Waiting to retry', 'Dispatch attempt 3', 'Awaiting result', 'Handoff attempt 1', 'Next handoff attempt:']) expect(tree).toContain(value);
         expect(tree).not.toContain('retryWaiting');
         expect(tree).not.toContain('awaitingResult');
     });
 
-    it('names the native execution and its ordered transition history for an uncertain Run', async () => {
-        runDetailMachinesState.list = [];
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'outcome_uncertain',
-            executionDispatchState: 'outcomeUnknown',
-            errorCode: null,
-            updatedAt: 22,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-            executionNativeRunId: 'native-run-9',
-            executionNativeCallId: 'native-call-9',
-            executionNativeSidechainId: 'native-sidechain-9',
-            events: [
-                { at: 10, type: 'run_started', machineId: 'machine-1', errorCode: null, executionAttempt: null, outcome: null, reason: null },
-                {
-                    at: 20,
-                    type: 'run_outcome_uncertain',
-                    machineId: null,
-                    errorCode: null,
-                    executionAttempt: null,
-                    outcome: null,
-                    reason: 'cancelled_after_dispatch_permitted',
-                },
-            ],
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
-        const rendered = screen.getTextContent();
-        // Without the native identity an uncertain Run gives the user nothing
-        // to inspect or stop.
-        expect(rendered).toContain('Native execution');
-        expect(rendered).toContain('native-run-9');
-        expect(rendered).toContain('Call native-call-9');
-        expect(rendered).toContain('Sidechain native-sidechain-9');
-        expect(screen.findAllByType('ItemGroup' as any).find((group: any) => (
-            group.props.title === 'What happened'
-        ))).toBeTruthy();
-        expect(rendered).toContain('Started running');
-        expect(rendered).toContain('Cancelled after the external execution had already been permitted');
-        // Raw persisted transition tokens are never painted at the user.
-        const tree = JSON.stringify(screen.tree.toJSON());
-        expect(tree).not.toContain('run_started');
-        expect(tree).not.toContain('cancelled_after_dispatch_permitted');
-    });
-
-    it('explains when cancellation left a running Run outcome uncertain', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'outcome_uncertain',
-            executionDispatchState: 'outcomeUnknown',
-            updatedAt: 22,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-            events: [{
-                at: 20,
-                type: 'run_outcome_uncertain',
-                machineId: null,
-                errorCode: null,
-                executionAttempt: null,
-                outcome: null,
-                reason: 'cancelled_while_running',
-            }],
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
-        expect(screen.getTextContent()).toContain(
-            'Cancelled while the assigned machine could still have been executing',
-        );
-        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('cancelled_while_running');
-    });
-
-    it('omits the assignment and handoff rows a Run has no fact for', async () => {
-        runDetailMachinesState.list = [];
-        runsState.list = [{
-            ...runsState.list[0],
-            attempt: 1,
-            claimedAt: null,
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            replyHandoffState: 'none',
-            replyHandoffAttempt: 0,
-            replyHandoffDueAt: null,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-
-        const rendered = screen.getTextContent();
-        expect(rendered).not.toContain('Claimed by');
-        expect(rendered).not.toContain('Claim lease expires:');
-        expect(rendered).not.toContain('Reply handoff');
-        expect(rendered).not.toContain('Next handoff attempt:');
+    it('omits assignment and handoff rows without facts', async () => {
+        const screen = await respond(run());
+        for (const value of ['Claimed by', 'Claim lease expires:', 'Reply handoff', 'Next handoff attempt:']) expect(screen.getTextContent()).not.toContain(value);
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Attempt 1');
     });
 
-    it('does not let an older direct response regress the bounded Run projection', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'cancelled',
-            errorCode: null,
-            finishedAt: 20,
-            updatedAt: 20,
-        }];
-        const staleDetail = {
-            ...runsState.list[0],
-            state: 'running',
-            errorCode: 'stale-direct-status',
-            updatedAt: 11,
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        };
-        const staleInspection = inspectRunDetail(staleDetail, {
-            recipe: {
-                kind: 'available',
-                templateVersion: 4,
-                evidence: null,
-                target: {
-                    kind: 'existingSession',
-                    sessionId: 'stale-session',
-                    prompt: 'stale private prompt',
-                },
-            },
-            result: { kind: 'absent' },
-        });
-        let resolveDirect: (value: typeof staleInspection) => void = () => {
-            throw new Error('Direct Run detail test promise did not initialize');
-        };
-        const pendingDirect = new Promise<typeof staleInspection>((resolve) => {
-            resolveDirect = resolve;
-        });
-        syncSpies.getAutomationRunDetailInspection.mockReturnValue(pendingDirect);
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledWith('a1', 'run-1');
-        });
-        await act(async () => {
-            resolveDirect(staleInspection);
-            await pendingDirect;
-        });
-
+    it('does not let an older direct response regress cached status or reveal its private recipe', async () => {
+        const pending = createDeferred<void>();
+        const stale = privateDetail(run({ state: 'running', updatedAt: 11, errorCode: 'stale-direct-status' }), 'Stale');
+        harness.answer(serverId, DETAIL_PATH, { body: stale, respondAfter: pending.promise });
+        const screen = await open(run({ state: 'cancelled', updatedAt: 20, finishedAt: 20, errorCode: null }));
+        await waitForHomeGovernance(() => expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1));
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/account/encryption/currentness')).toHaveLength(1));
         expect(screen.getTextContent()).toContain('Cancelled');
         expect(screen.getTextContent()).not.toContain('stale-direct-status');
-        expect(screen.getTextContent()).not.toContain('stale private prompt');
-        expect(screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel')).toBeUndefined();
+        expect(screen.getTextContent()).not.toContain('Stale private');
+        expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
     });
 
-    it('offers cancellation only through the incumbent Run owner for a cancellable state', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'queued',
-            errorCode: null,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
-        const cancel = screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel');
-        expect(cancel).toBeTruthy();
-        if (!cancel) {
-            throw new Error('Expected a cancellable Run action');
-        }
-
-        await act(async () => {
-            await cancel.props.onPress();
-        });
-
-        expect(modalConfirmSpy).toHaveBeenCalledWith(
-            'Cancel Run?',
-            'This stops the Run when possible.',
-            { cancelText: 'common.keepEditing', confirmText: 'Cancel Run', destructive: true },
-        );
-        expect(syncSpies.cancelAutomationRun).not.toHaveBeenCalled();
-
+    it('cancels through the Run owner only after confirmation and fences the pre-cancel direct response', async () => {
+        const pending = createDeferred<void>();
+        harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'running', updatedAt: 12, errorCode: 'stale-direct-after-cancel' })), respondAfter: pending.promise });
+        const cancelPath = '/v3/automations/runs/run-1/cancel';
+        harness.answer(serverId, 'POST ' + cancelPath, { body: { run: run({ state: 'cancelled', revision: 2, finishedAt: 12, updatedAt: 12, errorCode: null }) } });
+        const screen = await open(run({ state: 'queued', errorCode: null }));
+        await waitForHomeGovernance(() => expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(1));
+        const cancel = screen.findByProps({ title: 'common.cancel' });
+        await act(async () => cancel.props.onPress());
+        expect(harness.requestsFor(cancelPath)).toHaveLength(0);
+        expect(modalConfirmSpy).toHaveBeenCalledWith('Cancel Run?', 'This stops the Run when possible.', { cancelText: 'common.keepEditing', confirmText: 'Cancel Run', destructive: true });
         modalConfirmSpy.mockResolvedValueOnce(true);
-        await act(async () => {
-            await cancel.props.onPress();
-        });
-
-        expect(syncSpies.cancelAutomationRun).toHaveBeenCalledWith('run-1');
+        await act(async () => cancel.props.onPress());
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Cancelled'));
+        await act(async () => pending.resolve());
+        expect(screen.getTextContent()).not.toContain('stale-direct-after-cancel');
+        expect(screen.findAllByProps({ title: 'common.cancel' })).toHaveLength(0);
+        expect(harness.requestsFor(cancelPath)).toHaveLength(1);
     });
 
-    it('offers blocked reply handoff recovery through the incumbent Run owner', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'succeeded',
-            replyHandoffState: 'blocked',
-            replyHandoffAttempt: 2,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        const retry = screen.findByProps({ testID: 'automation-run-retry-reply-handoff' });
-
-        await act(async () => {
-            await retry.props.onPress();
-        });
-
-        expect(syncSpies.retryAutomationReplyHandoff).toHaveBeenCalledWith('run-1');
+    it('recovers blocked reply handoff through the Run owner', async () => {
+        const retryPath = '/v3/automations/runs/run-1/retry-reply-handoff';
+        const row = run({ state: 'succeeded', replyHandoffState: 'blocked', replyHandoffAttempt: 2 });
+        harness.answer(serverId, 'POST ' + retryPath, { body: { run: { ...row, revision: 2, replyHandoffState: 'ready', updatedAt: 12 } } });
+        const screen = await respond(row);
+        await screen.pressByTestIdAsync('automation-run-retry-reply-handoff');
+        expect(harness.requestsFor(retryPath)).toHaveLength(1);
+        const { storage } = await import('@/sync/domains/state/storage');
+        expect(storage.getState().workflowRunsById['run-1'].automation?.replyHandoffState).toBe('ready');
     });
 
-    it('states the truth instead of offering a retry the server can never dispatch', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'succeeded',
-            replyHandoffState: 'blocked',
-            replyHandoffAttempt: 2,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            replyHandoffRecoverable: false,
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
+    it('does not offer recovery that the server cannot dispatch', async () => {
+        const screen = await respond(run({ state: 'succeeded', replyHandoffState: 'blocked' }), { replyHandoffRecoverable: false });
         expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' })).toHaveLength(0);
         expect(screen.findByProps({ testID: 'automation-run-reply-handoff-unrecoverable' })).toBeTruthy();
-        expect(syncSpies.retryAutomationReplyHandoff).not.toHaveBeenCalled();
+        expect(harness.requestsFor('/v3/automations/runs/run-1/retry-reply-handoff')).toHaveLength(0);
     });
 
-    it('authorizes a new delivery of accepted custody at the exact revision it showed', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'succeeded',
-            replyHandoffState: 'accepted',
-            replyHandoffAttempt: 2,
-            revision: 7,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        modalConfirmSpy.mockResolvedValueOnce(true);
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        // A retry would rejoin the delivery whose outcome is unknown, so the
-        // accepted state offers the deliberate new delivery instead.
+    it('delivers accepted custody again only after confirmation and sends the exact displayed revision', async () => {
+        const row = run({ state: 'succeeded', replyHandoffState: 'accepted', revision: 7 });
+        const path = '/v3/automations/runs/run-1/deliver-result-again';
+        harness.answer(serverId, 'POST ' + path, { body: { run: { ...row, revision: 8, updatedAt: 12, replyHandoffState: 'ready' } } });
+        const screen = await respond(row);
         expect(screen.findAllByProps({ testID: 'automation-run-retry-reply-handoff' })).toHaveLength(0);
-        const deliverAgain = screen.findByProps({ testID: 'automation-run-deliver-result-again' });
-
-        await act(async () => {
-            await deliverAgain.props.onPress();
-        });
-
-        expect(syncSpies.deliverAutomationResultAgain).toHaveBeenCalledWith({
-            runId: 'run-1',
-            expectedRevision: 7,
-        });
-    });
-
-    it('does not deliver again when the user declines the confirmation', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'succeeded',
-            replyHandoffState: 'accepted',
-            revision: 7,
-        }];
-        syncSpies.getAutomationRunDetailInspection.mockResolvedValue(inspectRunDetail({
-            ...runsState.list[0],
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        }));
-        modalConfirmSpy.mockResolvedValueOnce(false);
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        const deliverAgain = screen.findByProps({ testID: 'automation-run-deliver-result-again' });
-
-        await act(async () => {
-            await deliverAgain.props.onPress();
-        });
-
-        expect(syncSpies.deliverAutomationResultAgain).not.toHaveBeenCalled();
-    });
-
-    it('does not let a pre-cancel direct read reclaim the route after cancellation commits', async () => {
-        runsState.list = [{
-            ...runsState.list[0],
-            state: 'queued',
-            errorCode: null,
-            updatedAt: 11,
-        }];
-        const cancelledRun = {
-            ...runsState.list[0],
-            state: 'cancelled' as const,
-            finishedAt: 12,
-            updatedAt: 12,
-        };
-        const staleDirect = {
-            ...runsState.list[0],
-            state: 'running' as const,
-            errorCode: 'stale-direct-after-cancel',
-            updatedAt: 12,
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        };
-        const staleInspection = inspectRunDetail(staleDirect);
-        const cancelledInspection = inspectRunDetail({
-            ...cancelledRun,
-            triggerEvidenceEnvelope: null,
-            executionInputEnvelope: null,
-            resultEnvelope: null,
-            legacySummaryCiphertext: null,
-        });
-        let resolveInitialDirect: ((value: typeof staleInspection) => void) | null = null;
-        const initialDirect = new Promise<typeof staleInspection>((resolve) => {
-            resolveInitialDirect = resolve;
-        });
-        syncSpies.getAutomationRunDetailInspection
-            .mockImplementationOnce(() => initialDirect)
-            .mockResolvedValueOnce(cancelledInspection);
-        syncSpies.cancelAutomationRun.mockImplementationOnce(async () => {
-            runsState.list = [cancelledRun];
-            return cancelledRun;
-        });
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledTimes(1);
-        });
-
-        const cancel = screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel');
-        expect(cancel).toBeTruthy();
-        if (!cancel) {
-            throw new Error('Expected a cancellable Run action');
-        }
+        await screen.pressByTestIdAsync('automation-run-deliver-result-again');
+        expect(harness.requestsFor(path)).toHaveLength(0);
         modalConfirmSpy.mockResolvedValueOnce(true);
-        await act(async () => {
-            await cancel.props.onPress();
-        });
-        await vi.waitFor(() => {
-            expect(syncSpies.cancelAutomationRun).toHaveBeenCalledWith('run-1');
-        });
-
-        await act(async () => {
-            resolveInitialDirect?.(staleInspection);
-            await initialDirect;
-        });
-
-        expect(screen.getTextContent()).toContain('Cancelled');
-        expect(screen.getTextContent()).not.toContain('stale-direct-after-cancel');
-        expect(screen.findAllByType('Item' as any).find((item: any) => item.props.title === 'common.cancel')).toBeUndefined();
+        await screen.pressByTestIdAsync('automation-run-deliver-result-again');
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(harness.requestsFor(path)[0].input).toEqual({ expectedRevision: 7 });
     });
 
-    it('keeps an uncached reused run detail loading while its own request is pending', async () => {
-        let resolveFetch: (() => void) | null = null;
-        const pendingFetch = new Promise<void>((resolve) => {
-            resolveFetch = resolve;
-        });
-        syncSpies.fetchAutomationRuns.mockImplementationOnce(() => pendingFetch);
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-
+    it('keeps a reused uncached route loading until its own request settles', async () => {
+        const screen = await respond(run());
+        const pending = createDeferred<void>();
+        const nextPath = '/v3/automations/a2/runs/run-2';
+        harness.answer(serverId, nextPath, { body: detail(run({ id: 'run-2', automationId: 'a2' })), respondAfter: pending.promise });
+        harness.answer(serverId, '/v3/automations/a2/runs?limit=20', { body: { runs: [], nextCursor: null }, respondAfter: pending.promise });
         routeParamsState.id = 'a2';
         routeParamsState.runId = 'run-2';
-        runsState.list = [];
-        await screen.update(React.createElement(AutomationRunDetailScreen));
-
-        expect(screen.findAllByType('ActivitySpinner' as any)).toHaveLength(1);
+        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
+        await screen.update(<AutomationRunDetailScreen />);
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
         expect(screen.getTextContent()).not.toContain('runs.runDetails.failedToLoad');
-
-        await act(async () => {
-            resolveFetch?.();
-            await pendingFetch;
-        });
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('run run-2'));
     });
 
-    it('offers an announced retry when a cold direct Run read and root-page refresh both fail', async () => {
-        runsState.list = [];
-        syncSpies.getAutomationRunDetailInspection.mockRejectedValueOnce(new Error('detail unavailable'));
-        syncSpies.fetchAutomationRuns.mockRejectedValueOnce(new Error('list unavailable'));
-        const { AutomationRunDetailScreen } = await import('./AutomationRunDetailScreen');
-
-        const screen = await renderScreen(React.createElement(AutomationRunDetailScreen));
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy();
-        });
-
-        const errorState = screen.findByTestId('automation-run-detail-load-error');
-        expect(errorState?.props.role).toBe('alert');
-        expect(errorState?.props['aria-live']).toBe('assertive');
-
-        await act(async () => {
-            screen.pressByTestId('automation-run-detail-load-error-action');
-            await Promise.resolve();
-        });
-        expect(syncSpies.getAutomationRunDetailInspection).toHaveBeenCalledTimes(2);
-        expect(syncSpies.fetchAutomationRuns).toHaveBeenCalledTimes(2);
+    it('announces retry when a cold direct read and root-page refresh fail, then recovers', async () => {
+        harness.answer(serverId, DETAIL_PATH, { status: 503, body: { error: 'unavailable' } });
+        harness.answer(serverId, LIST_PATH, { status: 503, body: { error: 'unavailable' } });
+        const screen = await open(null);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy());
+        const error = screen.findByTestId('automation-run-detail-load-error');
+        expect(error.props.role).toBe('alert');
+        expect(error.props['aria-live']).toBe('assertive');
+        harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'succeeded', errorCode: null })) });
+        harness.answer(serverId, LIST_PATH, { body: { runs: [], nextCursor: null } });
+        await screen.pressByTestIdAsync('automation-run-detail-load-error-action');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Succeeded'));
+        expect(harness.requestsFor(DETAIL_PATH)).toHaveLength(2);
+        expect(harness.requestsFor(LIST_PATH)).toHaveLength(2);
     });
 });

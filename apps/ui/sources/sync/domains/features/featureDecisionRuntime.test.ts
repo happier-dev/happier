@@ -1,10 +1,17 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
-
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -96,10 +103,10 @@ describe('featureDecisionRuntime', () => {
     afterEach(() => {
         standardCleanup();
         vi.unstubAllGlobals();
+        vi.restoreAllMocks();
     });
 
     it('reprojects a mounted runtime snapshot when the same server cache entry changes', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
         const {
             primeServerFeaturesSnapshot,
@@ -159,7 +166,6 @@ describe('featureDecisionRuntime', () => {
         env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW =
             'app.ui.onboardingTour,app.ui.sessionGettingStartedGuidance';
         delete env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         try {
@@ -218,7 +224,6 @@ describe('featureDecisionRuntime', () => {
     });
 
 	    it('ignores non-public build policy env vars in UI bundles', async () => {
-	        vi.resetModules();
         await publishTestHomeProfiles();
 
         const previousDenyPublic = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -251,7 +256,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('applies build policy without waiting for server probes in runtime scope', async () => {
-	        vi.resetModules();
         await publishTestHomeProfiles();
 
         const previousDeny = process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY;
@@ -280,7 +284,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('fails closed when remoteHosts.management is missing or disabled in the server snapshot', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -300,7 +303,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('enables remoteHosts.management when server snapshot gate is enabled', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -330,7 +332,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('disables remoteHosts.secretMaterial when remoteHosts.management is disabled (dependency)', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -361,7 +362,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('reports localServices disabled when the server snapshot disables it', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -386,7 +386,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('reports browser.context disabled when the server snapshot disables it', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -418,7 +417,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('reports plugins.ui disabled when the server snapshot disables the plugin platform', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { getStorage } = await import('@/sync/domains/state/storage');
@@ -443,7 +441,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refetches the server feature snapshot when active server changes', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -477,18 +474,22 @@ describe('featureDecisionRuntime', () => {
             await renderScreen(React.createElement(Test));
             await flushHookEffects(6);
 
-            const initialFetchCalls = fetchMock.mock.calls.length;
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({ status: 'ready' }));
+            const initialFetchCalls = countFeaturesFetchCalls(fetchMock);
             expect(initialFetchCalls).toBeGreaterThan(0);
             expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
             const firstReady = seen.find((entry) => entry?.status === 'ready') as any;
             expect(firstReady.features.features.voice.enabled).toBe(true);
 
             await act(async () => {
-                await activateTestHome('srv_server-b');
-                await flushHookEffects(6);
+        await activateTestHome('srv_server-b');
+        await flushHookEffects(6);
             });
 
-            expect(fetchMock.mock.calls.length).toBeGreaterThan(initialFetchCalls);
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({
+                status: 'ready', features: { features: { voice: { enabled: false } } },
+            }));
+            expect(countFeaturesFetchCalls(fetchMock)).toBeGreaterThan(initialFetchCalls);
             const last = seen.at(-1) as any;
             expect(last?.status).toBe('ready');
             expect(last.features.features.voice.enabled).toBe(false);
@@ -498,7 +499,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refreshes the runtime server feature snapshot after the cache TTL expires', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const { resetRuntimeFetch, setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -537,7 +537,8 @@ describe('featureDecisionRuntime', () => {
             let screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(6);
 
-            const initialFetchCalls = fetchMock.mock.calls.length;
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({ status: 'ready' }));
+            const initialFetchCalls = countFeaturesFetchCalls(fetchMock);
             expect(initialFetchCalls).toBeGreaterThan(0);
             expect(seen.some((entry) => entry?.status === 'ready')).toBe(true);
             const firstReady = seen.find((entry) => entry?.status === 'ready') as any;
@@ -549,10 +550,13 @@ describe('featureDecisionRuntime', () => {
             await act(async () => {
                 screen.tree.unmount();
                 screen = await renderScreen(React.createElement(Test));
-                await flushHookEffects(6);
+        await flushHookEffects(6);
             });
 
-            expect(fetchMock.mock.calls.length).toBeGreaterThan(initialFetchCalls);
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({
+                status: 'ready', features: { features: { voice: { enabled: false } } },
+            }));
+            expect(countFeaturesFetchCalls(fetchMock)).toBeGreaterThan(initialFetchCalls);
             const last = seen.at(-1) as any;
             expect(last?.status).toBe('ready');
             expect(last.features.features.voice.enabled).toBe(false);
@@ -564,7 +568,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('does not refetch explicit serverId snapshots on remount while cache is fresh', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         let now = 0;
@@ -587,13 +590,16 @@ describe('featureDecisionRuntime', () => {
 
         const { useServerFeaturesSnapshotForServerId } = await import('./featureDecisionRuntime');
 
+        const seen: Array<ReturnType<typeof useServerFeaturesSnapshotForServerId>> = [];
         function Test() {
-            useServerFeaturesSnapshotForServerId('srv_server-a');
+            const value = useServerFeaturesSnapshotForServerId('srv_server-a');
+            React.useEffect(() => { seen.push(value); }, [value]);
             return React.createElement('View');
         }
 
         let screen = await renderScreen(React.createElement(Test));
         await flushHookEffects(20);
+        await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({ status: 'ready' }));
         expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
 
         // Remount within TTL_READY_MS.
@@ -616,7 +622,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('refetches a transient main-selection feature error after its cache TTL expires and the consumer remounts', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         let now = 0;
@@ -650,6 +655,7 @@ describe('featureDecisionRuntime', () => {
 
             let screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(10);
+            await waitForHomeGovernance(() => expect(seen.at(-1)?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'error', reason: 'network' }));
             expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
             expect(seen.at(-1)?.snapshotsByServerId?.['srv_server-a']).toMatchObject({
                 status: 'error',
@@ -660,9 +666,10 @@ describe('featureDecisionRuntime', () => {
             await act(async () => {
                 screen.tree.unmount();
                 screen = await renderScreen(React.createElement(Test));
-                await flushHookEffects(10);
+        await flushHookEffects(10);
             });
 
+            await waitForHomeGovernance(() => expect(seen.at(-1)?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'ready' }));
             expect(countFeaturesFetchCalls(fetchMock)).toBe(2);
             expect(seen.at(-1)?.snapshotsByServerId?.['srv_server-a']).toMatchObject({
                 status: 'ready',
@@ -670,7 +677,7 @@ describe('featureDecisionRuntime', () => {
 
             await act(async () => {
                 screen.tree.unmount();
-                await flushHookEffects(2);
+        await flushHookEffects(2);
             });
         } finally {
             nowSpy.mockRestore();
@@ -679,7 +686,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('recovers a still-mounted main-selection feature consumer after the transient-error backoff', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         let now = 0;
@@ -750,6 +756,10 @@ describe('featureDecisionRuntime', () => {
 
             const screen = await renderScreen(React.createElement(Test));
             await flushHookEffects(10);
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({
+                mainSelection: { snapshotsByServerId: { 'srv_server-a': { status: 'error' } } },
+                runtime: { status: 'error' }, explicit: { status: 'error' },
+            }));
             expect(countFeaturesFetchCalls(fetchMock)).toBe(1);
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'error' });
             expect(seen.at(-1)?.runtime).toMatchObject({ status: 'error' });
@@ -760,9 +770,13 @@ describe('featureDecisionRuntime', () => {
                 const retries = runRetries;
                 runRetries = [];
                 retries.forEach((retry) => retry());
-                await flushHookEffects(10);
+        await flushHookEffects(10);
             });
 
+            await waitForHomeGovernance(() => expect(seen.at(-1)).toMatchObject({
+                mainSelection: { snapshotsByServerId: { 'srv_server-a': { status: 'ready' } } },
+                runtime: { status: 'ready' }, explicit: { status: 'ready' },
+            }));
             expect(countFeaturesFetchCalls(fetchMock)).toBe(2);
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-a']).toMatchObject({ status: 'ready' });
             expect(seen.at(-1)?.mainSelection?.snapshotsByServerId?.['srv_server-b']).toMatchObject({ status: 'ready' });
@@ -771,7 +785,7 @@ describe('featureDecisionRuntime', () => {
 
             await act(async () => {
                 screen.tree.unmount();
-                await flushHookEffects(2);
+        await flushHookEffects(2);
             });
 
             resetServerFeaturesClientForTests();
@@ -786,12 +800,12 @@ describe('featureDecisionRuntime', () => {
             const fetchesBeforeUnmount = countFeaturesFetchCalls(fetchMock);
             await act(async () => {
                 cancelledScreen.tree.unmount();
-                await flushHookEffects(2);
+        await flushHookEffects(2);
             });
             expect(clearTimeoutSpy).toHaveBeenCalledWith(retryTimerId);
             await act(async () => {
                 cancelledRetries.forEach((retry) => retry());
-                await flushHookEffects(4);
+        await flushHookEffects(4);
             });
             expect(countFeaturesFetchCalls(fetchMock)).toBe(fetchesBeforeUnmount);
 
@@ -808,7 +822,7 @@ describe('featureDecisionRuntime', () => {
             expect(runRetries).toHaveLength(0);
             await act(async () => {
                 unsupportedScreen.tree.unmount();
-                await flushHookEffects(2);
+        await flushHookEffects(2);
             });
         } finally {
             nowSpy.mockRestore();
@@ -819,7 +833,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('discards an already-dequeued runtime retry after the active server changes', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -871,8 +884,8 @@ describe('featureDecisionRuntime', () => {
             const staleRetry = retryHandlers[0];
 
             await act(async () => {
-                await activateTestHome('srv_server-b');
-                await flushHookEffects(6);
+        await activateTestHome('srv_server-b');
+        await flushHookEffects(6);
             });
             expect(seen.at(-1)).toMatchObject({
                 status: 'ready',
@@ -882,7 +895,7 @@ describe('featureDecisionRuntime', () => {
             now = 5_001;
             await act(async () => {
                 staleRetry?.();
-                await flushHookEffects(10);
+        await flushHookEffects(10);
             });
             expect(seen.at(-1)).toMatchObject({
                 status: 'ready',
@@ -897,7 +910,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('schedules a successor retry when a mounted runtime retry also fails', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
         let now = 0;
         const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -936,7 +948,7 @@ describe('featureDecisionRuntime', () => {
             now = 5_001;
             await act(async () => {
                 firstRetry?.();
-                await flushHookEffects(10);
+        await flushHookEffects(10);
             });
             expect(countFeaturesFetchCalls(fetchMock)).toBe(2);
             expect(retryHandlers).toHaveLength(1);
@@ -949,7 +961,6 @@ describe('featureDecisionRuntime', () => {
     });
 
     it('keeps a disabled main-selection snapshot empty and stable across cache notifications', async () => {
-        vi.resetModules();
         await publishTestHomeProfiles();
 
         const {

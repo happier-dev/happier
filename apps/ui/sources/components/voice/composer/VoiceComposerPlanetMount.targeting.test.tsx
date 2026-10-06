@@ -19,10 +19,6 @@ vi.mock('@/voice/agent/getVoiceAgentSessionTeleportAvailability', () => ({
     getVoiceAgentSessionTeleportAvailability: () => ({ ok: false }),
 }));
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
-    useProjectedConnectedServicesRegistry: () => Object.freeze({ entries: Object.freeze([]) }),
-}));
-
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ pathname: () => '/' }).module;

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FeaturesResponseSchema, projectSessionAccessCapabilitiesV1, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, FeaturesResponseSchema, projectSessionAccessCapabilitiesV1, setActionApprovalOverride, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { createSessionBoardOutcomeUnknownFailureV1, SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board';
 
 import {
     createDeferred,
@@ -41,6 +42,7 @@ vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: {
 } }));
 let localStorage: LocalStorageMockHandle;
 let serverId: string;
+let restoreBoardPolicy: (() => void) | undefined;
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } }); }
 
 const headlineRun = makeSessionWorkflowRunHeadline;
@@ -98,6 +100,8 @@ beforeEach(async () => {
     vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => network(String(url), init));
 });
 afterEach(async () => {
+    restoreBoardPolicy?.();
+    restoreBoardPolicy = undefined;
     const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
     await resetServerReachabilitySupervisors();
     localStorage?.restore();
@@ -129,29 +133,53 @@ async function renderForToolUseId(params: Readonly<{
 }
 
 describe('Board Action Account retirement', () => {
-    it('reports the retired Account scope without disclosing its mutation result', async () => {
+    it('retains only the issued Board recovery packet after Account retirement, not the returned mutation metadata', async () => {
         const fallback = network.getMockImplementation()!;
-        let dispatched = false;
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const previousSettings = storage.getState().settings;
+        const previousSettingsScope = storage.getState().settingsScope;
+        restoreBoardPolicy = () => storage.setState({ settings: previousSettings, settingsScope: previousSettingsScope });
+        const scope = { serverId, accountId: 'alice' };
+        const settings = {
+            ...storage.getState().settings,
+            actionsSettingsV1: setActionApprovalOverride({
+                settings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                actionId: 'session.board.layout.update', surface: 'ui', approvalRequired: false,
+            }),
+        };
+        // This Account has explicitly opted out through the supported persisted policy.
+        saveAccountSettings(scope, settings, 1);
+        storage.setState({ settings, settingsScope: scope });
+        const issued = createDeferred<string>();
+        const acknowledgement = createDeferred<Response>();
         network.mockImplementation(async (url, init) => {
             const pathname = new URL(url).pathname;
+            if (pathname === '/v2/account/settings') return json({ content: { t: 'plain', v: settings }, version: 1 });
             if (pathname.endsWith('/system-records/record')) return json({ record: null });
             if (pathname.endsWith('/board') && init?.method === 'PUT') {
-                dispatched = true;
-                const { storage } = await import('@/sync/domains/state/storage');
-                storage.getState().activateProfileScope({ serverId, accountId: 'bob' });
-                return json({ operation: 'update_layout', outcome: 'updated', layoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' });
+                issued.resolve(String(init.body));
+                return acknowledgement.promise;
             }
             return fallback(url, init);
         });
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => serverId });
-        const result = await executor.execute('session.board.layout.update', {
+        const intent = {
             sessionId: 'sess_1', expectedLayoutRevision: null,
             operation: { op: 'tab.create', tabId: 'overview', title: 'Private title' },
-        }, { surface: 'ui', serverId, defaultSessionId: 'sess_1' });
-        expect(dispatched).toBe(true);
-        expect(result).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
-        expect(JSON.stringify(result)).not.toContain('Private title');
+        } as const;
+        const pending = executor.execute('session.board.layout.update', intent, { surface: 'ui', serverId, defaultSessionId: 'sess_1' });
+        const requestBody = await issued.promise;
+        const mutationRequest = SessionBoardMutationV1Schema.parse(JSON.parse(requestBody));
+        expect(mutationRequest).toMatchObject({ operation: 'update_layout', expectedLayoutRevision: null,
+            layoutContent: { t: 'plain', v: { v: 1, tabs: [{ id: 'overview', title: 'Private title' }] } } });
+        storage.getState().activateProfileScope({ serverId, accountId: 'bob' });
+        acknowledgement.resolve(json({ operation: 'update_layout', outcome: 'updated', layoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' }));
+        const result = await pending;
+        expect(result).toEqual(createSessionBoardOutcomeUnknownFailureV1({
+            actionId: 'session.board.layout.update', serverId, sessionId: 'sess_1', requestBody, mutationRequest, intent,
+        }));
         expect(JSON.stringify(result)).not.toContain('ssr1.');
     });
 });

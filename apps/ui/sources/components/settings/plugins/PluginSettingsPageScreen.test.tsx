@@ -102,9 +102,15 @@ vi.mock('@/keyboard/escape', () => ({
     useEscapeLayer: () => {},
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => routeFocusState.value,
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        // This fixture renders an installed route, not a navigator-free preview.
+        NavigationContext: React.createContext({}),
+        useIsFocused: () => routeFocusState.value,
+    };
+});
 
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useAppShellPluginUiProjection: () => ({

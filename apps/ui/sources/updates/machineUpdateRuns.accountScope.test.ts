@@ -1,51 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { ScopedMachineEncryption } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+import { parseCapabilityId } from '@happier-dev/protocol/capabilities';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { UpdateItem } from './items/updateItem';
 
 const boundary = vi.hoisted(() => ({
-    credentials: null as AuthCredentials | null,
-    encryption: null as ScopedMachineEncryption | null,
     invoke: vi.fn<(accountId: string, request: CapabilitiesInvokeRequest) => Promise<unknown>>(),
 }));
 
-// Persisted authentication and machine transports are genuine system boundaries. The batch,
-// capability parser, scoped credential resolver and RPC/encryption orchestration stay real.
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        machineRPC: async (_machineId: string, method: string, request: CapabilitiesInvokeRequest) => {
-            if (method === 'capabilities.detect') return { protocolVersion: 1, results: {} };
-            const { parseToken } = await import('@/utils/auth/parseToken');
-            return boundary.invoke(parseToken(boundary.credentials!.token), request);
-        },
-    },
-}));
-vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
-    runtimeFetchWithServerReachability: async () => new Response(JSON.stringify({ machine: { id: 'studio', dataEncryptionKey: null } })),
-}));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
-    createEphemeralServerSocketClient: async ({ token }: { token: string }) => {
-        const emitWithAck = async (_event: string, payload: { method: string; params: string }) => {
-            if (payload.method.endsWith(':capabilities.detect')) {
-                return { ok: true, result: await boundary.encryption!.encryptRaw({ protocolVersion: 1, results: {} }) };
-            }
-            const { parseToken } = await import('@/utils/auth/parseToken');
-            const request = await boundary.encryption!.decryptRaw(payload.params) as CapabilitiesInvokeRequest;
-            const result = await boundary.invoke(parseToken(token), request);
-            return { ok: true, result: await boundary.encryption!.encryptRaw(result) };
-        };
-        return { timeout: () => ({ emitWithAck }), emitWithAck, emit: vi.fn(), disconnect: vi.fn() };
-    },
-}));
+let runUpdateBatch: typeof import('./machineUpdateRuns').runUpdateBatch;
+let runMachineItemUpdate: typeof import('./machineUpdateRuns').runMachineItemUpdate;
+let readMachineUpdateRuns: typeof import('./machineUpdateRuns').readMachineUpdateRuns;
+let observeMachineUpdateRun: typeof import('./machineUpdateRuns').observeMachineUpdateRun;
 
-import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
-import { runUpdateBatch, runMachineItemUpdate, readMachineUpdateRuns, observeMachineUpdateRun } from './machineUpdateRuns';
-
-function credentials(accountId: string): AuthCredentials {
-    return { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64')}.signature`, secret: Buffer.alloc(32, 7).toString('base64url') };
+// Validate the untyped daemon-network payload without replacing the capability or scope owners.
+function isInvokeRequest(value: unknown): value is CapabilitiesInvokeRequest {
+    return value !== null && typeof value === 'object'
+        && 'id' in value && parseCapabilityId(value.id) !== null
+        && 'method' in value && typeof value.method === 'string'
+        && (!('params' in value) || (value.params !== null && typeof value.params === 'object' && !Array.isArray(value.params)));
 }
 
 function item(id: string, subject: UpdateItem['subject']): UpdateItem {
@@ -57,19 +33,43 @@ function item(id: string, subject: UpdateItem['subject']): UpdateItem {
 }
 
 describe('machine update account scope at the real RPC credential boundary', () => {
+    const homeUrl = 'https://updates-account-scope.example.test';
+    let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
     let scope: { serverId: string; accountId: string };
     beforeEach(async () => {
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => boundary.credentials);
-        const profile = await upsertAndActivateServer({ serverUrl: 'https://updates-account-scope.example.test' });
-        scope = { serverId: profile.id, accountId: 'account-a' };
-        boundary.credentials = credentials('account-a');
-        const encryption = await createEncryptionFromAuthCredentials(boundary.credentials);
-        await encryption.initializeMachines(new Map([['studio', null]]));
-        boundary.encryption = encryption.getMachineEncryption('studio');
+        vi.resetModules();
         boundary.invoke.mockReset();
+        network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome(homeUrl, 'account-a');
+        scope = { serverId: home.id, accountId: home.accountId };
+        network.setRpcResponder(async (request) => {
+            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {} };
+            expect(request.serverUrl).toBe(home.serverUrl);
+            expect(request.targetId).toBe('studio');
+            expect(request.method).toBe(RPC_METHODS.CAPABILITIES_INVOKE);
+            if (!isInvokeRequest(request.payload) || !request.token) throw new Error('Malformed daemon invoke fixture');
+            const { parseToken } = await import('@/utils/auth/parseToken');
+            return await boundary.invoke(parseToken(request.token), request.payload);
+        });
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await loadSyncSingletonForTests();
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await upsertAndActivateServer({ serverUrl: home.serverUrl });
+        await restoreConnectionToActiveServer({ token: home.token });
+        ({ runUpdateBatch, runMachineItemUpdate, readMachineUpdateRuns, observeMachineUpdateRun } = await import('./machineUpdateRuns'));
         vi.useFakeTimers();
     });
-    afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+    afterEach(async () => {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        network.dispose();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
 
     it.each(['happier-cli', 'installable'] as const)('rejects a queued %s update after same-server account replacement', async (kind) => {
         const first = item(`first-${kind}`, { kind: 'installable', key: 'gh' });
@@ -87,7 +87,7 @@ describe('machine update account scope at the real RPC credential boundary', () 
         });
         const running = runUpdateBatch(scope, [first, second], (update) => runMachineItemUpdate(update, { scope }));
         await firstIssued;
-        boundary.credentials = credentials('account-b');
+        network.setAccount(homeUrl, 'account-b');
         release();
         await running;
 
@@ -115,7 +115,7 @@ describe('machine update account scope at the real RPC credential boundary', () 
     it('reports an unknown outcome without polling through replacement-account credentials', async () => {
         const cli = item('cli-start-poll-account', { kind: 'happier-cli' });
         boundary.invoke.mockImplementation(async (_accountId, request) => {
-            boundary.credentials = credentials('account-b');
+            network.setAccount(homeUrl, 'account-b');
             return { ok: true, result: request.method === 'poll' ? { result: { ok: true } } : { taskId: 'task-started' } };
         });
         await runUpdateBatch(scope, [cli], (update) => runMachineItemUpdate(update, { scope }));

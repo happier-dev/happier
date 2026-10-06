@@ -65,14 +65,7 @@ describe('buildDemoWorld', () => {
                 },
             },
         });
-        expect(richSession?.metadata?.directSessionV1).toMatchObject({
-            v: 1,
-            providerId: 'opencode',
-            machineId: DEMO_MACHINE_ID,
-            remoteSessionId: DEMO_OPEN_CODE_PROVIDER_SESSION_ID,
-        });
-        expect(richSession?.metadata?.directSessionV1).not.toHaveProperty('qualifiedIdentity');
-        expect(richSession?.metadata?.directSessionV1).not.toHaveProperty('linkData');
+        expect(richSession?.metadata).not.toHaveProperty('directSessionV1');
 
         const browseCandidate = createDemoExternalSessionBrowseCandidateFixture();
         expect(browseCandidate).toMatchObject({

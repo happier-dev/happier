@@ -6,10 +6,8 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import {
   resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
 } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
@@ -26,12 +24,12 @@ import {
 
 type MaterializeParams = Parameters<typeof materializeConnectedServicesForSpawnProduction>[0];
 
-let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
 
 beforeAll(async () => {
-  runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
-    resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
-      contributes: getResolvedContributionRegistry(),
+  runtimeFixture = await createAdmittedPluginRuntimeFixture({
+    controller: pluginReloadController,
+    runtimeOptions: {
       pluginIds: [
         'happier.agent.claude',
         'happier.agent.codex',
@@ -39,14 +37,13 @@ beforeAll(async () => {
         'happier.agent.opencode',
         'happier.agent.pi',
       ],
-    }),
+    },
   });
 });
 
 afterAll(async () => {
-  await runtimeRegistryLease?.release();
-  runtimeRegistryLease = null;
-  await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+  await runtimeFixture?.dispose();
+  runtimeFixture = null;
 });
 
 async function materializeConnectedServicesForSpawn(
@@ -55,7 +52,7 @@ async function materializeConnectedServicesForSpawn(
   const declarationSnapshot =
     resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
       agentId: params.agentId,
-      contributions: runtimeRegistryLease!.registry.contributes,
+      contributions: runtimeFixture!.registry.contributes,
     });
   if (!declarationSnapshot) {
     throw new Error(`Missing Connected Account declaration snapshot for ${params.agentId}`);

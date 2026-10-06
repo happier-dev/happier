@@ -1,63 +1,77 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-
-import { renderHook } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { buildServerFeaturesResponse, stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 import { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
-import { upsertServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { FeatureDecisionScopeParams } from './useFeatureDecision';
 
-const initialStorageState = getStorage().getState();
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
+
+
+const homes = createHomeGovernanceHarness();
+beforeEach(async () => {
+    await homes.reset();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    getStorage().setState({ settings: { ...settingsDefaults }, settingsScope: null });
+    // Device credential reads are the OS boundary; selection and usable-Home policy stay real.
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => {
+        const token = homes.findByServerUrl(serverUrl)?.token;
+        return token ? { token } : null;
+    });
+    const { updateEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
+    await updateEffectiveHomeViewState(() => ({
+        version: 1, groups: [], activeTargetKind: null, activeTargetId: null,
+    }), { scope: 'device' });
+});
+
 
 beforeEach(() => {
     resetServerFeaturesClientForTests();
-    getStorage().setState(initialStorageState, true);
 });
 
 afterEach(() => {
+    standardCleanup();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
 });
 
 describe('useFeatureDecision', () => {
     it('fails closed for main selection when servers disagree (mixed scope support)', async () => {
-        const serverA = await upsertServerProfile({ serverUrl: 'https://a.example', name: 'A', source: 'manual' });
-        const serverB = await upsertServerProfile({ serverUrl: 'https://b.example', name: 'B', source: 'manual' });
-        await setActiveServerId(serverA.id, { scope: 'device' });
+        const serverAId = await homes.addHome({ serverUrl: 'https://a.example', name: 'A', accountId: 'account-a' });
+        const serverBId = await homes.addHome({ serverUrl: 'https://b.example', name: 'B', accountId: 'account-b', active: false });
+        await homes.selectHomes([serverAId, serverBId]);
 
         getStorage().getState().applySettingsLocal({
             experiments: true,
             featureToggles: { automations: true },
-            serverSelectionGroups: [
-                {
-                    id: 'grp-main',
-                    name: 'Main',
-                    serverIds: [serverA.id, serverB.id],
-                    presentation: 'grouped',
-                },
-            ],
-            serverSelectionActiveTargetKind: 'group',
-            serverSelectionActiveTargetId: 'grp-main',
         });
 
         vi.stubGlobal(
             'fetch',
-            vi.fn(async (url: any) => {
-                const href = String(url ?? '');
+            vi.fn(async (url: RequestInfo | URL) => {
+                const href = url instanceof Request ? url.url : String(url);
                 if (href.includes('a.example')) {
-                    return { ok: true, json: async () => buildServerFeaturesResponse({ automationsEnabled: true }) };
+                    return Response.json(buildServerFeaturesResponse({ automationsEnabled: true }));
                 }
                 if (href.includes('b.example')) {
-                    return { ok: true, json: async () => buildServerFeaturesResponse({ automationsEnabled: false }) };
+                    return Response.json(buildServerFeaturesResponse({ automationsEnabled: false }));
                 }
-                return { ok: true, json: async () => buildServerFeaturesResponse({ automationsEnabled: true }) };
-            }) as any,
+                return Response.json(buildServerFeaturesResponse({ automationsEnabled: true }));
+            }),
         );
 
-        await getServerFeaturesSnapshot({ serverId: serverA.id, force: true });
-        await getServerFeaturesSnapshot({ serverId: serverB.id, force: true });
+        await getServerFeaturesSnapshot({ serverId: serverAId, force: true });
+        await getServerFeaturesSnapshot({ serverId: serverBId, force: true });
 
         const { useFeatureDecision } = await import('./useFeatureDecision');
         const seen = await renderHookAndCollectValues(() => useFeatureDecision('automations'));
@@ -158,11 +172,7 @@ describe('useFeatureDecision', () => {
     it('returns unsupported when the features endpoint is missing', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: false,
-                status: 404,
-                json: async () => ({}),
-            })) as any,
+            vi.fn(async () => Response.json({}, { status: 404 })),
         );
 
         getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { voice: true } });

@@ -37,14 +37,17 @@ function createPresentation(
 }
 
 describe('useExternalSessionOperationTranscriptDismissal', () => {
-    it('keeps a read-only transcript dismissal inert', async () => {
+    it('dismisses an exact terminal presentation locally without granting read-only actions', async () => {
         const presentation = createPresentation();
         const source = createTestSessionTranscriptSource({ sessionId: 'shared-session' });
         const hook = await renderHook(() => useExternalSessionOperationTranscriptDismissal({ sessionId: 'viewer-session', presentation }), {
             wrapper: (props) => wrapWithSessionTranscriptSource(props.children as React.ReactElement, source),
         });
         act(() => hook.getCurrent().onDismiss({ operationId: presentation.operationId, revision: presentation.revision }));
-        expect(hook.getCurrent().dismissal).toBeNull();
+        expect(hook.getCurrent().dismissal).toEqual({
+            sessionId: 'shared-session', operationId: presentation.operationId, revision: presentation.revision,
+        });
+        expect(source.actions).toBeNull();
         await hook.unmount();
     });
     it('retains one exact terminal dismissal for the mounted session and resets it for another session', async () => {
@@ -126,6 +129,11 @@ describe('useExternalSessionOperationTranscriptDismissal', () => {
             }),
             { wrapper: InteractiveTranscriptProvider },
         );
+        expect(remounted.getCurrent().dismissal).toBeNull();
+        act(() => {
+            remounted.getCurrent().onDismiss({ operationId: 'another-operation', revision: 4 });
+            remounted.getCurrent().onDismiss({ operationId: 'operation-1', revision: 3 });
+        });
         expect(remounted.getCurrent().dismissal).toBeNull();
         await remounted.unmount();
     });

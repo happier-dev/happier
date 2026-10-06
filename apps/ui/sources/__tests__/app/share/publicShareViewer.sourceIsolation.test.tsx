@@ -12,12 +12,14 @@ import { SessionTranscriptSourceProvider } from '@/components/sessions/transcrip
 import type { SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Message } from '@happier-dev/session-core/messages';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 installPublicShareViewerCommonModuleMocks();
 
-// Authentication and HTTP are environment boundaries; transcript rendering stays real.
-vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ credentials: null }) }));
-vi.mock('@/sync/http/client', () => ({ serverFetch: vi.fn() }));
 
 // Shared Session UI also imports Expo's random APIs directly. The native SDK
 // cannot initialize in Node; use the repository's real OS-crypto adapters.
@@ -28,6 +30,7 @@ vi.mock('expo-crypto', async () => {
     ]);
     return { ...randomBytes, ...uuid };
 });
+await initializeTerminalRouteRuntimeForTests();
 
 // The installed Legend web build owns its div refs. jsdom supplies DOM behavior,
 // while this OS/layout boundary supplies the geometry a headless renderer lacks.
@@ -51,6 +54,38 @@ function createMeasuredWebNode(element: React.ReactElement): HTMLElement {
 
 describe('public share transcript source', () => {
     it('renders shared rows and authorship under its own source despite a viewer row with the same session id', async () => {
+        const olderPage = createDeferred<Response>();
+        const sharedRequests: string[] = [];
+        const viewerConnection = await restoreServerAccountForTest({
+            serverUrl: 'https://share-source.example.test', accountId: 'private-viewer',
+            request: async (input) => {
+                const url = new URL(String(input));
+                if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({}));
+                if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (url.pathname === '/v1/public-share/tok-1') {
+                    sharedRequests.push(url.href);
+                    return Response.json({
+                        session: {
+                            id: 'same-session', seq: 1, encryptionMode: 'plain',
+                            createdAt: 1, updatedAt: 2, active: false, activeAt: 2,
+                            metadata: JSON.stringify({ path: '/shared', host: 'shared-host', name: 'Shared session' }),
+                            metadataVersion: 1,
+                        },
+                        owner: { id: 'owner', username: 'alice', firstName: null, lastName: null, avatar: null },
+                        accessLevel: 'view', encryptedDataKey: null, isConsentRequired: false,
+                    });
+                }
+                if (url.pathname === '/v1/public-share/tok-1/messages') {
+                    sharedRequests.push(url.href);
+                    if (url.searchParams.has('beforeSeq')) return olderPage.promise;
+                    return Response.json({ messages: [{
+                        id: 'shared-message', seq: 1, localId: null, createdAt: 3, updatedAt: 3,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Shared dataset content' } } },
+                    }], hasMore: true, nextBeforeSeq: 1 });
+                }
+                return new Response('{}', { status: 404 });
+            },
+        });
         const before = storage.getState();
         const frameGlobals = ['requestAnimationFrame', 'cancelAnimationFrame', 'ResizeObserver'] as const;
         const frameDescriptors = frameGlobals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
@@ -85,27 +120,8 @@ describe('public share transcript source', () => {
             sessionMessages: { ...before.sessionMessages, [viewerSession.id]: viewerMessages },
         });
         try {
-            const { serverFetch } = await import('@/sync/http/client');
-            const olderPage = createDeferred<Response>();
-            vi.mocked(serverFetch)
-                .mockResolvedValueOnce(new Response(JSON.stringify({
-                    session: {
-                        id: 'same-session', seq: 1, encryptionMode: 'plain',
-                        createdAt: 1, updatedAt: 2, active: false, activeAt: 2,
-                        metadata: JSON.stringify({ path: '/shared', host: 'shared-host', name: 'Shared session' }),
-                        metadataVersion: 1,
-                    },
-                    owner: { id: 'owner', username: 'alice', firstName: null, lastName: null, avatar: null },
-                    accessLevel: 'view', encryptedDataKey: null, isConsentRequired: false,
-                })))
-                .mockResolvedValueOnce(new Response(JSON.stringify({ messages: [{
-                    id: 'shared-message', seq: 1, localId: null, createdAt: 3, updatedAt: 3,
-                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Shared dataset content' } } },
-                }], hasMore: true, nextBeforeSeq: 1 })))
-                .mockReturnValueOnce(olderPage.promise);
-
             const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
-            const screen = await renderScreen(<PublicShareViewerScreen />, {
+            const screen = await renderScreen(<InjectedAuthProvider credentials={viewerConnection.credentials}><PublicShareViewerScreen /></InjectedAuthProvider>, {
                 createNodeMock: createMeasuredWebNode,
             });
             await flushHookEffects({ cycles: 4, turns: 2, frames: 2 });
@@ -137,7 +153,7 @@ describe('public share transcript source', () => {
             // The real list may already have requested its initial fill. Otherwise start
             // the same pending HTTP page through the source's public history boundary.
             await act(async () => {
-                if (vi.mocked(serverFetch).mock.calls.length === 2) {
+                if (sharedRequests.length === 2) {
                     loading = source.history.loadOlder!();
                 }
             });
@@ -152,7 +168,7 @@ describe('public share transcript source', () => {
             expect(Object.values(selected.getCurrent().messages)).toEqual(acceptedMessages);
             expect(Object.values(selected.getCurrent().messages)[0]).toBe(acceptedMessages[0]);
         } finally {
-            standardCleanup();
+            await standardCleanup();
             // The installed web runtime can retain a queued bootstrap ticker.
             // Cancel this test's OS work after unmount, before removing its RAF.
             vi.clearAllTimers();
@@ -164,6 +180,7 @@ describe('public share transcript source', () => {
                 if (descriptor) Object.defineProperty(globalThis, name, descriptor);
                 else Reflect.deleteProperty(globalThis, name);
             });
+            await viewerConnection.dispose();
         }
     });
 });

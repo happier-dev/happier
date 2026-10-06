@@ -141,7 +141,7 @@ describe('target Agent External Session takeover lease', () => {
             };
         });
         const takeover = Object.freeze({ resolveLaunch });
-        const lease = registry({ takeover }).get('assistant');
+        const lease = (await registry({ takeover })).get('assistant');
 
         expect(lease).toMatchObject({
             agentId: 'assistant',
@@ -175,9 +175,9 @@ describe('target Agent External Session takeover lease', () => {
                 AgentExternalSessionTakeoverContribution['resolveLaunch']
             >>
         ));
-        const takeover = registry({
+        const takeover = (await registry({
             takeover: Object.freeze({ resolveLaunch }),
-        }).get('assistant')?.externalSessionTakeover;
+        })).get('assistant')?.externalSessionTakeover;
         if (!takeover) throw new Error('Expected takeover lease');
 
         await expect(takeover.resolveLaunch({
@@ -212,11 +212,11 @@ describe('target Agent External Session takeover lease', () => {
                 },
             },
         });
-        const takeover = registry({
+        const takeover = (await registry({
             takeover: Object.freeze({
                 resolveLaunch: async () => publicResult as never,
             }),
-        }).get('assistant')?.externalSessionTakeover;
+        })).get('assistant')?.externalSessionTakeover;
         if (!takeover) throw new Error('Expected takeover lease');
 
         await expect(takeover.resolveLaunch(request())).resolves.toEqual({
@@ -224,7 +224,7 @@ describe('target Agent External Session takeover lease', () => {
             value: publicResult.value,
         });
 
-        const privateTakeover = registry({
+        const privateTakeover = (await registry({
             takeover: Object.freeze({
                 resolveLaunch: async () => ({
                     ok: true as const,
@@ -232,7 +232,7 @@ describe('target Agent External Session takeover lease', () => {
                     unrecognizedHostExtension: selectedSessionFile,
                 }) as never,
             }),
-        }).get('assistant')?.externalSessionTakeover;
+        })).get('assistant')?.externalSessionTakeover;
         if (!privateTakeover) throw new Error('Expected private takeover lease');
         await expect(privateTakeover.resolveLaunch(request())).rejects.toThrow(
             /unknown fields/u,
@@ -246,11 +246,11 @@ describe('target Agent External Session takeover lease', () => {
                 environmentVariables: { TAKEOVER: 'x'.repeat(512) },
             },
         };
-        const takeover = registry({
+        const takeover = (await registry({
             takeover: Object.freeze({
                 resolveLaunch: async () => result,
             }),
-        }).get('assistant')?.externalSessionTakeover;
+        })).get('assistant')?.externalSessionTakeover;
         if (!takeover) throw new Error('Expected takeover lease');
 
         await expect(takeover.resolveLaunch({
@@ -279,9 +279,9 @@ describe('target Agent External Session takeover lease', () => {
             value: Object.assign(Object.create(null), {}),
         });
         const stringify = vi.spyOn(JSON, 'stringify');
-        const takeover = registry({
+        const takeover = (await registry({
             takeover: Object.freeze({ resolveLaunch: async () => raw }),
-        }).get('assistant')?.externalSessionTakeover;
+        })).get('assistant')?.externalSessionTakeover;
         if (!takeover) throw new Error('Expected takeover lease');
 
         await expect(takeover.resolveLaunch(request())).resolves.toEqual({
@@ -313,11 +313,11 @@ describe('target Agent External Session takeover lease', () => {
             let current = true;
             const caller = new AbortController();
             const retirement = new AbortController();
-            const takeover = registry({
+            const takeover = (await registry({
                 takeover: Object.freeze({ resolveLaunch }),
                 isOccurrenceCurrent: () => current,
                 retirementSignal: retirement.signal,
-            }).get('assistant')?.externalSessionTakeover;
+            })).get('assistant')?.externalSessionTakeover;
             if (!takeover) throw new Error('Expected takeover lease');
 
             const invocation = takeover.resolveLaunch(request(caller.signal));
@@ -359,9 +359,9 @@ describe('target Agent External Session takeover lease', () => {
                     value: {},
                 };
             });
-            const takeover = registry({
+            const takeover = (await registry({
                 takeover: Object.freeze({ resolveLaunch }),
-            }).get('assistant')?.externalSessionTakeover;
+            })).get('assistant')?.externalSessionTakeover;
             if (!takeover) throw new Error('Expected takeover lease');
 
             const invocation = takeover.resolveLaunch(request());

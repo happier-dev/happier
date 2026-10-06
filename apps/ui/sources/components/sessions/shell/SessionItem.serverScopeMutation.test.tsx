@@ -1,8 +1,13 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createPlainAccountEncryptionCurrentnessFixture, createRootLayoutFeaturesResponse, createSessionFixture, pressTestInstanceAsync, renderScreen as renderCanonicalScreen, standardCleanup } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
@@ -15,7 +20,6 @@ import {
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
     SESSION_ACTION_STOP_ID,
 } from '@/components/sessions/actions/sessionActionIds';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,26 +39,6 @@ vi.mock('react-native-gesture-handler', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
-}));
-
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
 }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
@@ -77,23 +61,9 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-const stopSpy = vi.fn(async () => ({ success: true }));
-type ArchiveSpyResult = Readonly<{
-    success: boolean;
-    archivedAt?: number | null;
-    message?: string;
-    code?: string;
-}>;
-const archiveSpy = vi.fn(async (): Promise<ArchiveSpyResult> => ({ success: true, archivedAt: 1 }));
-const readStateSpy = vi.fn(async () => ({ success: true, readState: 'unread', lastViewedSessionSeq: 0, didChange: true }));
 const modalConfirmSpy = vi.fn(async () => true);
 let hideInactiveSessions = false;
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: stopSpy,
-    sessionArchiveWithServerScope: archiveSpy,
-    sessionSetManualReadStateWithServerScope: readStateSpy,
-}));
+let rejectFirstArchive = false;
 
 const modalAlertSpy = vi.fn();
 
@@ -120,57 +90,106 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useHasUnreadMessages: () => false,
-                useProfile: () => ({
-                    id: 'u1',
-                    timestamp: 0,
-                    firstName: null,
-                    lastName: null,
-                    username: null,
-                    avatar: null,
-                    linkedProviders: [],
-                    connectedServices: [],
-                    connectedServicesV2: [],
-                    connectedServiceCredentialRevisionsV1: [],
-                    connectedAccountsV4: [],
-                    connectedAccountGroupsV4: [],
-                }),
-                useSession: () => null,
-                useSessionListMeaningfulActivityAt: () => null,
-                useSetting: createUseSettingMock({ fallback: (key) => {
-                    if (key === 'hideInactiveSessions') return hideInactiveSessions;
-                    return false;
-                } }),
-            },
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
+
+// The common presentation harness must not replace the registered state owner.
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
+const { storage } = await import('@/sync/domains/state/storage');
+let previousState: ReturnType<typeof storage.getState>;
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+const mutationRequests: Array<{ url: string; method: string; token: string | null; body: unknown }> = [];
+const mutationOrder: string[] = [];
+afterAll(() => network.dispose());
+
+async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]) {
+    const props = element.props as Partial<ModelBackedSessionItemTestProps>;
+    if (props.session && props.serverId) {
+        const homeUrl = `https://${props.serverId.replaceAll('_', '-')}.test`;
+        const home = await network.addHome(homeUrl, 'row-account');
+        account = await restoreServerAccountForTest({ serverUrl: homeUrl, accountId: 'row-account', request: async (input, init) => {
+            const url = new URL(String(input));
+            const method = init?.method ?? 'GET';
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: { id: 'machine-row', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            if (method === 'POST' && (url.pathname.endsWith('/archive') || url.pathname.endsWith('/read-state'))) {
+                mutationRequests.push({ url: url.href, method, token: new Headers(init?.headers).get('authorization'), body: init?.body ? JSON.parse(String(init.body)) : null });
+                mutationOrder.push(url.pathname.endsWith('/archive') ? 'archive' : 'read-state');
+                if (url.pathname.endsWith('/archive')) {
+                    if (rejectFirstArchive) { rejectFirstArchive = false; return Response.json({ error: 'session_active' }, { status: 409 }); }
+                    return Response.json({ archivedAt: 1 });
+                }
+                return Response.json({ success: true, state: 'unread', lastViewedSessionSeq: 0, didChange: true });
+            }
+            return Response.json({}, { status: 404 });
+        } });
+        const session = createSessionFixture({ ...props.session, serverId: home.id,
+            metadata: { path: '/repo', host: 'tester.local', machineId: 'machine-row', name: 'Scoped row' },
+        });
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-row' })], true, { sourceServerId: home.id });
+        storage.getState().applySessions([session]);
+        return renderCanonicalScreen(React.cloneElement(element, { ...props, session, serverId: home.id }));
+    }
+    return renderCanonicalScreen(element);
+}
+
+function expectStopRequest(sessionId: string) {
+    expect(network.requests.filter((request) => request.method === RPC_METHODS.STOP_SESSION)).toEqual([
+        expect.objectContaining({ serverUrl: account!.home.serverUrl, targetId: 'machine-row', payload: { sessionId }, token: account!.credentials.token }),
+    ]);
+}
+
+function expectArchiveRequests(sessionId: string, count = 1) {
+    expect(mutationRequests.filter((request) => request.url.endsWith('/archive'))).toEqual(Array.from({ length: count }, () => ({
+        url: `${account!.home.serverUrl}/v2/sessions/${sessionId}/archive`, method: 'POST', token: `Bearer ${account!.credentials.token}`, body: null,
+    })));
+    expect(storage.getState().sessions[sessionId]?.archivedAt).toBe(1);
+}
 
 async function importSessionItem() {
     const { SessionItem } = await import('./SessionItem');
-    return createModelBackedSessionItemTestComponent(SessionItem);
+    return createModelBackedSessionItemTestComponent(SessionItem, {
+        resolveRowViewModelOverrides: () => ({ hideInactiveSessions }),
+    });
 }
 
 describe('SessionItem server-scoped mutations', () => {
-    afterEach(() => {
+    beforeEach(() => {
+        previousState = storage.getState();
+        network.resetRequests();
+        network.setRpcResponder(async (request) => {
+            if (request.method !== RPC_METHODS.STOP_SESSION) throw new Error(`Unexpected row RPC: ${request.method}`);
+            mutationOrder.push('stop');
+            return { status: 'stopped' };
+        });
+        mutationRequests.length = 0;
+        mutationOrder.length = 0;
+        rejectFirstArchive = false;
+        modalConfirmSpy.mockClear();
+        modalAlertSpy.mockClear();
+        storage.setState({ sessions: {}, sessionListRowsByServerId: {}, machines: {}, machineListByServerId: {} });
+    });
+    afterEach(async () => {
         standardCleanup();
+        await account?.dispose();
+        account = undefined;
+        storage.setState(previousState, true);
         hideInactiveSessions = false;
     });
 
     it('archives active sessions from the swipe action using server scope when serverId is provided', async () => {
-        archiveSpy.mockClear();
-        stopSpy.mockClear();
-        readStateSpy.mockClear();
         modalAlertSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_1',
             seq: 1,
             createdAt: 1,
@@ -184,7 +203,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -222,19 +241,18 @@ describe('SessionItem server-scoped mutations', () => {
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
-        expect(stopSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
-        expect(archiveSpy).toHaveBeenCalledWith('sess_1', { serverId: 'server_a' });
+        expectStopRequest('sess_1');
+        expectArchiveRequests('sess_1');
+        expect(mutationOrder).toEqual(['stop', 'archive']);
     });
 
     it('archives inactive sessions using server scope when serverId is provided', async () => {
-        archiveSpy.mockClear();
-        stopSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_2',
             seq: 1,
             createdAt: 1,
@@ -248,7 +266,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -286,26 +304,19 @@ describe('SessionItem server-scoped mutations', () => {
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
-        expect(archiveSpy).toHaveBeenCalledWith('sess_2', { serverId: 'server_b' });
-        expect(stopSpy).not.toHaveBeenCalled();
+        expectArchiveRequests('sess_2');
+        expect(mutationOrder).toEqual(['archive']);
+        expect(network.requests.filter((request) => request.method === RPC_METHODS.STOP_SESSION)).toEqual([]);
     });
 
     it('stops and retries archiving when an inactive-looking session is still active server-side', async () => {
-        archiveSpy.mockClear();
-        archiveSpy
-            .mockResolvedValueOnce({
-                success: false,
-                message: 'Cannot archive an active session',
-                code: 'session_active',
-            })
-            .mockResolvedValueOnce({ success: true, archivedAt: 1 });
-        stopSpy.mockClear();
+        rejectFirstArchive = true;
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_stale_inactive',
             seq: 1,
             createdAt: 1,
@@ -319,7 +330,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -356,22 +367,19 @@ describe('SessionItem server-scoped mutations', () => {
             },
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
-        expect(stopSpy).toHaveBeenCalledWith('sess_stale_inactive', { serverId: 'server_b' });
-        expect(archiveSpy).toHaveBeenCalledTimes(2);
-        expect(archiveSpy).toHaveBeenNthCalledWith(1, 'sess_stale_inactive', { serverId: 'server_b' });
-        expect(archiveSpy).toHaveBeenNthCalledWith(2, 'sess_stale_inactive', { serverId: 'server_b' });
+        expectStopRequest('sess_stale_inactive');
+        expectArchiveRequests('sess_stale_inactive', 2);
+        expect(mutationOrder).toEqual(['archive', 'stop', 'archive']);
     });
 
     it('archives active sessions from the swipe action when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
-        archiveSpy.mockClear();
-        stopSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_3',
             seq: 1,
             createdAt: 1,
@@ -385,7 +393,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -423,20 +431,19 @@ describe('SessionItem server-scoped mutations', () => {
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
-        expect(stopSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
-        expect(archiveSpy).toHaveBeenCalledWith('sess_3', { serverId: 'server_c' });
+        expectStopRequest('sess_3');
+        expectArchiveRequests('sess_3');
+        expect(mutationOrder).toEqual(['stop', 'archive']);
     });
 
     it('offers an archive action for active sessions in the more menu and stops before archiving', async () => {
         hideInactiveSessions = false;
-        archiveSpy.mockClear();
-        stopSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_active_archive',
             seq: 1,
             createdAt: 1,
@@ -450,7 +457,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -489,20 +496,19 @@ describe('SessionItem server-scoped mutations', () => {
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
-        expect(stopSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
-        expect(archiveSpy).toHaveBeenCalledWith('sess_active_archive', { serverId: 'server_d' });
+        expectStopRequest('sess_active_archive');
+        expectArchiveRequests('sess_active_archive');
+        expect(mutationOrder).toEqual(['stop', 'archive']);
     });
 
     it('archives pinned active sessions from the swipe action when hidden inactive sessions are enabled', async () => {
         hideInactiveSessions = true;
-        archiveSpy.mockClear();
-        stopSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_4',
             seq: 1,
             createdAt: 1,
@@ -516,7 +522,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -555,15 +561,15 @@ describe('SessionItem server-scoped mutations', () => {
         );
         expect(modalAlertSpy).not.toHaveBeenCalled();
 
-        expect(stopSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_d' });
-        expect(archiveSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_d' });
+        expectStopRequest('sess_4');
+        expectArchiveRequests('sess_4');
+        expect(mutationOrder).toEqual(['stop', 'archive']);
     });
 
     it('offers manual mark-unread in the context menu and uses server scope', async () => {
-        readStateSpy.mockClear();
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_read',
             seq: 3,
             lastViewedSessionSeq: 3,
@@ -579,7 +585,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -605,13 +611,15 @@ describe('SessionItem server-scoped mutations', () => {
             contextMenu!.props.onSelect(SESSION_ACTION_MARK_UNREAD_ID);
         });
 
-        expect(readStateSpy).toHaveBeenCalledWith('sess_read', 'unread', { serverId: 'server_read' });
+        expect(mutationRequests).toEqual([{ url: `${account!.home.serverUrl}/v2/sessions/sess_read/read-state`, method: 'POST', token: `Bearer ${account!.credentials.token}`, body: { state: 'unread' } }]);
+        expect(storage.getState().sessions.sess_read.lastViewedSessionSeq).toBe(0);
+        expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 
     it('does not offer read-state actions in the context menu from non-terminal raw seq', async () => {
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_raw_seq',
             seq: 5,
             lastViewedSessionSeq: 4,
@@ -627,7 +635,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'online',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -665,7 +673,7 @@ describe('SessionItem server-scoped mutations', () => {
         };
         const FolderAwareSessionItem = SessionItem as React.ComponentType<FolderAwareSessionItemProps>;
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_folder_move',
             seq: 1,
             createdAt: 1,
@@ -679,7 +687,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <FolderAwareSessionItem
@@ -770,7 +778,7 @@ describe('SessionItem server-scoped mutations', () => {
         const onMoveDown = vi.fn();
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_accessible_move',
             seq: 1,
             createdAt: 1,
@@ -784,7 +792,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem
@@ -850,7 +858,7 @@ describe('SessionItem server-scoped mutations', () => {
     it('hides manual read-state actions for archived sessions', async () => {
         const SessionItem = await importSessionItem();
 
-        const session = {
+        const session = createSessionFixture({
             id: 'sess_archived_read',
             seq: 3,
             lastViewedSessionSeq: 3,
@@ -866,7 +874,7 @@ describe('SessionItem server-scoped mutations', () => {
             thinking: false,
             thinkingAt: 0,
             presence: 'offline',
-        } as any;
+        });
 
         const screen = await renderScreen(
             <SessionItem

@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
@@ -85,7 +85,6 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
 vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
-vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (p: any) => p }));
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({ extractWorkspaceFileMentions: () => [] }));
 vi.mock('@/components/sessions/transcript/references/StructuredReferencesRow', () => ({ StructuredReferencesRow: () => React.createElement('StructuredReferencesRow') }));
@@ -118,6 +117,8 @@ vi.mock('@/components/sessions/transcript/thinking/ThinkingTimelineRow', async (
 afterEach(() => {
     standardCleanup();
 });
+
+await import('./MessageView');
 
 describe('MessageView (thinking pulse gating)', () => {
     it('enables the pulse only for the active thinking message id', async () => {

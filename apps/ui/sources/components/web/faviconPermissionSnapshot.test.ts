@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from "@happier-dev/session-core/messages";
 import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/runtimePresentation';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -10,23 +11,23 @@ import type { StorageState } from '@/sync/store/types';
 import { createFaviconPermissionSnapshotSelector } from './faviconPermissionSnapshot';
 
 function createSession(overrides: Partial<Session> & Pick<Session, 'id'>): Session {
-    const { id, ...rest } = overrides;
-    return {
-        id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        active: false,
-        activeAt: 1,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 'online',
+    return createSessionFixture({
         metadata: null,
         metadataVersion: 0,
         agentState: null,
         agentStateVersion: 0,
-        ...rest,
-    } as Session;
+        ...overrides,
+    });
+}
+
+function createPermissionViewer(): NonNullable<Session['viewer']> {
+    return {
+        readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
+        relevance: { relevant: true, reasons: ['followed_by_me'] },
+        follow: { follows: true, notificationLevel: 'none' },
+        notification: { level: 'none', source: 'preference' },
+        attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' },
+    };
 }
 
 function createPermissionMessage(createdAt: number): Message {
@@ -150,6 +151,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
             sessions: { permission: createSession({
                 id: 'permission', active: true, activeAt: 900,
                 pendingPermissionRequestCount: 1, pendingRequestObservedAt: 1_000,
+                viewer: createPermissionViewer(),
             }) },
         }));
         expect(snapshot.hasFreshPermission).toBe(true);
@@ -277,7 +279,7 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(second.hasFreshPermission).toBe(true);
     });
 
-    it('keeps an unresolved agent-state permission after transient freshness expires', () => {
+    it('keeps modern viewer permission attention while pre-viewer agent-state freshness expires', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -306,17 +308,23 @@ describe('createFaviconPermissionSnapshotSelector', () => {
             },
         });
 
-        const freshSnapshot = selector(state);
+        const modernState = createState({ sessions: {
+            session1: createSessionFixture({ ...state.sessions.session1, viewer: createPermissionViewer() }),
+        } });
+        const legacySelector = createFaviconPermissionSnapshotSelector();
+        const legacyFreshSnapshot = legacySelector(state);
+        const freshSnapshot = selector(modernState);
 
         vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
-        const staleSnapshot = selector(state);
+        const staleSnapshot = selector(modernState);
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
-        expect(staleSnapshot).not.toBe(freshSnapshot);
         expect(staleSnapshot.hasFreshPermission).toBe(true);
+        expect(legacyFreshSnapshot.hasFreshPermission).toBe(true);
+        expect(legacySelector(state).hasFreshPermission).toBe(false);
     });
 
-    it('keeps an unresolved transcript permission after transient freshness expires', () => {
+    it('keeps modern viewer permission attention while pre-viewer transcript freshness expires', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
         const state = createState({
@@ -347,14 +355,20 @@ describe('createFaviconPermissionSnapshotSelector', () => {
             },
         });
 
-        const freshSnapshot = selector(state);
+        const modernState = createState({ ...state, sessions: {
+            session1: createSessionFixture({ ...state.sessions.session1, viewer: createPermissionViewer() }),
+        } });
+        const legacySelector = createFaviconPermissionSnapshotSelector();
+        const legacyFreshSnapshot = legacySelector(state);
+        const freshSnapshot = selector(modernState);
 
         vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
-        const staleSnapshot = selector(state);
+        const staleSnapshot = selector(modernState);
 
         expect(freshSnapshot.hasFreshPermission).toBe(true);
-        expect(staleSnapshot).not.toBe(freshSnapshot);
         expect(staleSnapshot.hasFreshPermission).toBe(true);
+        expect(legacyFreshSnapshot.hasFreshPermission).toBe(true);
+        expect(legacySelector(state).hasFreshPermission).toBe(false);
     });
 
     it('reuses derived transcript permission freshness for unrelated session updates', () => {

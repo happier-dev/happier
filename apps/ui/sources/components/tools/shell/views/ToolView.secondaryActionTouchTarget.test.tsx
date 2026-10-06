@@ -1,4 +1,4 @@
-import { renderWithSessionTranscriptSource } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -70,13 +70,14 @@ vi.mock('@/utils/errors/toolErrorParser', () => ({
     parseToolUseError: () => ({ isToolUseError: false }),
 }));
 
+const { ToolView } = await import('./ToolView');
+
 describe('ToolView (secondary action touch target)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('renders a secondary action button with a stable touch target style', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             id: 't1',
@@ -88,6 +89,7 @@ describe('ToolView (secondary action touch target)', () => {
 
         const screen = await renderWithSessionTranscriptSource(
             <ToolView tool={tool} metadata={null} messages={[]} sessionId="s1" messageId="m1" />,
+            createTestSessionTranscriptSource({ sessionId: 's1', navigate: vi.fn() }),
         );
 
         const secondary = screen.findByTestId('tool-view-header-secondary');

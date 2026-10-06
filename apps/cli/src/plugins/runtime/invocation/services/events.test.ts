@@ -115,9 +115,9 @@ describe('stable invocation events service', () => {
         const representativeMaximumBytes = Math.max(...Object.values(measuredBytes));
 
         expect(measuredBytes).toEqual({
-            settingsChanged: 478,
-            notificationDelivered: 558,
-            runtimeLifecycle: 543,
+            settingsChanged: 482,
+            notificationDelivered: 562,
+            runtimeLifecycle: 547,
         });
         expect(STABLE_PLUGIN_EVENT_QUEUE_LIMITS).toEqual({
             pendingDeliveriesPerSubscription: 256,

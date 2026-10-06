@@ -1,43 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { DaemonMcpServersDetectRequest, DaemonMcpServersDetectResponse } from '@happier-dev/protocol';
+import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 
 describe('rpcHandlers.mcpServers (detect)', () => {
-  it('forwards daemon env to provider MCP detection', async () => {
-    const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
-    const rpcHandlerManager = {
-      registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
-        handlers.set(method, handler);
-      },
-    } as any;
-    const env = {
-      HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS: '1234',
-    } as NodeJS.ProcessEnv;
-    let observedEnv: NodeJS.ProcessEnv | undefined;
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController }); });
+  afterAll(async () => { await runtime?.dispose(); });
 
-    registerMachineMcpServersRpcHandlers({
-      rpcHandlerManager,
-      deps: {
-        env,
-        detectProviderMcpServers: async (params) => {
-          observedEnv = params.env;
-          return { servers: [], warnings: [] };
-        },
-      },
+  function createDetectionClient(env?: NodeJS.ProcessEnv) {
+    return createEncryptedRpcTestClient({ scopePrefix: 'm1',
+      registerHandlers: manager => registerMachineMcpServersRpcHandlers({ rpcHandlerManager: manager, deps: { env } }),
     });
-
-    const handler = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT);
-    expect(handler).toBeTruthy();
-
-    const out = (await handler!({ machineId: 'm1', providers: ['codex'] })) as any;
-    expect(out.ok).toBe(true);
-    expect(observedEnv).toBe(env);
-  });
+  }
 
   it('detects Codex MCP servers from CODEX_HOME config.toml without returning secrets', async () => {
     const prevCodexHome = process.env.CODEX_HOME;
@@ -61,27 +44,20 @@ describe('rpcHandlers.mcpServers (detect)', () => {
         'utf8',
       );
 
-      const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
-      const rpcHandlerManager = {
-        registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
-          handlers.set(method, handler);
-        },
-      } as any;
-
-      registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
-
-      const handler = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT);
-      expect(handler).toBeTruthy();
-
-      const out = (await handler!({ machineId: 'm1', providers: ['codex'] })) as any;
+      const { call } = createDetectionClient({ ...process.env, HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS: '1234' });
+      const out = await call<DaemonMcpServersDetectResponse, DaemonMcpServersDetectRequest>(
+        RPC_METHODS.DAEMON_MCP_SERVERS_DETECT, { machineId: 'm1', providers: ['codex'] },
+      );
       expect(out.ok).toBe(true);
       expect(out.warnings ?? []).toEqual([]);
 
-      const servers = Array.isArray(out.servers) ? out.servers : [];
+      if (!out.ok) throw new Error(out.error);
+      const servers = out.servers;
       expect(servers.length).toBeGreaterThan(0);
 
-      const ctx7 = servers.find((s: any) => s.provider === 'codex' && s.name === 'context7');
+      const ctx7 = servers.find((s) => s.provider === 'codex' && s.name === 'context7');
       expect(ctx7).toBeTruthy();
+      if (!ctx7) throw new Error('Expected current Agent discovery result');
       expect(ctx7.transport).toBe('stdio');
       expect(ctx7.stdio).toEqual({ command: 'npx', args: ['-y', '@context7/mcp'] });
       expect(ctx7.envKeys).toEqual([]);
@@ -116,24 +92,17 @@ describe('rpcHandlers.mcpServers (detect)', () => {
         'utf8',
       );
 
-      const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
-      const rpcHandlerManager = {
-        registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
-          handlers.set(method, handler);
-        },
-      } as any;
-
-      registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
-
-      const handler = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT);
-      expect(handler).toBeTruthy();
-
-      const out = (await handler!({ machineId: 'm1', providers: ['claude'] })) as any;
+      const { call } = createDetectionClient({ ...process.env, HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS: '1234' });
+      const out = await call<DaemonMcpServersDetectResponse, DaemonMcpServersDetectRequest>(
+        RPC_METHODS.DAEMON_MCP_SERVERS_DETECT, { machineId: 'm1', providers: ['claude'] },
+      );
       expect(out.ok).toBe(true);
 
-      const servers = Array.isArray(out.servers) ? out.servers : [];
-      const ctx7 = servers.find((s: any) => s.provider === 'claude' && s.name === 'context7');
+      if (!out.ok) throw new Error(out.error);
+      const servers = out.servers;
+      const ctx7 = servers.find((s) => s.provider === 'claude' && s.name === 'context7');
       expect(ctx7).toBeTruthy();
+      if (!ctx7) throw new Error('Expected the discovered Context7 server');
       expect(ctx7.transport).toBe('stdio');
       expect(ctx7.stdio).toEqual({ command: 'npx', args: ['-y', '@context7/mcp'] });
       expect(ctx7.envKeys).toEqual(['API_KEY']);
@@ -170,24 +139,17 @@ describe('rpcHandlers.mcpServers (detect)', () => {
         'utf8',
       );
 
-      const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
-      const rpcHandlerManager = {
-        registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
-          handlers.set(method, handler);
-        },
-      } as any;
-
-      registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
-
-      const handler = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT);
-      expect(handler).toBeTruthy();
-
-      const out = (await handler!({ machineId: 'm1', providers: ['opencode'] })) as any;
+      const { call } = createDetectionClient({ ...process.env, HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS: '1234' });
+      const out = await call<DaemonMcpServersDetectResponse, DaemonMcpServersDetectRequest>(
+        RPC_METHODS.DAEMON_MCP_SERVERS_DETECT, { machineId: 'm1', providers: ['opencode'] },
+      );
       expect(out.ok).toBe(true);
 
-      const servers = Array.isArray(out.servers) ? out.servers : [];
-      const s = servers.find((entry: any) => entry.provider === 'opencode' && entry.name === 'localtool');
+      if (!out.ok) throw new Error(out.error);
+      const servers = out.servers;
+      const s = servers.find((entry) => entry.provider === 'opencode' && entry.name === 'localtool');
       expect(s).toBeTruthy();
+      if (!s) throw new Error('Expected current Agent discovery result');
       expect(s.transport).toBe('stdio');
       expect(s.stdio).toEqual({ command: 'node', args: ['server.js'] });
       expect(s.envKeys).toEqual(['TOKEN']);

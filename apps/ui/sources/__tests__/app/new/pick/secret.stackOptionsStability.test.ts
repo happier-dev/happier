@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import {
     createNavigationMock,
     createRouterMock,
@@ -27,23 +27,6 @@ installPickerCommonModuleMocks({
             Platform: { OS: 'ios' },
             Pressable: 'Pressable',
         }),
-    storage: async (importOriginal) => {
-        const {
-            createStorageModuleMock,
-            createUseSettingMutableMockFromReader,
-        } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader((name) => {
-                    if (name !== 'secrets') {
-                        throw new Error(`Unexpected setting key in secret picker test: ${String(name)}`);
-                    }
-                    return React.useState<Settings['secrets']>([]);
-                }),
-            },
-        });
-    },
     unistyles: async () =>
         (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
             theme: { colors: { chrome: PICKER_THEME_COLORS.chrome } },
@@ -76,9 +59,7 @@ installPickerCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/secrets/SecretsList', () => ({
-    SecretsList: () => null,
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SecretPickerScreen (Stack.Screen options stability)', () => {
     afterEach(() => {
@@ -105,11 +86,11 @@ describe('SecretPickerScreen (Stack.Screen options stability)', () => {
         const SecretPickerScreen = (await import('@/app/(app)/new/pick/secret')).default;
         let tree: renderer.ReactTestRenderer | undefined;
 
-        tree = (await renderScreen(React.createElement(SecretPickerScreen))).tree;
+        tree = (await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(SecretPickerScreen)))).tree;
 
         localSearchParams = { selectedId: 'secret-1' };
         await act(async () => {
-            tree?.update(React.createElement(SecretPickerScreen));
+            tree?.update(React.createElement(runtime.Wrapper, null, React.createElement(SecretPickerScreen)));
         });
 
         expect(setOptionsSpy).toHaveBeenCalledTimes(1);

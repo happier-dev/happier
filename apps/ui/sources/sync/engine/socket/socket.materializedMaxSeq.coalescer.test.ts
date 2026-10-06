@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-    const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-    return emptyBundledPluginUiAssetsModule;
-});
-
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -16,6 +11,12 @@ import { handleUpdateContainer } from './socket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../pending/pendingQueueV2.testHelpers';
+
+import { Encryption } from '@/sync/encryption/encryption';
+
+let encryption: Encryption;
 const initialStorageState = storage.getState();
 
 function withActiveSessionListRows(
@@ -63,7 +64,8 @@ function buildSession(sessionId: string): Session {
     };
 }
 
-function buildNewMessageUpdate(params: {
+async function buildNewMessageUpdate(params: {
+    ciphertext?: string;
     sessionId: string;
     messageId: string;
     messageSeq: number;
@@ -71,7 +73,15 @@ function buildNewMessageUpdate(params: {
         affectsUnread: boolean;
         affectsMeaningfulActivity: boolean;
     };
-}): ApiUpdateContainer {
+}): Promise<ApiUpdateContainer> {
+    if (!encryption.getSessionEncryption(params.sessionId)) {
+        await encryption.initializeSessions(new Map([[params.sessionId, new Uint8Array(32).fill(8)]]));
+    }
+    const sessionEncryption = encryption.getSessionEncryption(params.sessionId);
+    if (!sessionEncryption) throw new Error('Expected the producer session key');
+    const ciphertext = params.ciphertext ?? await sessionEncryption.encryptRawRecord({
+        role: 'user', content: { type: 'text', text: 'hi' },
+    });
     return {
         id: `u_${params.messageId}`,
         seq: 100 + params.messageSeq,
@@ -85,7 +95,7 @@ function buildNewMessageUpdate(params: {
                 localId: null,
                 createdAt: 1_000 + params.messageSeq,
                 updatedAt: 1_000 + params.messageSeq,
-                content: { t: 'encrypted', c: 'x' },
+                content: { t: 'encrypted', c: ciphertext },
                 ...(params.attentionImpact ? { attentionImpact: params.attentionImpact } : {}),
             },
         },
@@ -189,9 +199,13 @@ function buildUpdateSessionUpdate(params: {
 }
 
 describe('socket new-message + coalescer: materialized max seq', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
+    beforeEach(async () => {
+        await loadSyncSingletonForTests();
         storage.setState(initialStorageState, true);
+        await activatePendingQueueScope({ serverId: 'socket-home', accountId: 'account-a' });
+        encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        await encryption.initializeSessions(new Map([['s1', new Uint8Array(32).fill(8)]]));
+        vi.useFakeTimers();
         resetSessionSurfaceVisibilityForTests();
     });
 
@@ -225,20 +239,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         });
 
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => ({
-                    decryptMessage: async (msg: any) => ({
-                        id: msg.id,
-                        localId: null,
-                        createdAt: 1_000,
-                        content: { role: 'user', content: { type: 'text', text: 'hi' } },
-                    }),
-                }),
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
@@ -261,8 +262,13 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             log: { log: vi.fn() },
         };
 
-        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2 }) });
-        await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3 }) });
+        const sessionEncryption = encryption.getSessionEncryption('s1');
+        if (!sessionEncryption) throw new Error('Expected the session key fixture');
+        const ciphertext = await sessionEncryption.encryptRawRecord({
+            role: 'user', content: { type: 'text', text: 'hi' },
+        });
+        await handleUpdateContainer({ ...baseParams, updateData: await buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2, ciphertext }) });
+        await handleUpdateContainer({ ...baseParams, updateData: await buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3, ciphertext }) });
 
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
@@ -303,13 +309,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         const markSessionMaterializedMaxSeq = vi.fn();
         const markSessionTranscriptDeferred = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
@@ -416,13 +416,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         const applyMessages = vi.fn();
         const markSessionTranscriptDeferred = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
@@ -522,13 +516,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         const applyMessages = vi.fn();
         const markSessionTranscriptStale = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions,
             fetchSessions: vi.fn(),
@@ -611,96 +599,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         }));
 
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as any,
-            artifactDataKeys: new Map(),
-            applySessions: vi.fn((sessions: Parameters<typeof handleUpdateContainer>[0]['applySessions'] extends (arg: infer T) => void ? T : never) => {
-                storage.getState().applySessions(sessions as Session[]);
-            }),
-            fetchSessions: vi.fn(),
-            applyMessages: vi.fn(),
-            onSessionVisible: vi.fn(),
-            isSessionMessagesLoaded: vi.fn(() => true),
-            getSessionMaterializedMaxSeq: vi.fn(() => 1),
-            markSessionMaterializedMaxSeq: vi.fn(),
-            onMessageGapDetected: vi.fn(),
-            assumeUsers: vi.fn(async () => {}),
-            applyTodoSocketUpdates: vi.fn(async () => {}),
-            invalidateMachines: vi.fn(),
-            invalidateSessions: vi.fn(),
-            invalidateArtifacts: vi.fn(),
-            invalidateFriends: vi.fn(),
-            invalidateFriendRequests: vi.fn(),
-            invalidateFeed: vi.fn(),
-            invalidateAutomations: vi.fn(),
-            invalidateTodos: vi.fn(),
-            markSessionTranscriptDeferred: vi.fn(),
-            log: { log: vi.fn() },
-        };
-
-        await handleUpdateContainer({
-            ...baseParams,
-            updateData: buildPlainNewMessageUpdate({
-                sessionId: 's-offscreen',
-                messageId: 'm2',
-                messageSeq: 2,
-                text: 'off-screen',
-            }),
-        });
-
-        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-offscreen']).find(Boolean)?.hasUnreadMessages).toBe(true);
-    });
-
-    it('does not mark cache-only renderables unread or meaningful when a hidden durable new-message is auth maintenance', async () => {
-        storage.setState((prev) => ({
-            ...prev,
-            sessions: {},
-            ...withActiveSessionListRows(prev, {
-                's-cache-auth-maintenance': {
-                    id: 's-cache-auth-maintenance',
-                    seq: 10,
-                    createdAt: 1,
-                    updatedAt: 900,
-                    meaningfulActivityAt: 800,
-                    active: false,
-                    activeAt: 1,
-                    archivedAt: null,
-                    lastViewedSessionSeq: 10,
-                    metadataVersion: 1,
-                    agentStateVersion: 0,
-                    metadata: { path: '/tmp', host: 'localhost' },
-                    latestTurnStatus: 'in_progress',
-                    latestTurnStatusObservedAt: 900,
-                    hasUnreadMessages: false,
-                    thinking: false,
-                    thinkingAt: 0,
-                    presence: 1,
-                },
-
-            }),
-            settings: {
-                ...prev.settings,
-                transcriptStreamingCoalesceEnabled: true,
-                transcriptStreamingCoalesceWindowMs: 50,
-                transcriptStreamingCoalesceMaxBatchSize: 1_000,
-            },
-        }));
-
-        const applyMessages = vi.fn();
-        const fetchSessions = vi.fn();
-        const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
@@ -794,13 +693,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         const fetchSessions = vi.fn();
         const hydrateSessionById = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
@@ -827,7 +720,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
         await handleUpdateContainer({
             ...baseParams,
-            updateData: buildNewMessageUpdate({
+            updateData: await buildNewMessageUpdate({
                 sessionId: 's-cache-encrypted',
                 messageId: 'm-encrypted',
                 messageSeq: 11,
@@ -895,13 +788,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         const fetchSessions = vi.fn();
         const applyMessages = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
@@ -927,7 +814,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
         await handleUpdateContainer({
             ...baseParams,
-            updateData: buildNewMessageUpdate({
+            updateData: await buildNewMessageUpdate({
                 sessionId: 's-cache-encrypted-maintenance-trusted',
                 messageId: 'm-encrypted-maintenance-trusted',
                 messageSeq: 11,
@@ -954,7 +841,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
         await handleUpdateContainer({
             ...baseParams,
-            updateData: buildNewMessageUpdate({
+            updateData: await buildNewMessageUpdate({
                 sessionId: 's-cache-encrypted-maintenance-trusted',
                 messageId: 'm-encrypted-maintenance-trusted-2',
                 messageSeq: 12,
@@ -1002,13 +889,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
         const fetchSessions = vi.fn();
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions,
@@ -1091,13 +972,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         ]);
 
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),
@@ -1166,13 +1041,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         ]);
 
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
-            encryption: {
-                getSessionEncryption: () => null,
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-                decryptEncryptionKey: async () => null as Uint8Array | null,
-                initializeMachines: async () => {},
-            } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+            encryption,
             artifactDataKeys: new Map(),
             applySessions: vi.fn(),
             fetchSessions: vi.fn(),

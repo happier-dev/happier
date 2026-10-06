@@ -1,362 +1,184 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
-import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { createRepositoryPickerInputHost } from '@/components/workspaces/files/repositoryTree/repositoryUploadBrowserTestFixture';
+import { createSessionFilesViewFixture, prepareSessionFilesViewTestkit, type FileViewRpcRequest } from './sessionFilesViewTestkit';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const { promptSpy, alertSpy, machineRpcSpy } = vi.hoisted(() => ({
+    promptSpy: vi.fn<(...args: unknown[]) => Promise<string | null>>(async () => null),
+    alertSpy: vi.fn<(...args: unknown[]) => void>(),
+    machineRpcSpy: vi.fn(async (params: FileViewRpcRequest) => {
+        if (params.method === 'listDirectory') return { success: true, entries: [] };
+        if (params.method === 'writeFile') return { success: true, hash: 'created-file-hash' };
+        if (params.method === 'createDirectory') return { success: true };
+        if (params.method === 'statFile') return { success: true, exists: false };
+        return { success: false, error: 'Unprovided daemon capability' };
+    }),
+}));
 
-const promptSpy = vi.fn(async (..._args: any[]) => null as any);
-const alertSpy = vi.fn((..._args: any[]) => {});
-const writeFileSpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
-const createDirectorySpy = vi.fn(async (..._args: any[]) => ({ success: true } as any));
-const startUploadsSpy = vi.fn(async (..._args: any[]) => ({ ok: true } as any));
-const setExpandedSpy = vi.fn();
-const safePathSpy = vi.fn((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
-let sessionActive = true;
-let machineRpcTargetAvailable = true;
-let workspaceTargetAvailable = true;
-
-installSessionFilesViewCommonModuleMocks({
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        const modalModuleMock = createModalModuleMock();
-        modalModuleMock.spies.prompt.mockImplementation((...args: any[]) => promptSpy(...args));
-        modalModuleMock.spies.alert.mockImplementation((...args: any[]) => alertSpy(...args));
-        return modalModuleMock.module;
-    },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: setExpandedSpy }) } as any,
-            useSession: () => ({ active: sessionActive, metadata: { machineId: 'm1' } }) as any,
-            useProjectForSession: () => ({ key: { machineId: 'm1', path: '/repo' } }) as any,
-            useAllMachines: () => [{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }] as any,
-            useMachine: () => ({ id: 'm1' }) as any,
-            useSessionRepositoryTreeExpandedPaths: () => [],
-            useSessionProjectScmSnapshot: () => null,
-        });
-    },
+vi.mock('react-native', async () => (await import('@/dev/testkit')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
+vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
+vi.mock('@/modal', async () => {
+    const boundary = (await import('@/dev/testkit')).createModalModuleMock();
+    boundary.spies.prompt.mockImplementation(promptSpy);
+    boundary.spies.alert.mockImplementation(alertSpy);
+    return boundary.module;
 });
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => {
-        const trigger = typeof props.trigger === 'function'
-            ? props.trigger({ toggle: vi.fn(), openMenu: vi.fn(), closeMenu: vi.fn(), open: Boolean(props.open), selectedItem: null })
-            : props.trigger;
-        return React.createElement('DropdownMenu', props, trigger);
-    },
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
-vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
-    useWorkspaceFileTransfers: () => ({
-        uploadState: { status: 'idle' },
-        downloadState: { status: 'idle' },
-        startUploads: startUploadsSpy,
-        cancelUploads: vi.fn(),
-        startDownload: vi.fn(async () => ({ ok: true })),
-        cancelDownload: vi.fn(),
-    }),
-}));
-
-vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
-    useSessionFileUploadAvailability: () => machineRpcTargetAvailable,
-}));
-
-vi.mock('@/components/workspaces/scm/states', () => ({
-    SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
-    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
-}));
-
-vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
-    resolveSessionMachineReachability: () => true,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
-}));
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({
-        machineReachable: machineRpcTargetAvailable,
-        machineOnline: machineRpcTargetAvailable,
-        machineRpcTargetAvailable,
-    }),
-}));
-
-vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
-    useSessionWorkspaceTarget: () => (
-        workspaceTargetAvailable
-            ? {
-                workspaceCacheKey: 'server:m1:/repo',
-                machineId: 'm1',
-                rootPath: '/repo',
-                serverId: 'server',
-            }
-            : null
-    ),
-}));
-
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: { invalidateFromUser: () => {} },
-}));
-
-vi.mock('@/sync/domains/input/suggestionFile', () => ({
-    fileSearchCache: { clearCache: vi.fn() },
-    searchFiles: vi.fn(async () => []),
-}));
-
-const mountCount = { current: 0 };
-vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
-    WorkspaceRepositoryTreeList: () => {
-        React.useEffect(() => {
-            mountCount.current += 1;
-        }, []);
-        return React.createElement('View', { testID: 'workspace-repository-tree-list' });
-    },
-}));
-
-vi.mock('@/components/sessions/agents/presentation/useSessionMachineName', () => ({
-    useSessionMachineName: () => 'MacBook Pro',
-}));
-
-vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
-    SearchResultsList: () => React.createElement('SearchResultsList'),
-}));
-
-vi.mock('@/components/workspaces/scm/review/ChangedFilesReview', () => ({
-    ChangedFilesReview: () => React.createElement('ChangedFilesReview'),
-}));
-
-vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
-    resolveWorkspaceTargetForSession: () => (
-        workspaceTargetAvailable
-            ? {
-                workspaceCacheKey: 'server:m1:/repo',
-                machineId: 'm1',
-                rootPath: '/repo',
-                serverId: 'server',
-            }
-            : null
-    ),
-}));
-
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceWriteFile: (...args: any[]) => writeFileSpy(...args),
-    workspaceCreateDirectory: (...args: any[]) => createDirectorySpy(...args),
-}));
-
-vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
-    isSafeWorkspaceRelativePath: (value: string) => safePathSpy(value),
-}));
-
-vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
-    computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
-}));
+vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/testkit')).createInlinePopoverModuleMock(importOriginal));
+// Execute the real Metro web owners in the Node renderer.
+vi.mock('@/hooks/ui/useWebFileDropZone', () => import('@/hooks/ui/useWebFileDropZone.web'));
+vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
 describe('SessionRepositoryTreeBrowserView (create actions)', () => {
-    afterEach(() => {
-        standardCleanup();
-    });
+    let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
+    beforeAll(prepareSessionFilesViewTestkit);
 
-    beforeEach(() => {
-        sessionActive = true;
-        machineRpcTargetAvailable = true;
-        workspaceTargetAvailable = true;
+    beforeEach(async () => {
+        vi.stubGlobal('SharedWorker', class SharedWorker {});
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: machineRpcSpy });
         promptSpy.mockReset();
         alertSpy.mockClear();
-        writeFileSpy.mockClear();
-        createDirectorySpy.mockClear();
-        startUploadsSpy.mockClear();
-        setExpandedSpy.mockClear();
-        safePathSpy.mockClear();
-        safePathSpy.mockImplementation((value: string) => value === 'src/new-file.ts' || value === 'src/new-folder' || value === 'src/uploads');
+        machineRpcSpy.mockClear();
     });
+
+    afterEach(async () => {
+        standardCleanup();
+        await fixture?.dispose();
+        vi.unstubAllGlobals();
+    });
+
+    async function changeSession(update: Partial<import('@/sync/domains/state/storageTypes').Session>) {
+        const session = fixture.storage.getState().sessions.s1;
+        if (!session) throw new Error('Expected session fixture');
+        fixture.storage.getState().applySessions([{ ...session, ...update }]);
+    }
 
     async function renderRepositoryTreeBrowserView(
         overrides: Partial<React.ComponentProps<typeof import('./SessionRepositoryTreeBrowserView').SessionRepositoryTreeBrowserView>> = {},
     ) {
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         const { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } = await import('@/components/appShell/panes/paneHeaderSlot');
-        // The + menu is the Files pane header's trailing action: render it where the header would.
         function HeaderAction() {
             return <>{usePublishedPaneHeaderContent('files')?.action ?? null}</>;
         }
-        return renderScreen(
+        const inputs: HTMLInputElement[] = [];
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        screen = await fixture.render(
             <PaneHeaderSlotProvider>
                 <HeaderAction />
                 <PaneHeaderSlotScope slotKey="files">
-                    <SessionRepositoryTreeBrowserView
-                        sessionId="s1"
-                        onOpenFile={vi.fn()}
-                        {...overrides}
-                    />
+                    <SessionRepositoryTreeBrowserView sessionId="s1" onOpenFile={vi.fn()} {...overrides} />
                 </PaneHeaderSlotScope>
             </PaneHeaderSlotProvider>,
+            { createNodeMock: element => {
+                if (element.props.testID === 'repository-tree-drop-zone') return document.createElement('div');
+                const index = inputs.length;
+                return createRepositoryPickerInputHost(element, inputs, () => screen?.findAllByType('input')[index]?.props.onChange);
+            } },
         );
+        return Object.assign(screen, { inputs });
     }
 
-    function createMenu(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>) {
-        return screen.findByTestId('repository-tree-create-menu');
+    function createMenuItem(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>, id: string): DropdownMenuItem | undefined {
+        const menu = screen.find(node => node.props.testID === 'repository-tree-create-menu' && Array.isArray(node.props.items));
+        return (menu.props.items as readonly DropdownMenuItem[]).find(item => item.id === id);
     }
 
-    function createMenuItem(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>, id: string) {
-        return createMenu(screen)?.props.items.find((item: any) => item.id === id);
+    async function selectMenuItem(screen: Awaited<ReturnType<typeof renderRepositoryTreeBrowserView>>, id: string) {
+        await screen.pressByTestIdAsync('repository-tree-create-button');
+        await screen.pressByTestIdAsync(id);
+        await flushHookEffects();
     }
 
     it('keeps create actions enabled when the session is inactive but the machine target is available', async () => {
-        sessionActive = false;
-        machineRpcTargetAvailable = true;
-
+        await changeSession({ active: false });
         const screen = await renderRepositoryTreeBrowserView();
-
         expect(createMenuItem(screen, 'repository-tree-upload-files')?.disabled).toBe(false);
         expect(createMenuItem(screen, 'repository-tree-create-file')?.disabled).toBe(false);
     });
 
     it('disables create actions when no machine RPC target is available', async () => {
-        machineRpcTargetAvailable = false;
-
+        const session = fixture.session;
+        await changeSession({ metadata: session.metadata ? { ...session.metadata, machineId: undefined, host: 'unknown-host' } : null });
         const screen = await renderRepositoryTreeBrowserView();
-
         expect(createMenuItem(screen, 'repository-tree-upload-files')?.disabled).toBe(true);
         expect(createMenuItem(screen, 'repository-tree-create-file')?.disabled).toBe(true);
     });
 
     it('disables create and upload actions when no workspace target is resolvable', async () => {
-        machineRpcTargetAvailable = true;
-        workspaceTargetAvailable = false;
-
+        const session = fixture.session;
+        await changeSession({ metadata: session.metadata ? { ...session.metadata, path: '' } : null });
         const screen = await renderRepositoryTreeBrowserView();
-
         expect(createMenuItem(screen, 'repository-tree-upload-files')?.disabled).toBe(true);
         expect(createMenuItem(screen, 'repository-tree-create-file')?.disabled).toBe(true);
     });
 
     it('renders stable web upload input testIDs for UI e2e', async () => {
         const screen = await renderRepositoryTreeBrowserView();
-
         expect(screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' })).toHaveLength(1);
         expect(screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-folder' })).toHaveLength(1);
     });
 
     it('uses the selected upload destination for toolbar-triggered web uploads', async () => {
         promptSpy.mockResolvedValueOnce('src/uploads');
-        startUploadsSpy.mockClear();
-
         const screen = await renderRepositoryTreeBrowserView();
-
-        await act(async () => {
-            await createMenu(screen)?.props.onSelect('repository-tree-upload-destination-select');
-        });
-
+        await selectMenuItem(screen, 'repository-tree-upload-destination-select');
         expect(promptSpy).toHaveBeenCalledWith(
             'settingsAttachments.workspaceDirectory.uploadsDirectory.promptTitle',
             'settingsAttachments.workspaceDirectory.uploadsDirectory.promptMessage',
-            expect.objectContaining({
-                defaultValue: '',
-                placeholder: 'files.projectRoot',
-            }),
+            expect.objectContaining({ defaultValue: '', placeholder: 'files.projectRoot' }),
         );
-
-        expect(createMenuItem(screen, 'repository-tree-upload-destination-select'))
-            .toMatchObject({ subtitle: 'src/uploads' });
-
-        const [fileInput] = screen.findAllByProps({ 'data-testid': 'repository-tree-upload-input-files' });
-        const file = { name: 'upload-source.txt' };
-
-        await act(async () => {
-            fileInput.props.onChange({
-                target: {
-                    files: [file],
-                    value: 'upload-source.txt',
-                },
-            });
-        });
-
-        expect(startUploadsSpy).toHaveBeenCalledWith({
-            entries: [
-                {
-                    kind: 'web',
-                    file,
-                    relativePath: 'upload-source.txt',
-                },
-            ],
-            destinationDir: 'src/uploads',
-        });
+        expect(createMenuItem(screen, 'repository-tree-upload-destination-select')).toMatchObject({ subtitle: 'src/uploads' });
+        await selectMenuItem(screen, 'repository-tree-upload-files');
+        const input = screen.inputs.find(candidate => !candidate.hasAttribute('webkitdirectory'));
+        if (!input) throw new Error('Expected files picker input');
+        Object.defineProperty(input, 'files', { value: [new File(['source'], 'upload-source.txt')] });
+        await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+        await vi.waitFor(() => expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            targetId: 'm1', method: RPC_METHODS.STAT_FILE,
+            payload: { path: '/repo/src/uploads/upload-source.txt' },
+        })));
     });
 
     it('creates a file and opens it pinned', async () => {
-        mountCount.current = 0;
         promptSpy.mockResolvedValueOnce('src/new-file.ts');
-        writeFileSpy.mockClear();
-        alertSpy.mockClear();
-
         const onOpenFile = vi.fn();
         const onOpenFilePinned = vi.fn();
-
-        const screen = await renderRepositoryTreeBrowserView({
-            onOpenFile,
-            onOpenFilePinned,
-        });
-
-        await act(async () => {});
-        expect(mountCount.current).toBe(1);
-
-        await act(async () => {
-            createMenu(screen)?.props.onSelect('repository-tree-create-file');
-        });
-
-        expect(writeFileSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ machineId: 'm1', rootPath: '/repo', serverId: 'server' }),
-            'src/new-file.ts',
-            '',
-            null,
-        );
-        expect(onOpenFilePinned).toHaveBeenCalledWith('src/new-file.ts');
-        expect(alertSpy).toHaveBeenCalledTimes(0);
+        const screen = await renderRepositoryTreeBrowserView({ onOpenFile, onOpenFilePinned });
+        const { WorkspaceRepositoryTreeList } = await import('@/components/projects/files/WorkspaceRepositoryTreeList');
+        const tree = screen.findByType(WorkspaceRepositoryTreeList);
+        await selectMenuItem(screen, 'repository-tree-create-file');
+        await vi.waitFor(() => expect(onOpenFilePinned).toHaveBeenCalledWith('src/new-file.ts'));
+        expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            targetId: 'm1', method: RPC_METHODS.WRITE_FILE,
+            payload: { path: '/repo/src/new-file.ts', content: '', expectedHash: null },
+        }));
+        expect(screen.findByType(WorkspaceRepositoryTreeList)).toBe(tree);
+        expect(alertSpy).not.toHaveBeenCalled();
     });
 
     it('shows an error when create file path is invalid', async () => {
         promptSpy.mockResolvedValueOnce('../bad');
-        alertSpy.mockClear();
-        writeFileSpy.mockClear();
-
         const screen = await renderRepositoryTreeBrowserView();
-        await act(async () => {
-            createMenu(screen)?.props.onSelect('repository-tree-create-file');
-        });
-
-        expect(writeFileSpy).toHaveBeenCalledTimes(0);
-        expect(alertSpy).toHaveBeenCalledTimes(1);
+        await selectMenuItem(screen, 'repository-tree-create-file');
+        await vi.waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
+        expect(machineRpcSpy.mock.calls.filter(([params]) => params.method === RPC_METHODS.WRITE_FILE)).toHaveLength(0);
     });
 
     it('creates a directory', async () => {
         promptSpy.mockResolvedValueOnce('src/new-folder');
-        createDirectorySpy.mockClear();
-        alertSpy.mockClear();
-
         const screen = await renderRepositoryTreeBrowserView();
-        await act(async () => {
-            createMenu(screen)?.props.onSelect('repository-tree-create-folder');
-        });
-
-        expect(createDirectorySpy).toHaveBeenCalledWith(
-            expect.objectContaining({ machineId: 'm1', rootPath: '/repo', serverId: 'server' }),
-            'src/new-folder',
-        );
-        expect(alertSpy).toHaveBeenCalledTimes(0);
+        await selectMenuItem(screen, 'repository-tree-create-folder');
+        await vi.waitFor(() => expect(machineRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+            targetId: 'm1', method: RPC_METHODS.CREATE_DIRECTORY,
+            payload: { path: '/repo/src/new-folder' },
+        })));
+        expect(alertSpy).not.toHaveBeenCalled();
     });
 });

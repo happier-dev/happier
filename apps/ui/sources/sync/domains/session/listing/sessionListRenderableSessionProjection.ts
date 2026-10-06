@@ -98,13 +98,17 @@ export function buildSessionFromListRenderable(
     const metadataLayoutVersion = readSessionMetadataLayoutVersion(
         renderable.metadataLayoutVersion ?? options.baseSession?.metadataLayoutVersion,
     );
-    const ownerMetadataView = isSessionListRenderableOwnerProjection({
-        metadataLayoutVersion,
-        access: renderable.access,
-        accessLevel: renderable.accessLevel,
-    })
-        ? renderable.metadata as Metadata | null
-        : null;
+    const ownerMetadataView = renderable.metadataUnavailable === true
+        ? null
+        : metadataLayoutVersion === 0
+            ? undefined
+            : isSessionListRenderableOwnerProjection({
+                metadataLayoutVersion,
+                access: renderable.access,
+                accessLevel: renderable.accessLevel,
+            })
+                ? renderable.metadata as Metadata | null
+                : null;
 
     return {
         ...baseSessionWithoutResponsibility,

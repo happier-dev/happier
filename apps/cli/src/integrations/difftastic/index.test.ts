@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { ChildProcess } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,17 +9,21 @@ const { spawnMock } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
 }));
 
-vi.mock('child_process', () => ({
+vi.mock('child_process', async (importOriginal) => ({
+    ...await importOriginal<typeof import('node:child_process')>(),
     spawn: spawnMock,
 }));
 
-vi.mock('node:fs', () => ({
-    existsSync: () => true,
-}));
-
-vi.mock('@/packagedRuntime/assets/resolveCliRuntimeAssetPath', () => ({
-    resolveCliRuntimeAssetPath: () => '/fixture/difft',
-}));
+vi.mock('node:fs', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:fs')>();
+    return {
+        ...actual,
+        // Only the executable's OS presence is synthetic. Runtime-root and
+        // asset resolution, including filesystem reads for unrelated imports, stay real.
+        existsSync: (path: Parameters<typeof actual.existsSync>[0]) =>
+            /(?:^|[\\/])difft(?:\.exe)?$/.test(String(path)) || actual.existsSync(path),
+    };
+});
 
 describe('difftastic run', () => {
     afterEach(() => {
@@ -27,12 +31,10 @@ describe('difftastic run', () => {
     });
 
     it('reports signal termination as an unsuccessful exit code', async () => {
-        const child = new EventEmitter() as EventEmitter & {
-            stdout: PassThrough;
-            stderr: PassThrough;
-        };
-        child.stdout = new PassThrough();
-        child.stderr = new PassThrough();
+        const child = Object.assign(new ChildProcess(), {
+            stdout: new PassThrough(),
+            stderr: new PassThrough(),
+        });
         spawnMock.mockReturnValue(child);
 
         const resultPromise = run(['--version']);

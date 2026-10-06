@@ -4,6 +4,9 @@ import {
     type BrowserRecordingCapabilities,
     type BrowserTargetPolicyDecisionV1,
     type FeatureDecision,
+    DaemonPluginActionSchemasReadRequestSchema,
+    DaemonPluginActionSchemasReadResponseSchema,
+    RPC_METHODS,
     PluginProjectionInstalledPackageV2Schema,
     PluginProjectedActionV2Schema,
     type PluginMachineExecutionOriginV1,
@@ -20,7 +23,6 @@ import { AppState } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AnnotationCaptureSurface } from '@/components/browser/annotation';
-import type { CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import {
     getInstalledPluginUiClientExecutableComposition,
@@ -30,7 +32,13 @@ import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/
 import type {
     PluginReactNativeLoaderBackend,
 } from '@/components/plugins/reactNative/loader';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createReactNativeAppStateEmitter } from '@/dev/testkit/mocks/reactNative';
 import {
     createBrowserViewState,
@@ -41,15 +49,12 @@ import {
     applyLocalServicePreviewSnapshot,
     createLocalServicePreviewState,
 } from '@/sync/domains/local/services/preview/store';
-import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
+import { executePluginBrowserAction, type PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/actions';
+import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
 
-// The presence capsule reads the session's agent from storage (testkit-owned boundary).
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
-});
+installTerminalRouteCommonModuleMocks();
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
@@ -65,41 +70,6 @@ vi.mock('@/components/browser/frame/engines/DesktopWebViewEngine', () => ({
     }),
 }));
 
-const pluginSurfaceAccountLifetime = vi.hoisted(() => {
-    let current = true;
-    const retirements = new Set<() => void>();
-    const lifetime = Object.freeze({
-        scope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
-        isCurrent: () => current,
-        onRetire: (cancel: () => void) => {
-            if (!current) {
-                cancel();
-                return Object.freeze({ dispose: () => {} });
-            }
-            retirements.add(cancel);
-            return Object.freeze({ dispose: () => retirements.delete(cancel) });
-        },
-    });
-    let capture: typeof lifetime | null = lifetime;
-    return {
-        capture: () => capture,
-        captureNone: () => { capture = null; },
-        retire: () => {
-            if (!current) return;
-            current = false;
-            for (const cancel of [...retirements]) cancel();
-            retirements.clear();
-        },
-        reset: () => {
-            current = true;
-            capture = lifetime;
-            retirements.clear();
-        },
-    };
-});
-const browserCurrentUiContextReader = vi.hoisted(() => ({
-    value: null as CurrentUiContextReader | null,
-}));
 const browserActionModal = vi.hoisted(() => {
     let confirm: (() => void) | null = null;
     return {
@@ -117,12 +87,6 @@ const browserActionModal = vi.hoisted(() => {
         reset: () => { confirm = null; },
     };
 });
-const accountEncryptionModeCredentials = vi.hoisted(() => ({
-    value: { token: 'browser-host-account-mode-test-token' } as Readonly<{ token: string }> | null,
-}));
-const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
-    typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
->());
 const browserStreamBoundary = vi.hoisted(() => ({
     views: [] as unknown[],
     listeners: new Set<(raw: unknown) => void>(),
@@ -130,8 +94,16 @@ const browserStreamBoundary = vi.hoisted(() => ({
 
 // Discovery and relay socket are genuine network boundaries; host/runtime/ingestion stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: async (input: { method: string }) => {
+    machineRpcWithServerScope: async (input: { method: string; machineId: string; serverId?: string | null; payload: unknown }) => {
         if (input.method === 'daemon.browser.view.list') return { protocolVersion: 1, views: browserStreamBoundary.views };
+        if (input.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+            expect(input.machineId).toBe('machine_1');
+            expect(input.serverId).toBe('srv_browser_client_action');
+            const request = DaemonPluginActionSchemasReadRequestSchema.parse(input.payload);
+            expect(request).toEqual({ machineId: 'machine_1', expectedOccurrenceId: 'occurrence-browser-client-action',
+                qualifiedActionId: 'acme.browser-client-action/refresh-preview' });
+            return DaemonPluginActionSchemasReadResponseSchema.parse({ ok: true, inputSchema: { type: 'object' } });
+        }
         throw new Error('offline');
     },
 }));
@@ -146,22 +118,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineLiveStr
         disconnect: async () => undefined,
     }),
 }));
-let restoreCredentialBoundary: (() => void) | undefined;
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime.capture(),
-}));
-
-vi.mock('@/components/appShell/currentUiContext/CurrentUiContextProvider', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/components/appShell/currentUiContext/CurrentUiContextProvider')>();
-    return {
-        ...original,
-        // Browser receives this opaque app-shell capability; this focused host
-        // test observes whether its late read is reached without replacing the
-        // Browser, dispatcher, or current-intent implementations.
-        useOptionalCurrentUiContextReader: () => browserCurrentUiContextReader.value,
-    };
-});
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -174,23 +130,7 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/http/client')>();
-    return {
-        ...original,
-        serverFetch: async (...args: Parameters<typeof original.serverFetch>) => {
-            if (args[0] === '/v1/account/encryption') {
-                const result = await accountEncryptionModeFetch(accountEncryptionModeCredentials.value!);
-                return new Response(JSON.stringify(result), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
-            return original.serverFetch(...args);
-        },
-    };
-});
-
+await initializeTerminalRouteRuntimeForTests();
 const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
 
 const target = {
@@ -410,7 +350,7 @@ const BROWSER_CLIENT_ACTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.free
 });
 const BROWSER_CLIENT_ACTION_ORIGIN_PROJECTION = Object.freeze({
     machineId: target.machineId,
-    serverId: 'server-1',
+    serverId: 'srv_browser_client_action',
     generation: BROWSER_CLIENT_ACTION_GENERATION,
     interactionEnabled: true,
     phase: 'current' as const,
@@ -573,32 +513,42 @@ function createBrowserClientActionFixture(handler: PluginClientActionHandler): R
     return Object.freeze({ activation, pluginUiProjection, pluginBrowserProjection });
 }
 
+let browserAccountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let restoreBrowserStorage: (() => void) | undefined;
+let restoreBrowserLocks: (() => void) | undefined;
 beforeEach(async () => {
-    pluginSurfaceAccountLifetime.reset();
-    browserCurrentUiContextReader.value = null;
     browserActionModal.show.mockClear();
     browserActionModal.hide.mockClear();
     browserActionModal.confirmFallback.mockClear();
     browserActionModal.reset();
-    accountEncryptionModeCredentials.value = { token: 'browser-host-account-mode-test-token' };
-    accountEncryptionModeFetch.mockReset();
-    accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
     const { invalidateAccountEncryptionModeCache } = await import(
         '@/sync/api/account/apiAccountEncryptionMode'
     );
     invalidateAccountEncryptionModeCache();
-    const credentialBoundary = vi.spyOn((await import('@/sync/syncEngine')).sync, 'getCredentials')
-        .mockImplementation(() => {
-            const credentials = accountEncryptionModeCredentials.value;
-            if (!credentials) throw new Error('Account credentials unavailable in test boundary');
-            return credentials;
-        });
-    restoreCredentialBoundary = () => credentialBoundary.mockRestore();
+    restoreBrowserStorage = installLocalStorageMock().restore;
+    restoreBrowserLocks = installWebLockManagerMock().restore;
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch(async () => new Response('{}', { status: 404 }));
+    const serverUrl = 'https://browser-host.example.test';
+    await adoptHomeProfile({ descriptor: {
+        v: 1, homeServerIdentityId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }],
+    }, source: 'qr', descriptorAuthority: 'current_connection_observation' });
+    browserAccountConnection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1', request: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        return new Response('{}', { status: 404 });
+    } });
+    expect(getActiveServerAccountScope()).toEqual({ serverId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId, accountId: 'account-1' });
 });
 
-afterEach(() => {
-    restoreCredentialBoundary?.();
-    restoreCredentialBoundary = undefined;
+afterEach(async () => {
+    await standardCleanup();
+    await browserAccountConnection?.dispose();
+    browserAccountConnection = undefined;
+    restoreBrowserLocks?.();
+    restoreBrowserStorage?.();
 });
 
 describe('BrowserSurfaceHost', () => {
@@ -617,7 +567,7 @@ describe('BrowserSurfaceHost', () => {
         const renderHost = (visible: boolean) => <BrowserSurfaceHost
             browserSessionId="session_1" platform="web" visible={visible} initialBrowserState={initialBrowserState}
             policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: 'server-1' }}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: 'srv_browser_client_action' }}
         />;
         try {
             const screen = await renderScreen(renderHost(true));
@@ -645,16 +595,8 @@ describe('BrowserSurfaceHost', () => {
         }
     });
 
-    it('does not read current context or enter a client Action handler when no Account lifetime is captured', async () => {
+    it('does not enter a client Action handler when no Account lifetime is captured', async () => {
         const composition = getInstalledPluginUiClientExecutableComposition();
-        const currentUiContextReader: CurrentUiContextReader = Object.freeze({
-            readCurrentUiContext: vi.fn((): CurrentUiContextSnapshotV1 => ({
-                navigation: { area: 'app', screen: 'browser' },
-                commands: [],
-            })),
-            resolveCurrentUiCommand: vi.fn(() => null),
-            subscribe: vi.fn(() => () => {}),
-        });
         const handler = vi.fn(async () => ({ shouldNotRun: true }));
         const fixture = createBrowserClientActionFixture(handler);
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), target, {
@@ -662,8 +604,11 @@ describe('BrowserSurfaceHost', () => {
             currentUrl: 'https://preview.happier.test/',
         });
 
-        pluginSurfaceAccountLifetime.captureNone();
-        browserCurrentUiContextReader.value = currentUiContextReader;
+        await browserAccountConnection?.dispose();
+        browserAccountConnection = undefined;
+        expect(getActiveServerAccountScope()).toBeNull();
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async () => new Response('{}', { status: 404 }));
         await composition.unload();
         try {
             await expect(composition.reconcile([fixture.activation])).resolves.toEqual([
@@ -686,7 +631,7 @@ describe('BrowserSurfaceHost', () => {
                     pluginBrowserProjection={fixture.pluginBrowserProjection}
                     pluginBrowserActionContext={{
                         machineId: target.machineId,
-                        serverId: 'server-1',
+                        serverId: 'srv_browser_client_action',
                         sessionId: target.sessionId,
                     }}
                     testID="browser-surface"
@@ -702,27 +647,17 @@ describe('BrowserSurfaceHost', () => {
                 });
 
                 expect(browserActionModal.shown()).toBe(false);
-                expect(currentUiContextReader.readCurrentUiContext).not.toHaveBeenCalled();
                 expect(handler).not.toHaveBeenCalled();
             } finally {
                 await screen.unmount();
             }
         } finally {
-            browserCurrentUiContextReader.value = null;
             await composition.unload();
         }
     });
 
-    it('does not enter a client Action handler or read current context after its Account retires during confirmation', async () => {
+    it('does not enter a client Action handler after its Account retires during confirmation', async () => {
         const composition = getInstalledPluginUiClientExecutableComposition();
-        const currentUiContextReader: CurrentUiContextReader = Object.freeze({
-            readCurrentUiContext: vi.fn((): CurrentUiContextSnapshotV1 => ({
-                navigation: { area: 'app', screen: 'browser' },
-                commands: [],
-            })),
-            resolveCurrentUiCommand: vi.fn(() => null),
-            subscribe: vi.fn(() => () => {}),
-        });
         const handler = vi.fn(async () => ({ shouldNotRun: true }));
         const fixture = createBrowserClientActionFixture(handler);
         const initialBrowserState = openBrowserTarget(createBrowserViewState(), target, {
@@ -730,7 +665,6 @@ describe('BrowserSurfaceHost', () => {
             currentUrl: 'https://preview.happier.test/',
         });
 
-        browserCurrentUiContextReader.value = currentUiContextReader;
         await composition.unload();
         try {
             await expect(composition.reconcile([fixture.activation])).resolves.toEqual([
@@ -753,7 +687,7 @@ describe('BrowserSurfaceHost', () => {
                     pluginBrowserProjection={fixture.pluginBrowserProjection}
                     pluginBrowserActionContext={{
                         machineId: target.machineId,
-                        serverId: 'server-1',
+                        serverId: 'srv_browser_client_action',
                         sessionId: target.sessionId,
                     }}
                     testID="browser-surface"
@@ -767,25 +701,89 @@ describe('BrowserSurfaceHost', () => {
                 await vi.waitFor(() => {
                     expect(browserActionModal.shown()).toBe(true);
                 });
-                expect(currentUiContextReader.readCurrentUiContext).not.toHaveBeenCalled();
                 expect(handler).not.toHaveBeenCalled();
 
                 // Account A owns this Browser projection and action attempt.
                 // Retiring it leaves the same machine/generation visible only
                 // long enough to prove the late confirmation cannot execute.
-                pluginSurfaceAccountLifetime.retire();
+                const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+                await disconnectActiveServerConnection();
+                expect(getActiveServerAccountScope()).toBeNull();
                 await act(async () => {
                     browserActionModal.confirm();
                     await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
                 });
 
-                expect(currentUiContextReader.readCurrentUiContext).not.toHaveBeenCalled();
                 expect(handler).not.toHaveBeenCalled();
             } finally {
                 await screen.unmount();
             }
         } finally {
-            browserCurrentUiContextReader.value = null;
+            await composition.unload();
+        }
+    });
+
+    it.each(['current', 'retired', 'wrong-home'] as const)(
+        'reads supplied current context only at admitted handler entry (%s)', async (currentness) => {
+        const composition = getInstalledPluginUiClientExecutableComposition();
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the real Browser Account lifetime');
+        let suppliedContext: CurrentUiContextSnapshotV1 = {
+            navigation: { area: 'app', screen: 'old-browser' }, commands: [],
+        };
+        // This is an existing caller-supplied capability at the public Browser
+        // Action port, not a substitute for AppShell's current-context owner.
+        const readCurrentUiContext = vi.fn(() => suppliedContext);
+        const handler = vi.fn<PluginClientActionHandler>((_input, context) => ({
+            seenContext: context.currentUiContext ?? null,
+        }));
+        const fixture = createBrowserClientActionFixture(handler);
+        const browserAction = fixture.pluginBrowserProjection.actionsById[
+            `browserAction:${BROWSER_CLIENT_ACTION_PLUGIN_ID}:${BROWSER_CLIENT_ACTION_ID}`
+        ];
+        if (!browserAction) throw new Error('Expected projected Browser Action');
+        await composition.unload();
+        try {
+            await expect(composition.reconcile([fixture.activation])).resolves.toEqual([
+                expect.objectContaining({ result: { ok: true } }),
+            ]);
+            const invoking = executePluginBrowserAction({
+                action: browserAction, machineId: target.machineId,
+                serverId: accountLifetime.scope.serverId, sessionId: target.sessionId,
+                input: { targetId: target.targetId },
+                policyContext: { profileMode: 'session', isFeatureEnabled: () => true },
+                resolveContributedAction: createPluginUiProjectedActionResolver(fixture.pluginUiProjection.actionsById),
+                pluginUiProjection: fixture.pluginUiProjection,
+                isCurrent: accountLifetime.isCurrent, readCurrentUiContext,
+            });
+            await vi.waitFor(() => expect(browserActionModal.shown()).toBe(true));
+            expect(readCurrentUiContext).not.toHaveBeenCalled();
+            expect(handler).not.toHaveBeenCalled();
+            suppliedContext = { navigation: { area: 'app', screen: 'fresh-browser' }, commands: [] };
+            if (currentness === 'retired') {
+                const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+                await disconnectActiveServerConnection();
+                expect(getActiveServerAccountScope()).toBeNull();
+            } else if (currentness === 'wrong-home') {
+                await browserAccountConnection?.dispose();
+                browserAccountConnection = await restoreServerAccountForTest({
+                    serverUrl: 'https://other-browser-home.example.test', accountId: 'account-1',
+                    request: async (input) => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
+                        ? Response.json(createPlainAccountEncryptionCurrentnessFixture()) : new Response('{}', { status: 404 }),
+                });
+                expect(getActiveServerAccountScope()?.serverId).not.toBe(accountLifetime.scope.serverId);
+                expect(getActiveServerAccountScope()?.accountId).toBe(accountLifetime.scope.accountId);
+            }
+            browserActionModal.confirm();
+            if (currentness === 'current') {
+                await expect(invoking).resolves.toEqual({ ok: true, result: { seenContext: suppliedContext } });
+                expect(handler).toHaveBeenCalledWith({ targetId: target.targetId }, expect.objectContaining({ currentUiContext: suppliedContext }));
+            } else {
+                await expect(invoking).resolves.toMatchObject({ ok: false, code: 'stale_surface', reason: 'plugin_action_generation_retired' });
+                expect(readCurrentUiContext).not.toHaveBeenCalled();
+                expect(handler).not.toHaveBeenCalled();
+            }
+        } finally {
             await composition.unload();
         }
     });
@@ -1349,7 +1347,7 @@ describe('BrowserSurfaceHost', () => {
                 pluginUiProjection={hostedWebBrowserPanelProjection}
                 pluginBrowserActionContext={{
                     machineId: 'machine_1',
-                    serverId: 'server-1',
+                    serverId: 'srv_browser_client_action',
                     sessionId: 'session_1',
                 }}
                 testID="browser-surface"

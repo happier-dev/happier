@@ -3,10 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { AgentExternalSessionsContribution } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope,
@@ -14,26 +13,9 @@ import {
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
-
-const {
-  activateAgentRuntimeContributionOnDemandMock,
-  acquireAuthoritativePluginRuntimeRegistryLeaseMock,
-} = vi.hoisted(() => ({
-  activateAgentRuntimeContributionOnDemandMock: vi.fn(
-    async (_registry: unknown, _agentId: unknown) => undefined,
-  ),
-  acquireAuthoritativePluginRuntimeRegistryLeaseMock: vi.fn(),
-}));
-
-vi.mock('@/agent/runtime/registry/activationDemand', () => ({
-  activateAgentRuntimeContributionOnDemand: (registry: unknown, agentId: unknown) =>
-    activateAgentRuntimeContributionOnDemandMock(registry, agentId),
-}));
-
-vi.mock('@/plugins/runtime/reload/runtimeLease', () => ({
-  acquireAuthoritativePluginRuntimeRegistryLease: () =>
-    acquireAuthoritativePluginRuntimeRegistryLeaseMock(),
-}));
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 function createRpcHandlerManager(): RpcHandlerManager {
   return new RpcHandlerManager({
@@ -60,10 +42,6 @@ function createDirectSessionMediaItem(providerMediaPath: string) {
 }
 
 describe('external session transcript media read allowance', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('grants only referenced direct-session media files to daemon file reads without durable adoption', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-media-workspace-'));
     const providerDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-media-provider-'));
@@ -90,31 +68,7 @@ describe('external session transcript media read allowance', () => {
       getAdditionalAllowedReadFiles: () => transientMediaReadAllowance.readAllowedReadFiles(),
     });
 
-    const externalSessions = {
-      resolveSource: vi.fn(async ({ source }) => ({
-        ok: true as const,
-        value: { source, transcriptMediaReadRoots: [providerDirectory] },
-      })),
-      listCandidates: vi.fn(async () => ({
-        ok: true as const,
-        value: { candidates: [], nextCursor: null },
-      })),
-      resolveLinkIdentity: vi.fn(async ({ source, remoteSessionId }) => ({
-        ok: true as const,
-        value: { source, remoteSessionId, linkData: {} },
-      })),
-      resolveLinkedIdentity: vi.fn(async ({ source, remoteSessionId, linkData }) => ({
-        ok: true as const,
-        value: {
-          source,
-          remoteSessionId,
-          linkData,
-          transcriptMediaReadRoots: [providerDirectory],
-        },
-      })),
-      pageTranscript: vi.fn(async () => ({
-        ok: true as const,
-        value: {
+    const transcript = {
           items: [{
             id: 'direct-item-1',
             localId: 'direct-item-1',
@@ -141,18 +95,15 @@ describe('external session transcript media read allowance', () => {
           tailCursor: null,
           hasMore: false,
           truncated: false,
-        },
-      } as const)),
-      readAfterTranscript: vi.fn(async () => ({
-        ok: true as const,
-        value: { outcome: 'already_current' as const },
-      })),
-    } satisfies AgentExternalSessionsContribution;
-    const agent = {
-      id: 'opencode',
-      identity: { pluginId: 'happier.opencode', localId: 'opencode' },
-      richDefinition: {
-        definition: {
+    };
+    const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      plugins: [{
+        manifest: createPluginManifestV2Fixture({
+          id: 'acme.media',
+          contributes: { agents: [{
+          id: 'media', title: 'Media fixture',
+          capabilities: { surfaces: ['externalSessions'] },
           surfaces: {
             externalSession: {
               sources: [{
@@ -171,28 +122,29 @@ describe('external session transcript media read allowance', () => {
                     { kind: 'field', field: 'directory' },
                   ],
                 },
+                instances: [{ kind: 'default', constants: { baseUrl: 'http://127.0.0.1:4096', directory: providerDirectory } }],
               }],
+              externalLinkedTakeover: { writerSafety: 'unsupported' },
             },
           },
-        },
-      },
-    };
-    const retirement = new AbortController();
-    acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockResolvedValue({
-      registry: {
-        contributes: {
-          agents: [agent],
-          agentDefinitionsById: new Map([['opencode', agent]]),
-        },
-        agentRuntimesByAgentId: new Map([['opencode', {
-          generation: 'plugin-generation-1',
-          retirementSignal: retirement.signal,
-          isCurrent: () => true,
-          externalSessions,
-        }]]),
-      },
-      release: vi.fn(async () => undefined),
+          }] },
+        }),
+        files: { 'daemon.mjs': `
+          const roots = ${JSON.stringify([providerDirectory])};
+          const externalSessions = {
+            resolveSource: async ({source}) => ({ok:true,value:{source,transcriptMediaReadRoots:roots}}),
+            listCandidates: async () => ({ok:true,value:{candidates:[],nextCursor:null}}),
+            resolveLinkIdentity: async ({source,remoteSessionId}) => ({ok:true,value:{source,remoteSessionId,linkData:{}}}),
+            resolveLinkedIdentity: async ({source,remoteSessionId,linkData}) => ({ok:true,value:{source,remoteSessionId,linkData,transcriptMediaReadRoots:roots}}),
+            pageTranscript: async () => ({ok:true,value:${JSON.stringify(transcript)}}),
+            readAfterTranscript: async () => ({ok:true,value:{outcome:'already_current'}}),
+          };
+          export function activate(api) { api.agents.registerExternalSessions('media',externalSessions); }
+        ` },
+      }],
     });
+    const agentId = runtime.registry.contributes.agents.find((agent) => agent.pluginId === 'acme.media')?.id;
+    if (!agentId) throw new Error('Expected admitted media fixture Agent');
 
     try {
       const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
@@ -209,7 +161,7 @@ describe('external session transcript media read allowance', () => {
 
       const pageResponse = await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, {
         machineId: 'machine-1',
-        agentId: 'opencode',
+        agentId,
         remoteSessionId: 'provider-session-1',
         source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: providerDirectory },
         direction: 'older',
@@ -269,6 +221,7 @@ describe('external session transcript media read allowance', () => {
 
       await expect(stat(join(workingDirectory, '.happier', 'uploads'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
+      await runtime.dispose();
       await fileSystemHandlers.dispose();
       await rm(workingDirectory, { recursive: true, force: true });
       await rm(providerDirectory, { recursive: true, force: true });

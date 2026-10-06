@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -12,6 +12,7 @@ import { buildTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { parsePendingTerminalConnectPreAuthEnvelope } from '@/sync/domains/pending/pendingTerminalConnect.shared';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { MMKV } from 'react-native-mmkv';
 import { clearPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import type { IrohHomeRuntimeOriginLease, IrohHomeTunnelAcquireInput } from '@/sync/runtime/nativeIrohTunnels/types';
@@ -93,14 +94,17 @@ function terminalRequest(serverUrl: string, serverIdentityId: string) {
     };
 }
 
-afterEach(() => {
-    standardCleanup();
+let restoreLocks: (() => void) | undefined;
+beforeEach(() => { restoreLocks = installWebLockManagerMock().restore; });
+afterEach(async () => {
+    await standardCleanup();
     clearPendingTerminalConnect();
     replaceSpy.mockClear();
     confirmSpy.mockReset();
     confirmSpy.mockResolvedValue(true);
     routeBoundary.params = {};
     nativeBoundary.acquire.mockReset();
+    restoreLocks?.();
     vi.unstubAllGlobals();
 });
 

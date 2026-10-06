@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { join } from 'node:path';
 
@@ -141,17 +141,44 @@ describe('AcpBackend subprocess stderr artifacts', () => {
           stderrText: 'PermissionError: [Errno 1] Operation not permitted on fd 0',
         });
 
+        let observeStderr!: () => void;
+        const stderrReceived = new Promise<void>((resolve) => { observeStderr = resolve; });
+        let observeInitialize!: () => void;
+        const initializeStarted = new Promise<void>((resolve) => { observeInitialize = resolve; });
+        const transport = createAcpTestTransportHandler({
+          agentName: 'kimi',
+          initTimeoutMs: 10,
+          handleStderr: (text) => {
+            if (text.includes('PermissionError: [Errno 1]')) observeStderr();
+            return { message: null };
+          },
+        });
+
         const backend = new AcpBackend({
           agentName: 'kimi',
           cwd: dir,
           command: process.execPath,
           args: [scriptPath],
-          transportHandler: createAcpTestTransportHandler({ agentName: 'kimi', initTimeoutMs: 10 }),
+          transportHandler: {
+            ...transport,
+            getInitTimeout: () => {
+              observeInitialize();
+              return transport.getInitTimeout();
+            },
+          },
         });
 
+        // Keep the real child/stdio/artifact path, but order the timeout after
+        // startup stderr has arrived rather than racing OS boot against 10ms.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         try {
-          await expect(backend.startSession()).rejects.toThrow(/PermissionError: \[Errno 1\]/);
+          const startup = backend.startSession();
+          const rejected = expect(startup).rejects.toThrow(/PermissionError: \[Errno 1\]/);
+          await Promise.all([stderrReceived, initializeStarted]);
+          await vi.advanceTimersByTimeAsync(10);
+          await rejected;
         } finally {
+          vi.useRealTimers();
           envScope.restore();
           await backend.dispose().catch(() => {});
         }

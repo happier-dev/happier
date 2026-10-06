@@ -63,6 +63,7 @@ describe('Session settings (Permissions entry)', () => {
             'settingsSession.rootGroups.rowDetails.title',
             'settingsSession.rootGroups.activitySignals.title',
             'settingsSession.rootGroups.mobileLayout.title',
+            'workspaceTabs.sectionTitle',
             'settingsSession.rootGroups.agentPersonalization.title',
             'settingsSession.detailedBehavior.title',
         ]);

@@ -124,6 +124,7 @@ describe('stable declared MCP transport connector', () => {
             },
         };
         const abort = new AbortController();
+        const occurrenceId = createPluginRuntimeOccurrenceId('caller.plugin');
         const client = await createStableDeclaredMcpTransportConnector()({
             declaration,
             ref: { pluginId: 'acme.static', localId: 'remote' },
@@ -132,7 +133,7 @@ describe('stable declared MCP transport connector', () => {
             seed: {
                 plugin: { id: 'caller.plugin', version: '1.0.0' },
                 contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-                occurrenceId: createPluginRuntimeOccurrenceId('caller.plugin'), correlationId: 'correlation-1', surface: 'agent',
+                occurrenceId, correlationId: 'correlation-1', surface: 'agent',
                 session: { id: 'session-1' }, currentSession: {
                     interactions: {
                         // The fixture exercises only the questions overload.
@@ -235,7 +236,7 @@ describe('stable declared MCP transport connector', () => {
             requester: {
                 pluginId: 'caller.plugin',
                 contributionId: 'run',
-                occurrenceId: 'occurrence-1',
+                occurrenceId,
                 invocationId: 'correlation-1',
             },
         }));

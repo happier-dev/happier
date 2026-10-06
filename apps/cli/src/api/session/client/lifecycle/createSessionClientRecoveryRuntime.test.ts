@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HttpStatusError } from '@/api/client/httpStatusError';
+import type { Update } from '@/api/types';
 import { createSessionClientRecoveryRuntime } from './createSessionClientRecoveryRuntime';
 
 const axiosGetMock = vi.hoisted(() => vi.fn());
@@ -18,10 +19,6 @@ vi.mock('axios', async (importOriginal) => {
     isAxiosError: actual.isAxiosError,
   };
 });
-
-vi.mock('@/persistence', () => ({
-  readAccountChangesCursor: vi.fn(async () => 0),
-}));
 
 describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => {
   let retryIndex: number;
@@ -41,7 +38,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     initialAfterSeq?: number;
     lastObservedSeq?: number;
     delays?: readonly number[];
-    handleUpdate?: (update: any) => void;
+    handleUpdate?: (update: Update) => void;
     accountChangesEnabled?: boolean;
     reconcilePendingExecutionRunTarget?: (runId: string) => Promise<void>;
   }> = {}) {
@@ -89,10 +86,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await vi.advanceTimersByTimeAsync(1_200);
 
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
-    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 3 }) }),
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 3 }) }),
-    ]);
+    expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['3', '3']);
   });
 
   it('stops retrying after terminal authentication failure', async () => {
@@ -117,10 +111,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await vi.advanceTimersByTimeAsync(1_200);
 
     expect(axiosGetMock).toHaveBeenCalledTimes(2);
-    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
-    ]);
+    expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['4', '4']);
   });
 
   it('retries a corrupt transcript page from the original cursor without applying its valid neighbors', async () => {
@@ -129,9 +120,9 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
         status: 200,
         data: {
           messages: [
-            { id: 'm5', seq: 5, content: { t: 'encrypted', c: 'c5' } },
-            { id: 'm6', seq: 6, content: { t: 'future', value: 'unreadable' } },
-            { id: 'm7', seq: 7, content: { t: 'encrypted', c: 'c7' } },
+            { id: 'm5', seq: 5, createdAt: 5, content: { t: 'plain', v: { role: 'user', content: 'before' } } },
+            { id: 'm6', seq: 6, createdAt: 6, content: { t: 'future', value: 'unreadable' } },
+            { id: 'm7', seq: 7, createdAt: 7, content: { t: 'plain', v: { role: 'user', content: 'after' } } },
           ],
           nextAfterSeq: 7,
         },
@@ -145,10 +136,7 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
     await vi.advanceTimersByTimeAsync(1_200);
 
     expect(handleUpdate).not.toHaveBeenCalled();
-    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
-      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
-    ]);
+    expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('afterSeq'))).toEqual(['4', '4']);
   });
 
   it('reconciles changes once per connect or reconnect and never from elapsed time', async () => {
@@ -208,9 +196,9 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
   it('recovers the exact Session transcript on scoped reconnect without Account profile or changes access', async () => {
     vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', '0');
     axiosGetMock.mockImplementation(async (url: string) => {
-      if (url.endsWith('/v1/sessions/s1/messages')) {
+      if (new URL(url).pathname === '/v1/sessions/s1/messages') {
         return { status: 200, data: { messages: [
-          { id: 'm18', seq: 18, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Continue' } } } },
+          { id: 'm18', seq: 18, createdAt: 18, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Continue' } } } },
         ] } };
       }
       return { status: 403, data: {} };
@@ -220,8 +208,8 @@ describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => 
 
     await runtime.syncChangesOnConnect({ reason: 'reconnect' });
 
-    expect(axiosGetMock.mock.calls.map(([url]) => url)).toEqual([expect.stringContaining('/v1/sessions/s1/messages')]);
-    expect(axiosGetMock.mock.calls[0][1]).toMatchObject({ params: { afterSeq: 17 } });
+    expect(axiosGetMock.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/sessions/s1/messages']);
+    expect(new URL(String(axiosGetMock.mock.calls[0][0])).searchParams.get('afterSeq')).toBe('17');
     expect(updates).toEqual([expect.objectContaining({ body: expect.objectContaining({ sid: 's1', message: expect.objectContaining({ id: 'm18' }) }) })]);
   });
 });

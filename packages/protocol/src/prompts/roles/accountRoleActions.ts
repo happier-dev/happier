@@ -2,6 +2,7 @@ import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.j
 import { RolesV1Schema, type RolesV1 } from '../../account/settings/rolesV1.js';
 import { readLegacyRolesV1, saveRolesV1WithLegacyMigration } from '../../account/settings/rolesV1Migration.js';
 import type { ActionExecutorDeps } from '../../actions/actionExecutor.js';
+import type { ActionExecuteFailure } from '../../actions/actionExecutionResult.js';
 import type { WorkflowDefinitionArtifactOperations } from '../../actions/executor/workflowDefinitions.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 import { buildRoleArtifactHeaderV1, RoleArtifactV1Schema } from './roleArtifactV1.js';
@@ -25,8 +26,21 @@ export type RoleSourceReaderParamsV1 = Readonly<{
   readRawAccountSettings?: () => Promise<Readonly<Record<string, unknown>>>;
 }>;
 
+class AccountRoleActionRefusalV1 extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
+}
+
 function refuse(code: string): never {
-  throw Object.assign(new Error(code), { code });
+  throw new AccountRoleActionRefusalV1(code);
+}
+
+/** Internal Action adapter: transport exceptions are not Role-owner refusals. */
+export function projectAccountRoleActionRefusalV1(error: unknown): ActionExecuteFailure | null {
+  return error instanceof AccountRoleActionRefusalV1
+    ? { ok: false, errorCode: error.code, error: error.message }
+    : null;
 }
 
 /** Shared Account source owner; hosts supply only Artifact/settings and plugin projection boundaries. */

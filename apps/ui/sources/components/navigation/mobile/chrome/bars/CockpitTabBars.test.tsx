@@ -1,14 +1,17 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
+import { renderScreen as renderRealScreen } from '@/dev/testkit/render/renderScreen';
+import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import type { ScmStatus, Session } from '@/sync/domains/state/storageTypes';
+import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let translationPrefix = 'en';
+let fixtureSessionServerId: string | undefined;
 const sessionMetadataState = vi.hoisted(() => ({
     metadata: { flavor: 'codex' } as Record<string, unknown> | null,
     metadataLayoutVersion: 0,
@@ -17,7 +20,7 @@ const sessionMetadataState = vi.hoisted(() => ({
 }));
 const collaborationAdmissionState = vi.hoisted(() => ({ admitted: false }));
 const scmState = vi.hoisted(() => ({
-    status: null as Record<string, unknown> | null,
+    status: null as Pick<ScmStatus, 'isDirty' | 'changedFileCount' | 'linesAdded' | 'linesRemoved'> | null,
 }));
 const badgeSettingsState = vi.hoisted(() => ({
     gitBadgeMode: 'changedFiles' as 'changedFiles' | 'diffLines' | 'off',
@@ -25,7 +28,6 @@ const badgeSettingsState = vi.hoisted(() => ({
 }));
 const cockpitPinsState = vi.hoisted(() => ({
     value: null as string[] | null,
-    set: vi.fn(),
 }));
 // The bar's width decides what fits; 800 is wide enough for everything, 390 is an iPhone.
 const windowState = vi.hoisted(() => ({ width: 800 }));
@@ -33,12 +35,7 @@ const swipeSettingsState = vi.hoisted(() => ({ always: false, swipe: true }));
 const reachableMachineState = vi.hoisted(() => ({
     target: null as { machineId: string; basePath: string } | null,
 }));
-const scopedSessionReadCalls = vi.hoisted(() => ({
-    session: [] as Array<[string, string | null | undefined]>,
-    scm: [] as Array<[string | null, string | null | undefined]>,
-    machine: [] as Array<[string, string | null | undefined]>,
-}));
-installNavigationCommonModuleMocks({
+installUiListsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -73,38 +70,65 @@ installNavigationCommonModuleMocks({
             getPreferredLanguage: () => translationPrefix,
         });
     },
-    // The canonical stub supplies the rest of the storage boundary — including
-    // `getStorage`, which the bar's exact-Home feature decisions read.
-    storage: async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
-        useSessionMetadata: () => sessionMetadataState.metadata,
-        useSession: (sessionId: string, serverId?: string | null) => {
-            scopedSessionReadCalls.session.push([sessionId, serverId]);
-            return {
-                id: 'sess_1',
-                metadata: sessionMetadataState.metadata,
-                metadataLayoutVersion: sessionMetadataState.metadataLayoutVersion,
-                ownerMetadataView: sessionMetadataState.ownerMetadataView,
-                accessLevel: sessionMetadataState.accessLevel,
-            };
-        },
-        useSessionProjectScmStatus: (sessionId: string | null, serverId?: string | null) => {
-            scopedSessionReadCalls.scm.push([sessionId, serverId]);
-            return scmState.status;
-        },
-        useSetting: (key: string) => {
-            if (key === 'tabBarGitBadgeMode') return badgeSettingsState.gitBadgeMode;
-            if (key === 'tabBarOpenTabsBadgeEnabled') return badgeSettingsState.openTabs;
-            if (key === 'tabBarShowLabels') return true;
-            if (key === 'tabBarSize') return 'regular';
-            if (key === 'sessionCockpitSwipeAlwaysSessionsEnabled') return swipeSettingsState.always;
-            if (key === 'sessionCockpitSwipeNavigationEnabled') return swipeSettingsState.swipe;
-            return undefined;
-        },
-        useLocalSettingMutable: (key: string) => key === 'sessionCockpitBarSurfaceIds'
-            ? [cockpitPinsState.value, cockpitPinsState.set]
-            : [null, vi.fn()],
-    }),
 });
+
+function readSessionRoute(node: React.ReactNode): { sessionId: string; serverId?: string } | null {
+    if (!React.isValidElement<Record<string, unknown>>(node)) return null;
+    if (typeof node.props.sessionId === 'string') return {
+        sessionId: node.props.sessionId,
+        ...(typeof node.props.serverId === 'string' ? { serverId: node.props.serverId } : {}),
+    };
+    for (const child of React.Children.toArray(node.props.children as React.ReactNode)) {
+        const route = readSessionRoute(child);
+        if (route) return route;
+    }
+    return null;
+}
+
+async function seedCockpitState(element: React.ReactNode) {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const route = readSessionRoute(element);
+    storage.setState({ settings: { ...storage.getState().settings,
+        tabBarGitBadgeMode: badgeSettingsState.gitBadgeMode, tabBarOpenTabsBadgeEnabled: badgeSettingsState.openTabs,
+        tabBarShowLabels: true, tabBarSize: 'regular',
+        sessionCockpitSwipeAlwaysSessionsEnabled: swipeSettingsState.always,
+        sessionCockpitSwipeNavigationEnabled: swipeSettingsState.swipe,
+    }, isDataReady: true });
+    storage.getState().applySettingsLocal({ sessionCockpitBarSurfaceIds: cockpitPinsState.value });
+    if (route) {
+        // These are producer fixture payloads; the presentation owner and store readers remain real.
+        const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
+        const serverId = fixtureSessionServerId ?? route.serverId;
+        const metadata = sessionMetadataState.metadata === null ? null : {
+            ...createSessionFixture().metadata,
+            machineId: target.machineId, path: target.basePath,
+            ...sessionMetadataState.metadata,
+        } as Session['metadata'];
+        const ownerMetadataView = sessionMetadataState.ownerMetadataView as Session['ownerMetadataView'];
+        const session = createSessionFixture({ id: route.sessionId, serverId,
+            metadata, metadataLayoutVersion: sessionMetadataState.metadataLayoutVersion, ownerMetadataView,
+            ...(sessionMetadataState.accessLevel ? { accessLevel: sessionMetadataState.accessLevel } : {}),
+        });
+        const machine = createMachineFixture({ id: target.machineId, active: true, activeAt: Date.now() });
+        storage.setState({ sessions: { [session.id]: session }, machines: { [machine.id]: machine },
+            machineListByServerId: serverId ? { [serverId]: [machine] } : {},
+        });
+        const status = scmState.status ? { branch: 'main', includedCount: 0, lastUpdatedAt: 1,
+            includedLinesAdded: 0, includedLinesRemoved: 0,
+            pendingLinesAdded: scmState.status.linesAdded, pendingLinesRemoved: scmState.status.linesRemoved,
+            linesChanged: scmState.status.linesAdded + scmState.status.linesRemoved, ...scmState.status } : null;
+        storage.getState().updateSessionProjectScmStatus(route.sessionId, status, serverId);
+    }
+}
+
+async function renderScreen(element: React.ReactElement) {
+    await seedCockpitState(element);
+    const screen = await renderRealScreen(element);
+    return { ...screen, update: async (next: React.ReactElement) => {
+        await act(async () => { await seedCockpitState(next); });
+        return screen.update(next);
+    } };
+}
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, any>) => React.createElement(
@@ -115,10 +139,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
             : props.trigger,
         ...(props.items ?? []).map((item: Record<string, any>) => item.rightElement),
     ),
-}));
-
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
 vi.mock('expo-blur', () => ({
@@ -133,13 +153,6 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 vi.mock('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon', () => ({
     SessionAgentCatalogIdentityIcon: (props: Record<string, unknown>) =>
         React.createElement('SessionAgentCatalogIdentityIcon', props),
-}));
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionReachableMachineTarget: (sessionId: string, serverId?: string | null) => {
-        scopedSessionReadCalls.machine.push([sessionId, serverId]);
-        return reachableMachineState.target;
-    },
 }));
 
 vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({
@@ -161,7 +174,11 @@ vi.mock('@/components/ui/layout/layout', () => ({
 }));
 
 describe('cockpit tab bars', () => {
-    afterEach(() => {
+    let initialStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState>;
+    beforeEach(async () => { initialStorageState = (await import('@/sync/domains/state/storageStore')).storage.getState(); });
+    afterEach(async () => {
+        standardCleanup();
+        (await import('@/sync/domains/state/storageStore')).storage.setState(initialStorageState, true);
         translationPrefix = 'en';
         sessionMetadataState.metadata = { flavor: 'codex' };
         sessionMetadataState.metadataLayoutVersion = 0;
@@ -171,19 +188,18 @@ describe('cockpit tab bars', () => {
         badgeSettingsState.gitBadgeMode = 'changedFiles';
         badgeSettingsState.openTabs = true;
         cockpitPinsState.value = null;
-        cockpitPinsState.set.mockClear();
         windowState.width = 800;
         swipeSettingsState.always = false;
         swipeSettingsState.swipe = true;
         reachableMachineState.target = null;
-        scopedSessionReadCalls.session.length = 0;
-        scopedSessionReadCalls.scm.length = 0;
-        scopedSessionReadCalls.machine.length = 0;
+        fixtureSessionServerId = undefined;
     });
 
     it('forwards the route Home to every session-scoped cockpit read', async () => {
         const { SessionCockpitTabBar } = await import('./SessionCockpitTabBar');
-        const screen = await renderScreen(
+        fixtureSessionServerId = 'home-a';
+        scmState.status = { isDirty: true, changedFileCount: 3, linesAdded: 42, linesRemoved: 8 };
+        const bar = () => (
             <SessionCockpitTabBar
                 sessionId="sess_1"
                 serverId="home-b"
@@ -191,12 +207,21 @@ describe('cockpit tab bars', () => {
                 terminalTabAvailable={true}
                 openDetailsTabCount={0}
                 onSurfacePress={() => {}}
-            />,
+            />
         );
+        const screen = await renderScreen(bar());
+        // A same-id live carrier from another Home cannot supply this route's identity or SCM.
+        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.agentId).toBe('');
+        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props.machineId).toBeNull();
+        expect(screen.findByTestId('session-cockpit-tab-git-badge')).toBeNull();
 
-        expect(scopedSessionReadCalls.session).toContainEqual(['sess_1', 'home-b']);
-        expect(scopedSessionReadCalls.scm).toContainEqual(['sess_1', 'home-b']);
-        expect(scopedSessionReadCalls.machine).toContainEqual(['sess_1', 'home-b']);
+        fixtureSessionServerId = 'home-b';
+        await screen.update(bar());
+        expect(screen.findByTestId('session-cockpit-tab-chat-agent-icon')?.props).toMatchObject({
+            agentId: 'codex', machineId: 'machine-1', serverId: 'home-b',
+        });
+        expect(screen.findByTestId('session-cockpit-tab-git-badge')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('3');
     });
 
     it('groups Project tabs into one tablist while preserving selection and navigation', async () => {
@@ -775,7 +800,8 @@ describe('cockpit tab bars', () => {
             });
             expect(stopPropagation).toHaveBeenCalledTimes(1);
             // The first change starts from the host defaults, then adds the plugin at the end.
-            expect(cockpitPinsState.set).toHaveBeenCalledWith(['browse', 'git', 'companion', 'terminal', 'plugin:acme.review:review-panel']);
+            expect((await import('@/sync/domains/state/storageStore')).storage.getState().localSettings.sessionCockpitBarSurfaceIds)
+                .toEqual(['browse', 'git', 'companion', 'terminal', 'plugin:acme.review:review-panel']);
             expect(onSurfacePress).not.toHaveBeenCalled();
 
             await act(async () => {

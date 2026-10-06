@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
@@ -91,6 +92,8 @@ async function renderMessageView(MessageView: typeof import('./MessageView').Mes
     );
 }
 
+await import('./MessageView');
+
 describe('MessageView (shrinkable transcript layout)', () => {
     afterEach(() => {
         standardCleanup();
@@ -113,7 +116,7 @@ describe('MessageView (shrinkable transcript layout)', () => {
             return style != null && typeof style === 'object' && 'maxWidth' in style && 'flexGrow' in style;
         });
 
-        expect(messageContent?.props?.style).toEqual(
+        expect(flattenTestStyle(messageContent?.props?.style)).toEqual(
             expect.objectContaining({
                 flexGrow: 1,
                 flexBasis: 0,
@@ -140,7 +143,7 @@ function findAncestorWithStyle(
 ) {
     let current = node?.parent ?? null;
     while (current) {
-        if (predicate(current.props?.style)) return current;
+        if (predicate(flattenTestStyle(current.props?.style))) return current;
         current = current.parent ?? null;
     }
     return null;

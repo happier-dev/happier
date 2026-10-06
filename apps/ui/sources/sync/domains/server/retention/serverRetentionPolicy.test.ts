@@ -65,7 +65,7 @@ describe('formatServerRetentionDisclosure', () => {
         });
 
         expect(formatServerRetentionDisclosure(policy)).toBe(
-            'This relay cleans up subagent transcripts after 7 days.',
+            'This Home cleans up subagent transcripts after 7 days.',
         );
     });
 
@@ -81,7 +81,7 @@ describe('formatServerRetentionDisclosure', () => {
         });
 
         expect(formatServerRetentionDisclosure(policy)).toBe(
-            'This relay cleans up inactive sessions after 30 days, subagent transcripts after 7 days.',
+            'This Home cleans up inactive sessions after 30 days, subagent transcripts after 7 days.',
         );
     });
 });

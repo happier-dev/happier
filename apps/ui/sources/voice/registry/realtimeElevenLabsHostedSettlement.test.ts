@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
   installDisconnectedServerSocketBoundary,
   restoreServerAccountForTest,
@@ -27,6 +28,8 @@ vi.mock('@elevenlabs/client', () => ({ Conversation: { startSession: sdk.startSe
 vi.mock('@/voice/runtime/voiceAudioMode', () => ({
   acquireVoiceBackgroundCallAudioMode: async () => ({ release: async () => undefined }),
 }));
+
+await loadSyncSingletonForTests();
 
 const sourceEntry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
   (entry) => entry.pluginId === 'happier.voice.elevenlabs',

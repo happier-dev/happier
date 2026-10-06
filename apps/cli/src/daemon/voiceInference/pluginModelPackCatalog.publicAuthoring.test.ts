@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { ingestPluginManifestV2, type ParsedPluginManifestV2 } from '@happier-dev/protocol';
+import { createPluginRuntimeOccurrenceId, ingestPluginManifestV2, type ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
 import {
   loadInstalledPlugins,
@@ -49,7 +49,13 @@ function projectLoadedPlugins(
     loadResult,
     provenance: 'external',
   });
-  const registry = createResolvedContributionRegistry(contributions);
+  const registry = createResolvedContributionRegistry({
+    ...contributions,
+    occurrenceIdsByPluginId: Object.fromEntries(loadResult.loadedPlugins.map((plugin) => [
+      plugin.pluginId,
+      createPluginRuntimeOccurrenceId(plugin.pluginId),
+    ])),
+  });
   const projection = buildPluginProjectionV2({ registry, generation: 12 });
   const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
     plugins: loadResult.loadedPlugins.map((plugin) => ({

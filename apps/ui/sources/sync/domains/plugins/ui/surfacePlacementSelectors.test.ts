@@ -58,8 +58,12 @@ function placement(input: Readonly<{
         renderer: { kind: 'declarative', contributionId: input.rendererId },
         display: { titleKey: 'title' },
         ...(input.legacyOrder === undefined ? {} : { order: input.legacyOrder }),
-        ...(input.featureGate === undefined ? {} : { featureGate: input.featureGate }),
-        availability: input.availability ?? { state: 'available', reason: 'available', diagnostics: [] },
+        availability: {
+            ...(input.availability ?? { state: 'available', reason: 'available', diagnostics: [] }),
+            ...(input.featureGate === undefined ? {} : {
+                when: { fact: 'host.feature', operator: 'enabled', value: input.featureGate },
+            }),
+        },
     };
 }
 

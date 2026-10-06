@@ -809,8 +809,12 @@ describe('ProviderConnectionModelsSection', () => {
         await act(async () => { await refreshButton?.props.onPress?.(); });
 
         expect(alert).not.toHaveBeenCalled();
-        expect(screen.findAllByType('Item').map((item) => item.props.title))
-            .toContain('settingsProviders.errors.actions.retry');
+        await vi.waitFor(() => expect(screen.findByTestId('provider-error:agent_error')).not.toBeNull());
+        const recovery = screen.findByTestId('provider-error-action:agent_error');
+        expect(recovery).not.toBeNull();
+        await act(async () => { await recovery?.props.onPress?.(); });
+        expect(routerPush).toHaveBeenCalledWith('/(app)/settings/providers/pc_a');
+        expect(probeProviderConnection).toHaveBeenCalledOnce();
     });
 
     it('contains a typed model-load transport failure in the same inline recovery owner', async () => {

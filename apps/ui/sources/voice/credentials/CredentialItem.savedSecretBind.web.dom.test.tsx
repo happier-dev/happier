@@ -10,35 +10,26 @@
  * worked in the running app, because they invoked the row handler directly or
  * stopped at "a callback fired". Everything between the click and the write is
  * real here; only genuine system boundaries (the account-settings transport, the
- * console sink, the encryption-mode probe) are replaced.
+ * console sink, and unavailable native adapters) are replaced.
  */
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import 'fake-indexeddb/auto';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-/**
- * Stands in for the account-settings transport only. It behaves the way the real
- * one does for a successful write — run the caller's reducer against the stored
- * raw and keep the result as the new stored state — so a test cannot pass by
- * reporting success over a write that produced nothing.
- */
 const boundary = vi.hoisted(() => ({
-    /** Set true to reproduce a transport that reports success and stores nothing. */
-    reportAppliedWithoutApplying: false,
-    appliedRaw: [] as Record<string, unknown>[],
-    mutateAccountSettings: vi.fn(),
-    mutateAccountSettingsOnce: vi.fn(),
     log: vi.fn<(message: string) => void>(),
-    settings: null as Settings | null,
-    rawSettings: {} as Record<string, unknown>,
-    listeners: new Set<() => void>(),
 }));
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+installDisconnectedServerSocketBoundary();
 
 vi.mock('@/log', () => ({ log: { log: boundary.log } }));
 
@@ -79,67 +70,14 @@ vi.mock('react-native-keyboard-controller', () => ({
     ),
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const React = await import('react');
-    const { settingsParse } = await import('@/sync/domains/settings/settings');
-    const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    const empty = settingsParse({});
-    const readSettings = () => boundary.settings ?? empty;
-    // The live account snapshot is a subscribed store: a settings write
-    // re-renders every reader. A non-reactive stub would let the row keep
-    // showing a stale label no matter what the write stored.
-    const subscribe = (listener: () => void) => {
-        boundary.listeners.add(listener);
-        return () => { boundary.listeners.delete(listener); };
-    };
-    return createStorageModuleStub({
-        storage: createLiveStorageStoreMock(() => ({ settings: readSettings() })),
-        useSettings: () => React.useSyncExternalStore(subscribe, readSettings, readSettings),
-    });
-});
-
-vi.mock('@/sync/store/hooks', async () => ({
-    ...await import('@/sync/domains/state/storage'),
-    useSettingsVersion: () => 7,
-    useSetting: (key: string) => (boundary.settings as unknown as Record<string, unknown> | null)?.[key],
-    useLocalSetting: (key: string) => (key === 'uiFontScale' ? 1 : undefined),
-}));
-
-const syncSingleton = {
-    getCredentials: () => ({ token: 'account-token' }),
-    mutateAccountSettings: boundary.mutateAccountSettings,
-    mutateAccountSettingsOnce: boundary.mutateAccountSettingsOnce,
-};
-
-vi.mock('@/sync/sync', () => ({ sync: syncSingleton }));
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({ getSyncSingleton: () => syncSingleton }));
-
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
-    fetchAccountEncryptionMode: vi.fn(async () => ({ mode: 'e2ee' })),
-}));
-
-vi.mock('./VoiceRawCredentialAccessReview', () => ({
-    VoiceRawCredentialAccessReview: () => null,
-}));
-
-// The menu trigger is not the defect under test (it is observed working in the
-// running app); the picker it opens is. This stands in for the row's dropdown so
-// the gesture can be started, and nothing downstream of it is replaced.
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: {
-        itemTrigger?: { title?: string; detailFormatter?: () => string };
-        onSelect: (id: string) => void;
-    }) => React.createElement(
-        'button',
-        {
-            'data-testid': 'credential-gesture-menu',
-            onClick: () => props.onSelect('useSavedSecret'),
-        },
-        React.createElement('span', { 'data-testid': 'credential-detail' },
-            props.itemTrigger?.detailFormatter?.() ?? ''),
-    ),
-}));
+// Native crypto adapters are unavailable in this Node/browser harness; the
+// Protocol codecs, Account-purpose encryption and settings writer stay real.
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
+await loadSyncSingletonForTests();
 
 const { createVoiceProviderRegistry } = await import('@/voice/registry/providerRegistry');
 const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } = await import(
@@ -156,7 +94,7 @@ const SECRETS: SavedSecret[] = [
         kind: 'apiKey',
         encryptedValue: {
             _isSecretValue: true,
-            encryptedValue: { t: 'enc-v1', c: 'Y2lwaGVydGV4dC1sZWdhY3k=' },
+            value: 'fixture-legacy-key',
         },
         createdAt: 1,
         updatedAt: 1,
@@ -167,7 +105,7 @@ const SECRETS: SavedSecret[] = [
         kind: 'apiKey',
         encryptedValue: {
             _isSecretValue: true,
-            encryptedValue: { t: 'enc-v1', c: 'Y2lwaGVydGV4dC1saXZl' },
+            value: 'fixture-live-key',
         },
         createdAt: 2,
         updatedAt: 2,
@@ -175,32 +113,6 @@ const SECRETS: SavedSecret[] = [
 ];
 
 let mounted: Readonly<{ root: Root; container: HTMLElement }> | null = null;
-
-async function installAccountSettingsTransport(): Promise<void> {
-    const { settingsParse } = await import('@/sync/domains/settings/settings');
-    const store = (next: Record<string, unknown>) => {
-        boundary.appliedRaw.push(next);
-        boundary.rawSettings = next;
-        boundary.settings = settingsParse(next);
-        for (const listener of [...boundary.listeners]) listener();
-    };
-    boundary.mutateAccountSettingsOnce.mockImplementation(async (input: {
-        mutate: (raw: Record<string, unknown>) => { settings: Record<string, unknown>; value: unknown };
-    }) => {
-        // The reducer always runs — the real owner runs it before deciding
-        // whether the outgoing state differs from the stored state — but a
-        // "reports applied, stores nothing" run keeps the account unchanged.
-        const produced = input.mutate(boundary.rawSettings);
-        if (!boundary.reportAppliedWithoutApplying) store(produced.settings);
-        return { status: 'applied' as const, settingsVersion: 8, value: produced.value };
-    });
-    boundary.mutateAccountSettings.mockImplementation(async (
-        mutate: (raw: Record<string, unknown>) => Record<string, unknown>,
-    ) => {
-        const produced = mutate(boundary.rawSettings);
-        if (!boundary.reportAppliedWithoutApplying) store(produced);
-    });
-}
 
 afterEach(async () => {
     const current = mounted;
@@ -210,10 +122,8 @@ afterEach(async () => {
         current.container.remove();
     }
     removeExternalVoiceProviderRegistration(registrationToken);
-    boundary.reportAppliedWithoutApplying = false;
-    boundary.appliedRaw = [];
-    boundary.mutateAccountSettings.mockReset();
-    boundary.mutateAccountSettingsOnce.mockReset();
+    await account?.dispose();
+    account = undefined;
     boundary.log.mockClear();
 });
 
@@ -224,12 +134,14 @@ function voiceCredentialGestureRecords(): string[] {
 }
 
 function appliedVoiceBinding(): Record<string, unknown> | null {
-    const last = boundary.appliedRaw[boundary.appliedRaw.length - 1];
-    const voice = last?.voiceSettingsV1 as { credentialBindings?: unknown } | undefined;
-    const bindings = Array.isArray(voice?.credentialBindings) ? voice.credentialBindings : [];
-    return (bindings as Record<string, unknown>[]).find((binding) => (
+    const bindings = account?.persistedSettings.voiceSettingsV1.credentialBindings ?? [];
+    return bindings.find((binding) => (
         binding.credentialSlotId === 'api-key'
     )) ?? null;
+}
+
+function credentialDetail(): string {
+    return requireNode('voice-credential').textContent ?? '';
 }
 
 function query(testID: string): HTMLElement | null {
@@ -255,14 +167,31 @@ async function flush(): Promise<void> {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
+async function openSavedSecretPicker(): Promise<void> {
+    const trigger = requireNode('voice-credential').querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
+    if (!trigger) throw new Error('missing actual Voice credential dropdown trigger');
+    await act(async () => { pressWithPointer(trigger); });
+    await vi.waitFor(async () => {
+        await flush();
+        expect(query('dropdown-option-useSavedSecret')).not.toBeNull();
+    });
+    await act(async () => { pressWithPointer(requireNode('dropdown-option-useSavedSecret')); });
+    // The real dropdown commits after teardown on a frame (or its owning
+    // fallback). Await the picker, not an invented number of event-loop turns.
+    await vi.waitFor(async () => {
+        await flush();
+        expect(document.querySelector('[data-testid^="saved-secret:"]')).not.toBeNull();
+    });
+}
+
 async function renderRow(options: Readonly<{
     credentialSourcePurpose?: string;
     initialRawSettings?: Record<string, unknown>;
     multiSource?: boolean;
     withRecipientContract?: boolean;
-}> = {}): Promise<void> {
-    const { settingsParse } = await import('@/sync/domains/settings/settings');
+}> = {}): Promise<string | null> {
     const { ModalProvider } = await import('@/modal');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { VoiceCredentialItem } = await import('./CredentialItem');
     const {
         VoiceProviderContributionSchema,
@@ -309,6 +238,7 @@ async function renderRow(options: Readonly<{
             presentation: { title: 'ElevenLabs' },
         })
         : null;
+    const recipientContractDigest = recipientContract ? createRecipientContractDigestV1(recipientContract) : null;
 
     const declaration = VoiceProviderContributionSchema.parse({
         id: 'conversation',
@@ -366,9 +296,19 @@ async function renderRow(options: Readonly<{
         adapter: null,
     });
 
-    boundary.rawSettings = options.initialRawSettings ?? { secrets: SECRETS };
-    boundary.settings = settingsParse(boundary.rawSettings);
-    await installAccountSettingsTransport();
+    account = await createSecretSettingsTestHarness({ mode: 'e2ee' });
+    const { sync } = await import('@/sync/sync');
+    const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
+    requireOneShotAccountSettingsMutationApplied(await sync.mutateAccountSettingsOnce({
+        expectedSettingsScope: account.scope,
+        mutate: (raw) => ({
+            settings: { ...raw, ...(options.initialRawSettings ?? { secrets: SECRETS }) },
+            value: undefined,
+        }),
+    }));
+    expect(JSON.stringify(account.settingsWrites)).not.toContain('fixture-live-key');
+    expect(JSON.stringify(account.settingsWrites)).not.toContain('fixture-legacy-key');
+    account.settingsWrites.length = 0;
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -377,25 +317,26 @@ async function renderRow(options: Readonly<{
 
     await act(async () => {
         root.render(
-            <ModalProvider>
-                <VoiceCredentialItem
-                    testID="voice-credential"
-                    title="ElevenLabs API Key"
-                    promptTitle="ElevenLabs API Key"
-                    promptDescription="Paste the key"
-                    contribution={CONTRIBUTION}
-                    credentialSlotId="api-key"
-                    credentialSourcePurpose={options.credentialSourcePurpose}
-                    credentialSourceDeclaration={declaration}
-                    recipientContract={recipientContract}
-                    recipientContractDigest={recipientContract
-                        ? createRecipientContractDigestV1(recipientContract)
-                        : null}
-                    disclosePlainStorage={false}
-                />
-            </ModalProvider>,
+            <InjectedAuthProvider credentials={account!.credentials}>
+                <ModalProvider>
+                    <VoiceCredentialItem
+                        testID="voice-credential"
+                        title="ElevenLabs API Key"
+                        promptTitle="ElevenLabs API Key"
+                        promptDescription="Paste the key"
+                        contribution={CONTRIBUTION}
+                        credentialSlotId="api-key"
+                        credentialSourcePurpose={options.credentialSourcePurpose}
+                        credentialSourceDeclaration={declaration}
+                        recipientContract={recipientContract}
+                        recipientContractDigest={recipientContractDigest}
+                        disclosePlainStorage={false}
+                    />
+                </ModalProvider>
+            </InjectedAuthProvider>,
         );
     });
+    return recipientContractDigest;
 }
 
 /**
@@ -414,9 +355,7 @@ const CASE_TIMEOUT_MS = 180_000;
 describe('Voice credential row → saved-secret picker → account-settings write', () => {
     it('writes the selected SavedSecret when a real click lands on a picker row', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         // The picker is open and lists the account's stored records.
         const row = requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666');
@@ -427,22 +366,19 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         // Asserting the call alone is what let three rounds of tests pass against
         // a feature that never worked: the contract is the CONTENT that reached
         // the account, and that the row now reports the record as in use.
-        expect(boundary.mutateAccountSettingsOnce).toHaveBeenCalledTimes(1);
+        expect(account!.settingsWrites).toHaveLength(1);
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSlotId: 'api-key',
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
         });
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.setOnAccount');
+        expect(credentialDetail()).toContain('settingsVoice.local.voiceCredential.setOnAccount');
         expect(voiceCredentialGestureRecords()).toEqual([]);
     }, CASE_TIMEOUT_MS);
 
     it('writes a colon-bearing SavedSecret id unchanged', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:voice:realtime_elevenlabs:api_key'));
@@ -480,33 +416,32 @@ describe('Voice credential row → saved-secret picker → account-settings writ
                 },
             },
         });
+        const savedRecordsBefore = account!.persistedSettings.secrets;
 
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
         await flush();
 
-        expect(boundary.mutateAccountSettingsOnce).toHaveBeenCalledTimes(1);
+        expect(account!.settingsWrites).toHaveLength(1);
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSlotId: 'api-key',
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
         });
-        expect(boundary.rawSettings.connectedAccountPurposeBindingsV1).toEqual({
+        expect(account!.persistedSettings.connectedAccountPurposeBindingsV1).toEqual({
             v: 1,
             bindings: [],
         });
-        expect(boundary.rawSettings.secrets).toEqual([SECRETS[1]]);
-        expect(JSON.stringify(boundary.rawSettings)).not.toContain('sk-');
+        expect(account!.persistedSettings.secrets).toEqual(savedRecordsBefore);
+        expect(savedRecordsBefore.map((secret) => secret.id)).toEqual([SECRETS[1]!.id]);
+        expect(JSON.stringify(account!.settingsWrites)).not.toContain('fixture-live-key');
     }, CASE_TIMEOUT_MS);
 
     it('reaches the write through the recipient-contract approval the live slot requires', async () => {
-        await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
-
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        const approvedDigest = await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
@@ -514,40 +449,37 @@ describe('Voice credential row → saved-secret picker → account-settings writ
 
         const confirm = query('web-modal-confirm');
         expect(confirm, 'the recipient approval must still be readable after the picker closes').not.toBeNull();
+        expect(account!.settingsWrites).toHaveLength(0);
+        expect(appliedVoiceBinding()).toBeNull();
         await act(async () => { pressWithPointer(confirm!); });
         await flush();
 
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': '2cd702f5-1111-4222-8333-444455556666' } },
+            approvedRecipientContractDigest: approvedDigest,
         });
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.setOnAccount');
+        expect(account!.settingsWrites).toHaveLength(1);
+        expect(credentialDetail()).toContain('settingsVoice.local.voiceCredential.setOnAccount');
     }, CASE_TIMEOUT_MS);
 
-    /**
-     * The live failure mode this whole corridor kept missing: the account-settings
-     * owner reports the mutation as applied while the stored state never gains the
-     * binding (an outgoing state equal to the stored state is applied WITHOUT a
-     * request). Every earlier test stopped at "the boundary was called", so this
-     * one is indistinguishable from success for them.
-     */
-    it('records one bounded failure when the write reports success but binds nothing', async () => {
+    it('records one bounded failure when the Home refuses the settings compare-and-set', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-        boundary.reportAppliedWithoutApplying = true;
-
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        const before = account!.persistedSettings.voiceSettingsV1;
+        account!.setRejectSettingsWrites(true);
+        await openSavedSecretPicker();
         await act(async () => {
             pressWithPointer(requireNode('saved-secret:2cd702f5-1111-4222-8333-444455556666'));
         });
         await flush();
 
-        expect(requireNode('credential-detail').textContent)
-            .toBe('settingsVoice.local.voiceCredential.notSetOnAccount');
+        expect(account!.settingsWrites).toHaveLength(1);
+        expect(account!.persistedSettings.voiceSettingsV1).toEqual(before);
+        expect(appliedVoiceBinding()).toBeNull();
+        expect(credentialDetail()).toContain('settingsVoice.local.voiceCredential.notSetOnAccount');
         expect(voiceCredentialGestureRecords()).toHaveLength(1);
-        expect(voiceCredentialGestureRecords()[0]).toContain('saved_secret_binding_not_effective');
-        expect(voiceCredentialGestureRecords()[0]).toContain('"outcome":"unapplied"');
+        expect(voiceCredentialGestureRecords()[0]).toContain('voice_credential_source_conflict');
+        expect(voiceCredentialGestureRecords()[0]).toContain('"outcome":"failed"');
     }, CASE_TIMEOUT_MS);
 
     /**
@@ -557,18 +489,18 @@ describe('Voice credential row → saved-secret picker → account-settings writ
      */
     it('records one bounded failure when the picker closes without a selection', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-
-        await act(async () => { pressWithPointer(requireNode('credential-gesture-menu')); });
-        await flush();
+        await openSavedSecretPicker();
 
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
         expect(dialog).not.toBeNull();
         await act(async () => {
-            dialog!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+            (document.activeElement ?? dialog!).dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Escape', bubbles: true, cancelable: true,
+            }));
         });
         await flush();
 
-        expect(boundary.mutateAccountSettingsOnce).not.toHaveBeenCalled();
+        expect(account!.settingsWrites).toHaveLength(0);
         expect(voiceCredentialGestureRecords()).toHaveLength(1);
         expect(voiceCredentialGestureRecords()[0]).toContain('saved_secret_selection_dismissed');
     }, CASE_TIMEOUT_MS);

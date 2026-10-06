@@ -1,17 +1,12 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, createSessionListRenderableSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
-const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
-const useHasUnreadMessagesSpy = vi.hoisted(() => vi.fn(() => false));
-
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
@@ -21,14 +16,6 @@ vi.mock('react-native-gesture-handler', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        pillLabel: () => ({ fontSize: 10, lineHeight: 12 }),
-        tabular: () => ({ fontVariant: ['tabular-nums'] }),
-    },
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -41,17 +28,16 @@ installSessionShellCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useHasUnreadMessages: useHasUnreadMessagesSpy,
-            useProfile: useProfileSpy,
-            useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
-            useSessionListMeaningfulActivityAt: () => 0,
-            useSetting: () => false,
-        });
-    },
+    storage: async (importOriginal) => importOriginal(),
 });
+
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+
+const storageModule = await import('@/sync/domains/state/storage');
+const useSessionListRenderableWithServerScopeSpy = vi.spyOn(storageModule, 'useSessionListRenderableWithServerScope');
+const useHasUnreadMessagesSpy = vi.spyOn(storageModule, 'useHasUnreadMessages');
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -63,10 +49,6 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
 
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
-}));
-
-vi.mock('@/components/sessions/pendingBadge', () => ({
-    formatPendingCountBadge: () => null,
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
@@ -81,20 +63,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));
 
-vi.mock('@/utils/errors/errors', () => ({
-    HappyError: class HappyError extends Error {},
-}));
-
-vi.mock('@/utils/time/formatShortRelativeTime', () => ({
-    formatShortRelativeTime: () => '',
-}));
-
-vi.mock('@/sync/ops', () => ({
-    sessionStopWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
-    sessionRename: vi.fn(async () => ({ success: true })),
-}));
-
 vi.mock('./sessionPinIcons', () => ({
     PinIcon: (props: Record<string, unknown>) => React.createElement('PinIcon', props),
     PinSlashIcon: (props: Record<string, unknown>) => React.createElement('PinSlashIcon', props),
@@ -102,30 +70,6 @@ vi.mock('./sessionPinIcons', () => ({
 
 vi.mock('./sessionTagIcons', () => ({
     TagIcon: (props: Record<string, unknown>) => React.createElement('TagIcon', props),
-}));
-
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    isUntitledSessionName: (name: string) => name === 'session.untitled',
-    getSessionName: () => 'session.untitled',
-    getSessionSubtitle: () => '',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        state: 'disconnected',
-        isConnected: false,
-        statusText: '',
-        statusColor: 'status-color',
-        statusDotColor: 'dot-color',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        state: 'disconnected',
-        isConnected: false,
-        statusText: '',
-        shouldShowStatus: false,
-        statusColor: 'status-color',
-        statusDotColor: 'dot-color',
-        isPulsing: false,
-    }),
 }));
 
 function createMetadataPendingSession(id: string) {
@@ -141,7 +85,7 @@ function createMetadataPendingSession(id: string) {
 }
 
 function createMetadataUnavailableSession(id: string): SessionListRenderableSession & { metadataUnavailable?: boolean } {
-    return {
+    return createSessionListRenderableSessionFixture({
         id,
         seq: 1,
         createdAt: 1,
@@ -156,7 +100,7 @@ function createMetadataUnavailableSession(id: string): SessionListRenderableSess
         thinkingAt: 0,
         presence: 1,
         metadataUnavailable: true,
-    };
+    });
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -175,7 +119,6 @@ function getRawStyle(screen: Awaited<ReturnType<typeof renderScreen>>, testID: s
 
 describe('SessionItem loading identity', () => {
     beforeEach(() => {
-        useProfileSpy.mockClear();
         useSessionListRenderableWithServerScopeSpy.mockClear();
         useHasUnreadMessagesSpy.mockClear();
     });

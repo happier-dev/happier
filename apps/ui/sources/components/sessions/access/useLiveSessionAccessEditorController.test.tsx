@@ -12,7 +12,15 @@ import {
 } from '@happier-dev/protocol';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { encodeBase64 } from '@/encryption/base64';
@@ -25,7 +33,6 @@ import { storage } from '@/sync/domains/state/storage';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
-import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { isDataKeyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 
@@ -33,13 +40,7 @@ import { useLiveSessionAccessEditorController } from './useLiveSessionAccessEdit
 import type { SessionAccessEditorController } from './sessionAccessEditorTypes';
 
 /** The manager's real content key pair; persisted credentials carry its secret as `machineKey`. */
-const MANAGER = vi.hoisted(() => ({ serverId: '', accountId: 'manager', keys: null as null | { publicKey: Uint8Array; secretKey: Uint8Array },
-    /**
-     * Data-key credentials as a current device persists them: the Account content
-     * key pair and no legacy recovery secret. Suites that predate owner-metadata
-     * sealing keep their historical placeholder secret beside the key pair.
-     */
-    dataKeyOnly: false }));
+const MANAGER = vi.hoisted(() => ({ serverId: '', accountId: 'manager', keys: null as null | { publicKey: Uint8Array; secretKey: Uint8Array } }));
 const TEAM_DIRECTORY = vi.hoisted(() => ({ items: [] as Array<{
     id: string;
     name: string;
@@ -56,7 +57,6 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         tokenStorage: {
             getCredentialsForServerUrl: async (_url, options) => options?.serverId !== MANAGER.serverId ? null : {
                 token: `e30.${Buffer.from(JSON.stringify({ sub: MANAGER.accountId })).toString('base64url')}.signature`,
-                ...(MANAGER.dataKeyOnly ? {} : { secret: 'test-secret' }),
                 ...(MANAGER.keys ? {
                     encryption: {
                         publicKey: base64.encodeBase64(MANAGER.keys.publicKey, 'base64'),
@@ -67,26 +67,13 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         },
     });
 });
-vi.mock('@/sync/ops/teams/teamActionClient', () => ({
-    runTeamAction: vi.fn(async (params: Readonly<{ actionId: string; input: Readonly<{ query?: string }> }>) => {
-        if (TEAM_DIRECTORY.failed) return { kind: 'failed', failure: { kind: 'unreachable', retryable: true, code: null } };
-        // The Home answers the bounded member lookup with exact `accountId` equality,
-        // which is what the ratified `teams.members.list` query already supports.
-        if (params.actionId === 'teams.members.list') {
-            TEAM_MEMBER_LOOKUPS.queries.push(params.input.query ?? '');
-            return { kind: 'succeeded', value: {
-                items: TEAM_MEMBER_LOOKUPS.members.filter((member) => member.accountId === params.input.query),
-                nextCursor: null,
-            } };
-        }
-        return { kind: 'succeeded', value: { items: TEAM_DIRECTORY.items, nextCursor: null } };
-    }),
-}));
-
 const TEAM_MEMBER_LOOKUPS = vi.hoisted(() => ({
     queries: [] as string[],
     members: [] as Array<{ accountId: string; account: { firstName: string | null; lastName: string | null; username: string | null; avatarUrl: string | null } }>,
 }));
+
+installDisconnectedServerSocketBoundary();
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
 
 const SESSION_ID = 'collaboration-session';
 const CAPABILITIES = {
@@ -171,6 +158,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
     MANAGER.keys = options.encrypted ? tweetnacl.box.keyPair() : null;
 
     const features = createRootLayoutFeaturesResponse();
+    if (!tryWriteServerEnabledBitInPlace(features, 'teams', true)) throw new Error('Expected the canonical Teams feature bit');
     if (!tryWriteServerEnabledBitInPlace(features, 'sharing.session', options.sharing)) {
         throw new Error('The Session sharing feature bit could not be written by its own writer');
     }
@@ -180,6 +168,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
     // Only Session-scoped requests are recorded. Direct Account sealing precedes
     // the atomic grant request; the broader audience pass follows acknowledgement.
     const paths: string[] = [];
+    const teamPaths: string[] = [];
     /** The exact collection view each envelope GET asked for, in order. */
     const envelopeStates: string[] = [];
     const recipientEnvelopeItem = createRecipientEnvelopeItem();
@@ -211,7 +200,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
     const sessionDataKey = new Uint8Array(32).fill(11);
     // The Home stores the fingerprint of the content key this Account published:
     // the one its persisted credentials derive, exactly as the client derives it.
-    const managerCredentials = MANAGER.keys && MANAGER.dataKeyOnly ? {
+    const managerCredentials = MANAGER.keys ? {
         token: 'manager-token',
         encryption: {
             publicKey: encodeBase64(MANAGER.keys.publicKey, 'base64'),
@@ -231,7 +220,30 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
 
     setRuntimeFetch(async (url, init) => {
         const path = new URL(String(url)).pathname;
+        if (path === '/v2/cursor') return Response.json({ cursor: '0' });
         if (path === '/v1/auth/ping') return new Response('{}');
+        if (path === '/v1/teams/list' || path === '/v1/teams/members/list') {
+            teamPaths.push(path);
+            if (TEAM_DIRECTORY.failed) throw new Error('Team directory network unavailable');
+            if (path === '/v1/teams/members/list') {
+                const input = JSON.parse(String(init?.body)) as { query?: string; teamId: string };
+                TEAM_MEMBER_LOOKUPS.queries.push(input.query ?? '');
+                return Response.json({
+                    items: TEAM_MEMBER_LOOKUPS.members.filter((member) => member.accountId === input.query).map((member) => teamMembershipFixture({
+                        teamId: input.teamId,
+                        accountId: member.accountId,
+                        account: member.account,
+                    })),
+                    nextCursor: null,
+                });
+            }
+            return Response.json({
+                items: TEAM_DIRECTORY.items.map((team) => teamSummaryFixture({
+                    id: team.id, name: team.name, policy: teamPolicyFixture(team.policy),
+                })),
+                nextCursor: null,
+            });
+        }
         if (path.startsWith('/v2/sessions/')) paths.push(`${init?.method === 'PATCH' ? 'PATCH ' : ''}${path}`);
         // The shared Action front door reads the Account's own settings before it
         // dispatches; this Home has never stored any.
@@ -365,13 +377,34 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
                 nextCursor: page.nextCursor ?? null,
             }));
         }
-        throw new Error(`Unexpected request ${path}`);
+        // This Home fixture exposes only the domain surfaces exercised here.
+        return Response.json({ error: 'not_found' }, { status: 404 });
     });
 
-    return { profile, paths, envelopeStates, state, sessionDataKey, artifacts };
+    await setActiveServerId(profile.id, { scope: 'device' });
+    const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
+    if (!credentials) throw new Error('Expected the manager Account credentials');
+    await restoreConnectionToActiveServer(credentials);
+    // Cold restore loads this Account's persisted baseline; the test's deliberate
+    // waiver belongs to that actual scope after restoration.
+    waiveSharedActionConfirmation({ serverId: profile.id, accountId: MANAGER.accountId });
+    return { profile, paths, teamPaths, envelopeStates, state, sessionDataKey, artifacts };
 }
 
-function Probe(props: Readonly<{ serverId: string; sessionId?: string; metadataLayoutVersion?: number; onRender: (controller: SessionAccessEditorController) => void }>) {
+type ProbeProps = Readonly<{ serverId: string; sessionId?: string; metadataLayoutVersion?: number; onRender: (controller: SessionAccessEditorController) => void }>;
+
+function Probe(props: ProbeProps) {
+    const credentials: AuthCredentials = {
+        token: `e30.${Buffer.from(JSON.stringify({ sub: MANAGER.accountId })).toString('base64url')}.signature`,
+        ...(MANAGER.keys ? { encryption: {
+            publicKey: encodeBase64(MANAGER.keys.publicKey, 'base64'),
+            machineKey: encodeBase64(MANAGER.keys.secretKey, 'base64'),
+        } } : {}),
+    };
+    return <AuthProvider initialCredentials={credentials}><ControllerProbe {...props} /></AuthProvider>;
+}
+
+function ControllerProbe(props: ProbeProps) {
     props.onRender(useLiveSessionAccessEditorController({
         scope: { serverId: props.serverId, accountId: MANAGER.accountId },
         sessionId: props.sessionId ?? SESSION_ID,
@@ -390,16 +423,21 @@ async function mountController(serverId: string, options?: Readonly<{ metadataLa
     return () => latest!;
 }
 
-beforeEach(() => {
-    MANAGER.dataKeyOnly = false;
+beforeEach(async () => {
+    webLocks = installWebLockManagerMock();
+    await loadSyncSingletonForTests();
     TEAM_DIRECTORY.failed = false;
     TEAM_MEMBER_LOOKUPS.queries = [];
     TEAM_MEMBER_LOOKUPS.members = [];
 });
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await disconnectActiveServerConnection();
     storage.setState(storage.getInitialState(), true);
+    MANAGER.serverId = '';
+    MANAGER.keys = null;
+    webLocks.restore();
 });
 
 describe('useLiveSessionAccessEditorController encrypted-access preparation', () => {
@@ -471,7 +509,7 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         await act(async () => { controller().actions.confirmContext(); });
         await vi.waitFor(() => expect(controller().model.context?.primaryTeamId).toBe('team-acme'));
         expect(home.paths).toContain('/v2/sessions/access-context/set');
-        expect(runTeamAction).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'teams.list' }));
+        expect(home.teamPaths).toContain('/v1/teams/list');
     });
 
     it('keeps a typed context denial visible without changing the acknowledged context', async () => {
@@ -932,7 +970,6 @@ function approvalIds(home: Readonly<{ artifacts: ReturnType<typeof createArtifac
 // and observed by the editor through the real approval reader.
 describe('useLiveSessionAccessEditorController deferred approval', () => {
     it('renders an approval-routed add as pending, holds further edits, and applies the executed approval once', async () => {
-        MANAGER.dataKeyOnly = true;
         const home = await setupHome({ sharing: true, encrypted: true, sessionEncrypted: false });
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.grant.set']);
         const controller = await mountController(home.profile.id);
@@ -966,7 +1003,6 @@ describe('useLiveSessionAccessEditorController deferred approval', () => {
     });
 
     it('releases the pending state without any change when the approval is rejected', async () => {
-        MANAGER.dataKeyOnly = true;
         const home = await setupHome({ sharing: true, encrypted: true, sessionEncrypted: false });
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.grant.set']);
         const controller = await mountController(home.profile.id);
@@ -1019,7 +1055,6 @@ describe('useLiveSessionAccessEditorController historical (0.2) Session', () => 
     }
 
     it('offers its owner an explicit update that splits it through the one tuple owner without changing content', async () => {
-        MANAGER.dataKeyOnly = true;
         const home = await setupHome({ sharing: true, encrypted: true });
         await storePredecessorSession(home);
         const controller = await mountController(home.profile.id, { metadataLayoutVersion: 0 });
@@ -1052,7 +1087,6 @@ describe('useLiveSessionAccessEditorController historical (0.2) Session', () => 
     });
 
     it('splits the Session before a new share reaches the grant writer', async () => {
-        MANAGER.dataKeyOnly = true;
         const home = await setupHome({ sharing: true, encrypted: true });
         await storePredecessorSession(home);
         const controller = await mountController(home.profile.id, { metadataLayoutVersion: 0 });

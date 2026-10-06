@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PluginUiExecuteActionRequestV1Schema, PluginUiJsonValueV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createCanonicalPluginReactNativeHostApiAdapter } from './hostApi';
 
 /**
  * RN-DOGFOOD — mounts the REAL inspector RN surface source
@@ -47,20 +50,32 @@ function createInspectorTabSurface(
  * installs no `openSurface`, so the surface renders no page-navigation control
  * in these cases.
  */
-const INSPECTOR_TAB_HOST_API_VERSION = () => ({
-    apiVersion: '1.0.0',
-    wireVersion: 1,
-    methods: ['executeAction'] as const,
-});
+const inspectorHostAdapters: ReturnType<typeof createCanonicalPluginReactNativeHostApiAdapter>[] = [];
 
 function createInspectorTabHostApi(executeAction: (actionId: string, input: unknown) => Promise<unknown>) {
-    return {
-        version: INSPECTOR_TAB_HOST_API_VERSION,
-        executeAction,
-        readResource: async () => {
-            throw new Error('Inspector tests must not read plugin resources.');
-        },
+    const requestSurface = {
+        pluginId: 'happier.inspector', contributionId: 'inspector-app', surfaceId: 'inspector-test',
+        placement: 'appSurface' as const, platform: 'ios' as const, channel: 'internal' as const,
+        resourceScope: [], diagnostics: [],
     };
+    const owner = createPluginSurfaceHostApi({
+        surfaceContext: requestSurface,
+        handlers: {
+            // Only daemon transport is substituted; mounted admission and the
+            // public SDK Action transport run through the canonical owners.
+            executeAction: async (request) => {
+                const payload = PluginUiExecuteActionRequestV1Schema.parse(request.payload);
+                if (typeof payload.action !== 'string') throw new Error('Inspector uses local Action ids.');
+                return PluginUiJsonValueV1Schema.parse(await executeAction(payload.action, payload.input));
+            },
+        },
+    });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+        surface: createInspectorTabSurface(), requestSurface, requestIdPrefix: 'inspector-test',
+        handleRequest: owner.handleRequest, installedMethods: owner.installedMethods,
+    });
+    inspectorHostAdapters.push(adapter);
+    return adapter.api;
 }
 
 function renderInspectorSurface(
@@ -102,6 +117,7 @@ afterEach(() => {
         renderer?.unmount();
     });
     renderer = null;
+    for (const adapter of inspectorHostAdapters.splice(0)) adapter.dispose();
     vi.restoreAllMocks();
 });
 
@@ -195,9 +211,14 @@ describe('inspector renderSurface (real source, mounted)', () => {
             await Promise.resolve();
         });
 
+        const quickMenu = findByTestId(renderer!, 'inspector-quick-actions-menu')
+            .find((instance) => typeof instance.props.onOpenChange === 'function');
+        expect(quickMenu).toBeDefined();
+        // A closed menu does not render its portal rows. Assert the translated
+        // author-facing Menu item model, not absent native overlay children.
+        expect(quickMenu!.props.items).toContainEqual({ id: 'refresh', label: 'Actualiser l’inventaire' });
         const rendered = JSON.stringify(renderer!.toJSON());
         expect(rendered).toContain('Aucun plugin installé.');
-        expect(rendered).toContain('Actualiser l’inventaire');
         // Untranslated key → the author fallback, never the raw key.
         expect(rendered).toContain('Quick menu');
         expect(rendered).not.toContain('plugins.inspector.surface.empty');
@@ -244,7 +265,8 @@ describe('inspector renderSurface (real source, mounted)', () => {
 
         expect(findByTestId(renderer!, 'inspector-error')[0]?.props).toMatchObject({
             tone: 'danger',
-            title: 'Host API is unavailable.',
+            title: 'Plugin inventory unavailable',
+            description: 'Host API is unavailable.',
         });
     });
 });

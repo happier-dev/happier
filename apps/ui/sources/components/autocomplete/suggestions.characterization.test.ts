@@ -1,3 +1,5 @@
+import { storage } from '@/sync/domains/state/storage';
+import { seedAutocompleteSessions } from './autocompleteTestFixtures';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 
@@ -17,27 +19,7 @@ const searchFilesMock = vi.hoisted(() => vi.fn(async (): Promise<FileItem[]> => 
 const searchCommandsMock = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
-const fetchArtifactWithBodyMock = vi.hoisted(() => vi.fn(async () => null as unknown));
 
-const storageStateMock = vi.hoisted(() => ({
-    sessions: {} as Record<string, { id?: string; active?: boolean; metadata?: Record<string, unknown> }>,
-    machines: {} as Record<string, unknown>,
-    artifacts: {} as Record<string, { body?: string }>,
-    getProjectForSession: vi.fn(),
-    applySessions: vi.fn(),
-    updateArtifact: vi.fn(),
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: { getState: () => storageStateMock },
-    });
-});
-
-vi.mock('@/sync/sync', () => ({
-    sync: { fetchArtifactWithBody: fetchArtifactWithBodyMock },
-}));
 
 vi.mock('@/sync/domains/input/suggestionFile', () => ({
     searchFiles: searchFilesMock,
@@ -63,16 +45,6 @@ vi.mock(
         const { installServerScopedMachineRpcModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
         return installServerScopedMachineRpcModuleMock({
             machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params) as never,
-        })(importOriginal);
-    },
-);
-
-vi.mock(
-    '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId',
-    async (importOriginal) => {
-        const { installResolvePreferredServerIdForSessionIdModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-        return installResolvePreferredServerIdForSessionIdModuleMock({
-            resolvePreferredServerIdForSessionId: () => 'server-a',
         })(importOriginal);
     },
 );
@@ -104,7 +76,7 @@ const REVIEW_SKILL_KEY = 'skill-happier:/repo/.happier/skills/review/skill.md:re
 
 /** Seeds the CANONICAL session-metadata catalog snapshot keys the daemon actually writes. */
 function seedSessionWithCatalogs(options?: Readonly<{ vendorPlugins?: unknown[]; skills?: unknown[] }>) {
-    storageStateMock.sessions = {
+    seedAutocompleteSessions({
         s1: {
             id: 's1',
             active: true,
@@ -114,7 +86,7 @@ function seedSessionWithCatalogs(options?: Readonly<{ vendorPlugins?: unknown[];
                 sessionSkillCatalogV1: { skills: options?.skills ?? [REVIEW_SKILL] },
             },
         },
-    };
+    });
 }
 
 async function importSuggestions() {
@@ -137,11 +109,8 @@ describe('getSuggestions characterization (EU-2)', () => {
         sessionRpcWithServerScopeMock.mockResolvedValue({});
         machineRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockResolvedValue({});
-        fetchArtifactWithBodyMock.mockReset();
-        storageStateMock.applySessions.mockReset();
-        storageStateMock.updateArtifact.mockReset();
-        storageStateMock.artifacts = {};
-        storageStateMock.machines = {};
+        storage.setState({ artifacts: {} });
+        storage.setState({ machines: {} });
         seedSessionWithCatalogs();
     });
 
@@ -366,13 +335,13 @@ describe('getSuggestions characterization (EU-2)', () => {
     // producer anywhere and no matching presence check, and were deleted.
     describe('catalog snapshot shapes', () => {
         it.each(['plugins', 'items'])('reads a vendor plugin snapshot stored under the %s alias', async (alias) => {
-            storageStateMock.sessions = {
+            seedAutocompleteSessions({
                 s1: {
                     id: 's1',
                     active: true,
                     metadata: { path: '/repo', sessionVendorPluginCatalogV1: { [alias]: [GMAIL_PLUGIN] } },
                 },
-            };
+            });
             const { getSuggestions } = await importSuggestions();
 
             expect((await getSuggestions('s1', '@plugin:gma')).map((s) => s.key))
@@ -380,20 +349,20 @@ describe('getSuggestions characterization (EU-2)', () => {
         });
 
         it('reads a skill snapshot stored under the items alias', async () => {
-            storageStateMock.sessions = {
+            seedAutocompleteSessions({
                 s1: {
                     id: 's1',
                     active: true,
                     metadata: { path: '/repo', sessionSkillCatalogV1: { items: [REVIEW_SKILL] } },
                 },
-            };
+            });
             const { getSuggestions } = await importSuggestions();
 
             expect((await getSuggestions('s1', '$rev')).map((s) => s.key)).toEqual([REVIEW_SKILL_KEY]);
         });
 
         it('ignores a producer-less top-level catalog key', async () => {
-            storageStateMock.sessions = {
+            seedAutocompleteSessions({
                 s1: {
                     id: 's1',
                     active: true,
@@ -401,7 +370,7 @@ describe('getSuggestions characterization (EU-2)', () => {
                     // `ensure` and the reader disagree about what a snapshot is.
                     metadata: { path: '/repo', vendorPluginCatalogV1: { vendorPlugins: [GMAIL_PLUGIN] } },
                 },
-            };
+            });
             sessionRpcWithServerScopeMock.mockResolvedValue({ vendorPlugins: [] });
             const { getSuggestions } = await importSuggestions();
 
@@ -411,9 +380,9 @@ describe('getSuggestions characterization (EU-2)', () => {
 
     describe('sessions without catalogs (participant and automation composers)', () => {
         beforeEach(() => {
-            storageStateMock.sessions = {
+            seedAutocompleteSessions({
                 s1: { id: 's1', active: true, metadata: { path: '/repo' } },
-            };
+            });
         });
 
         it('still returns files for a mention query when no catalog snapshot exists', async () => {
@@ -438,12 +407,14 @@ describe('getSuggestions characterization (EU-2)', () => {
 
 describe('registry-owned selection application (D-20)', () => {
     beforeEach(() => {
-        fetchArtifactWithBodyMock.mockReset();
-        storageStateMock.artifacts = {
+        storage.setState({ artifacts: {
             artifact_prompt_1: {
+                id: 'artifact_prompt_1', title: 'QA', isDecrypted: true, seq: 1,
+                createdAt: 1, updatedAt: 1, headerVersion: 1, bodyVersion: 1,
+                header: { v: 1, kind: 'prompt_doc.v2', title: 'QA' },
                 body: JSON.stringify({ v: 1, markdown: 'Run QA now', createdAtMs: 1, updatedAtMs: 1 }),
             },
-        };
+        } });
     });
 
     it('rewrites the whole input through the kind that produced the candidate', async () => {
@@ -518,12 +489,14 @@ describe('prompt invocation selection characterization (D-20)', () => {
     }
 
     beforeEach(() => {
-        fetchArtifactWithBodyMock.mockReset();
-        storageStateMock.artifacts = {
+        storage.setState({ artifacts: {
             artifact_prompt_1: {
+                id: 'artifact_prompt_1', title: 'QA', isDecrypted: true, seq: 1,
+                createdAt: 1, updatedAt: 1, headerVersion: 1, bodyVersion: 1,
+                header: { v: 1, kind: 'prompt_doc.v2', title: 'QA' },
                 body: JSON.stringify({ v: 1, markdown: 'Run QA now', createdAtMs: 1, updatedAtMs: 1 }),
             },
-        };
+        } });
     });
 
     it('rewrites the whole input, not just the token, for an insert-behavior invocation', async () => {

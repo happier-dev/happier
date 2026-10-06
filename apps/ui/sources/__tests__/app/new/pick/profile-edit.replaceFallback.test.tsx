@@ -1,246 +1,105 @@
 import React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
-import type { AiLaunchProfile } from '@happier-dev/protocol';
-import { createEmptyCustomProfile } from '@/sync/domains/profiles/profileMutations';
+import { createMachineFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import {
-    BUNDLED_AGENT_ROUTE_PARAMS,
-    createDiscoveredPluginBackendDescribeResult,
-    createNavigationMock,
-    createProjectionDescribeMock,
-    createRouterMock,
-    enableReactActEnvironment,
-    installPickerCommonModuleMocks,
-    PICKER_NAV_STATE,
-    PICKER_THEME_COLORS,
+    BUNDLED_AGENT_ROUTE_PARAMS, createDiscoveredPluginBackendDescribeResult,
+    createNavigationMock, createRouterMock, enableReactActEnvironment, installPickerCommonModuleMocks,
 } from './testHarness';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 
 enableReactActEnvironment();
-
 const routerMock = createRouterMock();
-const navigationMock = createNavigationMock() as ReturnType<typeof createNavigationMock> & {
-    setOptions: ReturnType<typeof vi.fn>;
-    addListener: ReturnType<typeof vi.fn>;
+const navigationMock = {
+    ...createNavigationMock(), setOptions: vi.fn(), addListener: vi.fn(() => () => {}),
 };
-navigationMock.setOptions = vi.fn();
-navigationMock.addListener = vi.fn(() => ({ remove: vi.fn() }));
-const capturedFormPropsRef = { current: null as any };
-const routeParamsState = vi.hoisted(() => ({
-    current: {
-        profileData: JSON.stringify({
-            id: 'new',
-            name: '',
-            isBuiltIn: false,
-            compatibility: { claude: true, codex: true, gemini: true },
-        }),
-        machineId: 'machine-2',
-        dataId: 'draft-1',
-        agentType: 'customAcp',
-        spawnServerId: 'server-2',
-    } as Record<string, string>,
-}));
-const settingsState = vi.hoisted(() => ({
-    current: {
-        lastUsedAgent: 'customAcp',
-        lastUsedBackendTarget: null as unknown,
-        backendEnabledByTargetKey: null as Record<string, boolean> | null,
-        acpCatalogSettingsV1: null as unknown,
-    },
-}));
-const applyProfileSaveSpy = vi.hoisted(() => vi.fn());
-const machineContributionRegistryProjectionDescribe = createProjectionDescribeMock();
+let routeParams: Record<string, string> = {};
+const describeRequests: Array<ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>> = [];
+vi.mock('expo-constants', () => ({ default: { statusBarHeight: 0 } }));
+vi.mock('@react-navigation/elements', () => ({ useHeaderHeight: () => 0 }));
 
 installPickerCommonModuleMocks({
-    reactNative: async () =>
-        (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
-            Platform: { OS: 'ios' },
-            useWindowDimensions: () => ({ width: 390, height: 844 }),
-            KeyboardAvoidingView: (props: any) => React.createElement('KeyboardAvoidingView', props, props.children),
-        }),
-    expoRouter: async () =>
-        ({
-            ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-                navigation: navigationMock,
-                params: () => routeParamsState.current,
-                router: {
-                    push: routerMock.push,
-                    back: routerMock.back,
-                    replace: routerMock.replace,
-                    setParams: routerMock.setParams,
-                },
-            }).module,
-            useNavigation: () => navigationMock,
-        }),
-    unistyles: async () =>
-        (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-            theme: {
-                colors: {
-                    background: PICKER_THEME_COLORS.background,
-                    chrome: PICKER_THEME_COLORS.chrome,
-                },
-            },
-            runtime: { insets: { bottom: 0 } },
-        }),
-    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
-    storage: async (importOriginal) =>
-        (await import('@/dev/testkit/mocks/storage')).createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'profiles') {
-                        return [[], vi.fn()];
-                    }
-                    return [null, vi.fn()];
-                }),
-                useSettings: () => ({
-                    ...settingsDefaults,
-                    lastUsedAgent: settingsState.current.lastUsedAgent,
-                    lastUsedBackendTarget:
-                        settingsState.current.lastUsedBackendTarget as unknown as typeof settingsDefaults.lastUsedBackendTarget,
-                    backendEnabledByTargetKey:
-                        settingsState.current.backendEnabledByTargetKey as unknown as typeof settingsDefaults.backendEnabledByTargetKey,
-                    acpCatalogSettingsV1:
-                        settingsState.current.acpCatalogSettingsV1 as unknown as typeof settingsDefaults.acpCatalogSettingsV1,
-                }),
-            },
-        }),
-    modal: async () =>
-        (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
-            spies: {
-                alert: vi.fn(),
-                show: vi.fn(),
-            },
-        }).module,
-    projectionSeam: { describe: machineContributionRegistryProjectionDescribe },
+    reactNative: async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
+            Platform: { isPad: false },
+            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+        });
+    },
+    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+        navigation: navigationMock, params: () => routeParams,
+        router: { push: routerMock.push, back: routerMock.back, replace: routerMock.replace, setParams: routerMock.setParams },
+    }).module,
 });
 
-vi.mock('@/components/profiles/edit', () => ({
-    LaunchProfileEditForm: (props: any) => {
-        capturedFormPropsRef.current = props;
-        return React.createElement('ProfileEditForm');
-    },
-}));
+function configureSocket(socket: import('socket.io-client').Socket) {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+        if (event !== 'rpc-call' || !payload || typeof payload !== 'object'
+            || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
+            throw new Error('Unexpected Socket RPC envelope');
+        }
+        if (payload.method === 'machine-2:' + RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload.params);
+            describeRequests.push(request);
+            return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+                protocolVersion: 1,
+                projection: createDiscoveredPluginBackendDescribeResult().projection,
+            }) };
+        }
+        return { ok: true, result: { error: 'Method not found', errorCode: 'RPC_METHOD_NOT_FOUND' } };
+    });
+}
+const runtime = installSessionPaneRuntimeTestHarness({ configureSocket });
 
-vi.mock('@/sync/store/settingsWriters', () => ({
-    useApplyProfileSave: () => applyProfileSaveSpy,
-}));
-
-vi.mock('expo-constants', () => ({
-    default: { statusBarHeight: 0 },
-}));
-
-vi.mock('@react-navigation/elements', () => ({
-    useHeaderHeight: () => 0,
-}));
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 1024 },
-    useLayoutMaxWidth: () => 1024,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 1024 }),
-}));
-vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    DEFAULT_PROFILES: [],
-    getBuiltInProfile: () => null,
-    getBuiltInProfileNameKey: () => null,
-    resolveProfileById: () => null,
-}));
-vi.mock('@/sync/domains/profiles/profileMutations', () => ({
-    convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
-    createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
-    duplicateProfileForEdit: <T,>(profile: T) => profile,
-}));
-vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
-    promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
-}));
-vi.mock('@/components/ui/keyboardAvoidance', () => ({
-    KeyboardAwareScreen: ({ children, ...props }: any) =>
-        React.createElement('KeyboardAwareScreen', props, children),
-}));
+beforeEach(async () => {
+    const { createEmptyCustomProfile } = await import('@/sync/domains/profiles/profileMutations');
+    routeParams = {
+        profileData: JSON.stringify({ ...createEmptyCustomProfile(), id: 'profile-new' }),
+        machineId: 'machine-2', dataId: 'draft-1', agentType: 'customAcp', spawnServerId: runtime.serverId,
+    };
+    storage.getState().applySettingsLocal({ profiles: [], lastUsedAgent: 'customAcp', lastUsedBackendTarget: null });
+    storage.getState().applyMachines([createMachineFixture({
+        id: 'machine-2', active: true, storageMode: 'plain', activeAt: Date.now(),
+    })], true, { sourceServerId: runtime.serverId });
+    describeRequests.length = 0;
+    routerMock.replace.mockClear();
+    routerMock.push.mockClear();
+    routerMock.back.mockClear();
+    navigationMock.dispatch.mockClear();
+    navigationMock.goBack.mockClear();
+    navigationMock.setParams.mockClear();
+});
 
 describe('ProfileEditScreen replace fallback', () => {
-    beforeEach(() => {
-        capturedFormPropsRef.current = null;
-        routeParamsState.current = {
-            profileData: JSON.stringify({
-                id: 'new',
-                name: '',
-                isBuiltIn: false,
-                compatibility: { claude: true, codex: true, gemini: true },
-            }),
-            machineId: 'machine-2',
-            dataId: 'draft-1',
-            agentType: 'customAcp',
-            spawnServerId: 'server-2',
-        };
-        settingsState.current = {
-            lastUsedAgent: 'customAcp',
-            lastUsedBackendTarget: null,
-            backendEnabledByTargetKey: null,
-            acpCatalogSettingsV1: null,
-        };
-        routerMock.replace.mockClear();
-        routerMock.push.mockClear();
-        routerMock.back.mockClear();
-        routerMock.setParams.mockClear();
-        navigationMock.dispatch.mockClear();
-        navigationMock.goBack.mockClear();
-        navigationMock.setParams.mockClear();
-        navigationMock.getState = vi.fn(() => ({
-            index: PICKER_NAV_STATE.index,
-            routes: PICKER_NAV_STATE.routes.map((route) => ({ key: route.key })),
-        }));
-        machineContributionRegistryProjectionDescribe.mockReset();
-        machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
-        applyProfileSaveSpy.mockReset();
-    });
-
-    afterEach(() => {
-        standardCleanup();
-    });
-
-    it('falls back to the preferred built-in target when route params only carry legacy customAcp even when merged projection lists discovered plugin backends', async () => {
-        machineContributionRegistryProjectionDescribe.mockResolvedValue(createDiscoveredPluginBackendDescribeResult());
-
+    it('uses the preferred bundled target for a legacy customAcp carrier despite admitted plugin backends', async () => {
         const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
-        await act(async () => {
-            await renderScreen(React.createElement(ProfileEditScreen));
-        });
-        await flushHookEffects({ cycles: 1, turns: 2 });
-        await vi.waitFor(() => expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('machine-2', expect.objectContaining({
-            serverId: 'server-2',
-            accountLifetime: expect.objectContaining({
-                scope: { serverId: 'server-2', accountId: 'account:server-2' },
-            }),
-        })));
-
-        const onSave = capturedFormPropsRef.current?.onSave as ((profile: AiLaunchProfile) => boolean) | undefined;
-        expect(typeof onSave).toBe('function');
-
-        const { storage } = await import('@/sync/domains/state/storageStore');
+        const screen = await renderScreen(<runtime.Wrapper><ProfileEditScreen /></runtime.Wrapper>);
+        await flushHookEffects();
+        expect(describeRequests).toEqual(expect.arrayContaining([expect.objectContaining({ machineId: 'machine-2' })]));
+        const name = screen.findHostByTestId('profile-slim-name');
+        if (!name || typeof name.props.onChangeText !== 'function') throw new Error('Expected actual profile name field');
+        await act(async () => name.props.onChangeText('New Profile'));
         const rememberedProfile = storage.getState().authoringMemory.lastUsedProfile;
-        let saved: boolean | undefined;
-        await act(async () => {
-            saved = onSave?.({
-                ...createEmptyCustomProfile(),
-                id: 'profile-new',
-                name: 'New Profile',
-            } satisfies AiLaunchProfile);
-        });
-        expect(saved).toBe(true);
+        const save = screen.findHostByTestId('profile-edit-save');
+        if (!save || typeof save.props.onPress !== 'function') throw new Error('Expected actual profile save action');
+        await act(async () => save.props.onPress());
+        expect(storage.getState().settings.profiles).toEqual([expect.objectContaining({ id: 'profile-new', v: 2, name: 'New Profile' })]);
         expect(storage.getState().authoringMemory.lastUsedProfile).toBe(rememberedProfile);
-
         expect(routerMock.replace).toHaveBeenCalledTimes(1);
         expect(routerMock.replace).toHaveBeenCalledWith({
-            pathname: '/new',
-            params: {
-                ...BUNDLED_AGENT_ROUTE_PARAMS.claude,
-                dataId: 'draft-1',
-                machineId: 'machine-2',
-                profileId: 'profile-new',
-                spawnServerId: 'server-2',
+            pathname: '/new', params: {
+                ...BUNDLED_AGENT_ROUTE_PARAMS.claude, dataId: 'draft-1', machineId: 'machine-2',
+                profileId: 'profile-new', spawnServerId: runtime.serverId,
             },
         });
     });

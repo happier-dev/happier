@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { resolveSessionListViewContextDefaults } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { clearSessionListViewFilterRetentionForTests, useSessionListViewFilters } from '@/components/sessions/shell/search/useSessionListViewFilters';
 import { invokeScopeAction, registerSessionListScopeActionOwner, registerShellColumnActionOwner } from './scopeActionFamily';
@@ -13,7 +14,7 @@ afterEach(() => { standardCleanup(); clearSessionListViewFilterRetentionForTests
 describe('client scope Actions through canonical mounted owners', () => {
   it('changes the real retained filter model, preserves other facets, resets and retires at unmount', async () => {
     // The UI host is the system boundary; internal filtering and Action admission remain real.
-    const executor = createActionExecutor({ scopeAction: ({ actionId, input }) => invokeScopeAction(actionId, input) } as ActionExecutorDeps);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ scopeAction: ({ actionId, input }) => invokeScopeAction(actionId, input) }));
     const viewContext = { kind: 'global' } as const;
     let retentionScopeKey = 'credential-a';
     const context = resolveSessionListViewContextDefaults(viewContext, ['home-a', 'home-b'], 'all');
@@ -53,7 +54,10 @@ describe('client scope Actions through canonical mounted owners', () => {
     expect(await executor.execute('session.list.view.set', { filters: { homeServerIds: ['unknown-home'] } }, { surface: 'ui' }))
       .toMatchObject({ ok: false, errorCode: 'client_control_unavailable' });
     expect(hook.getCurrent().filters).toBe(before);
-    await act(async () => { await executor.execute('session.list.view.reset', {}, { surface: 'cli' }); });
+    await act(async () => {
+      expect(await executor.execute('session.list.view.reset', {}, { surface: 'ui' }))
+        .toEqual({ ok: true, result: { ok: true } });
+    });
     expect(hook.getCurrent().filters).toEqual(context.defaults);
     retentionScopeKey = 'credential-b';
     expect(await executor.execute('session.list.view.get', {}, { surface: 'ui' }))

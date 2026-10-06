@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { executeSessionAccessHttpAction } from './sessionAccessApi';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -6,7 +6,10 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storageStore';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
-import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { computeAccountEncryptionMigrateKeyFingerprintV1, type AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { decryptDataKeyFromPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -14,26 +17,35 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { Encryption } from '@/sync/encryption/encryption';
 
 // Substitute native UI boundaries only; the default Action executor and its
 // account-scoped Session HTTP dependency remain real.
 installApprovalCommonModuleMocks({ storage: importOriginal => importOriginal() });
 
+beforeAll(loadSyncSingletonForTests);
+
 afterEach(() => {
     retireActiveServerAccountScopeLifetime();
     invalidateAccountEncryptionModeCache();
     resetServerFeaturesClientForTests();
+    resetRuntimeFetch();
     vi.restoreAllMocks();
 });
 
 describe.each(['plain', 'e2ee'] as const)('Session public-link physical materialization (%s)', mode => {
     it('returns the complete link and sends only an independent lookup and wrapped key', async () => {
         const active = await upsertAndActivateServer({ serverUrl: 'https://active-material.example', name: 'Active' });
+        await switchConnectionToActiveServer();
         const target = await upsertServerProfile({ serverUrl: 'https://target-material.example', name: 'Target' });
         storage.getState().activateProfileScope({ serverId: active.id, accountId: 'active-account' });
         // As in the Artifact frontdoor fixture, this Home's Settings have
         // already been loaded by their real scoped store owner.
-        storage.setState({ settingsScope: { serverId: target.id, accountId: 'target-account' } });
+        storage.getState().applySettingsForScope(
+            { serverId: target.id, accountId: 'target-account' }, storage.getState().settings, 1,
+        );
         const contentKeys = tweetnacl.box.keyPair();
         const token = (sub: string) => `e30.${Buffer.from(JSON.stringify({sub})).toString('base64url')}.signature`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async url => ({
@@ -42,6 +54,24 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
         }));
         const dataKey = new Uint8Array(32).fill(31);
         const callerEnvelope = encryptDataKeyForRecipientV0(dataKey, encodeBase64(contentKeys.publicKey, 'base64'));
+        const metadata = createSessionFixture().metadata;
+        if (!metadata) throw new Error('Canonical Session fixture must include readable metadata');
+        let wireMetadata = JSON.stringify(metadata);
+        if (mode === 'e2ee') {
+            const producer = await Encryption.createFromContentKeyPair({ publicKey: contentKeys.publicKey, machineKey: contentKeys.secretKey });
+            await producer.initializeSessions(new Map([['same', dataKey]]));
+            const sessionEncryption = producer.getSessionEncryption('same');
+            if (!sessionEncryption) throw new Error('Expected initialized Session encryption producer');
+            wireMetadata = await sessionEncryption.encryptMetadata(metadata);
+        }
+        const accountCurrentness = mode === 'plain'
+            ? createPlainAccountEncryptionCurrentnessFixture()
+            : {
+                mode: 'e2ee', version: 1, updatedAt: 1,
+                signingKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey),
+                contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(contentKeys.publicKey),
+                recipientEnvelopeReadiness: { status: 'available' },
+            } satisfies AccountEncryptionCurrentnessResponse;
         let body: Record<string, unknown> | null = null;
         let posts = 0;
         let legacyWrappedKey = 'existing-legacy-wrapped-key';
@@ -51,10 +81,11 @@ describe.each(['plain', 'e2ee'] as const)('Session public-link physical material
             const path = new URL(String(url)).pathname;
             if (path === '/v1/auth/ping') return new Response('{}');
             if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(accountCurrentness);
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path === '/v2/sessions/same') return new Response(JSON.stringify({session:{
                 id:'same',createdAt:1,updatedAt:2,seq:0,active:true,activeAt:2,encryptionMode:mode,
-                dataEncryptionKey:mode === 'e2ee' ? callerEnvelope : null,metadata:mode === 'e2ee' ? 'sealed' : '{}',metadataVersion:1,agentState:null,agentStateVersion:1,share:null,
+                dataEncryptionKey:mode === 'e2ee' ? callerEnvelope : null,metadata:wireMetadata,metadataVersion:1,agentState:null,agentStateVersion:1,share:null,
             }}));
             if (path.endsWith('/turns')) return new Response('{}',{status:404});
             if (path === '/v1/sessions/same/public-share') {

@@ -1,17 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { readRuntimeCapabilitiesForSession } from '@happier-dev/agents';
 
 import { renderHook } from '@/dev/testkit';
+import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { useTranscriptRootRollbackActions } from './useTranscriptRootRollbackActions';
 
-const metadata = {
-    path: '/workspace',
-    host: 'localhost',
-    flavor: 'codex',
-    codexBackendMode: 'appServer',
-} as const;
+function createMetadata(mode: 'appServer' | 'acp' = 'appServer') {
+    const selection = {
+        path: '/workspace',
+        host: 'localhost',
+        flavor: 'codex',
+        codexBackendMode: mode,
+    } as const;
+    // Use the real typed Agent publisher, not a fabricated capability fragment.
+    const capabilities = readRuntimeCapabilitiesForSession({ agentId: 'codex', metadata: selection });
+    if (!capabilities) throw new Error('Expected Codex runtime capability publication');
+    return { ...selection, agentRuntimeCapabilitiesV1: capabilities };
+}
+
+const metadata = createMetadata();
 
 const messagesById: Readonly<Record<string, Message>> = {
     user: {
@@ -25,7 +35,7 @@ const messagesById: Readonly<Record<string, Message>> = {
 };
 
 function createSession(rollbackEligibleTurnStarts?: readonly number[]): Session {
-    return {
+    return createSessionFixture({
         id: 'session-1',
         seq: 1,
         createdAt: 1,
@@ -40,7 +50,7 @@ function createSession(rollbackEligibleTurnStarts?: readonly number[]): Session 
         thinkingAt: 0,
         presence: 'online',
         ...(rollbackEligibleTurnStarts ? { rollbackEligibleTurnStarts } : {}),
-    };
+    });
 }
 
 describe('useTranscriptRootRollbackActions', () => {
@@ -71,15 +81,30 @@ describe('useTranscriptRootRollbackActions', () => {
             },
         });
 
+        await hook.rerender({
+            ...initialProps,
+            session: createSessionFixture({ ...createSession([1]), access: createSessionAccessFixture('view') }),
+        });
+        expect(hook.getCurrent().rollbackActionsByMessageId).toEqual({});
+
+        const unsupportedMetadata = createMetadata('acp');
+        await hook.rerender({
+            ...initialProps,
+            session: createSessionFixture({ ...createSession([1]), metadata: unsupportedMetadata }),
+            stableSessionMetadata: unsupportedMetadata,
+            sessionMetadataSignature: 'metadata-acp',
+        });
+        expect(hook.getCurrent().rollbackActionsByMessageId).toEqual({});
+
         await hook.unmount();
     });
 
     it('keeps rollback actions stable when only the unused turns projection changes', async () => {
         const eligibleTurnStarts = [1] as const;
-        const session = {
+        const session = createSessionFixture({
             ...createSession(eligibleTurnStarts),
             sessionTurns: { v: 1, sessionId: 'session-1', updatedAt: 1, turns: [] },
-        } as Session;
+        });
         const initialProps = {
             messageIdsOldestFirst: ['user'],
             messagesById,
@@ -95,10 +120,10 @@ describe('useTranscriptRootRollbackActions', () => {
 
         await hook.rerender({
             ...initialProps,
-            session: {
+            session: createSessionFixture({
                 ...session,
                 sessionTurns: { v: 1, sessionId: 'session-1', updatedAt: 2, turns: [] },
-            } as Session,
+            }),
         });
 
         expect(hook.getCurrent().rollbackActionsByMessageId).toBe(initialActions);

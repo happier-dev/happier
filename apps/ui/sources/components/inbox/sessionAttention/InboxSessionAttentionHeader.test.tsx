@@ -1,71 +1,37 @@
 import * as React from 'react';
-import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
-vi.mock('react-native', () => ({
-    Platform: { OS: 'android' },
-    Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Pressable', props, props.children),
-    View: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('View', props, props.children),
-}));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative'))
+    .createReactNativeNativeMock({ platformOS: 'android' }));
 
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
-}));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
-vi.mock('react-native-unistyles', () => {
-    const theme = {
-        colors: {
-            border: { default: '#ccc' },
-            surface: { base: '#fff', pressedOverlay: '#eee' },
-            text: { primary: '#000' },
-        },
-    };
-    return {
-        StyleSheet: { create: (factory: (value: typeof theme) => unknown) => factory(theme) },
-        useUnistyles: () => ({ theme }),
-    };
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/components/sessions/context/SessionContextChips', () => ({
-    SessionContextChips: () => null,
-}));
-vi.mock('@/components/sessions/shell/SessionListIdentity', () => ({ SessionListIdentity: () => null }));
-vi.mock('@/components/sessions/shell/resolveSessionListDensityViewState', () => ({
-    SESSION_LIST_ROW_IDENTITY_METRICS: { compact: { slotSize: 30, agentLogoSize: 23 } },
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string, params?: Readonly<{ session?: string }>) =>
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+    translate: (key, params) =>
         key === 'inbox.openSession' ? `Open session: ${params?.session}` : key,
 }));
 
 describe('InboxSessionAttentionHeader', () => {
+    afterEach(standardCleanup);
     it('names the destination and provides the Android minimum target after Voice ends', async () => {
         const { InboxSessionAttentionHeader } = await import('./InboxSessionAttentionHeader');
-        let renderer: ReturnType<typeof create>;
-        await act(async () => {
-            renderer = create(
-                <InboxSessionAttentionHeader
-                    session={{ id: 'session-1' } as never}
-                    serverId={null}
-                    identityDisplay="none"
-                    connected={false}
-                    sessionTitle="Fix login"
-                    machineLabel={null}
-                    pathLabel={null}
-                    onOpenSession={() => {}}
-                />,
-            );
-        });
+        const screen = await renderScreen(
+            <InboxSessionAttentionHeader
+                session={createSessionFixture({ id: 'session-1' })}
+                serverId={null}
+                identityDisplay="none"
+                connected={false}
+                sessionTitle="Fix login"
+                machineLabel={null}
+                pathLabel={null}
+                onOpenSession={() => {}}
+            />,
+        );
 
-        const button = renderer!.root.findByType('Pressable' as any);
+        const button = screen.tree.findByType('Pressable');
         const style = button.props.style({ pressed: false });
         const flattened = Object.assign({}, ...style.filter(Boolean));
         expect(button.props.accessibilityLabel).toBe('Open session: Fix login');

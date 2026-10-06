@@ -8,6 +8,7 @@ import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { useSessionMessageAuthorshipScope } from './useSessionMessageAuthorshipScope';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -64,15 +65,19 @@ function createRunPendingMessage(overrides: Partial<PendingMessage>): PendingMes
 
 function createChainTestRoot(Content: typeof import('./ChainTranscriptList')['ChainTranscriptList']) {
     return function ChainTestRoot(props: React.ComponentProps<typeof Content>) {
-        const [source] = React.useState(() => createTestSessionTranscriptSource({
+        const authorship = useSessionMessageAuthorshipScope(props.sessionId, props.serverId);
+        const source = React.useMemo(() => createTestSessionTranscriptSource({
             sessionId: props.sessionId, serverId: props.serverId, messages: props.messages,
             metadata: props.metadata, interaction: props.interaction,
+            authorship,
             loadSidechain: async () => 'not_ready',
             history: { loadOlder: props.loadOlder ?? (async () => ({ loaded: 0, hasMore: false, status: 'not_ready' })) },
-        }));
+        }), [props.sessionId, props.serverId, props.messages, props.metadata, props.interaction, props.loadOlder, authorship]);
         return wrapWithSessionTranscriptSource(React.createElement(Content, props), source);
     };
 }
+
+const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
 
 describe('ChainTranscriptList target-scoped pending queue', () => {
     type ChainTranscriptListTestProps =
@@ -80,7 +85,6 @@ describe('ChainTranscriptList target-scoped pending queue', () => {
         & { datasetKey?: string };
 
     async function renderChainTranscriptList(props: ChainTranscriptListTestProps) {
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
         const ChainTranscriptList = createChainTestRoot(ChainContent);
         return renderScreen(React.createElement(ChainTranscriptList, {
             ...props,
@@ -121,7 +125,6 @@ describe('ChainTranscriptList target-scoped pending queue', () => {
     });
 
     it('refreshes the pending-row callback when only the exact Home changes', async () => {
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
         const ChainTranscriptList = createChainTestRoot(ChainContent);
         const pendingMessages = [createRunPendingMessage({
             id: 'p_run',

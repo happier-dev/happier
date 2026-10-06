@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import {
     createSessionBoardDetailsTab,
@@ -10,7 +11,7 @@ describe('createSessionBoardDetailsTab', () => {
         expect(createSessionBoardDetailsTab()).toEqual({
             key: 'board',
             kind: 'board',
-            title: 'Board',
+            title: t('sessionBoard.title'),
             resource: { kind: 'board' },
         });
     });
@@ -21,7 +22,7 @@ describe('createSessionBoardDetailsTab', () => {
         expect(createSessionBoardDetailsTab({ kind: 'item', itemId: 'note-1' })).toEqual({
             key: 'board:note-1',
             kind: 'board',
-            title: 'Board',
+            title: t('sessionBoard.title'),
             resource: { kind: 'board', focusTarget: { kind: 'item', itemId: 'note-1' } },
         });
         expect(createSessionBoardDetailsTab({ kind: 'item', itemId: 'note-2' }).key)
@@ -36,7 +37,7 @@ describe('createSessionDiscussionDetailsTab', () => {
         expect(createSessionDiscussionDetailsTab({ kind: 'new', address })).toEqual({
             key: 'discussion:["https://home.example:444","session:shared"]:new',
             kind: 'discussion',
-            title: 'New discussion',
+            title: t('session.collaboration.discussion.newDiscussion'),
             resource: { kind: 'discussion', target: { kind: 'new', address } },
         });
         expect(createSessionDiscussionDetailsTab({

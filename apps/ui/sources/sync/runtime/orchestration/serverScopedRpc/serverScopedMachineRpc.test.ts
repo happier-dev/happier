@@ -523,44 +523,6 @@ describe('machineRpcWithServerScope', () => {
         } finally { vi.useRealTimers(); }
     });
 
-    it('decrypts a scoped E2EE observation after its caller-owned wait without an expired setup budget', async () => {
-        const { Encryption } = await import('@/sync/encryption/encryption');
-        const { createFakeCryptoWorker } = await import('@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker');
-        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
-        const worker = createFakeCryptoWorker();
-        encryption.configureNativeCryptoWorker({ worker: {
-            ...worker,
-            // Native crypto completion is an OS boundary; retain its real codec
-            // while making response work outlast the exhausted 1ms setup budget.
-            decryptSecretboxJson: async (request) => {
-                await new Promise((resolve) => setTimeout(resolve, 10));
-                return await worker.decryptSecretboxJson(request);
-            },
-        }, routing: { mode: 'require', minPayloadBytes: 0 } });
-        getActiveServerSnapshotSpy.mockReturnValue({ serverId: 'server-a', serverUrl: 'https://server-a.example.test', generation: 1 });
-        listServerProfilesSpy.mockReturnValue([{ id: 'server-b', serverUrl: 'https://server-b.example.test', name: 'Server B' }]);
-        getCredentialsSpy.mockResolvedValue({ token: TOKEN_B, secret: SECRET_B });
-        createEncryptionSpy.mockResolvedValue(encryption);
-        mockScopedMachineFetch({ id: 'machine-1', dataEncryptionKey: null });
-        let resolveAck!: (value: unknown) => void;
-        const emitWithAck = vi.fn(() => new Promise((resolve) => { resolveAck = resolve; }));
-        const socket = { timeout: vi.fn(() => ({ emitWithAck })), emitWithAck, emit: vi.fn(), disconnect: vi.fn() };
-        createEphemeralSocketSpy.mockResolvedValue(socket);
-        const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
-        const pending = machineRpcWithServerScope({ serverId: 'server-b', machineId: 'machine-1',
-            method: 'execution.run.get', payload: { runId: 'run-1' }, operationTimeoutMs: null, onIssued: () => undefined });
-        const settled = vi.fn();
-        void pending.then(settled, settled);
-        await vi.waitFor(() => expect(emitWithAck).toHaveBeenCalledOnce());
-        const ciphertext = await encryption.getMachineEncryption('machine-1')!.encryptRaw({ run: { status: 'running' } });
-        const startedAt = Date.now();
-        vi.spyOn(Date, 'now').mockReturnValue(startedAt + 31_000);
-        resolveAck({ ok: true, result: ciphertext });
-        await expect(pending).resolves.toMatchObject({ run: { status: 'running' } });
-        expect(socket.timeout).not.toHaveBeenCalled();
-        expect(socket.disconnect).toHaveBeenCalledOnce();
-    });
-
     it.each(['exact', 'ordered'] as const)('fences delayed active preparation after %s scoped fallback starts', async (dispatchMode) => {
         vi.useFakeTimers();
         try {

@@ -10,28 +10,37 @@ import {
     resetLocalServicePreviewStoreForTests,
 } from './sharedStore';
 import type { LocalServicePreviewSnapshotClient } from './useLocalServicePreviewState';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 
-const testState = vi.hoisted(() => ({
-    apiSocketRequest: vi.fn(),
-    createServerRequestWithServerScope: vi.fn(),
-    machineRpcWithServerScope: vi.fn(),
-    scopedRequest: vi.fn(),
-}));
+const daemonBoundary = vi.hoisted(() => ({ requests: [] as Array<{
+    serverUrl: string; token: string | undefined; method: string; params: unknown;
+}>, response: undefined as unknown }));
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: (...args: readonly unknown[]) => testState.apiSocketRequest(...args),
-    },
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
-    createServerRequestWithServerScope: (...args: readonly unknown[]) =>
-        testState.createServerRequestWithServerScope(...args),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: (...args: readonly unknown[]) => testState.machineRpcWithServerScope(...args),
-}));
+// Socket.IO is the external daemon boundary; the scoped RPC owner and codec remain real.
+vi.mock('socket.io-client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('socket.io-client')>();
+    const { createSocketIoBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+    const { SOCKET_RPC_EVENTS } = await import('@happier-dev/protocol/socketRpc');
+    return { ...actual, io: (serverUrl: string, options: { auth?: { token?: string } }) => {
+        const { socket } = createSocketIoBoundaryStub();
+        socket.emitWithAck.mockImplementation(async (event, payload) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+            if (!payload || typeof payload !== 'object' || !('method' in payload)
+                || typeof payload.method !== 'string' || !('params' in payload)) {
+                throw new Error('Malformed daemon RPC request');
+            }
+            daemonBoundary.requests.push({ serverUrl, token: options.auth?.token,
+                method: payload.method, params: payload.params });
+            return { ok: true, result: daemonBoundary.response };
+        });
+        return socket;
+    } };
+});
 
 function createPreviewResource(overrides: Partial<LocalServicePreviewResourceV1> = {}): LocalServicePreviewResourceV1 {
     return {
@@ -61,14 +70,17 @@ function createPreviewResource(overrides: Partial<LocalServicePreviewResourceV1>
 }
 
 describe('useLocalServicePreviewState', () => {
-    afterEach(() => {
+    afterEach(async () => {
         vi.useRealTimers();
         resetLocalServicePreviewStoreForTests();
-        testState.apiSocketRequest.mockReset();
-        testState.createServerRequestWithServerScope.mockReset();
-        testState.machineRpcWithServerScope.mockReset();
-        testState.scopedRequest.mockReset();
+        resetRuntimeFetch();
+        daemonBoundary.requests.length = 0;
+        vi.restoreAllMocks();
         standardCleanup();
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
     });
 
     it('loads preview snapshots from the canonical snapshot client', async () => {
@@ -109,36 +121,44 @@ describe('useLocalServicePreviewState', () => {
     });
 
     it('routes the default snapshot request through daemon machine rpc', async () => {
-        testState.machineRpcWithServerScope.mockResolvedValue({
+        await loadSyncSingletonForTests();
+        const home = await upsertServerProfile({ serverUrl: 'https://preview-background.example.test' });
+        const token = createAccountTokenForTests('preview-account');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl) => (
+            serverUrl === home.serverUrl ? { token } : null
+        ));
+        setRuntimeFetch(async (input) => {
+            const url = new URL(String(input));
+            if (url.origin !== home.serverUrl) throw new Error(`Unexpected preview Home: ${url.origin}`);
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            if (url.pathname === '/v1/machines/machine_1') return Response.json({ machine: {
+                id: 'machine_1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } });
+            return Response.json({}, { status: 404 });
+        });
+        daemonBoundary.response = {
             protocolVersion: 1,
             snapshot: {
                 v: 1,
                 machineId: 'machine_1',
                 generatedAt: 1_000,
                 refreshState: 'idle',
-                resources: [],
+                previews: [],
                 diagnostics: [],
             },
-        });
+        };
         const { useLocalServicePreviewState } = await import('./useLocalServicePreviewState');
 
         const hook = await renderHook(() => useLocalServicePreviewState({
             machineId: 'machine_1',
-            serverId: 'server_2',
+            serverId: home.id,
             nowMs: () => 900,
         }));
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(testState.machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine_1',
-            serverId: 'server_2',
-            method: 'daemon.localServices.preview.snapshot',
-            payload: { machineId: 'machine_1' },
-        }));
-        expect(testState.createServerRequestWithServerScope).not.toHaveBeenCalled();
-        expect(testState.scopedRequest).not.toHaveBeenCalled();
-        expect(testState.apiSocketRequest).not.toHaveBeenCalled();
+        expect(daemonBoundary.requests).toEqual([{ serverUrl: home.serverUrl, token,
+            method: 'machine_1:daemon.localServices.preview.snapshot', params: { machineId: 'machine_1' } }]);
         expect(hook.getCurrent().refreshState).toBe('idle');
     });
 

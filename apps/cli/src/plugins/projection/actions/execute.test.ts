@@ -5,7 +5,11 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { accountSettingsParse, formatQualifiedPluginActionId, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, createActionExecutor, formatQualifiedPluginActionId, normalizeActionsSettingsV1, type PluginActionContributionV2 } from '@happier-dev/protocol';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import type {
   ResolvedActionContribution,
   ResolvedActionDefinition,
@@ -35,6 +39,40 @@ import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocati
 type SafeResolvedActionContribution = Omit<ResolvedActionContribution, 'definition'> & Readonly<{
   definition: Extract<ResolvedActionDefinition, Readonly<{ dangerLevel: 'safe' }>>;
 }>;
+
+function physicalActionPlugin(params: Readonly<{
+  pluginId?: string;
+  action: PluginActionContributionV2;
+  handlerBody: string;
+}>) {
+  return {
+    manifest: createPluginManifestV2Fixture({
+      id: params.pluginId ?? 'acme.action.plugin',
+      contributes: { actions: [params.action] },
+    }),
+    files: {
+      'daemon.mjs': [
+        'let invocationCount = 0;',
+        'export function readInvocationCount() { return invocationCount; }',
+        'export function activate(api) {',
+        `  api.actions.register(${JSON.stringify(params.action.id)}, async (input, context) => {`,
+        '    invocationCount += 1;',
+        params.handlerBody,
+        '  });',
+        '}',
+      ].join('\n'),
+    },
+  };
+}
+
+function readPhysicalInvocationCount(
+  fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>,
+  pluginId = 'acme.action.plugin',
+) {
+  const readCount = fixture.modulesByPluginId.get(pluginId)?.readInvocationCount;
+  if (typeof readCount !== 'function') throw new Error('Physical Action fixture has no invocation counter');
+  return readCount();
+}
 
 const fixtureOccurrenceIds = new Map<string, ReturnType<typeof createPluginRuntimeOccurrenceId>>();
 
@@ -690,21 +728,20 @@ describe('executeContributedAction', () => {
   });
 
   it.each(['agent', 'mcp', 'cli'] as const)('executes a client-target Action on the answering UI with the real %s surface', async (surface) => {
-    const base = createAction('/unused/client-action.mjs', 'open-client');
-    const action: SafeResolvedActionContribution = {
-      ...base,
-      definition: {
-        ...base.definition,
-        surfaces: { ...base.definition.surfaces, agent: true, mcp: true, cli: true },
-        execution: { target: 'client', client: { artifactId: 'client-actions', exportName: 'activate' }, platforms: ['web'] },
-      },
-    };
     const requests: unknown[] = [];
-    const qualifiedId = formatQualifiedPluginActionId({ pluginId: action.pluginId!, localId: action.definition.id });
-    const baseRegistry = createExecutableRegistry({ action, activateContributionsOnDemand: async () => [] });
-    const runtimeRegistry = {
-      ...baseRegistry,
-      contributes: { ...baseRegistry.contributes, actionsById: new Map([[qualifiedId, action]]) },
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{
+        manifest: createPluginManifestV2Fixture({
+          id: 'acme.action.plugin',
+          contributes: { actions: [{
+            id: 'open-client', title: 'Open client preview', dangerLevel: 'safe', scopes: ['global'],
+            surfaces: ['agent', 'mcp', 'cli'],
+            execution: { target: 'client', client: { artifactId: 'client-actions', exportName: 'activate' }, platforms: ['web'] },
+          }] },
+        }),
+        files: { 'daemon.mjs': 'export function activate() {}' },
+      }],
+      runtimeOptions: {
       executeClientAction: createClientActionMachineRpcExecutor(() => ({
         hasConnectedClientRpcHandler: () => true,
         callConnectedClientRpc: async (_method, request, options) => {
@@ -713,26 +750,29 @@ describe('executeContributedAction', () => {
           return { ok: true, result: { ok: true, result: { handledBy: 'client' } } };
         },
       })),
-    };
-    // The injected boundary is the daemon control transport; all dispatch and
-    // machine reverse-RPC admission beneath it remain the production owners.
-    const executor = createDaemonPluginActionExecutor({
-      base: { execute: async () => { throw new Error('Unexpected built-in fallback'); } },
-      requestPluginActionExecution: (request, options) => executeContributedAction({
-        runtimeRegistry, actionId: request.actionId, input: request.input,
-        ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
-        context: { surface: request.surface, defaultSessionId: request.defaultSessionId, signal: options?.signal },
+      },
+    });
+    try {
+    // Only the connected-client RPC transport is substituted; the public meta
+    // Action, committed lease, contributed dispatch, and surface policy are real.
+    const executor = createActionExecutor({
+      ...createUnavailableActionTransportDeps(),
+      invokeContributedAction: createCommittedContributedActionInvoker({
+        acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry(),
       }),
     });
-    await expect(executor.execute('action.invoke', { action: { pluginId: action.pluginId!, localId: action.definition.id }, input: { destination: 'preview' } }, {
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.action.plugin', localId: 'open-client' }, input: { destination: 'preview' } }, {
       surface, defaultSessionId: 'session-current', requiredContributedActionDangerLevel: 'safe',
     })).resolves.toEqual({ ok: true, result: { handledBy: 'client' } });
     expect(requests).toEqual([{
-      v: 1, action: { pluginId: action.pluginId, localId: action.definition.id },
+      v: 1, action: { pluginId: 'acme.action.plugin', localId: 'open-client' },
       input: { destination: 'preview' }, surface,
-      expectedContributorOccurrenceId: readFixtureOccurrenceId(action.pluginId!),
+      expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId('acme.action.plugin'),
       defaultSessionId: 'session-current', requiredDangerLevel: 'safe',
     }]);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('keeps caller provenance and retired occurrences out of the host client Action transport', async () => {
@@ -1818,37 +1858,22 @@ describe('executeContributedAction', () => {
   });
 
   it('executes one committed target action invocation', async () => {
-    const action: ResolvedActionContribution = {
-      ...createAction('/unused/daemon.mjs', 'run'),
-      pluginId: 'acme.action.plugin',
-      definition: {
-        ...createAction('/unused/daemon.mjs', 'run').definition,
-        dangerLevel: 'safe',
-        scopes: ['global'],
-        contributionSurfaces: ['cli'],
-      },
-    };
-    const target = vi.fn(async () => ({ executedBy: 'target' }));
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [{
-        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', occurrenceId: createPluginRuntimeOccurrenceId('acme.action.plugin'), localId: 'run',
-        definition: {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [physicalActionPlugin({
+        action: {
           id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+          title: 'Run target', execution: { target: 'daemon' },
           resultSchema: { type: 'object', required: ['executedBy'], properties: { executedBy: { const: 'target' } } },
         },
-        handler: target,
-      }],
-    });
-    const registry = createExecutableRegistry({
-      action,
-      targetActionInvocations,
-      activateContributionsOnDemand: async () => [],
-    });
-
+        handlerBody: 'return { executedBy: "target" };',
+    })] });
+    try {
     await expect(executeContributedAction({
-      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+      runtimeRegistry: fixture.registry, actionId: 'acme.action.plugin/run', input: {}, context: { surface: 'cli' },
     })).resolves.toEqual({ matched: true, result: { ok: true, result: { executedBy: 'target' } } });
-    expect(target).toHaveBeenCalledTimes(1);
+    expect(readPhysicalInvocationCount(fixture)).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('preserves a null result from the committed target action registry', async () => {
@@ -1905,55 +1930,40 @@ describe('executeContributedAction', () => {
   });
 
   it('returns the committed target failure', async () => {
-    const action: ResolvedActionContribution = {
-      ...createAction('/unused/daemon.mjs', 'run'),
-      definition: {
-        ...createAction('/unused/daemon.mjs', 'run').definition,
-        dangerLevel: 'safe', scopes: ['global'], contributionSurfaces: ['cli'],
-      },
-    };
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [{
-        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', occurrenceId: createPluginRuntimeOccurrenceId('acme.action.plugin'), localId: 'run',
-        definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] },
-        handler: async () => { throw new Error('target failed'); },
-      }],
-    });
-    const registry = createExecutableRegistry({ action, targetActionInvocations, activateContributionsOnDemand: async () => [] });
-
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [physicalActionPlugin({
+      action: { id: 'run', title: 'Run target', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' } },
+      handlerBody: 'throw new Error("target failed");',
+    })] });
+    try {
     await expect(executeContributedAction({
-      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+      runtimeRegistry: fixture.registry, actionId: 'acme.action.plugin/run', input: {}, context: { surface: 'cli' },
     })).resolves.toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_execution_failed' } });
+    expect(readPhysicalInvocationCount(fixture)).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('returns target result validation failures', async () => {
-    const action: ResolvedActionContribution = {
-      ...createAction('/unused/daemon.mjs', 'run'),
-      definition: {
-        ...createAction('/unused/daemon.mjs', 'run').definition,
-        dangerLevel: 'safe', scopes: ['global'], contributionSurfaces: ['cli'],
-      },
-    };
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [{
-        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', occurrenceId: createPluginRuntimeOccurrenceId('acme.action.plugin'), localId: 'run',
-        definition: {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [physicalActionPlugin({
+        action: {
           id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+          title: 'Run target', execution: { target: 'daemon' },
           resultSchema: { type: 'object', required: ['owner'], properties: { owner: { const: 'target' } } },
         },
-        handler: async () => ({ wrong: true }),
-      }],
-    });
-    const registry = createExecutableRegistry({
-      action, targetActionInvocations, activateContributionsOnDemand: async () => [],
-    });
-
+        handlerBody: 'return { wrong: true };',
+    })] });
+    try {
     await expect(executeContributedAction({
-      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+      runtimeRegistry: fixture.registry, actionId: 'acme.action.plugin/run', input: {}, context: { surface: 'cli' },
     })).resolves.toMatchObject({
       matched: true,
       result: { ok: false, errorCode: 'plugin_action_result_schema_invalid' },
     });
+    expect(readPhysicalInvocationCount(fixture)).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('rejects non-JSON plugin action results even when no output schema is declared', async () => {
@@ -2016,47 +2026,39 @@ describe('executeContributedAction', () => {
   });
 
   it('requires qualified identity when two target plugins publish the same local action id', async () => {
-    const alpha = { ...createAction('/unused/a.mjs', 'run'), pluginId: 'acme.alpha' };
-    const beta = { ...createAction('/unused/b.mjs', 'run'), pluginId: 'acme.beta' };
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [
-        { pluginId: 'acme.alpha', pluginVersion: '1', occurrenceId: createPluginRuntimeOccurrenceId('acme.alpha'), localId: 'run', definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] }, handler: async () => ({ owner: 'alpha' }) },
-        { pluginId: 'acme.beta', pluginVersion: '1', occurrenceId: createPluginRuntimeOccurrenceId('acme.beta'), localId: 'run', definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] }, handler: async () => ({ owner: 'beta' }) },
-      ],
-    });
-    const base = createExecutableRegistry({ action: alpha, targetActionInvocations, activateContributionsOnDemand: async () => [] });
-    const contributes = {
-      ...base.contributes,
-      actions: [alpha, beta],
-      actionsById: new Map([['acme.alpha/run', alpha], ['acme.beta/run', beta]]),
-    };
-    const runtimeRegistry = { ...base, contributes };
-
-    await expect(executeContributedAction({ runtimeRegistry, actionId: 'acme.beta/run', input: {}, context: { surface: 'cli' } }))
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: ['alpha', 'beta'].map((owner) => physicalActionPlugin({
+      pluginId: `acme.${owner}`,
+      action: { id: 'run', title: 'Run target', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' } },
+      handlerBody: `return { owner: ${JSON.stringify(owner)} };`,
+    })) });
+    try {
+    await expect(executeContributedAction({ runtimeRegistry: fixture.registry, actionId: 'acme.beta/run', input: {}, context: { surface: 'cli' } }))
       .resolves.toEqual({ matched: true, result: { ok: true, result: { owner: 'beta' } } });
-    await expect(executeContributedAction({ runtimeRegistry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
+    await expect(executeContributedAction({ runtimeRegistry: fixture.registry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
       .resolves.toEqual({ matched: false });
+    expect(readPhysicalInvocationCount(fixture, 'acme.alpha')).toBe(0);
+    expect(readPhysicalInvocationCount(fixture, 'acme.beta')).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('does not turn a globally supplied local action id into authority even when only one plugin matches', async () => {
-    const action = { ...createAction('/unused/a.mjs', 'run'), pluginId: 'acme.alpha' };
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [{
-        pluginId: 'acme.alpha', pluginVersion: '1', occurrenceId: createPluginRuntimeOccurrenceId('acme.alpha'), localId: 'run',
-        definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] },
-        handler: async () => ({ owner: 'alpha' }),
-      }],
-    });
-    const base = createExecutableRegistry({ action, targetActionInvocations, activateContributionsOnDemand: async () => [] });
-    const runtimeRegistry = {
-      ...base,
-      contributes: { ...base.contributes, actionsById: new Map([['acme.alpha/run', action]]) },
-    };
-
-    await expect(executeContributedAction({ runtimeRegistry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [physicalActionPlugin({
+      pluginId: 'acme.alpha',
+      action: { id: 'run', title: 'Run target', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' } },
+      handlerBody: 'return { owner: "alpha" };',
+    })] });
+    try {
+    await expect(executeContributedAction({ runtimeRegistry: fixture.registry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
       .resolves.toEqual({ matched: false });
-    await expect(executeContributedAction({ runtimeRegistry, actionId: 'acme.alpha/run', input: {}, context: { surface: 'cli' } }))
+    expect(readPhysicalInvocationCount(fixture, 'acme.alpha')).toBe(0);
+    await expect(executeContributedAction({ runtimeRegistry: fixture.registry, actionId: 'acme.alpha/run', input: {}, context: { surface: 'cli' } }))
       .resolves.toEqual({ matched: true, result: { ok: true, result: { owner: 'alpha' } } });
+    expect(readPhysicalInvocationCount(fixture, 'acme.alpha')).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('does not import a daemon module to resolve an unbound static action export', async () => {
@@ -2277,14 +2279,9 @@ describe('executeContributedAction', () => {
   });
 
   it('fails closed before invoking a plugin action when input does not match inputSchema', async () => {
-    const baseAction = createAction('/unused/daemon.mjs', 'run');
-    const action: ResolvedActionContribution = {
-      ...baseAction,
-      definition: {
-        ...baseAction.definition,
-        dangerLevel: 'safe',
-        scopes: ['global'],
-        contributionSurfaces: ['cli'],
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [physicalActionPlugin({
+      action: {
+        id: 'run', title: 'Run target', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], execution: { target: 'daemon' },
         inputSchema: {
           type: 'object',
           required: ['scope'],
@@ -2294,26 +2291,12 @@ describe('executeContributedAction', () => {
           additionalProperties: false,
         },
       },
-    };
-    const handler = vi.fn(async () => ({ ok: true }));
-    const targetActionInvocations = createTargetActionInvocationRegistry({
-      actions: [{
-        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', occurrenceId: createPluginRuntimeOccurrenceId('acme.action.plugin'), localId: 'run',
-        definition: {
-          id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
-          inputSchema: action.definition.inputSchema,
-        },
-        handler,
-      }],
-    });
-
+      handlerBody: 'return { ok: true };',
+    })] });
+    try {
     const result = await executeContributedAction({
-      runtimeRegistry: createExecutableRegistry({
-        action,
-        targetActionInvocations,
-        activateContributionsOnDemand: async () => [],
-      }),
-      actionId: 'run',
+      runtimeRegistry: fixture.registry,
+      actionId: 'acme.action.plugin/run',
       input: { scope: 123 },
       context: {
         surface: 'cli',
@@ -2329,7 +2312,10 @@ describe('executeContributedAction', () => {
         actionHandlerInvocation: 'notStarted',
       },
     });
-    expect(handler).not.toHaveBeenCalled();
+    expect(readPhysicalInvocationCount(fixture)).toBe(0);
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('validates null-prototype JSON enum inputs and const results without throwing', async () => {

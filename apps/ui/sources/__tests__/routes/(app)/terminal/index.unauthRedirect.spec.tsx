@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { installTerminalRouteCommonModuleMocks, resetTerminalRouteTestState } from './terminalRouteTestHelpers';
+import { installTerminalRouteCommonModuleMocks, initializeTerminalRouteRuntimeForTests, renderTerminalRoute } from './terminalRouteTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,14 +17,12 @@ const routerMock = createExpoRouterMock({
 
 installTerminalRouteCommonModuleMocks({ router: () => routerMock.module });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: false, credentials: null }),
-}));
-
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { alertAsync: modalAlertAsyncMock } }).module;
 });
+
+await initializeTerminalRouteRuntimeForTests();
 
 function createV4Params(serverUrl: string, serverIdentityId: string) {
     const descriptor = {
@@ -32,7 +30,9 @@ function createV4Params(serverUrl: string, serverIdentityId: string) {
         homeServerIdentityId: serverIdentityId,
         canonicalServerUrl: serverUrl,
         revision: 1,
-        endpoints: [{ kind: 'iroh' as const, endpointId: 'a'.repeat(64) }],
+        endpoints: serverUrl.startsWith('https://')
+            ? [{ kind: 'https' as const, url: serverUrl }]
+            : [{ kind: 'iroh' as const, endpointId: 'a'.repeat(64) }],
     };
     return {
         descriptor,
@@ -61,7 +61,6 @@ async function activateServer(serverUrl: string) {
 
 describe('TerminalScreen unauthenticated redirect', () => {
     beforeEach(async () => {
-        vi.resetModules();
         installTerminalRouteCommonModuleMocks({ router: () => routerMock.module });
         replaceMock.mockClear();
         modalAlertAsyncMock.mockClear();
@@ -75,7 +74,6 @@ describe('TerminalScreen unauthenticated redirect', () => {
         const { clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         clearPendingTerminalConnect();
         standardCleanup();
-        resetTerminalRouteTestState();
     });
 
     it('captures a strict V4 descriptor in the real pending owner before redirecting to auth', async () => {
@@ -83,10 +81,10 @@ describe('TerminalScreen unauthenticated redirect', () => {
         searchParamsValue = link.params;
         const Screen = (await import('@/app/(app)/terminal/index')).default;
 
-        await renderScreen(<Screen />);
+        await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
-        expect(replaceMock).toHaveBeenCalledWith('/?server=https%3A%2F%2Fexample.test');
+        await vi.waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/?server=https%3A%2F%2Fexample.test'));
         await activateServer('https://example.test');
         const { getPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         expect(getPendingTerminalConnect()).toMatchObject({
@@ -101,7 +99,7 @@ describe('TerminalScreen unauthenticated redirect', () => {
         searchParamsValue = link.params;
         const Screen = (await import('@/app/(app)/terminal/index')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
         expect(replaceMock).not.toHaveBeenCalled();
@@ -126,7 +124,7 @@ describe('TerminalScreen unauthenticated redirect', () => {
         };
         const Screen = (await import('@/app/(app)/terminal/index')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen, null);
         await act(async () => {});
 
         expect(modalAlertAsyncMock).toHaveBeenCalledWith(

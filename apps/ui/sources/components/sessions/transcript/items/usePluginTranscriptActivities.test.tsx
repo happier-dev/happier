@@ -1,8 +1,26 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 
 import {
+    DaemonPluginUiResourceReadRequestSchema,
+    DaemonPluginUiResourceReadResponseSchema,
+    DaemonPluginUiResourceWatchCloseRequestSchema,
+    DaemonPluginUiResourceWatchNextRequestSchema,
+    DaemonPluginUiResourceWatchNextResponseSchema,
+    DaemonPluginUiResourceWatchOpenRequestSchema,
+    DaemonPluginUiResourceWatchOpenResponseSchema,
+    type DaemonPluginUiResourceReadResponse,
+    type DaemonPluginUiResourceWatchCloseResponse,
+    type DaemonPluginUiResourceWatchNextResponse,
+    type DaemonPluginUiResourceWatchOpenResponse,
     PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
     PluginProjectionV2Schema,
 } from '@happier-dev/protocol';
@@ -31,57 +49,47 @@ const transport = vi.hoisted(() => ({
     close: vi.fn(),
 }));
 
-vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-    machinePluginUiResourceRead: transport.read,
-    machinePluginUiResourceWatchOpen: transport.open,
-    machinePluginUiResourceWatchNext: transport.next,
-    machinePluginUiResourceWatchClose: transport.close,
-    machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSecretDelete: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-    machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
-}));
+// Exercise the real Resource transport adapters below their daemon network boundary.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () =>
+    createServerScopedMachineRpcBoundaryMock(async (request) => {
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) {
+            const options = DaemonPluginUiResourceWatchCloseRequestSchema.parse(request.payload);
+            await transport.close(request.machineId, options);
+            return { ok: true, closed: true } satisfies DaemonPluginUiResourceWatchCloseResponse;
+        }
+        const boundary = request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
+            ? { call: transport.read, schema: DaemonPluginUiResourceReadRequestSchema, reply: DaemonPluginUiResourceReadResponseSchema }
+            : request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
+                ? { call: transport.open, schema: DaemonPluginUiResourceWatchOpenRequestSchema, reply: DaemonPluginUiResourceWatchOpenResponseSchema }
+                : request.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT
+                    ? { call: transport.next, schema: DaemonPluginUiResourceWatchNextRequestSchema, reply: DaemonPluginUiResourceWatchNextResponseSchema }
+                    : null;
+        if (!boundary) throw new Error(`Unexpected daemon RPC: ${request.method}`);
+        const options = { ...boundary.schema.parse(request.payload), signal: request.signal };
+        const outcome = await boundary.call(request.machineId, options);
+        if (!outcome.supported) throw new Error(outcome.reason);
+        return boundary.reply.parse(outcome.result);
+    }),
+);
 
-const ACCOUNT_LIFETIME = Object.freeze({
-    scope: { serverId: 'server-1', accountId: 'account-1' },
-    isCurrent: () => true,
-    onRetire: () => Object.freeze({ dispose: () => undefined }),
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const connections: Awaited<ReturnType<typeof restoreServerAccountForTest>>[] = [];
+async function createAccountLifetime(accountId = 'account-a') {
+    // Cold restore is an app-entry operation; a new Account first retires the live connection.
+    if (connections.length > 0) await disconnectActiveServerConnection();
+    const http = createHomeHubArtifactHttpBoundary(accountId);
+    connections.push(await restoreServerAccountForTest({ serverUrl: 'http://transcript-activities.test', accountId, request: http.request }));
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected captured active Account lifetime');
+    return { lifetime, retire: retireActiveServerAccountScopeLifetime };
+}
+afterEach(async () => {
+    for (const connection of connections.splice(0).reverse()) await connection.dispose();
 });
 
-function createAccountLifetime(accountId: string) {
-    let current = true;
-    const retirements = new Set<() => void>();
-    return {
-        lifetime: Object.freeze({
-            scope: { serverId: 'server-1', accountId },
-            isCurrent: () => current,
-            onRetire(cancel: () => void) {
-                if (!current) {
-                    cancel();
-                    return Object.freeze({ dispose: () => undefined });
-                }
-                retirements.add(cancel);
-                let removed = false;
-                return Object.freeze({
-                    dispose: () => {
-                        if (removed) return;
-                        removed = true;
-                        retirements.delete(cancel);
-                    },
-                });
-            },
-        }),
-        activeRetirementCount: () => retirements.size,
-        retire: () => {
-            if (!current) return;
-            current = false;
-            const pending = [...retirements];
-            retirements.clear();
-            pending.forEach((cancel) => cancel());
-        },
-    };
-}
+let ACCOUNT_LIFETIME: NonNullable<ReturnType<typeof captureActiveServerAccountScopeLifetime>>;
+beforeEach(async () => { ACCOUNT_LIFETIME = (await createAccountLifetime()).lifetime; });
 
 const projection: PluginUiProjectionModel = Object.freeze({
     ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -116,7 +124,7 @@ function response(
             contentType: PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
             digest,
             bytesBase64: Buffer.from(JSON.stringify(value)).toString('base64'),
-        },
+        } satisfies Extract<DaemonPluginUiResourceReadResponse, { ok: true }>,
     };
 }
 
@@ -175,7 +183,7 @@ function ResourceOnlyTestProviders(props: Readonly<{ children: React.ReactNode }
 
 describe('plugin transcript Activity Resource projection', () => {
     it('retires a zero-consumer dismissal when the canonical Session owner records deletion', async () => {
-        const account = createAccountLifetime('dismissal-retirement');
+        const account = await createAccountLifetime('dismissal-retirement');
         const sessionA = 'dismissal-retirement-session-a';
         let latest!: ReturnType<typeof usePluginTranscriptActivityDismissal>;
         function Probe(props: Readonly<{ sessionId: string }>) {
@@ -183,7 +191,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 accountLifetime: account.lifetime,
                 sessionId: props.sessionId,
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 generation: '1',
             });
             return null;
@@ -214,14 +222,14 @@ describe('plugin transcript Activity Resource projection', () => {
     });
 
     it('retires a dormant prior-generation dismissal when the same Session is reacquired at a new generation', async () => {
-        const account = createAccountLifetime('generation-retirement');
+        const account = await createAccountLifetime('generation-retirement');
         let latest!: ReturnType<typeof usePluginTranscriptActivityDismissal>;
         function Probe(props: Readonly<{ sessionId: string; generation: string }>) {
             latest = usePluginTranscriptActivityDismissal({
                 accountLifetime: account.lifetime,
                 sessionId: props.sessionId,
                 machineId: 'machine-1',
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 generation: props.generation,
             });
             return null;
@@ -282,7 +290,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -295,7 +303,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: channelsProjection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -373,7 +381,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -386,7 +394,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: allowlistProjection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -430,7 +438,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise((resolve) => {
             resolveNext = resolve;
@@ -445,7 +453,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -485,7 +493,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         kind: 'invalidated',
                         digest: current.result.digest,
                     },
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true }>,
             });
             await Promise.resolve();
         });
@@ -526,7 +534,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise((resolve) => {
             resolveNext = resolve;
@@ -543,7 +551,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             latest = value;
@@ -597,7 +605,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         kind: 'invalidated',
                         digest: current.result.digest,
                     },
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true }>,
             });
             await Promise.resolve();
         });
@@ -670,7 +678,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise((resolve) => {
             resolveNext = resolve;
@@ -685,7 +693,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -725,7 +733,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         // rereads, then receives the malformed fresh candidate.
                         digest: previousDigest,
                     },
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true }>,
             });
             await Promise.resolve();
         });
@@ -762,7 +770,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         kind: 'invalidated',
                         digest: current.result.digest,
                     },
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true }>,
             });
             await Promise.resolve();
         });
@@ -818,7 +826,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -831,7 +839,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: twoProfiles,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -890,7 +898,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         ok: true,
                         subscriptionId: options.subscriptionId,
                         digest: current.result.digest,
-                    },
+                    } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
                 };
             });
             transport.next.mockImplementation(async () => await new Promise(() => {}));
@@ -905,7 +913,7 @@ describe('plugin transcript Activity Resource projection', () => {
                     machineId: 'machine-1',
                     platform: 'web',
                     pluginUiProjection: projection,
-                    serverId: 'server-1',
+                    serverId: ACCOUNT_LIFETIME.scope.serverId,
                     sessionId: 'session-a',
                 });
                 latest = value;
@@ -979,7 +987,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -992,19 +1000,23 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
         }
 
         let tree: renderer.ReactTestRenderer | null = null;
+        // React's renderer supports the runtime flag before its external types expose it.
+        const strictModeOptions: renderer.TestRendererOptions & { unstable_strictMode: true } = {
+            unstable_strictMode: true,
+        };
         await act(async () => {
             tree = renderer.create(
                 <React.StrictMode>
                     <ActivityTestProviders><Probe /></ActivityTestProviders>
                 </React.StrictMode>,
-                { unstable_strictMode: true } as unknown as renderer.TestRendererOptions,
+                strictModeOptions,
             );
             await Promise.resolve();
             await Promise.resolve();
@@ -1068,7 +1080,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: readCount === 0 ? initial.result.digest : remounted.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -1081,7 +1093,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -1167,7 +1179,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: readCount <= 1 ? initial.result.digest : remounted.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -1180,7 +1192,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -1243,8 +1255,7 @@ describe('plugin transcript Activity Resource projection', () => {
         transport.next.mockReset();
         transport.close.mockReset();
 
-        const accountA = createAccountLifetime('account-a');
-        const accountB = createAccountLifetime('account-b');
+        const accountA = await createAccountLifetime('account-a');
         const initial = response({
             version: 1,
             activities: [{
@@ -1282,7 +1293,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: readCount <= 1 ? initial.result.digest : replacement.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -1295,7 +1306,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             return null;
@@ -1321,7 +1332,6 @@ describe('plugin transcript Activity Resource projection', () => {
         // The activity consumer and its one mounted generic Resource store
         // are the only Account-retirement owners. There is no app-root map
         // retaining Account-keyed Resource entries.
-        expect(accountA.activeRetirementCount()).toBe(2);
 
         await act(async () => {
             accountA.retire();
@@ -1332,6 +1342,9 @@ describe('plugin transcript Activity Resource projection', () => {
             expect(transport.close).toHaveBeenCalledTimes(1);
         });
 
+        const accountB = await createAccountLifetime('account-b');
+        expect(accountA.lifetime.isCurrent()).toBe(false);
+        expect(accountB.lifetime.scope.accountId).toBe('account-b');
         await act(async () => {
             tree?.update(<Harness accountLifetime={accountB.lifetime} />);
             await Promise.resolve();
@@ -1354,14 +1367,16 @@ describe('plugin transcript Activity Resource projection', () => {
         await act(async () => { tree?.unmount(); });
     });
 
-    it('does not share one exact Session Resource store across concurrent Account lifetimes', async () => {
+    it('rejects a retired Account lifetime while admitting the current Account Resource observation', async () => {
         transport.read.mockReset();
         transport.open.mockReset();
         transport.next.mockReset();
         transport.close.mockReset();
 
-        const accountA = createAccountLifetime('account-a');
-        const accountB = createAccountLifetime('account-b');
+        const accountA = await createAccountLifetime('account-a');
+        const accountB = await createAccountLifetime('account-b');
+        expect(accountA.lifetime.isCurrent()).toBe(false);
+        expect(accountB.lifetime.scope.accountId).toBe('account-b');
         const current = response({
             version: 1,
             activities: [{
@@ -1380,7 +1395,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: current.result.digest,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -1397,7 +1412,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: 'session-a',
             });
             if (props.account === 'a') latestA = value;
@@ -1417,15 +1432,14 @@ describe('plugin transcript Activity Resource projection', () => {
             await Promise.resolve();
         });
         await vi.waitFor(() => {
-            expect(latestA?.activities).toMatchObject([{ title: 'Account-isolated build' }]);
+            expect(latestA?.activities).toEqual([]);
             expect(latestB?.activities).toMatchObject([{ title: 'Account-isolated build' }]);
         });
 
-        // Account identity is part of the exact mounted binding. Sharing a
-        // Session target must never let Account B consume Account A's store,
-        // even while both pane trees coexist during a transition.
-        expect(transport.open).toHaveBeenCalledTimes(2);
-        expect(transport.read).toHaveBeenCalledTimes(2);
+        // The retired Account is refused before transport admission, even
+        // while both pane trees coexist during a transition.
+        expect(transport.open).toHaveBeenCalledTimes(1);
+        expect(transport.read).toHaveBeenCalledTimes(1);
 
         await act(async () => { tree?.unmount(); });
     });
@@ -1486,7 +1500,7 @@ describe('plugin transcript Activity Resource projection', () => {
                     ok: true,
                     subscriptionId: options.subscriptionId,
                     digest: currentBySession.get(sessionId)!.result.digest,
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
             };
         });
         transport.next.mockImplementation(async (_machineId: string, options: Readonly<{
@@ -1510,7 +1524,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: props.sessionId,
             });
             if (props.mount === 'a-first') latestAFirst = value;
@@ -1570,7 +1584,7 @@ describe('plugin transcript Activity Resource projection', () => {
                         kind: 'invalidated',
                         digest: currentBySession.get('session-a')!.result.digest,
                     },
-                },
+                } satisfies Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true }>,
             });
             await Promise.resolve();
         });
@@ -1639,7 +1653,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 ok: true,
                 subscriptionId: options.subscriptionId,
                 digest: `sha256:${'c'.repeat(64)}`,
-            },
+            } satisfies Extract<DaemonPluginUiResourceWatchOpenResponse, { ok: true }>,
         }));
         transport.next.mockImplementation(async () => await new Promise(() => {}));
         transport.close.mockResolvedValue(undefined);
@@ -1656,7 +1670,7 @@ describe('plugin transcript Activity Resource projection', () => {
                 machineId: 'machine-1',
                 platform: 'web',
                 pluginUiProjection: props.projectionModel ?? projection,
-                serverId: 'server-1',
+                serverId: ACCOUNT_LIFETIME.scope.serverId,
                 sessionId: props.sessionId,
                 sessionRemoved: props.sessionRemoved,
             });
@@ -1703,7 +1717,16 @@ describe('plugin transcript Activity Resource projection', () => {
         // Replacing a contributor generation retires its old local dismissal;
         // returning to the former generation must not resurrect a stale card
         // decision from that retired source.
-        const replacementGeneration = Object.freeze({ ...projection, generation: 8 });
+        const replacementGeneration = Object.freeze({
+            ...projection,
+            generation: 8,
+            transcriptActivitiesById: Object.freeze({
+                'acme.preview/activity': Object.freeze({
+                    ...projection.transcriptActivitiesById['acme.preview/activity']!,
+                    occurrenceId: 'preview-occurrence-8',
+                }),
+            }),
+        });
         await act(async () => {
             tree?.update(
                 <ActivityTestProviders>

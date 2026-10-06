@@ -313,7 +313,7 @@ describe('daemon contribution registry projection adapters', () => {
             kind: 'device_code',
             resolvedCommand: "'/opt/runtime/bun' '/opt/acme/acme.js'",
         })).toEqual({
-            initialCommand: "'/opt/runtime/bun' '/opt/acme/acme.js' login --device-code",
+            launch: { kind: 'agent_login', agentId: 'acme.native', launchId: 'device_code' },
         });
 
         // The plugin shows the mark of the Agent it contributes, rather than a letter.

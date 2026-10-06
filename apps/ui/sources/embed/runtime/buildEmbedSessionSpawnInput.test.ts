@@ -68,7 +68,7 @@ describe('buildEmbedSessionSpawnInput', () => {
         self.grant.permissionModes = null;
         const unrestricted = buildEmbedSessionSpawnInput({ draft: missingSelections, attemptId: 'launch-attempt', self, endpointUrl });
         expect(unrestricted.modelSelection).toBeUndefined();
-        expect(unrestricted.permissionMode).toBeUndefined();
+        expect(unrestricted.permissionMode).toBe('default');
     });
 
     it('fails with typed create_not_granted when creation, presentation or canonical action admission refuses the spawn', () => {

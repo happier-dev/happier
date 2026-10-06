@@ -4,9 +4,9 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { pressTestInstance, renderScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
+import { pressTestInstance, renderScreen as renderCanonicalScreen, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
   EMPTY_PLUGIN_UI_PROJECTION,
@@ -17,6 +17,17 @@ import {
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import 'fake-indexeddb/auto';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { buildRealmQualifiedSessionCompanionPreferenceKey } from '@/components/sessions/companion/state/sessionCompanionPreferenceKey';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -34,7 +45,7 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
 }));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const keyboardDismissSpy = vi.hoisted(() => vi.fn());
-const ensureSidechainMessagesLoadedSpy = vi.hoisted(() => vi.fn(async () => 'loaded' as const));
+let ensureSidechainMessagesLoadedSpy: MockInstance<typeof import('@/sync/sync')['sync']['ensureSidechainMessagesLoaded']>;
 const paneOpenRightSpy = vi.hoisted(() => vi.fn());
 const paneSetRightTabSpy = vi.hoisted(() => vi.fn());
 const paneOpenDetailsTabSpy = vi.hoisted(() => vi.fn());
@@ -149,9 +160,6 @@ vi.mock('@react-navigation/native', () => ({
   useFocusEffect: () => {},
   useIsFocused: () => true,
 }));
-vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
   AgentContentView: () => null,
@@ -223,18 +231,6 @@ vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', async (im
     ),
   };
 });
-vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
-  useRegisterSessionPaneDriver: () => 'pane-scope-test',
-}));
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-  useAppPaneScope: () => ({
-    scopeState: paneScopeState.value,
-    openRight: paneOpenRightSpy,
-    setRightTab: paneSetRightTabSpy,
-    openDetailsTab: paneOpenDetailsTabSpy,
-    selectRightDestination: paneSelectRightDestinationSpy,
-  }),
-}));
 vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
   SessionBoardControllerProvider: ({ children }: React.PropsWithChildren) => children,
   useMountedSessionBoardController: (address: { serverId: string; sessionId: string } | null) => (
@@ -421,36 +417,9 @@ vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
   useSessionMachineTarget: () => null,
   useSessionMachineControlTarget: () => sessionMachineControlTargetState.target,
 }));
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
-  subscribeActiveServer: () => () => {},
-}));
 vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
   voiceSessionManager: {},
-}));
-vi.mock('@/sync/sync', async () => {
-  const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
-  return {
-    sync: {
-      ...createAcceptedExternalSessionTailCursorSyncBoundary(),
-      markSessionViewed: async () => {},
-      fetchPendingMessages: async () => {},
-      refreshSessions: async () => {},
-      onSessionVisible: () => () => {},
-      ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedSpy,
-      sendMessage: async () => {},
-      enqueuePendingMessage: async () => {},
-      submitMessage: async () => {},
-      encryption: { getMachineEncryption: () => null },
-    },
-  };
-});
-vi.mock('@/sync/ops', () => ({
-  sessionAbort: vi.fn(),
-  resumeSession: vi.fn(),
-  sessionAttachmentsUploadFile: vi.fn(),
-  sessionSwitch: vi.fn(),
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
@@ -551,48 +520,7 @@ installSessionShellCommonModuleMocks({
       },
     }).module;
   },
-  storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, sessionPending: {}, settings: {}, concurrentSessionListCacheByServerId: {} }) },
-	      useSession: () => sessionState.session,
-	      useIsDataReady: () => true,
-	      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-      useSessionVisibleReadSeq: () => sessionState.session?.seq ?? 0,
-      useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
-      useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-      useSessionPendingMessages: () => ({ messages: [] }),
-      useSessionSubagentSourceMessages: () => sessionMessagesState.messages,
-      useSessionReviewCommentsDrafts: () => [],
-      useWorkspaceReviewCommentsDrafts: () => [],
-      useSessionUsage: () => null,
-      useWorkflowRunRows: () => [],
-      useSessionCompanionPreferenceSlot: (sessionId: string | null, serverId?: string | null) => ({
-        storageKey: sessionId ? JSON.stringify([serverId ?? 'server-1', 'account-a', sessionId]) : null,
-        stored: companionPreferenceState.stored,
-      }),
-      useMutateSessionCompanionPreference: () => companionPreferenceMutateSpy,
-      useLocalSetting: (key: string) => {
-        if (key === 'acknowledgedCliVersions') return {};
-        if (key === 'uiMultiPanePanelsEnabled') return false;
-        if (key === 'detailsPaneTabsBehavior') return 'preview';
-        if (key === 'rightPaneWidthPx') return 360;
-        if (key === 'rightPaneWidthBasisPx') return 1200;
-        if (key === 'detailsPaneWidthPx') return 520;
-        if (key === 'detailsPaneWidthBasisPx') return 1200;
-        return {};
-      },
-      useLocalSettingMutable: () => [null, vi.fn()],
-      useSetting: (key: string) => {
-        if (key === 'mobileWorkspaceExperienceV1') return localSettingsState.mobileWorkspaceExperienceV1;
-        if (key === 'workspaceRefsV1' || key === 'workspaceSyncRelationshipsV1') return [];
-        return null;
-      },
-      useSettings: () => ({ experiments: true, featureToggles: {} }),
-      useAutomations: () => [],
-      useEnabledAutomationsCountForSession: () => automationsState.enabledCount,
-    });
-  },
+  storage: async importOriginal => importOriginal(),
 });
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => ({
@@ -608,10 +536,83 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => p,
 }));
 
+
+installDisconnectedServerSocketBoundary();
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+const { storage: canonicalStorage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let previousStorage: ReturnType<typeof canonicalStorage.getState>;
+let pane: ReturnType<typeof useAppPaneScope>;
+
+function applyShellFixtures() {
+  canonicalStorage.getState().applySessions([createSessionFixture({ ...sessionState.session, active: sessionState.session.active ?? true })]);
+  const messages = sessionMessagesState.messages.map((message, index) => message.kind === 'tool-call'
+    ? createToolCallMessageFixture({ ...message, id: message.id ?? `tool-${index}`, tool: { ...createToolCallMessageFixture().tool, ...message.tool } })
+    : { localId: null, createdAt: 1, ...message });
+  const messagesById = Object.fromEntries(messages.map(message => [message.id, message]));
+  canonicalStorage.setState({ isDataReady: true, sessionMessages: { s1: createSessionMessagesFixture({
+    isLoaded: true, messagesById, messageIdsOldestFirst: messages.map(message => message.id),
+  }) } });
+  canonicalStorage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: localSettingsState.mobileWorkspaceExperienceV1 });
+  const key = buildRealmQualifiedSessionCompanionPreferenceKey({ serverId: account.home.id, accountId: 'account-a' }, 's1');
+  canonicalStorage.getState().applyLocalSettings({
+    uiMultiPanePanelsEnabled: false, acknowledgedCliVersions: {},
+    sessionCompanionPreferencesBySessionV1: key && companionPreferenceState.stored ? { [key]: companionPreferenceState.stored } : {},
+  }, { persist: false });
+  canonicalStorage.getState().applyAutomations(Array.from({ length: automationsState.enabledCount }, (_, index) => createAutomationDefinitionSummary({
+    id: `automation-${index}`, name: 'Session task', description: null, enabled: true,
+    targetType: 'existingSession', existingSessionId: 's1', templateVersion: 1, lastRunAt: null,
+    createdAt: 1, updatedAt: 1, assignments: [], triggers: [],
+  })));
+}
+
+function PaneProbe() {
+  pane = useAppPaneScope(createSessionPaneScopeId('s1', account.home.id));
+  React.useEffect(() => {
+    if (paneScopeState.value?.details.isOpen) pane.openDetailsTab(createSessionBoardDetailsTab(), { intent: 'pinned' });
+  }, []);
+  return null;
+}
+
+async function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
+  applyShellFixtures();
+  const screen = await renderCanonicalScreen(...args);
+  return { ...screen, update: async (element: React.ReactElement) => { applyShellFixtures(); await screen.update(element); } };
+}
+
+beforeEach(async () => {
+  previousStorage = canonicalStorage.getState();
+  await loadSyncSingletonForTests();
+  const { sync } = await import('@/sync/sync');
+  ensureSidechainMessagesLoadedSpy = vi.spyOn(sync, 'ensureSidechainMessagesLoaded');
+  account = await restoreServerAccountForTest({ serverUrl: 'https://server-1', request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+    if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+    if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+    if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+    if (path.endsWith('/pending')) return Response.json({ pending: [] });
+    if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
+    return new Response('{}', { status: 404 });
+  } });
+  canonicalStorage.getState().applyLocalSettings({ appPaneScopesV1: {} }, { persist: false });
+});
+afterEach(async () => {
+  await standardCleanup();
+  const { scmStatusSync } = await import('@/scm/scmStatusSync');
+  scmStatusSync.stop('s1', account.home.id);
+  ensureSidechainMessagesLoadedSpy.mockRestore();
+  await account.dispose();
+  canonicalStorage.setState(previousStorage, true);
+});
+
 const { SessionView } = await import('./SessionView');
 
 const AppPaneProviderWrapper = ({ children }: { children?: React.ReactNode }) => (
-  <AppPaneProvider>{children ?? null}</AppPaneProvider>
+  <InjectedAuthProvider credentials={account.credentials}><AppPaneProvider><PaneProbe />{children ?? null}</AppPaneProvider></InjectedAuthProvider>
 );
 
 function findPressableByAccessibilityLabel(screen: RenderScreenResult, label: string) {
@@ -839,7 +840,7 @@ describe('SessionView header action menu visibility', () => {
       input: { source: 'session-header' },
     } as const;
     await expect(openSurface(rightSidebarRequest)).resolves.toEqual({ ok: true });
-    expect(paneSelectRightDestinationSpy).toHaveBeenCalledWith({
+    expect(pane.scopeState?.right.selectedDestination).toEqual({
       kind: 'plugin',
       destination: rightSidebarPlacement.binding.destination,
     });
@@ -1404,10 +1405,9 @@ describe('SessionView header action menu visibility', () => {
 
     const props = headerActionMenuSpy.mock.calls.at(-1)?.[0] as any;
     expect((props?.extraItems ?? []).map((item: any) => item?.id)).not.toContain('header.openBoard');
-    expect(paneOpenDetailsTabSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'board', kind: 'board' }),
-      { intent: 'pinned' },
-    );
+    expect(pane.scopeState?.details.tabs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'board', kind: 'board', isPinned: true }),
+    ]));
   });
 
   it('folds a populated Board back into overflow when the incumbent header budget is compact', async () => {
@@ -1461,7 +1461,8 @@ describe('SessionView header action menu visibility', () => {
       expect(mounts.bridges).toHaveLength(1);
       expect(mounts.revealAddress).toEqual({ serverId: 'server-1', sessionId: 's1' });
       // Admission is not a reason to rewrite this device's saved choices.
-      expect(companionPreferenceMutateSpy).not.toHaveBeenCalled();
+      const key = buildRealmQualifiedSessionCompanionPreferenceKey({ serverId: account.home.id, accountId: 'account-a' }, 's1');
+      expect(canonicalStorage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key!]).toEqual(VISIBLE_COMPANION_PREFERENCE);
     });
 
     it('keeps the Companion header entry, rail host and presentation bridge when that Home enables Board', async () => {

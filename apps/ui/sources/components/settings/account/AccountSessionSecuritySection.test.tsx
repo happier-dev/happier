@@ -5,7 +5,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 const boundary = vi.hoisted(() => ({
@@ -13,6 +14,7 @@ const boundary = vi.hoisted(() => ({
     alertAsync: vi.fn(async () => undefined),
     logout: vi.fn(async () => ({ kind: 'completed' as const })),
 }));
+installDisconnectedServerSocketBoundary();
 installSettingsViewCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -28,6 +30,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 describe('Account session Security confirmation', () => {
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
         boundary.confirm.mockReset().mockResolvedValue(false);
         boundary.alertAsync.mockClear();
         boundary.logout.mockClear();

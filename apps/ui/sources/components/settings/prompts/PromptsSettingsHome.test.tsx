@@ -1,6 +1,9 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import {
     installPromptLibrarySettingsCommonModuleMocks,
     promptLibrarySettingsRouterPushSpy,
@@ -13,7 +16,7 @@ const useFeatureEnabledMock = vi.hoisted(() => vi.fn((featureId: string) => (
     featureId === 'prompts.assets.external' || featureId === 'prompts.skills.registries'
 )));
 
-installPromptLibrarySettingsCommonModuleMocks();
+installPromptLibrarySettingsCommonModuleMocks({ storage: async (importOriginal) => importOriginal() });
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -29,12 +32,19 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => useFeatureEnabledMock(featureId),
 }));
 
-beforeEach(() => {
-    vi.resetModules();
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    installDisconnectedServerSocketBoundary();
+    clearActiveUnsavedChangesGuard();
     promptLibrarySettingsRouterPushSpy.mockClear();
     useFeatureEnabledMock.mockImplementation((featureId: string) => (
         featureId === 'prompts.assets.external' || featureId === 'prompts.skills.registries'
     ));
+});
+
+afterEach(async () => {
+    await standardCleanup();
+    clearActiveUnsavedChangesGuard();
 });
 
 describe('PromptsSettingsHome', () => {

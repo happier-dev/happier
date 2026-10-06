@@ -16,12 +16,6 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
 });
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-    },
-}));
 vi.mock('@/modal/components/card/ModalCardFrame', () => ({
     ModalCardFrame: ({ children, footer }: { children?: React.ReactNode; footer?: React.ReactNode }) =>
         React.createElement('ModalCardFrame', null, children, footer),

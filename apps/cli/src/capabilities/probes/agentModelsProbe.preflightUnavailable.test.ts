@@ -66,6 +66,8 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
       availableModels: [],
       supportsFreeform: false,
       source: 'unavailable',
+      cacheable: false,
+      refreshError: true,
     });
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -82,11 +84,12 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
     })).resolves.toEqual({
       agentId: 'acme-agent',
       availableModels: [
-        { id: 'default', name: 'Default' },
+        { id: 'default', name: 'Default', capabilities: { structuredOutput: 'unknown' } },
         { id: 'acme-model', name: 'Acme Model' },
       ],
       supportsFreeform: false,
       source: 'dynamic',
+      observedAt: expect.any(Number),
     });
     expect(spawnMock).not.toHaveBeenCalled();
   });
@@ -103,6 +106,8 @@ describe('probeAgentModelsBestEffort (authoritative preflight unavailable)', () 
       availableModels: [],
       supportsFreeform: false,
       source: 'unavailable',
+      cacheable: false,
+      refreshError: true,
     });
     expect(spawnMock).not.toHaveBeenCalled();
   });

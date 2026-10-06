@@ -1,707 +1,212 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { delimiter, join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { setImmediate as nextIoTurn } from 'node:timers/promises';
 
-import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
-import { writePnpmNodeBridge } from '@/testkit/fs/executableShim';
-import type { DetectCliRequest } from './cliSnapshot';
+import { createProbeTempDir } from '@/capabilities/probes/agentModelsProbe.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { reloadConfiguration } from '@/configuration';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { detectCliSnapshotOnDaemonPath as detect, invalidateCliSnapshots as invalidate, type DetectCliRequest } from './cliSnapshot';
+
+const ENV_KEYS = [
+  'HOME', 'USERPROFILE', 'PATH', 'HAPPIER_HOME_DIR', 'HAPPIER_OPENCODE_PATH', 'HAPPIER_CODEX_PATH',
+  'HAPPIER_CLAUDE_PATH', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON', 'HAPPIER_JS_RUNTIME_PATH',
+  'HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', 'HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS',
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY',
+] as const;
 
 describe('detectCliSnapshotOnDaemonPath (cache)', () => {
-  const previousOpenCodePath = process.env.HAPPIER_OPENCODE_PATH;
+  let fixture: Awaited<ReturnType<typeof createProbeTempDir>>;
+  let nativeRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+  let baseline: ReturnType<typeof snapshotEnvValues>;
+  let binDir: string;
+  let countFile: string;
 
-  beforeEach(() => {
-    // Some CLI unit lanes provide a default OpenCode stub for machine-agnostic tests.
-    // Cache behavior tests need full control over PATH vs overrides, so clear the global
-    // override by default and let individual tests set it when needed.
-    delete process.env.HAPPIER_OPENCODE_PATH;
+  beforeEach(async () => {
+    fixture = await createProbeTempDir('happier-cli-snapshot-cache');
+    baseline = snapshotEnvValues(ENV_KEYS);
+    binDir = join(fixture.dir, 'bin');
+    countFile = join(fixture.dir, 'invocations');
+    await mkdir(binDir, { recursive: true });
+    await writeFile(countFile, '');
+    applyEnvValues(Object.fromEntries(ENV_KEYS.map((key) => [key, undefined])));
+    applyEnvValues({ HOME: fixture.dir, USERPROFILE: fixture.dir, HAPPIER_HOME_DIR: fixture.dir,
+      PATH: binDir, HAPPIER_JS_RUNTIME_PATH: process.execPath });
+    reloadConfiguration();
+    invalidate();
   });
 
-  afterEach(() => {
-    if (previousOpenCodePath === undefined) {
-      delete process.env.HAPPIER_OPENCODE_PATH;
-    } else {
-      process.env.HAPPIER_OPENCODE_PATH = previousOpenCodePath;
+  afterEach(async () => {
+    vi.useRealTimers();
+    invalidate();
+    restoreEnvValues(baseline);
+    try {
+      reloadConfiguration();
+    } finally {
+      await fixture.cleanup();
     }
   });
+
+  afterAll(async () => {
+    await nativeRuntime?.dispose();
+  });
+
+  async function cli(name: string, body = 'process.stdout.write("1.2.3\\n");', directory = binDir) {
+    const scriptPath = join(directory, name + '.js');
+    await mkdir(directory, { recursive: true });
+    await writeFile(scriptPath, [
+      'const fs = require("node:fs");',
+      'fs.appendFileSync(' + JSON.stringify(countFile) + ', "1");', body,
+    ].join('\n'));
+    // OpenCode promises a native executable override, not a JavaScript-file override.
+    const path = await writeExecutableShim({
+      dir: directory,
+      fileName: process.platform === 'win32' ? name + '.cmd' : name,
+      contents: process.platform === 'win32'
+        ? '@echo off\r\n"' + process.execPath + '" "' + scriptPath + '" %*\r\n'
+        : '#!/bin/sh\nexec "' + process.execPath + '" "' + scriptPath + '" "$@"\n',
+    });
+    applyEnvValues({ ['HAPPIER_' + name.toUpperCase() + '_PATH']: path });
+    return path;
+  }
+
+  const request = (name = 'opencode', includeLoginStatus = false): DetectCliRequest => ({
+    requestedCliNames: [name], includeLoginStatus,
+  });
+  const invocations = async () => (await readFile(countFile, 'utf8')).length;
 
   it('returns a timed-out auth status instead of hanging when a CLI auth probe never settles', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        codex: {
-          id: 'codex',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['codex'],
-            detectAuthStatus: async () => await new Promise<never>(() => {}),
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-auth-timeout');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const codexPath = resolve(join(binDir, process.platform === 'win32' ? 'codex.cmd' : 'codex'));
-    await writeExecutableScript(
-      codexPath,
-      process.platform === 'win32'
-        ? '@echo off\r\necho codex 0.0.0-test\r\n'
-        : '#!/bin/sh\necho "codex 0.0.0-test"\n',
-    );
-
-    const prevPath = process.env.PATH;
-    const prevProbeTimeout = process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = '25';
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      const startedAt = Date.now();
-      const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, bypassCache: true });
-
-      expect(Date.now() - startedAt).toBeLessThan(3_000);
-      expect(snapshot.clis.codex.available).toBe(true);
-      expect(snapshot.clis.codex.isLoggedIn).toBeNull();
-      expect(snapshot.clis.codex.authStatus).toMatchObject({
-        state: 'unknown',
-        reason: 'timeout',
-      });
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevProbeTimeout === 'string') process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = prevProbeTimeout;
-      else delete process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-      await fixture.cleanup();
-    }
-  }, 20_000);
-
-  it('does not project a malformed Agent CLI auth callback result as login status', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        codex: {
-          id: 'codex',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['codex'],
-            detectAuthStatus: async () => ({ state: 'authenticated' }),
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-malformed-auth-status');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-    await writeExecutableScript(
-      resolve(join(binDir, process.platform === 'win32' ? 'codex.cmd' : 'codex')),
-      process.platform === 'win32'
-        ? '@echo off\r\necho codex 0.0.0-test\r\n'
-        : '#!/bin/sh\necho "codex 0.0.0-test"\n',
-    );
-
-    const prevPath = process.env.PATH;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-      const snapshot = await detectCliSnapshotOnDaemonPath({
-        includeLoginStatus: true,
-        bypassCache: true,
-        requestedCliNames: ['codex'],
-      });
-
-      expect(snapshot.clis.codex.authStatus).toBeNull();
-      expect(snapshot.clis.codex.isLoggedIn).toBeNull();
-    } finally {
-      process.env.PATH = prevPath;
-      await fixture.cleanup();
-    }
+    const startedFile = join(fixture.dir, 'auth-started');
+    await cli('opencode', [
+      'if (process.argv.includes("auth")) {',
+      'fs.writeFileSync(' + JSON.stringify(startedFile) + ', "started");',
+      'setInterval(() => {}, 1000000);',
+      '} else process.stdout.write("1.2.3\\n");',
+    ].join('\n'));
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+    });
+    process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = '25';
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    let settled = false;
+    const pending = detect({ ...request('opencode', true), bypassCache: true }).then((value) => { settled = true; return value; });
+    // Keep real filesystem/process scheduling; only the external clock is controlled.
+    while (!existsSync(startedFile) && !settled) await nextIoTurn();
+    expect(existsSync(startedFile)).toBe(true);
+    await vi.advanceTimersByTimeAsync(24);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const snapshot = await pending;
+    expect(snapshot.clis.opencode.available).toBe(true);
+    expect(snapshot.clis.opencode.isLoggedIn).toBeNull();
+    expect(snapshot.clis.opencode.authStatus).toMatchObject({ state: 'unknown', reason: 'timeout' });
+    // Settle the admitted command owner's own deadline before restoring the clock.
+    await vi.runOnlyPendingTimersAsync();
   }, 20_000);
 
   it('only probes auth for requested CLI names when the request is provider-scoped', async () => {
-    vi.resetModules();
-
-    const codexAuthProbe = vi.fn(async () => ({
-      state: 'logged_in' as const,
-      method: 'oauth_cli' as const,
-      source: 'command' as const,
-    }));
-    const opencodeAuthProbe = vi.fn(async () => ({
-      state: 'logged_in' as const,
-      method: 'oauth_cli' as const,
-      source: 'command' as const,
-    }));
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        codex: {
-          id: 'codex',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['codex'],
-            detectAuthStatus: codexAuthProbe,
-          }),
-        },
-        opencode: {
-          id: 'opencode',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['opencode'],
-            detectAuthStatus: opencodeAuthProbe,
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-scoped-auth');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    await writeExecutableScript(
-      resolve(join(binDir, process.platform === 'win32' ? 'codex.cmd' : 'codex')),
-      process.platform === 'win32'
-        ? '@echo off\r\necho codex 0.0.0-test\r\n'
-        : '#!/bin/sh\necho "codex 0.0.0-test"\n',
-    );
-    await writeExecutableScript(
-      resolve(join(binDir, process.platform === 'win32' ? 'opencode.cmd' : 'opencode')),
-      process.platform === 'win32'
-        ? '@echo off\r\necho opencode 0.0.0-test\r\n'
-        : '#!/bin/sh\necho "opencode 0.0.0-test"\n',
-    );
-
-    const prevPath = process.env.PATH;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      const snapshot = await detectCliSnapshotOnDaemonPath({
-        includeLoginStatus: true,
-        bypassCache: true,
-        requestedCliNames: ['codex'],
-      } as DetectCliRequest & { requestedCliNames: readonly string[] });
-
-      expect(snapshot.clis.codex.isLoggedIn).toBe(true);
-      expect(codexAuthProbe).toHaveBeenCalledTimes(1);
-      expect(opencodeAuthProbe).not.toHaveBeenCalled();
-    } finally {
-      process.env.PATH = prevPath;
-      await fixture.cleanup();
-    }
+    const otherFile = join(fixture.dir, 'unselected-codex');
+    await cli('opencode', 'process.stdout.write(process.argv.includes("auth") ? "openai alice@example.com default\\n" : "1.2.3\\n");');
+    await cli('codex', 'fs.writeFileSync(' + JSON.stringify(otherFile) + ', "invoked"); process.stdout.write("1.2.3\\n");');
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+    });
+    const snapshot = await detect({ ...request('opencode', true), bypassCache: true });
+    expect(snapshot.clis.opencode.isLoggedIn).toBe(true);
+    expect(snapshot.clis.opencode.authStatus).toMatchObject({ state: 'logged_in', method: 'oauth_cli', source: 'command' });
+    expect(existsSync(otherFile)).toBe(false);
   }, 20_000);
 
   it('allows slower successful auth probes to complete before the snapshot timeout', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        codex: {
-          id: 'codex',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['codex'],
-            detectAuthStatus: async () => {
-              await new Promise((resolve) => setTimeout(resolve, 1_700));
-              return {
-                state: 'logged_in',
-                method: 'oauth_cli',
-                source: 'command',
-              };
-            },
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-auth-slow-success');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const codexPath = resolve(join(binDir, process.platform === 'win32' ? 'codex.cmd' : 'codex'));
-    await writeExecutableScript(
-      codexPath,
-      process.platform === 'win32'
-        ? '@echo off\r\necho codex 0.0.0-test\r\n'
-        : '#!/bin/sh\necho "codex 0.0.0-test"\n',
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCi = process.env.CI;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    delete process.env.CI;
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true, bypassCache: true });
-
-      expect(snapshot.clis.codex.available).toBe(true);
-      expect(snapshot.clis.codex.isLoggedIn).toBe(true);
-      expect(snapshot.clis.codex.authStatus).toMatchObject({
-        state: 'logged_in',
-        method: 'oauth_cli',
-        source: 'command',
-      });
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCi === 'string') process.env.CI = prevCi;
-      else delete process.env.CI;
-      await fixture.cleanup();
-    }
+    await cli('opencode', [
+      'if (process.argv.includes("auth")) setTimeout(() => process.stdout.write("openai alice@example.com default\\n"), 1700);',
+      'else process.stdout.write("1.2.3\\n");',
+    ].join('\n'));
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+    });
+    const snapshot = await detect({ ...request('opencode', true), bypassCache: true });
+    expect(snapshot.clis.opencode.available).toBe(true);
+    expect(snapshot.clis.opencode.isLoggedIn).toBe(true);
+    expect(snapshot.clis.opencode.authStatus).toMatchObject({ state: 'logged_in', method: 'oauth_cli', source: 'command' });
   }, 20_000);
 
-  it('caches snapshots and avoids re-probing CLI versions within TTL', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        opencode: { id: 'opencode' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    await writeExecutableScript(
-      opencodePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("opencode 1.2.3\\n");
-process.exit(0);
-`,
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-
-      expect(afterSecond).toBe(afterFirst);
-
-      // Different request params should not share the cached entry.
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
-      const afterThird = (await readFile(countFile, 'utf8')).length;
-      expect(afterThird).toBeGreaterThan(afterSecond);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevPnpmBin === 'string') process.env.HAPPIER_PNPM_BIN = prevPnpmBin;
-      else delete process.env.HAPPIER_PNPM_BIN;
-      await fixture.cleanup();
-    }
+  it('caches snapshots and avoids re-probing within TTL', async () => {
+    await cli('opencode');
+    await detect(request());
+    const first = await invocations();
+    await detect(request());
+    expect(await invocations()).toBe(first);
+    await detect(request('opencode', true));
+    expect(await invocations()).toBeGreaterThan(first);
   }, 20_000);
 
   it('reports what is installed now after an update invalidates the cached snapshots', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        opencode: { id: 'opencode' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-invalidate');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    const writeVersion = async (version: string) => {
-      await writeExecutableScript(opencodePath, `#!/bin/sh\necho "opencode ${version}"\n`);
-    };
-    await writeVersion('1.2.3');
-
-    const prevPath = process.env.PATH;
-    const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
-    try {
-      const { detectCliSnapshotOnDaemonPath, invalidateCliSnapshots } = await import('./cliSnapshot');
-
-      expect((await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false })).clis.opencode.version).toBe('1.2.3');
-      await writeVersion('1.2.4');
-      invalidateCliSnapshots();
-      expect((await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false })).clis.opencode.version).toBe('1.2.4');
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevPnpmBin === 'string') process.env.HAPPIER_PNPM_BIN = prevPnpmBin;
-      else delete process.env.HAPPIER_PNPM_BIN;
-      await fixture.cleanup();
-    }
+    await cli('opencode');
+    expect((await detect(request())).clis.opencode.version).toBe('1.2.3');
+    await cli('opencode', 'process.stdout.write("1.2.4\\n");');
+    invalidate();
+    expect((await detect(request())).clis.opencode.version).toBe('1.2.4');
   }, 20_000);
 
   it('invalidates cache when HAPPIER_*_PATH override changes', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        opencode: { id: 'opencode' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-override');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    const altBinDir = resolve(join(fixture.dir, 'alt-bin'));
-    await mkdir(binDir, { recursive: true });
-    await mkdir(altBinDir, { recursive: true });
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    const altOpencodePath = resolve(join(altBinDir, 'opencode'));
-    const script = `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("opencode 1.2.3\\n");
-process.exit(0);
-`;
-    await writeExecutableScript(opencodePath, script);
-    await writeExecutableScript(altOpencodePath, script);
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevOverride = process.env.HAPPIER_OPENCODE_PATH;
-    const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
-
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      // First call with no override
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-
-      // Second call with no override should use cache
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-      expect(afterSecond).toBe(afterFirst);
-
-      // Set override - should invalidate cache and re-probe
-      process.env.HAPPIER_OPENCODE_PATH = altOpencodePath;
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterThird = (await readFile(countFile, 'utf8')).length;
-      expect(afterThird).toBeGreaterThan(afterSecond);
-
-      // Fourth call with same override should use cache
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterFourth = (await readFile(countFile, 'utf8')).length;
-      expect(afterFourth).toBe(afterThird);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevOverride === 'string') process.env.HAPPIER_OPENCODE_PATH = prevOverride;
-      else delete process.env.HAPPIER_OPENCODE_PATH;
-      if (typeof prevPnpmBin === 'string') process.env.HAPPIER_PNPM_BIN = prevPnpmBin;
-      else delete process.env.HAPPIER_PNPM_BIN;
-      await fixture.cleanup();
-    }
+    await cli('opencode');
+    await detect(request());
+    const first = await invocations();
+    await detect(request());
+    expect(await invocations()).toBe(first);
+    await cli('opencode', 'process.stdout.write("1.2.4\\n");', join(fixture.dir, 'other-bin'));
+    const changed = await detect(request());
+    expect(changed.clis.opencode.version).toBe('1.2.4');
+    const afterChange = await invocations();
+    expect(afterChange).toBeGreaterThan(first);
+    await detect(request());
+    expect(await invocations()).toBe(afterChange);
   }, 20_000);
 
-  it('invalidates cache when HAPPIER_HOME_DIR changes', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        opencode: { id: 'opencode' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-homedir');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    await writeExecutableScript(
-      opencodePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("opencode 1.2.3\\n");
-process.exit(0);
-`,
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevHomeDir = process.env.HAPPIER_HOME_DIR;
-    const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
-
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_HOME_DIR = '/tmp/happier-home-1';
-    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-      expect(afterSecond).toBe(afterFirst);
-
-      // Change HAPPIER_HOME_DIR - should invalidate cache
-      process.env.HAPPIER_HOME_DIR = '/tmp/happier-home-2';
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterThird = (await readFile(countFile, 'utf8')).length;
-      expect(afterThird).toBeGreaterThan(afterSecond);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevHomeDir === 'string') process.env.HAPPIER_HOME_DIR = prevHomeDir;
-      else delete process.env.HAPPIER_HOME_DIR;
-      if (typeof prevPnpmBin === 'string') process.env.HAPPIER_PNPM_BIN = prevPnpmBin;
-      else delete process.env.HAPPIER_PNPM_BIN;
-      await fixture.cleanup();
-    }
-  }, 20_000);
-
-  it('invalidates cache when HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON changes', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        opencode: { id: 'opencode' },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-prefs');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const opencodePath = resolve(join(binDir, 'opencode'));
-    await writeExecutableScript(
-      opencodePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("opencode 1.2.3\\n");
-process.exit(0);
-`,
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevPrefs = process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON;
-    const prevPnpmBin = process.env.HAPPIER_PNPM_BIN;
-
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_PNPM_BIN = await writePnpmNodeBridge({ dir: fixture.dir, pathLookup: prevPath });
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-      expect(afterSecond).toBe(afterFirst);
-
-      // Change source preferences - should invalidate cache
-      process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = JSON.stringify({ opencode: 'managed-first' });
-      await detectCliSnapshotOnDaemonPath({ includeLoginStatus: false });
-      const afterThird = (await readFile(countFile, 'utf8')).length;
-      expect(afterThird).toBeGreaterThan(afterSecond);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevPrefs === 'string') process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = prevPrefs;
-      else delete process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON;
-      if (typeof prevPnpmBin === 'string') process.env.HAPPIER_PNPM_BIN = prevPnpmBin;
-      else delete process.env.HAPPIER_PNPM_BIN;
-      await fixture.cleanup();
-    }
-  }, 20_000);
+  it.each(['HAPPIER_HOME_DIR', 'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'] as const)(
+    'invalidates cache when %s changes', async (key) => {
+      await cli('opencode');
+      await detect(request());
+      const first = await invocations();
+      await detect(request());
+      expect(await invocations()).toBe(first);
+      process.env[key] = key === 'HAPPIER_HOME_DIR'
+        ? join(fixture.dir, 'other-home') : JSON.stringify({ opencode: 'managed-first' });
+      await detect(request());
+      expect(await invocations()).toBeGreaterThan(first);
+    }, 20_000,
+  );
 
   it('invalidates cache when auth environment changes login status', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        claude: {
-          id: 'claude',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['claude'],
-            detectAuthStatus: async () => {
-              const apiKey = typeof process.env.ANTHROPIC_API_KEY === 'string'
-                ? process.env.ANTHROPIC_API_KEY.trim()
-                : '';
-              return apiKey
-                ? { state: 'logged_in', method: 'api_key_env', source: 'env' }
-                : { state: 'logged_out', reason: 'missing_credentials' };
-            },
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-auth-env');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    await mkdir(binDir, { recursive: true });
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const claudePath = resolve(join(binDir, 'claude'));
-    await writeExecutableScript(
-      claudePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("claude 1.2.3\\n");
-process.exit(0);
-`,
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevAnthropicKey = process.env.ANTHROPIC_API_KEY;
-    const prevClaudePath = process.env.HAPPIER_CLAUDE_PATH;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_CLAUDE_PATH = claudePath;
-    delete process.env.ANTHROPIC_API_KEY;
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      const first = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-      expect(first.clis.claude.isLoggedIn).toBe(false);
-
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
-      const second = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-
-      expect(second.clis.claude.isLoggedIn).toBe(true);
-      expect(afterSecond).toBeGreaterThan(afterFirst);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevAnthropicKey === 'string') process.env.ANTHROPIC_API_KEY = prevAnthropicKey;
-      else delete process.env.ANTHROPIC_API_KEY;
-      if (typeof prevClaudePath === 'string') process.env.HAPPIER_CLAUDE_PATH = prevClaudePath;
-      else delete process.env.HAPPIER_CLAUDE_PATH;
-      await fixture.cleanup();
-    }
+    await cli('claude');
+    const first = await detect(request('claude', true));
+    const firstCount = await invocations();
+    expect(first.clis.claude.isLoggedIn).toBe(false);
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    const second = await detect(request('claude', true));
+    expect(second.clis.claude.isLoggedIn).toBe(true);
+    expect(second.clis.claude.authStatus).toMatchObject({ state: 'logged_in', method: 'api_key_env', source: 'env' });
+    expect(await invocations()).toBeGreaterThan(firstCount);
   }, 20_000);
 
   it('invalidates cache when HOME changes auth-file lookup', async () => {
-    vi.resetModules();
-
-    vi.doMock('@/agent/catalog/registry', () => ({
-      AGENTS: {
-        claude: {
-          id: 'claude',
-          getCliAuthSpec: async () => ({
-            binaryNames: ['claude'],
-            detectAuthStatus: async () => {
-              const homeDir = typeof process.env.HOME === 'string' ? process.env.HOME.trim() : '';
-              if (!homeDir) return { state: 'logged_out', reason: 'missing_credentials' };
-              try {
-                await readFile(resolve(join(homeDir, '.claude', '.credentials.json')), 'utf8');
-                return { state: 'logged_in', method: 'credentials_file', source: 'file' };
-              } catch {
-                return { state: 'logged_out', reason: 'missing_credentials' };
-              }
-            },
-          }),
-        },
-      },
-    }));
-
-    const fixture = await createProbeTempDir('happier-cli-snapshot-cache-auth-home');
-    const binDir = resolve(join(fixture.dir, 'bin'));
-    const homeA = resolve(join(fixture.dir, 'home-a'));
-    const homeB = resolve(join(fixture.dir, 'home-b'));
-    await mkdir(binDir, { recursive: true });
-    await mkdir(homeA, { recursive: true });
-    await mkdir(resolve(join(homeB, '.claude')), { recursive: true });
-    await writeFile(resolve(join(homeB, '.claude', '.credentials.json')), JSON.stringify({ accessToken: 'token' }), 'utf8');
-
-    const countFile = resolve(join(fixture.dir, 'count.txt'));
-    await writeFile(countFile, '', 'utf8');
-
-    const claudePath = resolve(join(binDir, 'claude'));
-    await writeExecutableScript(
-      claudePath,
-      `#!/usr/bin/env node
-const fs = require("fs");
-const countFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-if (countFile) fs.appendFileSync(countFile, "1");
-process.stdout.write("claude 1.2.3\\n");
-process.exit(0);
-`,
-    );
-
-    const prevPath = process.env.PATH;
-    const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-    const prevHome = process.env.HOME;
-    const prevClaudePath = process.env.HAPPIER_CLAUDE_PATH;
-    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
-    process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
-    process.env.HAPPIER_CLAUDE_PATH = claudePath;
-    process.env.HOME = homeA;
-
-    try {
-      const { detectCliSnapshotOnDaemonPath } = await import('./cliSnapshot');
-
-      const first = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
-      const afterFirst = (await readFile(countFile, 'utf8')).length;
-      expect(first.clis.claude.isLoggedIn).toBe(false);
-
-      process.env.HOME = homeB;
-      const second = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
-      const afterSecond = (await readFile(countFile, 'utf8')).length;
-
-      expect(second.clis.claude.isLoggedIn).toBe(true);
-      expect(afterSecond).toBeGreaterThan(afterFirst);
-    } finally {
-      process.env.PATH = prevPath;
-      if (typeof prevCountFile === 'string') process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = prevCountFile;
-      else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
-      if (typeof prevHome === 'string') process.env.HOME = prevHome;
-      else delete process.env.HOME;
-      if (typeof prevClaudePath === 'string') process.env.HAPPIER_CLAUDE_PATH = prevClaudePath;
-      else delete process.env.HAPPIER_CLAUDE_PATH;
-      await fixture.cleanup();
-    }
+    await cli('claude');
+    const homeB = join(fixture.dir, 'home-b');
+    await mkdir(join(homeB, '.claude'), { recursive: true });
+    await writeFile(join(homeB, '.claude', '.credentials.json'), JSON.stringify({ accessToken: 'token' }));
+    const first = await detect(request('claude', true));
+    const firstCount = await invocations();
+    expect(first.clis.claude.isLoggedIn).toBe(false);
+    process.env.HOME = homeB;
+    process.env.USERPROFILE = homeB;
+    const second = await detect(request('claude', true));
+    expect(second.clis.claude.isLoggedIn).toBe(true);
+    expect(second.clis.claude.authStatus).toMatchObject({ state: 'logged_in', method: 'credentials_file', source: 'file' });
+    expect(await invocations()).toBeGreaterThan(firstCount);
   }, 20_000);
 });

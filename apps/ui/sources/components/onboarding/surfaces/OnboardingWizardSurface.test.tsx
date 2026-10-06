@@ -2,7 +2,7 @@ import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { IModal } from '@/modal';
 import type { AuthCredentialLifecycleResult } from '@/auth/context/AuthContext';
 import type { AccountEncryptionFirstKeyRecoveryHandle } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
@@ -13,6 +13,9 @@ import type { HomeAuthenticationAction } from '@/auth/capabilities/authMethodCap
 
 import { WizardModalShell } from '../ui/WizardModalShell';
 import { WizardChoiceRow } from '../ui/WizardChoiceRow';
+import { storage } from '@/sync/domains/state/storageStore';
+
+const initialStorageState = storage.getState();
 
 const reactNativeMockState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios' | 'android',
@@ -28,11 +31,6 @@ const runtimeActiveMockState = vi.hoisted(() => ({
 
 const desktopHostMockState = vi.hoisted(() => ({
     kind: 'tauri' as 'tauri' | 'electron' | null,
-}));
-
-const syncStoreHooksMockState = vi.hoisted(() => ({
-    sessions: [] as Array<Record<string, unknown>>,
-    machines: {} as Record<string, Record<string, unknown>>,
 }));
 
 const relayAccessWizardMockState = vi.hoisted(() => ({
@@ -189,6 +187,9 @@ const getOrCreateHappierCloudServerProfileMock = vi.hoisted(() => vi.fn(() => ({
 })));
 const runtimeFetchMock = vi.hoisted(() => vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith('/v1/features') || url.endsWith('/v1/features/authenticated')) {
+        return Response.json(createRootLayoutFeaturesResponse());
+    }
     if (
         url.includes('https://unreachable-relay.example.test')
         && url.endsWith('/health')
@@ -408,23 +409,6 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     upsertActivateAndSwitchServer: upsertActivateAndSwitchServerMock,
     setActiveServerAndSwitch: setActiveServerAndSwitchMock,
 }));
-vi.mock('@/sync/store/hooks', () => {
-    const localSettings: Record<string, unknown> = {
-        hasCompletedAuthOnce: false,
-        uiBackdropBlurEnabled: false,
-        uiFontScale: 1,
-    };
-    return {
-        useAllSessions: () => syncStoreHooksMockState.sessions,
-        useSetting: (key: string) => localSettings[key] ?? null,
-        useLocalSetting: (key: string) => localSettings[key] ?? null,
-        useMachine: (machineId: string) => syncStoreHooksMockState.machines[machineId] ?? null,
-    };
-});
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getServerFeaturesSnapshot: vi.fn(async () => ({ status: 'ready', features: { capabilities: { auth: { methods: [] } } } })),
-    getCachedServerFeaturesSnapshot: () => null,
-}));
 vi.mock('@/components/onboarding/restore/RestoreIndexEmbedded', () => ({
     RestoreIndexEmbedded: (props: Record<string, unknown>) => React.createElement('RestoreIndexEmbedded', props),
     resolveReverseQrTargetProfileId: () => null,
@@ -594,8 +578,7 @@ describe('OnboardingWizardSurface', () => {
         relayAccessWizardMockState.emitSelectedProviderFromEffect = false;
         relayAccessWizardMockState.effectSelectionProviderId = 'lan';
         relayAccessWizardMockState.effectSelectionNotificationCount = 0;
-        syncStoreHooksMockState.sessions = [];
-        syncStoreHooksMockState.machines = {};
+        storage.setState(initialStorageState, true);
     });
 
     it('exposes wizard state and navigation through the controller hook', async () => {
@@ -1483,6 +1466,7 @@ describe('OnboardingWizardSurface', () => {
 
     afterEach(() => {
         standardCleanup();
+        storage.setState(initialStorageState, true);
     });
 
     it('can start on relay selection when initialStepId is provided', async () => {

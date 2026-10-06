@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -63,9 +64,10 @@ vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    useFocusEffect: (_callback: () => void) => {},
-}));
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({ useFocusEffect: () => {} });
+});
 
 vi.mock('expo-constants', () => ({
     default: { expoConfig: { version: '0.0.0-test' } },
@@ -88,9 +90,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), connectWithUrl: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null, isAuthenticated: false }),
-}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -186,7 +185,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = false;
 
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-pets-row')).toBeNull();
     });
@@ -195,7 +194,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = true;
 
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-pets-row')).not.toBeNull();
     });
@@ -204,7 +203,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = true;
 
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         await act(async () => {
             screen.pressRow('settings-pets-row');
@@ -216,7 +215,7 @@ describe('SettingsView pets entry', () => {
 
     it('projects General rows from the resolved Settings catalog rather than a hand-written overview list', async () => {
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         const keyboard = screen.findRow('settings-catalog-page-item.keyboard');
         expect(keyboard).toBeTruthy();

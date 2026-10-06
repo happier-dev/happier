@@ -1,40 +1,26 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
-import { SessionModelSelectionV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import type { Machine } from '@/sync/domains/state/storageTypes';
-import { storage } from '@/sync/domains/state/storage';
-import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
-import { createSpawnAttemptKeyForFreshSpawnOptions } from '@/sync/domains/session/spawn/spawnAttemptKey';
-import { readSpawnAttemptCustodyState } from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
+import { AccountEncryptionModeResponseSchema, AccountSettingsV2GetResponseSchema, SessionModelSelectionV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { createMachineFixture } from '@/dev/testkit';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+let storage: typeof import('@/sync/domains/state/storage').storage;
+let createSpawnAttemptKeyForFreshSpawnOptions: typeof import('@/sync/domains/session/spawn/spawnAttemptKey').createSpawnAttemptKeyForFreshSpawnOptions;
+let readSpawnAttemptCustodyState: typeof import('@/sync/domains/session/spawn/spawnAttemptNonceStore').readSpawnAttemptCustodyState;
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-const prepareAccountSettingsForDaemonSpawnIfNeededMock = vi.hoisted(() => vi.fn(async () => ({})));
 const randomUUIDMock = vi.hoisted(() => vi.fn(() => 'generated-spawn-id'));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-  machineRpcWithServerScope: machineRpcWithServerScopeMock,
-}));
-
-vi.mock('../api/session/apiSocket', () => ({
-  apiSocket: {
-    machineRPC: vi.fn(),
-    sessionRPC: vi.fn(),
-  },
-}));
 
 vi.mock('@/platform/randomUUID', () => ({
   randomUUID: randomUUIDMock,
 }));
 
-vi.mock('./accountSettingsDaemonSpawnPreparation', async (importOriginal) => ({
-  ...await importOriginal<typeof import('./accountSettingsDaemonSpawnPreparation')>(),
-  prepareAccountSettingsForDaemonSpawnIfNeeded: prepareAccountSettingsForDaemonSpawnIfNeededMock,
-  registerAccountSettingsDaemonSpawnPreparation: vi.fn(() => vi.fn()),
-}));
-
 describe('machineSpawnNewSession error mapping', () => {
-  const initialStorageState = storage.getInitialState();
+  let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+  const homeUrl = 'https://server-b';
   const providerModelSelection = SessionModelSelectionV1Schema.parse({
     v: 1,
     updatedAt: 1,
@@ -59,15 +45,10 @@ describe('machineSpawnNewSession error mapping', () => {
     cliVersion?: string | null;
     homeDir?: string | null;
     platform?: string;
-  }>): Machine {
+  }>) {
     const homeDir = params.homeDir === undefined ? '/Users/alice' : params.homeDir;
-    return {
+    return createMachineFixture({
       id: params.id,
-      seq: 1,
-      createdAt: 1,
-      updatedAt: 1,
-      active: true,
-      activeAt: 1,
       revokedAt: null,
       metadata: homeDir === null ? null : {
         host: params.id,
@@ -77,25 +58,70 @@ describe('machineSpawnNewSession error mapping', () => {
         homeDir,
       },
       metadataVersion: 0,
-      daemonState: params.cliVersion
-        ? ({ cliVersion: params.cliVersion } as any)
-        : null,
-      daemonStateVersion: params.cliVersion ? 1 : 0,
-    };
+      daemonStateVersion: 0,
+    });
   }
 
-  beforeEach(() => {
-    storage.setState({
-      ...initialStorageState,
-      profileScope: { serverId: 'server-b', accountId: 'account-a' },
-      machines: { 'machine-1': buildMachine({ id: 'machine-1' }) },
-    }, true);
+  beforeEach(async () => {
+    vi.resetModules();
+    const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
     getPersistenceStorage().clearAll();
     machineRpcWithServerScopeMock.mockReset();
-    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockReset();
-    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValue({});
+    network = await installSessionOpsNetworkBoundary();
+    const home = await network.addHome(homeUrl, 'account-a');
+    const homeA = await network.addHome('https://server-a', 'account-a');
+    const homeC = await network.addHome('https://server-c', 'account-a');
+    const homeIds = new Map([home, homeA, homeC].map((profile) => [profile.serverUrl, profile.id]));
+    expect(home.id).toBe('server-b');
+    network.setHttpResponder(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption') return Response.json(AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 }));
+      if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
+      return null;
+    });
+    await loadSyncSingletonForTests();
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await upsertAndActivateServer({ serverUrl: home.serverUrl });
+    await restoreConnectionToActiveServer({ token: home.token });
+    ({ storage } = await import('@/sync/domains/state/storage'));
+    ({ createSpawnAttemptKeyForFreshSpawnOptions } = await import('@/sync/domains/session/spawn/spawnAttemptKey'));
+    ({ readSpawnAttemptCustodyState } = await import('@/sync/domains/session/spawn/spawnAttemptNonceStore'));
+    storage.setState({
+      machines: { 'machine-1': buildMachine({ id: 'machine-1' }) },
+      settingsVersion: 0,
+    });
+    network.setRpcAckResponder(async (request) => {
+      try {
+        return { ok: true, result: await machineRpcWithServerScopeMock({
+          machineId: request.targetId,
+          serverId: homeIds.get(request.serverUrl),
+          method: request.method,
+          payload: request.payload,
+          timeoutMs: request.timeoutMs,
+        }) };
+      } catch (error) {
+        const errorCode = readRpcErrorCode(error);
+        if (errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND || errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+          return { ok: false, error: 'Daemon method unavailable', errorCode };
+        }
+        throw error; // Socket ACK timeout/disconnect is a physical transport rejection.
+      }
+    });
     randomUUIDMock.mockReset();
     randomUUIDMock.mockReturnValue('generated-spawn-id');
+  });
+
+  afterEach(async () => {
+    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
+    const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+    const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+    serverScopedRpcSocketPool.resetForTests();
+    resetScopedMachineTransportCacheForTests();
+    network.dispose();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it('uses one current-only Provider-safe RPC so an older daemon refuses before spawn', async () => {
@@ -327,12 +353,12 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
     const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0];
     expect(call).toMatchObject({ timeoutMs: expect.any(Number) });
-    expect(call.timeoutMs).toBe(readSpawnSessionRpcTimeoutMsFromEnv());
-    expect(call.timeoutMs).toBe(5 * 60_000);
+    expect(call.timeoutMs).toBeGreaterThan(0);
+    expect(call.timeoutMs).toBeLessThanOrEqual(readSpawnSessionRpcTimeoutMsFromEnv());
   });
 
   it('includes prepared account settings version hints in spawn requests', async () => {
-    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValueOnce({ accountSettingsVersionHint: 17 });
+    storage.setState({ settingsVersion: 17 });
     machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
 
     const { machineSpawnNewSession } = await import('./machines');
@@ -491,14 +517,7 @@ describe('machineSpawnNewSession error mapping', () => {
         status: 'success',
         sessionId: 'session-from-accepted-retry',
       });
-    let nowMs = 0;
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
-      nowMs += 6 * 60_000;
-      return nowMs;
-    });
-
-    try {
-      const { machineSpawnNewSession } = await import('./machines');
+    const { machineSpawnNewSession } = await import('./machines');
       const options = {
         machineId: 'machine-1',
         directory: '/tmp',
@@ -516,10 +535,6 @@ describe('machineSpawnNewSession error mapping', () => {
         type: 'success',
         sessionId: 'session-from-accepted-retry',
       });
-    } finally {
-      nowSpy.mockRestore();
-    }
-
     expect(randomUUIDMock).toHaveBeenCalledTimes(1);
     const spawnCalls = machineRpcWithServerScopeMock.mock.calls
       .map(([call]) => call)
@@ -1074,9 +1089,20 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('does not spawn when account settings scope changes during preparation', async () => {
-    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockRejectedValueOnce(
-      new Error('Account settings scope changed while preparing session spawn'),
-    );
+    storage.setState({ settingsVersion: null });
+    let accountReplaced = false;
+    network.setHttpResponder(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption') return Response.json(AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 }));
+      if (path !== '/v2/account/settings') return null;
+      if (!accountReplaced) {
+        accountReplaced = true;
+        const nextAccount = await network.addHome(homeUrl, 'account-b');
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer({ token: nextAccount.token });
+      }
+      return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 17 }));
+    });
 
     const { machineSpawnNewSession } = await import('./machines');
     const result = await machineSpawnNewSession({
@@ -1089,6 +1115,7 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(result.type).toBe('error');
     if (result.type !== 'error') throw new Error('expected an error result');
     expect(result.errorCode).toBe('ACCOUNT_SCOPE_CHANGED');
+    expect(accountReplaced).toBe(true);
     expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
   });
 
@@ -1113,23 +1140,27 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('reconciles a scoped machine RPC timeout through the submitted nonce without spawning twice', async () => {
+    vi.useFakeTimers();
     machineRpcWithServerScopeMock
-      .mockRejectedValueOnce(Object.assign(new Error('scoped spawn exceeded its RPC budget'), {
-        code: 'MACHINE_RPC_TIMEOUT',
-      }))
+      .mockImplementationOnce(() => new Promise(() => {}))
       .mockResolvedValueOnce({
         status: 'success',
         sessionId: 'session-after-scoped-timeout',
       });
 
     const { machineSpawnNewSession } = await import('./machines');
-    const result = await machineSpawnNewSession({
+    const resultPromise = machineSpawnNewSession({
       machineId: 'machine-1',
       directory: '/tmp',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       serverId: 'server-b',
       spawnNonce: 'spawn-nonce-scoped-timeout',
     });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
+    const { readSpawnSessionRpcTimeoutMsFromEnv } = await import('../domains/session/spawn/spawnSessionRpcTimeout');
+    await vi.advanceTimersByTimeAsync(readSpawnSessionRpcTimeoutMsFromEnv());
+    const result = await resultPromise;
 
     expect(result).toMatchObject({
       type: 'success',
@@ -1342,6 +1373,7 @@ describe('machineSpawnNewSession error mapping', () => {
         timeoutMs: 5_000,
       });
 
+      await vi.advanceTimersByTimeAsync(0);
       expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(999);
       expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);

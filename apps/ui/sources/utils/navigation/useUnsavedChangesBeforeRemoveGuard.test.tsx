@@ -13,8 +13,9 @@ const preventRemove = vi.hoisted(() => ({
     committedCallback: null as null | ((event: { data: { action: unknown } }) => void),
 }));
 
-vi.mock('@react-navigation/native', () => ({
-    usePreventRemove: (
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({ usePreventRemove: (
         enabled: boolean,
         callback: (event: { data: { action: unknown } }) => void,
     ) => {
@@ -24,8 +25,8 @@ vi.mock('@react-navigation/native', () => ({
             preventRemove.committedEnabled = enabled;
             preventRemove.committedCallback = callback;
         }, [callback, enabled]);
-    },
-}));
+    } });
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

@@ -930,31 +930,31 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       accountPasswordEnrollAction: async ({ input, signal }) => {
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => enrollAccountPassword(accountContext.request, input, signal));
-        accountContext.assertCurrent();
+        accountContext.assertResultCurrent(getActionSpec('account.password.enroll').sideEffectClass);
         return result;
       },
       accountPasswordChangeAction: async ({ input, signal }) => {
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => submitAccountPasswordChange(accountContext.request, input, signal));
-        accountContext.assertCurrent();
+        accountContext.assertResultCurrent(getActionSpec('account.password.change').sideEffectClass);
         return result;
       },
       accountPasswordRemoveAction: async ({ input, signal }) => {
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => submitAccountPasswordRemove(accountContext.request, input, signal));
-        accountContext.assertCurrent();
+        accountContext.assertResultCurrent(getActionSpec('account.password.remove').sideEffectClass);
         return result;
       },
       accountEmailChangeRequestAction: async ({ input, signal }) => {
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => requestAccountSignInEmailChange(accountContext.request, input, signal));
-        accountContext.assertCurrent();
+        accountContext.assertResultCurrent(getActionSpec('account.email.change.request').sideEffectClass);
         return result;
       },
       accountSecurityTerminalPresentUserSetAction: async ({ input, signal }) => {
         accountContext.assertCurrent();
         const result = await settleAccountSecurityAction(() => setAccountTerminalPresentUserPolicy(accountContext.request, input, signal));
-        accountContext.assertCurrent();
+        accountContext.assertResultCurrent(getActionSpec('account.security.terminalPresentUser.set').sideEffectClass);
         return result;
       },
     } : {}),
@@ -1013,7 +1013,10 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         const base = buildResumeSessionBaseOptionsFromSession({
           sessionId, session,
           resumeTargetOverride: machineTarget ? { machineId: machineTarget.machineId, directory: machineTarget.basePath } : null,
-          resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
+          resumeCapabilityOptions: {
+            ...buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
+            currentAgentCapabilities: opts?.currentAgentCapabilities,
+          },
         });
         if (!machineTarget || !base) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
         const resumed = await resumeSession({
@@ -1176,6 +1179,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         sessionId: sid,
         serverId,
         target: resolvedTarget,
+        currentAgentCapabilities: opts?.currentAgentCapabilities,
       });
     },
 

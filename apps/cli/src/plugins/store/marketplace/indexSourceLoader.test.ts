@@ -38,7 +38,7 @@ function communityHappierMetadata(params: Readonly<{
       hostAccess: { required: [], optional: [] },
       contributes: {},
     },
-    uiArtifacts: { version: 1, entries: [] },
+    uiArtifacts: { version: 2, entries: [] },
   };
   return {
     manifest: '.happier-plugin/plugin.json',

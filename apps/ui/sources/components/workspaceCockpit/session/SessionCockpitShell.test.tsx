@@ -1,10 +1,12 @@
 import * as React from 'react';
 
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -16,7 +18,11 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let localSettingsMock: Record<string, unknown> = {};
+const initialStorageState = storage.getState();
+
+function primeLocalSettings(value: Readonly<Record<string, unknown>>) {
+    storage.setState({ localSettings: localSettingsParse(value) });
+}
 const safeAreaInsetsMock = vi.hoisted(() => ({
     top: 0,
     bottom: 0,
@@ -45,23 +51,10 @@ const pluginProjectionState = vi.hoisted<{
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useLocalSetting: (key: string) => localSettingsMock[key],
-        useLocalSettingMutable: (key: string) => [
-            localSettingsMock[key],
-            (value: unknown) => {
-                localSettingsMock[key] = value;
-            },
-        ],
-        useSessionCompanionPreferenceSlot: () => ({ storageKey: null, stored: undefined }),
-    });
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
 });
-
-vi.mock('@react-navigation/native', () => ({
-    useIsFocused: () => true,
-}));
 
 vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: null,
@@ -211,10 +204,16 @@ async function primeSessionBoardFeature(serverId: string, enabled: boolean): Pro
 }
 
 describe('SessionCockpitSurfaceScreen', () => {
+    afterEach(() => {
+        standardCleanup();
+        storage.setState(initialStorageState);
+    });
+
     beforeEach(async () => {
         standardCleanup();
         await primeSessionBoardFeature('server-b', true);
-        localSettingsMock = {};
+        storage.setState(initialStorageState);
+        primeLocalSettings({});
         safeAreaInsetsMock.top = 0;
         safeAreaInsetsMock.bottom = 0;
         safeAreaInsetsMock.left = 0;
@@ -231,7 +230,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('closes an already-open right pane when the chat surface becomes active', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: true, activeTabId: 'terminal', tabState: {} },
@@ -245,7 +244,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -290,7 +289,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('makes the mounted mobile Board primary over retained desktop Board panes', async () => {
         const retainedBoardTab = createSessionBoardDetailsTab();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: true, activeTabId: 'board', tabState: {} },
@@ -304,7 +303,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -326,22 +325,25 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('publishes the focused surface as the cockpit navigation owner', async () => {
         const switchSurface = vi.fn();
+        const { NavigationContext } = await import('@react-navigation/native');
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
-            <AppPaneProvider>
-                <SessionCockpitChromeRegistryProvider>
-                    <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
-                        <SessionCockpitSurfaceScreen
-                            sessionId="s_1"
-                            scopeId="session:s_1"
-                            surface="chat"
-                            routeServerId="server-b"
-                            terminalTabAvailable
-                        />
-                    </SessionCockpitSurfaceNavigationProvider>
-                    <CockpitRegistrationProbe />
-                </SessionCockpitChromeRegistryProvider>
-            </AppPaneProvider>,
+            <NavigationContext.Provider value={{} as React.ContextType<typeof NavigationContext>}>
+                <AppPaneProvider>
+                    <SessionCockpitChromeRegistryProvider>
+                        <SessionCockpitSurfaceNavigationProvider value={{ switchSurface, returnToPreviousSurface: () => switchSurface('chat') }}>
+                            <SessionCockpitSurfaceScreen
+                                sessionId="s_1"
+                                scopeId="session:s_1"
+                                surface="chat"
+                                routeServerId="server-b"
+                                terminalTabAvailable
+                            />
+                        </SessionCockpitSurfaceNavigationProvider>
+                        <CockpitRegistrationProbe />
+                    </SessionCockpitChromeRegistryProvider>
+                </AppPaneProvider>
+            </NavigationContext.Provider>,
         );
 
         const registration = screen.tree.findByType('CockpitRegistrationProbe' as never).props.registration;
@@ -358,7 +360,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('closes the details presentation when returning to chat from an opened details surface', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -381,7 +383,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -419,7 +421,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders a stable terminal screen wrapper when the terminal surface is active', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -433,7 +435,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -459,7 +461,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     it('delegates route-owned safe-area padding to the shared session chrome', async () => {
         safeAreaInsetsMock.top = 24;
         safeAreaInsetsMock.bottom = 12;
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -473,7 +475,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -500,7 +502,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('uses screen presentation for fallback details when the route owns safe-area padding', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -514,7 +516,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -535,7 +537,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders the mobile Browser cockpit surface through BrowserSurfaceHost', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -549,7 +551,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -576,7 +578,7 @@ describe('SessionCockpitSurfaceScreen', () => {
     });
 
     it('renders the mobile Services cockpit surface through DetectedLocalServicesPane', async () => {
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -590,7 +592,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -616,7 +618,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens file details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -630,7 +632,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -697,7 +699,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens commit details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -711,7 +713,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -748,7 +750,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens review details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -762,7 +764,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -799,7 +801,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens stash details on the internal details tab without pushing a sibling stack route', async () => {
         const switchSurface = vi.fn();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -813,7 +815,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -850,7 +852,7 @@ describe('SessionCockpitSurfaceScreen', () => {
 
     it('opens a new terminal details tab on the internal details surface', async () => {
         const switchSurface = vi.fn();
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -864,7 +866,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(
@@ -909,7 +911,7 @@ describe('SessionCockpitSurfaceScreen', () => {
             serverId: 'server-1',
             platform: 'web',
         };
-        localSettingsMock = {
+        primeLocalSettings({
             appPaneScopesV1: {
                 'session:s_1': {
                     right: { isOpen: false, activeTabId: null, tabState: {} },
@@ -923,7 +925,7 @@ describe('SessionCockpitSurfaceScreen', () => {
                 },
             },
             sessionLastMobileSurfaceBySessionId: null,
-        };
+        });
 
         const { SessionCockpitSurfaceScreen } = await import('./SessionCockpitSurfaceScreen');
         const screen = await renderScreen(

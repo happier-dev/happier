@@ -9,13 +9,13 @@ describe('formatAsOfTime', () => {
         const yesterday = new Date(2026, 8, 26, 18, 44, 1).getTime();
 
         const today = formatAsOfTime(earlierToday, now);
-        expect(today).toBe(new Date(earlierToday).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        expect(today).toBe(new Date(earlierToday).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }));
         expect(today).not.toMatch(/2026/);
 
         const older = formatAsOfTime(yesterday, now);
         expect(older).not.toBe(formatAsOfTime(yesterday, yesterday));
         // No seconds and no year: a quiet "as of", not a timestamp dump.
         expect(older).not.toMatch(/:01|2026/);
-        expect(older).toContain(new Date(yesterday).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        expect(older).toContain(new Date(yesterday).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }));
     });
 });

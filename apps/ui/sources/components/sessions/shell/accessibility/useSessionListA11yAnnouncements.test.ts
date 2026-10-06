@@ -3,17 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit';
 import { useSessionListA11yAnnouncements } from './useSessionListA11yAnnouncements';
 
-vi.mock('react-native', () => ({
-    AccessibilityInfo: { announceForAccessibility: vi.fn() },
-    Platform: {
-        OS: 'ios',
-        select: (value: Record<string, unknown>) => value.ios ?? value.default,
-    },
-}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
+});
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+});
 
 describe('useSessionListA11yAnnouncements', () => {
     it('keeps the announcement API object stable across rerenders', async () => {

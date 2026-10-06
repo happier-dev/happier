@@ -4689,7 +4689,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
   });
 
   it('coalesces in-band quota snapshots and writes the latest payload on flush', async () => {
-    const now = 1_000_000;
+    let now = 1_000_000;
     const legacyV4 = createLegacyScalarV4PersistenceRuntime({
       serviceId: 'openai-codex',
       profileIds: ['work'],
@@ -4714,7 +4714,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
 
-    await coordinator.recordInBandQuotaSnapshot({
+    expect(await coordinator.recordInBandQuotaSnapshot({
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -4727,29 +4727,30 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         accountLabel: null,
         meters: [],
       },
-    });
-    await coordinator.recordInBandQuotaSnapshot({
+    })).toEqual({ status: 'enqueued', enqueue: 'accepted' });
+    now += 1;
+    expect(await coordinator.recordInBandQuotaSnapshot({
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
         v: 1,
         serviceId: 'openai-codex',
         profileId: 'work',
-        fetchedAt: now + 1,
+        fetchedAt: now,
         staleAfterMs: 300_000,
         planLabel: 'Pro',
         accountLabel: null,
         meters: [],
       },
-    });
+    })).toEqual({ status: 'enqueued', enqueue: 'coalesced' });
     expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(0);
-    await (coordinator as any).flushInBandQuotaPersistence(100);
+    await coordinator.flushInBandQuotaPersistence(100);
     expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(1);
     expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledWith(expect.objectContaining({
       token: 'happy-token',
       write: expect.objectContaining({
         payloadMode: 'plain_json_v1',
-        snapshot: expect.objectContaining({ fetchedAtMs: now + 1, planLabel: 'Pro' }),
+        snapshot: expect.objectContaining({ fetchedAtMs: now, planLabel: 'Pro' }),
         metadata: expect.objectContaining({ materialFingerprint: expect.any(String) }),
       }),
     }));

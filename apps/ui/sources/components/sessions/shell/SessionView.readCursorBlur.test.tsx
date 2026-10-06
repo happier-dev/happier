@@ -1,16 +1,41 @@
 import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
+import 'fake-indexeddb/auto';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
-const markSessionViewedSpy = vi.hoisted(() => vi.fn(async () => {}));
+let markSessionViewedSpy: MockInstance<typeof import('@/sync/sync')['sync']['markSessionViewed']>;
+const readCursorRequests: Array<{ homeUrl: string; input: unknown }> = [];
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary(socket => {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, input: unknown) => {
+        if (event === 'update-read-cursor') {
+            readCursorRequests.push({ homeUrl: socket.io.uri, input });
+            return { result: 'success', lastViewedSessionSeq: (input as { lastViewedSessionSeq: number }).lastViewedSessionSeq };
+        }
+        return { v: 1, ok: true, admittedSessionIds: [] };
+    });
+});
 const scheduledInteractionCallbacks = vi.hoisted<(() => void)[]>(() => []);
 const sessionState = vi.hoisted(() => ({
     current: {
@@ -42,9 +67,6 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
-}));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
@@ -54,20 +76,6 @@ vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
 }));
 vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'session:s1',
-}));
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        openRight: vi.fn(),
-        setRightTab: vi.fn(),
-        closeRight: vi.fn(),
-        openDetailsTab: vi.fn(),
-        closeDetails: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        setRightTabState: vi.fn(),
-        scopeState: { right: { isOpen: false, activeTabId: null, tabState: {} }, details: { isOpen: false, tabs: [], activeTabKey: null } },
-    }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
@@ -122,40 +130,9 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
     useSessionReachableMachineTarget: () => null,
 }));
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
-    subscribeActiveServer: () => () => {},
-}));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
-}));
-vi.mock('@/sync/sync', async () => {
-    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
-    return {
-        sync: {
-            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
-            markSessionViewed: markSessionViewedSpy,
-            fetchPendingMessages: vi.fn(async () => {}),
-            publishSessionPermissionModeToMetadata: async () => {},
-            publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-            publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-            publishSessionModelOverrideToMetadata: async () => {},
-            refreshSessions: async () => {},
-            onSessionVisible: () => {},
-            sendMessage: async () => {},
-            enqueuePendingMessage: async () => {},
-            submitMessage: async () => {},
-            encryption: { getMachineEncryption: () => null },
-            onSessionViewportChange: () => {},
-        },
-    };
-});
-vi.mock('@/sync/ops', () => ({
-    sessionAbort: vi.fn(),
-    resumeSession: vi.fn(),
-    sessionAttachmentsUploadFile: vi.fn(),
-    sessionSwitch: vi.fn(async () => true),
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({ execute: vi.fn() }),
@@ -163,17 +140,16 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: () => null,
 }));
-vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
-    runAfterInteractionsWithFallback: (callback: () => void) => {
-        scheduledInteractionCallbacks.push(callback);
-        return () => {};
-    },
-}));
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             useWindowDimensions: () => ({ width: 1200, height: 800 }),
+            Platform: { OS: 'ios' },
+            InteractionManager: { runAfterInteractions: (callback: () => void) => {
+                scheduledInteractionCallbacks.push(callback);
+                return { cancel: () => {} };
+            } },
         });
     },
     router: async () => {
@@ -184,62 +160,10 @@ installSessionShellCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-	                getState: () => ({
-	                    sessions: { s1: sessionState.current },
-	                    settings: {},
-	                    concurrentSessionListCacheByServerId: {},
-	                }),
-	            },
-	            useSession: () => sessionState.current,
-	            useAutomations: () => [],
-            useIsDataReady: () => true,
-            useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionSubagentSourceMessages: () => [],
-            useSessionPendingMessages: () => ({ messages: [] }),
-            useSessionReviewCommentsDrafts: () => [],
-            useWorkspaceReviewCommentsDrafts: () => [],
-            useSessionUsage: () => null,
-            useSetting: () => null,
-            useSettings: () => ({ experiments: true, featureToggles: {} }),
-            useLocalSetting: (key: string) => {
-                if (key === 'acknowledgedCliVersions') return {};
-                if (key === 'detailsPaneTabsBehavior') return 'preview';
-                if (key === 'rightPaneWidthPx') return 360;
-                if (key === 'rightPaneWidthBasisPx') return 1200;
-                if (key === 'detailsPaneWidthPx') return 520;
-                if (key === 'detailsPaneWidthBasisPx') return 1200;
-                if (key === 'sessionsRightPaneDefaultOpen') return false;
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                if (key === 'uiMultiPanePanelsEnabled') return true;
-                return null;
-            },
-        });
-    },
+    storage: async importOriginal => importOriginal(),
 });
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplyLocalSettings: () => vi.fn(),
-}));
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['codex'],
-    DEFAULT_AGENT_ID: 'codex',
-    buildResumeSessionExtrasFromUiState: () => null,
-    getAgentCore: () => ({
-        cli: { detectKey: 'codex' },
-        uiConnectedService: { serviceId: null, labelKey: 'agentInput.agent.codex', connectRoute: null },
-        model: { defaultMode: 'default' },
-        resume: { vendorResumeIdField: null },
-        sessionModes: { kind: 'none' },
-    }),
-    getAgentResumeExperimentsFromSettings: () => null,
-    getNewSessionRelevantInstallableDepKeys: () => [],
-    isBundledAgentId: (value: unknown) => value === 'codex',
-    resolveAgentIdFromFlavor: () => 'codex',
 }));
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeSessionWithOptions: () => false,
@@ -275,16 +199,6 @@ vi.mock('@/utils/platform/platform', () => ({
 }));
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid',
-}));
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    isUntitledSessionName: (name: string) => name === 'session.untitled',
-    formatPathRelativeToHome: () => '/tmp',
-    getSessionAvatarId: () => 'avatar',
-    getSessionName: () => 'Session',
-    listPendingPermissionRequests: () => [],
-    listPendingUserActionRequests: () => [],
-    shouldShowAbortButtonForSessionState: () => false,
-    useSessionStatus: () => 'online',
 }));
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
@@ -337,10 +251,6 @@ vi.mock('@/hooks/session/useSessionSubagents', () => ({
 vi.mock('@/agents/registry/sessionSubagentUiBehavior', () => ({
     hasSessionSubagentLaunchCards: () => false,
 }));
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    isExecutionRunNotRunningSendError: () => false,
-    sessionExecutionRunSend: vi.fn(),
-}));
 vi.mock('@/sync/runtime/time', () => ({
     nowServerMs: () => 0,
 }));
@@ -375,13 +285,61 @@ vi.mock('@/sync/domains/session/control/controlSwitchUiTimeout', () => ({
     readControlSwitchUiTimeoutMsFromEnv: () => 1000,
 }));
 
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { storage } = await import('@/sync/domains/state/storage');
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let previousStorage: ReturnType<typeof storage.getState>;
+function applyVisibleFixtureSeq(seq: number) {
+    sessionState.current.seq = seq;
+    storage.getState().applySessions([{ ...storage.getState().sessions.s1!, seq }]);
+}
+async function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
+    storage.getState().applySessions([createSessionFixture({ ...sessionState.current, accessLevel: 'owner', serverId: account.home.id })]);
+    return renderCanonicalScreen(<InjectedAuthProvider credentials={account.credentials}>{args[0]}</InjectedAuthProvider>, args[1]);
+}
 
 describe('SessionView read cursor on blur', () => {
-    beforeEach(() => {
-        sessionState.current.seq = 2;
+    beforeEach(async () => {
+        previousStorage = storage.getState();
+        await home.reset();
+        await home.addHome({ name: 'Cursor Home', serverUrl: 'https://server-1', accountId: 'account-a' });
+        await home.addHome({ name: 'Previous Home', serverUrl: 'https://home-b', accountId: 'account-a', active: false });
+        await home.addHome({ name: 'Next Home', serverUrl: 'https://home-a', accountId: 'account-a', active: false });
+        await loadSyncSingletonForTests();
+        account = await restoreServerAccountForTest({ serverUrl: 'https://server-1', request: async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path.endsWith('/pending')) return Response.json({ pending: [] });
+            if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
+            return new Response('{}', { status: 404 });
+        } });
+        sessionState.current = createSessionFixture({ ...sessionState.current, serverId: account.home.id, accessLevel: 'owner', seq: 2 });
+        storage.getState().applySessions([sessionState.current, createSessionFixture({ id: 's2', serverId: account.home.id, seq: 9 })]);
+        storage.getState().applyServerScopedSessionListRows('home-b', [createSessionListRenderableSessionFixture({ id: 'same-session', seq: 2 })], { source: 'rowOnly', mode: 'append' });
+        storage.setState({ isDataReady: true });
+        const { sync } = await import('@/sync/sync');
+        markSessionViewedSpy = vi.spyOn(sync, 'markSessionViewed');
         markSessionViewedSpy.mockClear();
+        readCursorRequests.length = 0;
         scheduledInteractionCallbacks.length = 0;
+    });
+
+    afterEach(async () => {
+        vi.useRealTimers();
+        await standardCleanup();
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        scmStatusSync.stop('s1', account.home.id);
+        markSessionViewedSpy.mockRestore();
+        await account.dispose();
+        await home.reset();
+        storage.setState(previousStorage, true);
     });
 
     it('bounds the blur read mark to the seq visible when leaving the session', async () => {
@@ -414,7 +372,7 @@ describe('SessionView read cursor on blur', () => {
         expect(scheduledInteractionCallbacks).toHaveLength(1);
 
         // Simulate a later assistant message landing after navigation away.
-        sessionState.current.seq = 4;
+        applyVisibleFixtureSeq(4);
 
         await act(async () => {
             const callback = scheduledInteractionCallbacks.shift();
@@ -423,6 +381,10 @@ describe('SessionView read cursor on blur', () => {
 
         expect(markSessionViewedSpy).toHaveBeenCalledTimes(1);
         expect(markSessionViewedSpy).toHaveBeenCalledWith({ serverId: 'server-1', sessionId: 's1' }, { sessionSeq: 2 });
+        await waitForHomeGovernance(() => expect(readCursorRequests).toEqual([
+            { homeUrl: 'https://server-1', input: { sid: 's1', lastViewedSessionSeq: 2 } },
+        ]));
+        expect(storage.getState().sessions.s1?.lastViewedSessionSeq).toBe(2);
 
         await hook.unmount();
     });
@@ -463,6 +425,10 @@ describe('SessionView read cursor on blur', () => {
             { serverId: 'home-b', sessionId: 'same-session' },
             { sessionSeq: 2 },
         );
+        await waitForHomeGovernance(() => expect(readCursorRequests).toEqual([
+            { homeUrl: 'https://home-b', input: { sid: 'same-session', lastViewedSessionSeq: 2 } },
+        ]));
+        expect(storage.getState().sessionListRowsByServerId['home-b']?.['same-session']?.lastViewedSessionSeq).toBe(2);
 
         await hook.unmount();
     });
@@ -513,7 +479,7 @@ describe('SessionView read cursor on blur', () => {
             resetSessionManualUnreadHoldsForTests,
         } = await import('@/sync/domains/session/readState/sessionManualUnreadHold');
         resetSessionManualUnreadHoldsForTests();
-        sessionState.current.seq = 4;
+        applyVisibleFixtureSeq(4);
 
         const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');
         const hook = await renderHook((props: {
@@ -559,7 +525,7 @@ describe('SessionView read cursor on blur', () => {
     });
 
     it('reschedules focused seq-change read marks after a transient visible seq reset', async () => {
-        sessionState.current.seq = 2;
+        applyVisibleFixtureSeq(2);
 
         const initialHookProps: {
             address: { serverId: string; sessionId: string };
@@ -617,7 +583,7 @@ describe('SessionView read cursor on blur', () => {
     });
 
     it('bounds focused seq-change read marks to the seq that became visible', async () => {
-        sessionState.current.seq = 2;
+        applyVisibleFixtureSeq(2);
 
         const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');
         const hook = await renderHook((props: {
@@ -647,7 +613,7 @@ describe('SessionView read cursor on blur', () => {
             });
 
             // A later completion/message reaches storage before the delayed mark fires.
-            sessionState.current.seq = 6;
+            applyVisibleFixtureSeq(6);
 
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(300);
@@ -663,7 +629,7 @@ describe('SessionView read cursor on blur', () => {
     });
 
     it('does not mark a raw session seq before the visible seq is ready', async () => {
-        sessionState.current.seq = 10;
+        applyVisibleFixtureSeq(10);
 
         const { useSessionViewedLifecycle } = await import('./view/useSessionViewedLifecycle');
         const hook = await renderHook((props: {

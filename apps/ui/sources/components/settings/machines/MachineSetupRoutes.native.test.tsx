@@ -30,15 +30,15 @@ describe('Machines add route in the native app', () => {
         nativeSsh.available = true;
         const screen = await renderAddMachine();
 
-        expect(screen.findByTestId('settings.machineSetup:ssh')).toBeTruthy();
-        expect(screen.tree.findAll((node) => node.props?.testID === 'settings.machineSetup:thisComputer')).toHaveLength(0);
+        expect(screen.findByTestId('settings.machines.draft.form.path:ssh')).toBeTruthy();
+        expect(screen.findByTestId('settings.machines.draft.form.path:thisComputer')).toBeNull();
     });
 
-    it('says machines are added from a computer only when this build cannot connect over SSH', async () => {
+    it('keeps another-computer setup reachable without offering SSH when the native transport is unavailable', async () => {
         nativeSsh.available = false;
         const screen = await renderAddMachine();
 
-        expect(screen.tree.findAll((node) => node.props?.testID === 'settings.machineSetup:ssh')).toHaveLength(0);
-        expect(screen.findByTestId('settings.machineSetup.fromComputer')).toBeTruthy();
+        expect(screen.findByTestId('settings.machines.draft.form.path:ssh')).toBeNull();
+        expect(screen.findByTestId('settings.machines.draft.form.path:anotherComputer')).toBeTruthy();
     });
 });

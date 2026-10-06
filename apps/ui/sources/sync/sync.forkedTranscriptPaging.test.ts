@@ -1,25 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -28,52 +8,47 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
 const requestMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-    },
-}));
-
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import { storage } from './domains/state/storage';
+
+installDisconnectedServerSocketBoundary();
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+
+async function restoreTestHome(serverUrl = 'https://transcript-tests.example'): Promise<void> {
+    await account?.dispose();
+    account = await restoreServerAccountForTest({
+        serverUrl,
+        accountId: 'transcript-account',
+        request: async (url, init) => {
+            const requestUrl = new URL(String(url));
+            const path = requestUrl.pathname + requestUrl.search;
+            if (requestUrl.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (requestUrl.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (requestUrl.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (requestUrl.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (requestUrl.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (requestUrl.pathname.includes('/messages') || requestUrl.pathname === '/v2/sessions/parent') {
+                return await requestMock(path, init);
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        },
+    });
+}
 import type { Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
 import { insertForkDividersIntoTranscriptItems } from '@/components/sessions/transcript/forkContext/insertForkDividersIntoTranscriptItems';
-import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
-import type { ServerAccountRequestAuthority } from './runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { apiSocket } from './api/session/apiSocket';
+import { runWithServerRequestAuthorityForServerAccountScope } from './runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 
 function isMainMessagesPageRequest(path: string, params: {
     sessionId: string;
@@ -93,12 +68,6 @@ function isMainMessagesPageRequest(path: string, params: {
 }
 
 type SyncForkPagingTestAccess = {
-    credentials: { token: string; secret: string } | null;
-    encryption: {
-        decryptEncryptionKey: (encryptedKey: string | null | undefined) => Promise<null>;
-        initializeSessions: () => Promise<void>;
-        getSessionEncryption: () => null;
-    };
     activeServerSessionIds: Set<string>;
     hasFetchedSessionsSnapshotForActiveServer: boolean;
     sessionMessagesBeforeSeqByKey: Map<string, number>;
@@ -168,24 +137,23 @@ function applyChildForkSession(): void {
 
 describe('sync forked transcript paging', () => {
     beforeEach(async () => {
+        webLocks = installWebLockManagerMock();
+        await loadSyncSingletonForTests();
+        getPersistenceStorage().clearAll();
         storage.setState(initialStorageState, true);
-        kvStore.clear();
         requestMock.mockReset();
+        await restoreTestHome();
 
         const { sync } = await import('./syncEngine');
         const syncForTest = sync as unknown as SyncForkPagingTestAccess;
-        syncForTest.disconnectServer();
-        syncForTest.credentials = { token: 'token', secret: 'secret' };
-        syncForTest.encryption = {
-            decryptEncryptionKey: async () => null,
-            initializeSessions: async () => {},
-            getSessionEncryption: () => null,
-        };
         syncForTest.activeServerSessionIds = new Set<string>(['child']);
         syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await account?.dispose();
+        account = undefined;
+        webLocks.restore();
         vi.unstubAllGlobals();
     });
 
@@ -222,25 +190,17 @@ describe('sync forked transcript paging', () => {
     });
 
     it('publishes account-authority refresh coverage only after its first page materializes', async () => {
-        const server = await upsertServerProfile({ serverUrl: 'https://fork-coverage.example', name: 'Fork coverage' });
-        await setActiveServerId(server.id, { scope: 'device' });
-        storage.getState().activateProfileScope({ serverId: server.id, accountId: 'fork-account' });
+        await restoreTestHome('https://fork-coverage.example');
+        if (!account) throw new Error('Expected the restored Account');
+        const scope = { serverId: account.home.id, accountId: 'transcript-account' };
         applyChildForkSession();
-        const authority = {
-            scope: { serverId: server.id, accountId: 'fork-account' },
-            context: {
-                scope: 'scoped', timeoutMs: 30_000, targetServerId: server.id,
-                targetServerUrl: server.serverUrl, targetAccountId: 'fork-account', token: 'test-token', encryption: null,
-            },
-            request: async () => Response.json({
-                messages: [{
-                    id: 'account-start', seq: 2, localId: null, sidechainId: null,
-                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'account start' } } },
-                    createdAt: 2, updatedAt: 2,
-                }], hasMore: false, nextBeforeSeq: null,
-            }),
-            release: async () => undefined,
-        } satisfies ServerAccountRequestAuthority;
+        requestMock.mockResolvedValue(Response.json({
+            messages: [{
+                id: 'account-start', seq: 2, localId: null, sidechainId: null,
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'account start' } } },
+                createdAt: 2, updatedAt: 2,
+            }], hasMore: false, nextBeforeSeq: null,
+        }));
         const observedFirstSeqs: Array<number | undefined> = [];
         const unsubscribe = storage.subscribe((state) => {
             if (state.sessionMessagesHistoryStartLoaded.child !== true) return;
@@ -249,7 +209,10 @@ describe('sync forked transcript paging', () => {
         });
         try {
             const { sync } = await import('./sync');
-            await sync.refreshSessionMessages('child', { authority });
+            await runWithServerRequestAuthorityForServerAccountScope({
+                scope,
+                activeRequest: (path, init, options) => apiSocket.request(path, init, options),
+            }, async (authority) => await sync.refreshSessionMessages('child', { authority }));
             expect(observedFirstSeqs.length).toBeGreaterThan(0);
             expect(observedFirstSeqs.every((seq) => seq === 2)).toBe(true);
         } finally {

@@ -242,15 +242,16 @@ describe('socketParse', () => {
                     },
                     generation: 'source-1',
                 },
-                contributionGeneration: 'contribution-1',
+                sourceCustody: { kind: 'development', registeredRootId: 'contribution-1' },
                 cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
             },
         });
 
         expect(res).not.toBeNull();
         expect(res?.type).toBe('external-session-transcript-invalidated');
-        expect((res as any)?.binding.sessionId).toBe('s1');
-        expect((res as any)?.binding).not.toHaveProperty('items');
+        if (res?.type !== 'external-session-transcript-invalidated') throw new Error('Expected a qualified invalidation');
+        expect(res.binding.sessionId).toBe('s1');
+        expect(res.binding).not.toHaveProperty('items');
     });
 
     it('rejects transcript-bearing direct-session deltas', () => {

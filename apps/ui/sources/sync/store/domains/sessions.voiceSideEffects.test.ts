@@ -1,135 +1,40 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const storageStateRef = vi.hoisted(() => ({
-    current: null as any,
-}));
+import { storage } from '@/sync/domains/state/storage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../../engine/pending/pendingQueueV2.testHelpers';
 
-afterEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    storageStateRef.current = null;
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'server_1', accountId: 'account_a' });
 });
 
-function mockSessionsDomainBoundaries(): void {
-    vi.doMock('../../domains/state/persistence', () => ({
-        loadSettings: () => ({
-            settings: {},
-            version: null,
-        }),
-        loadLocalSettings: () => ({}),
-        loadPendingSettings: () => ({}),
-        loadPurchases: () => ({}),
-        loadProfile: () => ({ id: 'account_a' }),
-        loadSessionDrafts: () => ({}),
-        loadSessionLastViewed: () => ({}),
-        loadSessionModelModeUpdatedAts: () => ({}),
-        loadSessionModelModes: () => ({}),
-        loadSessionPermissionModeUpdatedAts: () => ({}),
-        loadSessionPermissionModes: () => ({}),
-        loadSessionActionDrafts: () => ({}),
-        loadSessionReviewCommentsDrafts: () => ({}),
-        loadWorkspaceReviewCommentsDrafts: () => ({}),
-        saveSessionDrafts: vi.fn(),
-        saveSessionLastViewed: vi.fn(),
-        saveSessionModelModeUpdatedAts: vi.fn(),
-        saveSessionModelModes: vi.fn(),
-        saveSessionPermissionModeUpdatedAts: vi.fn(),
-        saveSessionPermissionModes: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
-        saveSessionReviewCommentsDrafts: vi.fn(),
-        saveWorkspaceReviewCommentsDrafts: vi.fn(),
-        saveSettings: vi.fn(),
-        saveLocalSettings: vi.fn(),
-        savePendingSettings: vi.fn(),
-        savePurchases: vi.fn(),
-        saveProfile: vi.fn(),
-    }));
-    vi.doMock('../../domains/state/warmCachePersistence', () => ({
-        resolveWarmCacheAccountScope: vi.fn(() => null),
-        peekSessionListWarmCacheEntries: vi.fn(() => null),
-        saveSessionListWarmCacheEntries: vi.fn(),
-    }));
-    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
-        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
-        return {
-            ...actual,
-            buildPersistedSessionListCacheEntriesFromRenderables: vi.fn(() => []),
-        };
-    });
-    vi.doMock('../../domains/session/listing/applyReachableTargetsToSessionListRenderables', () => ({
-        applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
-    }));
-    vi.doMock('../sessionListIndex/buildSessionListIndexWithServerScope', () => ({
-        buildActiveServerSessionListIndex: vi.fn(() => []),
-    }));
-    vi.doMock('../../domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server_1' })),
-    }));
-    vi.doMock('../../runtime/orchestration/projectManager', () => ({
-        projectManager: {
-            updateSessions: vi.fn(),
-        },
-    }));
-    vi.doMock('../../domains/state/storage', async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: () => storageStateRef.current,
-                getInitialState: () => storageStateRef.current,
-                setState: () => undefined,
-                subscribe: () => () => undefined,
-                destroy: () => undefined,
-            },
-        } as any);
-    });
-    vi.doMock('@/sync/sync', () => ({
-        sync: {
-            ensureSessionVisibleForMessageRoute: vi.fn(),
-        },
-        syncSwitchServer: vi.fn(),
-    }));
-}
+afterEach(() => {
+    storage.setState(storage.getInitialState(), true);
+    vi.clearAllMocks();
+});
 
-function createHarness(createSessionsDomain: any, createReducer: any) {
-    let state: any = {
-        sessions: {},
-        sessionListRowsByServerId: {},
-        ordinarySessionListMembershipByServerId: {},
-        archivedSessionListMembershipByServerId: {},
-        sessionListIndexByServerId: {},
-        concurrentSessionListCacheByServerId: {},
-        sessionScmStatus: {},
-        sessionLastViewed: {},
-        isDataReady: false,
-        machines: {},
-        machineDisplayById: {},
+function createHarness(_createSessionsDomain: unknown, createReducer: typeof import('@happier-dev/session-core/reducer').createReducer) {
+    storage.setState({
         sessionMessages: {
             s1: {
-                messages: [],
+                messageIdsOldestFirst: [],
+                messagesById: {},
                 messagesMap: {},
                 reducerState: createReducer(),
+                latestThinkingMessageId: null,
+                latestThinkingMessageActivityAtMs: null,
+                messagesVersion: 0,
                 isLoaded: true,
             },
         },
-        settings: {},
-    };
-    storageStateRef.current = state;
-
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-        storageStateRef.current = state;
-    };
-
-    const domain = createSessionsDomain({ get, set } as any);
-    return { get, domain };
+    });
+    return { get: storage.getState, domain: storage.getState() };
 }
 
 describe('sessions domain: no voice side effects', () => {
     it('applies agentState permission requests to loaded session messages when applySessions receives newer agentStateVersion', async () => {
-        mockSessionsDomainBoundaries();
-
         const { createReducer } = await import("@happier-dev/session-core/reducer");
         const { createSessionsDomain } = await import('./sessions');
         const { get, domain } = createHarness(createSessionsDomain, createReducer);

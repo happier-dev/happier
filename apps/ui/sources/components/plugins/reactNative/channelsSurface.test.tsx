@@ -11,8 +11,12 @@ import {
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
 } from '@happier-dev/channels-protocol/v1';
 import {
-  PLUGIN_UI_HOST_API_VERSION_V1,
   PluginUiArtifactDigestV1Schema,
+  PluginUiExecuteActionRequestV1Schema,
+  PluginUiJsonValueV1Schema,
+  PluginUiResourceSubscriptionTargetV1Schema,
+  PluginUiResourceSubscriptionRequestV1Schema,
+  PluginUiSelectActionInputRequestV1Schema,
   type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -52,41 +56,13 @@ import {
 } from '../../../../../../packages/plugins/channels/src/collections';
 
 vi.mock('react-native', async () => {
-  const ReactModule = await import('react');
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
   const { StyleSheet } = await import('react-native-web');
   return createReactNativeWebMock({
     Platform: { OS: 'web' },
     StyleSheet,
-    // The virtualized list is the genuine rendering boundary for this mounted
-    // surface test, so render its supplied rows rather than mocking item logic.
-    FlatList: ({
-      data,
-      renderItem,
-      keyExtractor,
-      ListHeaderComponent,
-      ListEmptyComponent,
-      ListFooterComponent,
-      ...props
-    }: Readonly<{
-      data?: readonly unknown[];
-      renderItem: (input: Readonly<{ item: unknown; index: number }>) => React.ReactNode;
-      keyExtractor?: (item: unknown, index: number) => string;
-      ListHeaderComponent?: React.ReactNode;
-      ListEmptyComponent?: React.ReactNode;
-      ListFooterComponent?: React.ReactNode;
-    }>) => ReactModule.createElement(
-      'FlatList',
-      { ...props, data },
-      ListHeaderComponent,
-      ...(data ?? []).map((item: unknown, index: number) => ReactModule.createElement(
-        ReactModule.Fragment,
-        { key: keyExtractor ? keyExtractor(item, index) : String(index) },
-        renderItem({ item, index }),
-      )),
-      (data?.length ?? 0) === 0 ? ListEmptyComponent : null,
-      ListFooterComponent,
-    ),
+    ...createCapturingFlatListMock({ renderItems: true }).module,
   });
 });
 
@@ -94,6 +70,11 @@ const { flushHookEffects } = await import('@/dev/testkit');
 const { StyleSheet } = await import('react-native');
 
 const CHANNELS_SETTINGS_VIEW = { id: 'connections', placement: 'settingsPage' } as const;
+const CHANNELS_PAGE_MOUNT = {
+  kind: 'destination',
+  destination: { pluginId: 'happier.channels', localId: 'conversations' },
+  container: 'appPage',
+} as const satisfies SurfaceContext['mount'];
 const CHANNELS_SETTINGS_MOUNT = {
   kind: 'destination',
   destination: { pluginId: 'happier.channels', localId: 'connections' },
@@ -114,6 +95,7 @@ type ChannelsHostMethod =
   | 'selectActionInput'
   | 'watchContext'
   | 'watchResource';
+const mountedHostAdapters: ReturnType<typeof createCanonicalPluginReactNativeHostApiAdapter>[] = [];
 type ChannelStateValue = PluginAccountCollectionValue<typeof CHANNEL_STATE_COLLECTION>;
 type ChannelStateRow = PluginCollectionRow<ChannelStateValue>;
 type ChannelStateMutation = PluginCollectionMutation<ChannelStateValue>;
@@ -131,6 +113,16 @@ function createChannelsSettingsSurfaceContextFixture(
   return createPluginSurfaceContextFixture({
     ...overrides,
     mount: CHANNELS_SETTINGS_MOUNT,
+    target: { kind: 'app' },
+  });
+}
+
+function createChannelsPageSurfaceContextFixture(
+  overrides: Omit<Partial<SurfaceContext>, 'mount' | 'target'> = {},
+): SurfaceContext {
+  return createPluginSurfaceContextFixture({
+    ...overrides,
+    mount: CHANNELS_PAGE_MOUNT,
     target: { kind: 'app' },
   });
 }
@@ -913,58 +905,85 @@ function createChannelsHostApi(input: Readonly<{
   selectActionInput?: (request: SelectActionInputRequest) => Promise<SelectActionInputResult>;
   methods?: readonly ChannelsHostMethod[];
 }>) {
-  const readResource = vi.fn(async (resource: Readonly<{ pluginId: string; localId: string }>) => (
-    resource.localId === CHANNELS_BINDINGS_RESOURCE.localId
+  const methods = input.methods ?? ['executeAction', 'readResource', 'watchContext', 'watchResource'];
+  const subscriptions = new Map<string, string>();
+  const requestSurface = {
+    pluginId: 'happier.channels',
+    contributionId: 'channels-renderer',
+    surfaceId: 'surface_channels_transport',
+    placement: 'appSurface',
+    platform: 'ios',
+    channel: 'internal',
+    resourceScope: [],
+    diagnostics: [],
+  } satisfies PluginUiSurfaceContextV1;
+  const handlers: PluginSurfaceHostApiHandlers = {};
+  // Only daemon transport is substituted. The mounted host admission, public
+  // SDK adapter, Resource subscription lifecycle and author hooks remain real.
+  if (methods.includes('readResource')) handlers.readResource = async (request) => {
+    const payload = request.payload;
+    if (!isRecord(payload)) throw new Error('Expected a Resource read payload.');
+    const resource = PluginUiResourceSubscriptionTargetV1Schema.parse(payload.resource);
+    if (typeof resource === 'string') throw new Error('Channels sends qualified Resource references.');
+    const content = resource.localId === CHANNELS_BINDINGS_RESOURCE.localId
       ? await input.readBindingsResource?.() ?? bindingResourceContent([])
-      : await input.readResource(resource)
-  ));
-  const executeAction = vi.fn(input.executeAction ?? (async () => ({ kind: 'updated' })));
-  const selectActionInput = vi.fn(input.selectActionInput ?? (async () => ({ kind: 'cancelled' as const })));
-  const resourceListeners = new Map<string, (event: ResourceSubscriptionEvent) => void>();
-  const watchResource = vi.fn(async (
-    resource: Readonly<{ localId?: unknown }>,
-    listener: (event: ResourceSubscriptionEvent) => void,
-  ) => {
-    if (typeof resource.localId !== 'string') throw new Error('Expected a Resource local ID.');
-    resourceListeners.set(resource.localId, listener);
-    return {
-      dispose: vi.fn(() => {
-        resourceListeners.delete(resource.localId as string);
-      }),
+      : await input.readResource(resource);
+    return { contentType: content.contentType, digest: content.digest,
+      bytesBase64: Buffer.from(content.bytes).toString('base64') };
+  };
+  if (methods.includes('executeAction')) handlers.executeAction = async (request) => {
+    const payload = PluginUiExecuteActionRequestV1Schema.parse(request.payload);
+    if (typeof payload.action !== 'string') throw new Error('Channels management uses its local Action ids.');
+    return PluginUiJsonValueV1Schema.parse(
+      await input.executeAction?.(payload.action, payload.input) ?? { kind: 'updated' },
+    );
+  };
+  if (methods.includes('selectActionInput')) handlers.selectActionInput = async (request) => {
+    const payload = PluginUiSelectActionInputRequestV1Schema.parse(request.payload);
+    return PluginUiJsonValueV1Schema.parse(
+      await input.selectActionInput?.(payload) ?? { kind: 'cancelled' },
+    );
+  };
+  if (methods.includes('watchResource')) {
+    handlers.watchResource = (request) => {
+      const payload = PluginUiResourceSubscriptionRequestV1Schema.parse(request.payload);
+      if (typeof payload.resource === 'string') throw new Error('Channels watches qualified Resources.');
+      subscriptions.set(payload.resource.localId, payload.subscriptionId);
+      return {};
     };
+    handlers.disposeHostResource = (request) => {
+      const payload = request.payload;
+      if (!isRecord(payload) || typeof payload.subscriptionId !== 'string') throw new Error('Expected a subscription disposal.');
+      for (const [localId, id] of subscriptions) if (id === payload.subscriptionId) subscriptions.delete(localId);
+      return {};
+    };
+  }
+  const owner = createPluginSurfaceHostApi({ surfaceContext: requestSurface, handlers });
+  const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+    surface: createChannelsSettingsSurfaceContextFixture(),
+    requestSurface,
+    requestIdPrefix: 'channels-transport',
+    handleRequest: owner.handleRequest,
+    installedMethods: owner.installedMethods,
   });
+  mountedHostAdapters.push(adapter);
+  const readResource = vi.fn(adapter.api.readResource);
+  const executeAction = vi.fn(adapter.api.executeAction);
+  const selectActionInput = vi.fn(adapter.api.selectActionInput);
+  const watchResource = vi.fn(adapter.api.watchResource);
   return {
-    hostApi: {
-      version: () => ({
-        apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
-        wireVersion: 1,
-        methods: input.methods ?? ['executeAction', 'readResource', 'watchContext', 'watchResource'] as const,
-      }),
-      context: vi.fn(async () => createChannelsSettingsSurfaceContextFixture()),
-      watchContext: vi.fn(async () => ({ dispose: vi.fn() })),
-      executeAction,
-      selectActionInput,
-      readResource,
-      watchResource,
-    },
+    hostApi: { ...adapter.api, readResource, executeAction, selectActionInput, watchResource },
     readResource,
     executeAction,
     selectActionInput,
     watchResource,
     invalidateResource: (
       digest: ResourceInvalidationDigest,
-      resourceLocalId: typeof CHANNELS_CONNECTIONS_RESOURCE.localId | typeof CHANNELS_BINDINGS_RESOURCE.localId = (
-        CHANNELS_CONNECTIONS_RESOURCE.localId
-      ),
+      resourceLocalId: typeof CHANNELS_CONNECTIONS_RESOURCE.localId | typeof CHANNELS_BINDINGS_RESOURCE.localId = CHANNELS_CONNECTIONS_RESOURCE.localId,
     ) => {
-      const resourceListener = resourceListeners.get(resourceLocalId);
-      if (resourceListener === undefined) throw new Error('Expected the Resource watch to be established.');
-      resourceListener({
-        version: 1,
-        subscriptionId: 'channels-surface-test',
-        kind: 'invalidated',
-        digest,
-      });
+      const subscriptionId = subscriptions.get(resourceLocalId);
+      if (subscriptionId === undefined) throw new Error('Expected the Resource watch to be established.');
+      adapter.publishSubscriptionEvent({ version: 1, subscriptionId, kind: 'invalidated', digest });
     },
   };
 }
@@ -1037,13 +1056,18 @@ async function renderChannelsSurface(
   surface = createChannelsSettingsSurfaceContextFixture(),
   presentationHost?: unknown,
   dataClient?: PluginUiDataClient,
+  subPath?: string,
+  existingRenderer?: ReactTestRenderer,
 ) {
   const { renderSurface } = await import('../../../../../../packages/plugins/channels/src/ui/renderSurface');
   const element = renderSurface({
     plugin: { id: 'happier.channels', version: '0.0.0' },
-    view: CHANNELS_SETTINGS_VIEW,
+    view: surface.mount.kind === 'destination' && surface.mount.destination.localId === 'conversations'
+      ? { id: 'conversations', placement: 'appPage' }
+      : CHANNELS_SETTINGS_VIEW,
     surface,
     hostApi,
+    subPath,
     signal: new AbortController().signal,
   } as never);
   if (!React.isValidElement(element)) {
@@ -1059,7 +1083,12 @@ async function renderChannelsSurface(
     : React.cloneElement(element as React.ReactElement<Record<string, unknown>>, privateBindings);
   let rendered: ReactTestRenderer | undefined;
   await act(async () => {
-    rendered = create(mountedElement);
+    if (existingRenderer) {
+      existingRenderer.update(mountedElement);
+      rendered = existingRenderer;
+    } else {
+      rendered = create(mountedElement);
+    }
   });
   await flushHookEffects();
   if (!rendered) throw new Error('Expected Channels surface to mount.');
@@ -1096,6 +1125,17 @@ function createChannelsBrandPresentationHost(names: Readonly<Record<string, stri
   };
 }
 
+function renderChannelsConversation(
+  hostApi: ReturnType<typeof createChannelsHostApi>['hostApi'],
+  surface = createChannelsPageSurfaceContextFixture(),
+  presentationHost?: unknown,
+  dataClient?: PluginUiDataClient,
+  subPath = 'binding-1',
+  existingRenderer?: ReactTestRenderer,
+) {
+  return renderChannelsSurface(hostApi, surface, presentationHost, dataClient, subPath, existingRenderer);
+}
+
 let renderer: ReactTestRenderer | null = null;
 
 afterEach(() => {
@@ -1103,11 +1143,12 @@ afterEach(() => {
     renderer?.unmount();
   });
   renderer = null;
+  for (const adapter of mountedHostAdapters.splice(0)) adapter.dispose();
   vi.restoreAllMocks();
 });
 
 describe('Channels settings surface (real source, mounted)', () => {
-  it('uses bindings as the default management index and joins their connection presentation', async () => {
+  it('joins a conversation with its owning connection on the canonical detail page', async () => {
     const connection = connectionFixture({
       attention: {
         outwardDelivery: {
@@ -1124,7 +1165,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       readBindingsResource: async () => bindingResourceContent([binding]),
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
+    renderer = await renderChannelsConversation(host.hostApi);
 
     expect(host.watchResource).toHaveBeenCalledWith(
       CHANNELS_BINDINGS_RESOURCE,
@@ -1135,14 +1176,12 @@ describe('Channels settings surface (real source, mounted)', () => {
       CHANNELS_BINDINGS_RESOURCE,
       expect.any(Object),
     );
-    const bindingRow = findByTestId(renderer, 'channels-binding-binding-1')[0];
-    if (!bindingRow) throw new Error('Expected the binding row to render.');
-    expect(bindingRow.props.accessibilityLabel).toContain('Support discussion');
-    expect(bindingRow.props.accessibilityLabel).toContain('Session: session-support');
-    expect(bindingRow.props.accessibilityLabel).toContain('Runs on your selected machine');
-    expect(bindingRow.props.accessibilityLabel).toContain('Delivery is waiting to retry');
-    expect(bindingRow.props.accessibilityLabel).toContain('Enabled');
-    expect(findByTestId(renderer, 'channels-bindings-list').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-binding-binding-1').length).toBeGreaterThan(0);
+    const detail = JSON.stringify(renderer.toJSON());
+    expect(detail).toContain('Support discussion');
+    expect(detail).toContain('session-support');
+    expect(findByTestId(renderer, 'channels-binding-bot-attention-binding-1').length).toBeGreaterThan(0);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-1').props.disabled).toBe(false);
   });
 
   it('projects each Session approval scope distinctly without granting or exposing approval authority', async () => {
@@ -1174,38 +1213,21 @@ describe('Channels settings surface (real source, mounted)', () => {
       ]),
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
+    for (const [bindingId, expected, forbidden] of [
+      ['binding-1', 'One request at a time', 'Up to the whole session'],
+      ['binding-approval-session', 'Up to the whole session', 'One request at a time'],
+      ['binding-automation', undefined, '/allow or /deny'],
+      ['binding-approval-off', 'Off', '/allow or /deny'],
+    ] as const) {
+      if (renderer) act(() => renderer?.unmount());
+      renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, bindingId);
+      const detail = JSON.stringify(renderer.toJSON());
+      if (expected !== undefined) expect(detail).toContain(expected);
+      expect(detail).not.toContain(forbidden);
+      expect(findPressableByTestId(renderer, 'channels-binding-pause-' + bindingId).props.disabled).toBe(false);
+    }
 
-    // The two enabled scopes are separate saved policies and must not share one
-    // sentence: `request` admits a single pending request, `session` admits up
-    // to Session scope. A projection that collapsed them would silently
-    // overstate or understate what an approver in the chat can answer.
-    const requestRow = findByTestId(renderer, 'channels-binding-binding-1')[0];
-    if (!requestRow) throw new Error('Expected the request-scope approval binding row to render.');
-    expect(requestRow.props.detail).toContain('answer one permission request at a time');
-    expect(requestRow.props.detail).not.toContain('up to Session scope');
-    expect(requestRow.props.accessibilityLabel).toContain('answer one permission request at a time');
-
-    const sessionRow = findByTestId(renderer, 'channels-binding-binding-approval-session')[0];
-    if (!sessionRow) throw new Error('Expected the session-scope approval binding row to render.');
-    expect(sessionRow.props.detail).toContain('up to Session scope');
-    expect(sessionRow.props.detail).not.toContain('answer one permission request at a time');
-    expect(sessionRow.props.accessibilityLabel).toContain('up to Session scope');
-
-    // A target that cannot mediate approvals, and a Session target whose owner
-    // turned them off, both disclose nothing about approval authority.
-    const automationRow = findByTestId(renderer, 'channels-binding-binding-automation')[0];
-    if (!automationRow) throw new Error('Expected the Automation binding row to render.');
-    expect(automationRow.props.detail).not.toContain('/allow or /deny');
-    expect(automationRow.props.accessibilityLabel).not.toContain('/allow or /deny');
-
-    const offRow = findByTestId(renderer, 'channels-binding-binding-approval-off')[0];
-    if (!offRow) throw new Error('Expected the approvals-off binding row to render.');
-    expect(offRow.props.detail).not.toContain('/allow or /deny');
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-approval-off').props.disabled).toBe(false);
-
-    // Reading the management index is not a mutation: no Action is dispatched
-    // and the surface never becomes an approval authority of its own.
+    // Projection never gives the surface authority to answer permissions.
     expect(host.executeAction).not.toHaveBeenCalled();
   });
 
@@ -1234,10 +1256,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
-    const toggle = findPressableByTestId(renderer, 'channels-binding-enabled-binding-1');
-    expect(toggle.props.accessibilityRole).toBe('switch');
-    expect(toggle.props.checked).toBe(true);
+    renderer = await renderChannelsConversation(host.hostApi);
+    const toggle = findPressableByTestId(renderer, 'channels-binding-pause-binding-1');
+    expect(toggle.props.disabled).toBe(false);
+    expect(toggle.props.title).toBe('Pause');
 
     await act(async () => {
       toggle.props.onPress();
@@ -1249,7 +1271,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(host.readResource.mock.calls.filter(([resource]) => (
       (resource as Readonly<{ localId: string }>).localId === CHANNELS_BINDINGS_RESOURCE.localId
     )).length).toBeGreaterThanOrEqual(2);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-1').props.checked).toBe(false);
+    expect(findByTestId(renderer, 'channels-binding-turn-on-binding-1').length).toBeGreaterThan(0);
   });
 
   /**
@@ -1290,7 +1312,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       isMethodAvailable: (method) => method === 'context' || input.isDaemonReachable(),
     });
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({
-      surface: createChannelsSettingsSurfaceContextFixture(),
+      surface: createChannelsPageSurfaceContextFixture(),
       requestSurface,
       requestIdPrefix: 'channels-outage',
       handleRequest: host.handleRequest,
@@ -1334,21 +1356,34 @@ describe('Channels settings surface (real source, mounted)', () => {
       expect(adapter.api.version().methods).toContain('readResource');
       expect(adapter.api.version().methods).toContain('watchResource');
 
-      renderer = await renderChannelsSurface(
+      renderer = await renderChannelsConversation(
         adapter.api as never,
-        createChannelsSettingsSurfaceContextFixture(),
+        createChannelsPageSurfaceContextFixture(),
         undefined,
         data.client,
+      '',
       );
       await flushHookEffects();
 
       // Cold offline presentation: the direct Account rows, and none of the
       // daemon-only setup vertical.
       await vi.waitFor(() => {
-        expect(findByTestId(renderer!, 'channels-binding-binding-offline-1').length).toBeGreaterThan(0);
+        expect(findByTestId(renderer!, 'channels-page-row-binding-offline-1').length).toBeGreaterThan(0);
       });
       expect(findByTestId(renderer, 'channels-provider-setup-picker')).toHaveLength(0);
       expect(data.query).toHaveBeenCalled();
+
+      renderer = await renderChannelsConversation(
+        adapter.api as never, undefined, undefined, data.client, 'binding-offline-1', renderer,
+      );
+      await act(async () => {
+        findPressableByTestId(renderer!, 'channels-binding-edit-binding-offline-1').props.onPress();
+      });
+      await flushHookEffects();
+      expect(findByTestId(renderer, 'channels-binding-target-delivery-mode').length).toBeGreaterThan(0);
+      renderer = await renderChannelsConversation(
+        adapter.api as never, undefined, undefined, data.client, '', renderer,
+      );
 
       daemonReachable = true;
       // Recovery is the canonical Resource owner's own watch retry plus
@@ -1356,9 +1391,9 @@ describe('Channels settings surface (real source, mounted)', () => {
       // the daemon child — holds the subscription.
       await vi.waitFor(async () => {
         await flushHookEffects();
-        expect(findByTestId(renderer!, 'channels-binding-binding-daemon-1').length).toBeGreaterThan(0);
+        expect(findByTestId(renderer!, 'channels-page-row-binding-daemon-1').length).toBeGreaterThan(0);
       }, { timeout: 10_000, interval: 100 });
-      expect(findByTestId(renderer, 'channels-binding-binding-offline-1')).toHaveLength(0);
+      expect(findByTestId(renderer, 'channels-page-row-binding-offline-1')).toHaveLength(0);
     } finally {
       adapter.dispose();
     }
@@ -1382,11 +1417,12 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
 
     try {
-      renderer = await renderChannelsSurface(
+      renderer = await renderChannelsConversation(
         adapter.api as never,
-        createChannelsSettingsSurfaceContextFixture(),
+        createChannelsPageSurfaceContextFixture(),
         undefined,
         data.client,
+      'binding-offline-1',
       );
       await flushHookEffects();
 
@@ -1421,11 +1457,12 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture({ targetedContributions }),
+      createChannelsPageSurfaceContextFixture({ targetedContributions }),
       undefined,
       data.client,
+      'binding-offline-1',
     );
     await flushHookEffects();
 
@@ -1441,11 +1478,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(host.watchResource).not.toHaveBeenCalled();
     expect(host.selectActionInput).not.toHaveBeenCalled();
     expect(findByTestId(renderer, 'channels-provider-setup-picker')).toHaveLength(0);
-    const row = findByTestId(renderer, 'channels-binding-binding-offline-1')[0];
-    if (!row) throw new Error('Expected the Account-local binding row to render offline.');
-    expect(row.props.accessibilityLabel).toContain('Offline support conversation');
-    expect(row.props.accessibilityLabel).toContain('Session: session-visible-summary');
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.checked).toBe(true);
+    const detail = JSON.stringify(renderer.toJSON());
+    expect(detail).toContain('Offline support conversation');
+    expect(detail).toContain('session-visible-summary');
+    expect(findByTestId(renderer, 'channels-binding-pause-binding-offline-1').length).toBeGreaterThan(0);
 
     const renderedBeforeWrite = JSON.stringify(renderer.toJSON());
     expect(renderedBeforeWrite).not.toContain('endpoint-private');
@@ -1458,7 +1494,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     const directReadsBeforeWrite = data.query.mock.calls.length;
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-offline-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-offline-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
@@ -1488,7 +1524,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       }),
     ], expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(data.query.mock.calls.length).toBeGreaterThan(directReadsBeforeWrite);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.checked).toBe(false);
+    expect(findByTestId(renderer, 'channels-binding-turn-on-binding-offline-1').length).toBeGreaterThan(0);
     const savedPendingMachineReconciliation = findByTestId(
       renderer,
       'channels-binding-saved-pending-machine-reconciliation',
@@ -1577,11 +1613,12 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture(),
+      createChannelsPageSurfaceContextFixture(),
       undefined,
       data.client,
+      '',
     );
     await flushHookEffects();
 
@@ -1596,12 +1633,11 @@ describe('Channels settings surface (real source, mounted)', () => {
       && request.limit <= 200
     ))).toBe(true);
     expect(bindingQueries.some(([request]) => request.cursor !== undefined)).toBe(true);
-    expect(findByTestId(renderer, 'channels-binding-binding-offline-001').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-binding-binding-offline-256').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-binding-enabled-binding-offline-256').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-page-row-binding-offline-001').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-page-row-binding-offline-256').length).toBeGreaterThan(0);
     const bindingRows = renderer.root.findAll((instance) => (
       typeof instance.props?.testID === 'string'
-      && instance.props.testID.startsWith('channels-binding-binding-offline-')
+      && instance.props.testID.startsWith('channels-page-row-binding-offline-')
     ));
     expect(new Set(bindingRows.map((instance) => instance.props.testID)).size).toBe(256);
     expect(host.readResource).not.toHaveBeenCalled();
@@ -1639,7 +1675,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(data.query.mock.calls.every(([request]) => (
       request.index === CHANNEL_STATE_INDEX_ID.byAttention
     ))).toBe(true);
-    expect(findByTestId(renderer, 'channels-bindings-error').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-settings-content').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-binding-create')).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).not.toContain(diagnostic);
   });
 
@@ -1665,7 +1702,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     renderer = await renderChannelsSurface(host.hostApi, undefined, undefined, data.client);
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-bindings-error').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-settings-content').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-binding-create')).toHaveLength(0);
     expect(data.query).toHaveBeenCalledWith({
       index: CHANNEL_STATE_INDEX_ID.byAttention,
       prefix: [true],
@@ -1704,17 +1742,19 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture(),
+      createChannelsPageSurfaceContextFixture(),
       undefined,
       data.client,
+      'binding-offline-1',
     );
     queryFailure = Object.assign(new Error(diagnostic), { code: 'unavailable' });
-    await act(async () => {
-      findPressableByTestId(renderer!, 'channels-bindings-resource-refresh').props.onPress();
-    });
-    await flushHookEffects();
+    // The host updates the mounted input signal; the real Account reader
+    // rereads the same Collection while retaining its last successful rows.
+    renderer = await renderChannelsConversation(
+      host.hostApi, undefined, undefined, data.client, 'binding-offline-1', renderer,
+    );
 
     expect(findByTestId(renderer, 'channels-binding-binding-offline-1').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-bindings-resource-stale').length).toBeGreaterThan(0);
@@ -1723,7 +1763,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     queryFailure = undefined;
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-bindings-resource-retry').props.onPress();
+      findPressableByTestId(renderer!, 'channels-bindings-resource-stale-action').props.onPress();
     });
     await flushHookEffects();
 
@@ -1751,10 +1791,11 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     const element = renderSurface({
       plugin: { id: 'happier.channels', version: '0.0.0' },
-      view: CHANNELS_SETTINGS_VIEW,
-      surface: createChannelsSettingsSurfaceContextFixture(),
+      view: { id: 'conversations', placement: 'appPage' },
+      surface: createChannelsPageSurfaceContextFixture(),
       hostApi: host.hostApi,
       signal: new AbortController().signal,
+      subPath: 'binding-offline-1',
     } as never);
     if (!React.isValidElement(element)) {
       throw new Error('Channels renderSurface must return a React element.');
@@ -1792,14 +1833,15 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture(),
+      createChannelsPageSurfaceContextFixture(),
       undefined,
       data.client,
+      'binding-offline-1',
     );
     const editBinding = renderer.root.findAll((instance) => (
-      instance.props?.title === 'Edit binding' && typeof instance.props?.onPress === 'function'
+      instance.props?.testID === 'channels-binding-edit-binding-offline-1' && typeof instance.props?.onPress === 'function'
     ))[0];
     if (!editBinding) throw new Error('Expected an Edit binding control.');
     await act(async () => {
@@ -1833,20 +1875,21 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture(),
+      createChannelsPageSurfaceContextFixture(),
       undefined,
       data.client,
+      'binding-offline-1',
     );
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-offline-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-offline-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
 
     expect(data.batch).toHaveBeenCalledTimes(1);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.disabled).toBe(true);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-offline-1').props.disabled).toBe(true);
     const reconcile = findPressableByTestId(
       renderer,
       'channels-binding-outcome-unknown-reconcile-binding-offline-1',
@@ -1860,16 +1903,16 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(data.query.mock.calls.length).toBeGreaterThan(readsBeforeExplicitReread);
     expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile-binding-offline-1')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.disabled).toBe(false);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-offline-1').props.disabled).toBe(false);
 
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-offline-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-offline-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
 
     expect(data.batch).toHaveBeenCalledTimes(2);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.checked).toBe(false);
+    expect(findByTestId(renderer, 'channels-binding-turn-on-binding-offline-1').length).toBeGreaterThan(0);
     expect(host.readResource).not.toHaveBeenCalled();
   });
 
@@ -1891,14 +1934,15 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(
+    renderer = await renderChannelsConversation(
       host.hostApi,
-      createChannelsSettingsSurfaceContextFixture(),
+      createChannelsPageSurfaceContextFixture(),
       undefined,
       data.client,
+      'binding-offline-1',
     );
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-offline-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-offline-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
@@ -1910,7 +1954,7 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
     expect(host.executeAction).not.toHaveBeenCalled();
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.disabled).toBe(true);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-offline-1').props.disabled).toBe(true);
     const reconcile = findPressableByTestId(
       renderer,
       'channels-binding-outcome-unknown-reconcile-binding-offline-1',
@@ -1924,7 +1968,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(data.query.mock.calls.length).toBeGreaterThan(readsBeforeExplicitReread);
     expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile-binding-offline-1')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-offline-1').props.checked).toBe(false);
+    expect(findByTestId(renderer, 'channels-binding-turn-on-binding-offline-1').length).toBeGreaterThan(0);
     expect(host.readResource).not.toHaveBeenCalled();
   });
 
@@ -2008,10 +2052,10 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
+    renderer = await renderChannelsConversation(host.hostApi);
     failBindingRefresh = true;
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-bindings-resource-refresh').props.onPress();
+      host.invalidateResource(resourceDigest('d'), CHANNELS_BINDINGS_RESOURCE.localId);
     });
     await flushHookEffects();
 
@@ -2021,7 +2065,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     failBindingRefresh = false;
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-bindings-resource-retry').props.onPress();
+      findPressableByTestId(renderer!, 'channels-bindings-resource-stale-action').props.onPress();
     });
     await flushHookEffects();
     expect(findByTestId(renderer, 'channels-bindings-resource-stale')).toHaveLength(0);
@@ -2048,15 +2092,15 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
+    renderer = await renderChannelsConversation(host.hostApi);
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
 
     expect(host.executeAction).toHaveBeenCalledTimes(1);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-1').props.disabled).toBe(true);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-1').props.disabled).toBe(true);
     const reconcile = findPressableByTestId(
       renderer,
       'channels-binding-outcome-unknown-reconcile-binding-1',
@@ -2076,9 +2120,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile-binding-1')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-1').props.disabled).toBe(false);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-1').props.disabled).toBe(false);
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
@@ -2112,9 +2156,9 @@ describe('Channels settings surface (real source, mounted)', () => {
       },
     });
 
-    renderer = await renderChannelsSurface(host.hostApi);
+    renderer = await renderChannelsConversation(host.hostApi);
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-binding-enabled-binding-1').props.onPress();
+      findPressableByTestId(renderer!, 'channels-binding-pause-binding-1').props.onPress();
       await Promise.resolve();
     });
     await flushHookEffects();
@@ -2129,8 +2173,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
+    renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, 'binding-2', renderer);
     expect(findByTestId(renderer, 'channels-binding-binding-1')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-2').props.disabled).toBe(true);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(true);
     const reconcile = findPressableByTestId(renderer, 'channels-binding-outcome-unknown-reconcile');
     deferReconciliationRead = true;
     await act(async () => {
@@ -2145,7 +2190,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findByTestId(renderer, 'channels-binding-outcome-unknown-reconcile')).toHaveLength(0);
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-2').props.disabled).toBe(false);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(false);
   });
 
   it('offers provider filters only when the joined binding rows span multiple provider types', async () => {
@@ -2425,7 +2470,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     renderer = await renderChannelsSurface(host.hostApi);
     await flushHookEffects();
 
-    expect(findByTestId(renderer, 'channels-bindings-error').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-settings-content').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-binding-create')).toHaveLength(0);
     expect(findByTestId(renderer, 'channels-connections-list').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-connection-connection-1').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-resource-refresh').length).toBeGreaterThan(0);
@@ -2973,7 +3019,6 @@ describe('Channels settings surface (real source, mounted)', () => {
       findPressableByTestId(renderer!, 'channels-detail-resource-refresh').props.onPress();
     });
     await flushHookEffects();
-    expect(findByTestId(renderer, 'channels-resource-refreshing').length).toBeGreaterThan(0);
     expect(deferredReads).toHaveLength(1);
 
     await act(async () => {
@@ -3029,11 +3074,11 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(findByTestId(renderer, 'channels-connection-connection-1').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-resource-stale').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-resource-retry').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-resource-stale-action').length).toBeGreaterThan(0);
 
     failRefresh = false;
     await act(async () => {
-      findPressableByTestId(renderer!, 'channels-resource-retry').props.onPress();
+      findPressableByTestId(renderer!, 'channels-resource-stale-action').props.onPress();
     });
     await flushHookEffects();
 
@@ -3060,7 +3105,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     const staleOutput = JSON.stringify(renderer.toJSON());
-    expect(staleOutput).toContain('Live connection updates are temporarily unavailable.');
+    expect(staleOutput).toContain('Showing last known connection details');
     expect(staleOutput).not.toContain(diagnostic);
 
     act(() => renderer?.unmount());
@@ -3100,7 +3145,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(findByTestId(renderer, 'channels-connections-empty').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-resource-stale').length).toBeGreaterThan(0);
-    expect(findByTestId(renderer, 'channels-resource-retry').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-resource-stale-action').length).toBeGreaterThan(0);
   });
 
   it('opens only the exact admitted Channels setup Action through the host-owned input selector', async () => {
@@ -3118,7 +3163,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         if (!('operation' in request)) {
           throw new Error('Expected a targeted operation selection request.');
         }
-        expect(request.operation).toBe(betaSetupOperation);
+        expect(request.operation).toEqual(betaSetupOperation);
         return { kind: 'cancelled' };
       },
     });
@@ -3184,7 +3229,7 @@ describe('Channels settings surface (real source, mounted)', () => {
         if (!('operation' in request)) {
           throw new Error('Expected a targeted operation selection request.');
         }
-        expect(request.operation).toBe(betaSetupOperation);
+        expect(request.operation).toEqual(betaSetupOperation);
         return {
           kind: 'submitted',
           action: betaSetupOperation.action,

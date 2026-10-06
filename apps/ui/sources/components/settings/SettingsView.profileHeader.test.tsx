@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -99,7 +100,8 @@ vi.mock('expo-image', () => ({
 const focusState = vi.hoisted(() => ({ callbacks: new Set<() => void>() }));
 vi.mock('@react-navigation/native', async () => {
     const React = await import('react');
-    return {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({
         useFocusEffect: (callback: () => void | (() => void)) => {
             React.useEffect(() => {
                 const run = () => { callback(); };
@@ -108,7 +110,7 @@ vi.mock('@react-navigation/native', async () => {
                 return () => { focusState.callbacks.delete(run); };
             }, [callback]);
         },
-    };
+    });
 });
 
 vi.mock('expo-constants', () => ({
@@ -127,9 +129,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('Item', props, props.children),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
-}));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: Record<string, unknown>) => React.createElement('Avatar', props),
@@ -207,7 +206,7 @@ describe('SettingsView profile header', () => {
 
     it('renders when the profile has a display name', async () => {
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(React.createElement(SettingsView));
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findAllByType('Avatar')).toHaveLength(1);
         expect(screen.findAllByType('Text').some((node) => node.props.children === 'Lee')).toBe(true);
@@ -223,7 +222,7 @@ describe('SettingsView profile header', () => {
     ])('shows the resolved profile identity without a first name: $expectedName', async ({ expectedName, ...profile }) => {
         profileState.value = { ...profileDefaults, id: 'prof_1', ...profile };
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findAllByType('Avatar')).toHaveLength(1);
         expect(screen.findAllByType('Text').some((node) => node.props.children === expectedName)).toBe(true);
@@ -234,7 +233,7 @@ describe('SettingsView profile header', () => {
         const push = vi.fn();
         routerPush.spy = push;
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findByTestId('settings-overview-machines')).toBeNull();
         screen.pressByTestId('settings-overview-account');
@@ -245,7 +244,7 @@ describe('SettingsView profile header', () => {
     it('composes the lighter hub on a wide window: each machine as its own row, not summary rows', async () => {
         machinesState.value = [{ id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox', displayName: 'devbox' } }];
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findByTestId('hub-machines.m1')).toBeTruthy();
         expect(screen.findByTestId('hub-summary.machines')).toBeNull();
@@ -259,7 +258,7 @@ describe('SettingsView profile header', () => {
             import('@/components/ui/layout/PageHeader'),
         ]);
         const phone = await renderSettingsView(
-            <NavigationTitleChromeProvider showsTitle><SettingsView /></NavigationTitleChromeProvider>,
+            <NavigationTitleChromeProvider showsTitle><InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider></NavigationTitleChromeProvider>,
         );
 
         expect(phone.findAllByType('Avatar')).toHaveLength(1);
@@ -270,12 +269,12 @@ describe('SettingsView profile header', () => {
     it('says where the person stands with the Home\'s account service, as the account popover does', async () => {
         accountServiceState.storedCredential = { token: 't' };
         const { SettingsView } = await import('./SettingsView');
-        const signedIn = await renderSettingsView(<SettingsView />);
+        const signedIn = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         // The stored sign-in is read asynchronously from secure storage.
         await vi.waitFor(() => expect(signedIn.getTextContent()).toContain('settingsOverview.accountServiceSignedIn'));
 
         accountServiceState.storedCredential = null;
-        const signedOut = await renderSettingsView(<SettingsView />);
+        const signedOut = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(signedOut.getTextContent()).toContain('accountPopover.notLinkedTo'));
         expect(signedOut.getTextContent()).not.toContain('settingsOverview.accountServiceSignedIn');
     });
@@ -283,7 +282,7 @@ describe('SettingsView profile header', () => {
     it('follows a sign-out while mounted, and re-reads the sign-in on focus', async () => {
         accountServiceState.storedCredential = { token: 't' };
         const { SettingsView } = await import('./SettingsView');
-        const screen = await renderSettingsView(<SettingsView />);
+        const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsOverview.accountServiceSignedIn'));
 
         // Signed out from the Account page while the Settings home stayed mounted beneath it.
@@ -302,7 +301,7 @@ describe('SettingsView profile header', () => {
         homeServiceState.healthKind = 'server_unreachable';
         try {
             const { SettingsView } = await import('./SettingsView');
-            const screen = await renderSettingsView(<SettingsView />);
+            const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('accountPopover.signInStatusUnavailable'));
         } finally {
             homeServiceState.status = 'ready';

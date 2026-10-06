@@ -3,6 +3,7 @@ import { getAgentCore } from '@/agents/catalog/catalog';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 import { storage } from '@/sync/domains/state/storage';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const start = vi.fn(async (_params: any) => ({ voiceAgentId: 'voice-agent-1' }));
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
@@ -86,6 +87,7 @@ let state: any = {
 installVoiceAgentCommonModuleMocks();
 
 installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 vi.mock('@/voice/agent/assertDaemonVoiceAgentRuntimeSupported', () => ({
     assertDaemonVoiceAgentRuntimeSupported: () => assertDaemonVoiceAgentRuntimeSupported(),

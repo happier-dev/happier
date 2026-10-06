@@ -11,6 +11,7 @@ import type {
 import { buildSessionListDragSnapshot } from './sessionListDragSnapshot';
 import { resolveSessionListDragPointer } from './resolveSessionListDragPointer';
 import { treeRowId } from '../drop-resolution/treeRowId';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -78,7 +79,7 @@ function contentRows(): TreeContentRow[] {
         parentId: null,
         containerId: treeRowId.workspaceRoot('project-a'),
         depth: 0,
-        kind: id.startsWith('workspace-root:') ? 'container' : 'leaf',
+        kind: index === 0 ? 'container' : 'leaf',
         bounds: { x: 0, y: index * ROW_HEIGHT, width: 320, height: ROW_HEIGHT },
     }));
 }
@@ -101,7 +102,7 @@ function snapshotFor(sourceSessionId: string) {
     return buildSessionListDragSnapshot({
         items: indexItems(),
         viewItems: viewItems(),
-        sessionDragKey: `server-a:${sourceSessionId}`,
+        sessionDragKey: sessionAddressKey({ serverId: 'server-a', sessionId: sourceSessionId }),
         foldersFeatureEnabled: true,
     });
 }
@@ -436,7 +437,7 @@ describe('resolveSessionListDragPointer — folder topology', () => {
         const snapshot = buildSessionListDragSnapshot({
             items: folderIndexItems(),
             viewItems: folderViewItems(),
-            sessionDragKey: 'server-a:root-a',
+            sessionDragKey: sessionAddressKey({ serverId: 'server-a', sessionId: 'root-a' }),
             foldersFeatureEnabled: true,
         });
         const registry = liveRegistry(folderContentRows());

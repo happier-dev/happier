@@ -1,21 +1,13 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const closeRightSpy = vi.fn();
-const openRightSpy = vi.fn();
-const setRightTabSpy = vi.fn();
-
-let scopeState: {
-    right: { isOpen: boolean; activeTabId: string | null; tabState: Record<string, unknown> };
-} = {
-    right: { isOpen: true, activeTabId: 'git', tabState: {} },
-};
+let initialTabId = 'git';
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -25,15 +17,6 @@ installSessionDetailsPanelCommonModuleMocks({
                 OS: 'ios',
                 select: <T,>(options: { ios?: T; native?: T; default?: T; web?: T; android?: T }) =>
                     options?.ios ?? options?.native ?? options?.default ?? options?.web ?? options?.android,
-            },
-        });
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: (key: string) => {
-                if (key === 'embeddedTerminalDockLocation') return 'sidebar';
-                return null;
             },
         });
     },
@@ -47,44 +30,19 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
+
+
+// Native safe-area measurements are the platform boundary; chrome merging stays real.
+vi.mock('react-native-safe-area-context', async (importOriginal) => ({
+    ...await importOriginal<typeof import('react-native-safe-area-context')>(),
+    useSafeAreaInsets: () => ({ top: 17, bottom: 0, left: 0, right: 0 }),
+    initialWindowMetrics: null,
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-    useHeaderHeight: () => 56,
-}));
 
-vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
-    useChromeSafeAreaInsets: () => ({ top: 17, bottom: 0, left: 0, right: 0 }),
-}));
 
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState,
-        openRight: openRightSpy,
-        setRightTab: setRightTabSpy,
-        closeRight: closeRightSpy,
-        openDetailsTab: vi.fn(),
-    }),
-}));
 
-vi.mock('@/components/sessions/panes/surfaces/SessionBrowseFilesSurface', () => ({
-    SessionBrowseFilesSurface: () => React.createElement('FilesSurface'),
-}));
 
-vi.mock('@/components/sessions/panes/surfaces/SessionGitSurface', () => ({
-    SessionGitSurface: () => React.createElement('GitSurface'),
-}));
-
-vi.mock('@/components/sessions/panes/surfaces/SessionTerminalSurface', () => ({
-    SessionTerminalSurface: () => React.createElement('TerminalSurface'),
-}));
-
-vi.mock('@/components/sessions/work/SessionWorkView', () => ({
-    SessionWorkView: () => React.createElement('AgentsView'),
-}));
 
 function getStyleValue(node: renderer.ReactTestInstance, key: string): unknown {
     const styles = Array.isArray(node.props.style) ? node.props.style : [node.props.style];
@@ -96,20 +54,23 @@ function getStyleValue(node: renderer.ReactTestInstance, key: string): unknown {
     return undefined;
 }
 
-const { SessionRightPanel } = await import('./SessionRightPanel');
+
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+const runtime = installSessionPaneRuntimeTestHarness();
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderPanelScreen(<runtime.Wrapper>{element}</runtime.Wrapper>);
+    await act(async () => runtime.pane.openRight({ tabId: initialTabId }));
+    return screen;
+}
 
 describe('SessionRightPanel (mobile screen chrome)', () => {
     beforeEach(() => {
-        scopeState = {
-            right: { isOpen: true, activeTabId: 'git', tabState: {} },
-        };
-        closeRightSpy.mockClear();
-        openRightSpy.mockClear();
-        setRightTabSpy.mockClear();
+        initialTabId = 'git';
         vi.clearAllMocks();
     });
 
     it('omits redundant header controls when the pane has an external action rail', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
         const { PaneActionRailContext } = await import('@/components/appShell/panes/PaneActionRailContext');
         const screen = await renderScreen(
             <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1000 }}>
@@ -121,6 +82,7 @@ describe('SessionRightPanel (mobile screen chrome)', () => {
     });
 
     it('keeps the active pane header reachable on a screen without the action rail', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
         const screen = await renderScreen(
             <SessionRightPanel sessionId="s1" scopeId="session:s1" presentation="screen" />,
         );
@@ -128,6 +90,7 @@ describe('SessionRightPanel (mobile screen chrome)', () => {
     });
 
     it('renders the screen close affordance as a leading back button on native', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
         const screen = await renderScreen(
             <SessionRightPanel sessionId="s1" scopeId="session:s1" presentation="screen" />,
         );
@@ -151,6 +114,7 @@ describe('SessionRightPanel (mobile screen chrome)', () => {
         if (!header) {
             throw new Error('Expected close button to be inside the header');
         }
-        expect(header.children[0]).toBe(closeButton);
+        expect(header.findAll((node) => typeof node.type === 'string' && node.props.testID === 'session-rightpanel-close')[0]).toBe(closeButton);
+        expect(header.findAll((node) => typeof node.type === 'string' && node.props.testID?.startsWith('session-rightpanel-tab:')).every((tab) => header!.findAll(() => true).indexOf(closeButton) < header!.findAll(() => true).indexOf(tab))).toBe(true);
     });
 });

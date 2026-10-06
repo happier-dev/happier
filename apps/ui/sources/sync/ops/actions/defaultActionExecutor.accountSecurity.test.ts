@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import {
     encodePasswordCredentialFieldV1,
     type PlainAccountPasswordCredentialV1,
+    type AccountSecurityGetResponseV1,
 } from '@happier-dev/protocol';
 
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -33,6 +34,10 @@ import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/r
 
 const initialState = getStorage().getState();
 const tokenWithPayload = (payload: object) => `e30.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
+const enrolledSecuritySummary = {
+    v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: 'person@example.test',
+    password: { status: 'enrolled', revision: 4 },
+} satisfies AccountSecurityGetResponseV1;
 
 describe('default Account Security Action transport', () => {
     let serverId: string;
@@ -66,10 +71,7 @@ describe('default Account Security Action transport', () => {
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/security') {
                 if (securityResponseOverride) return await securityResponseOverride;
-                return Response.json({
-                    v: 1, encryptionMode: 'plain', nativeEmail: 'person@example.test',
-                    password: { status: 'enrolled', revision: 4 },
-                });
+                return Response.json(enrolledSecuritySummary);
             }
             if (path === '/v1/account/email/change/request') return Response.json({ v: 1, status: 'verification_sent' });
             const status = path.endsWith('/remove') ? 'removed' : path.endsWith('/enroll') ? 'enrolled' : 'updated';
@@ -190,7 +192,7 @@ describe('default Account Security Action transport', () => {
                     init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
                 });
             }
-            return Response.json({ v: 1, encryptionMode: 'plain', nativeEmail: 'person@example.test', password: { status: 'enrolled', revision: 4 } });
+            return Response.json(enrolledSecuritySummary);
         });
         act(() => { view.pressByTestId('settings-account-change-password-submit'); });
         await vi.waitFor(() => expect(mutationIssued).toBe(true));
@@ -355,7 +357,7 @@ describe('default Account Security Action transport', () => {
 
         await upsertAndActivateServer({ serverUrl: 'https://other-home.test', name: 'Other Home' });
         release?.(Response.json({
-            v: 1, encryptionMode: 'plain', nativeEmail: 'must-not-escape@example.test',
+            ...enrolledSecuritySummary, nativeEmail: 'must-not-escape@example.test',
             password: { status: 'not_enrolled', revision: null },
         }));
 

@@ -1,7 +1,6 @@
-import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@/dev/testkit';
+import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { enterDemoMode, resetDemoModeDepthForTests } from '@/demoMode/runtime/enterExitDemoMode';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,18 +28,8 @@ const replaceExternalSessionStatusDemandViewportSpy = vi.hoisted(() => vi.fn());
 const subscribeActiveServerSpy = vi.hoisted(() =>
   vi.fn<(listener: (snapshot: { serverId: string }) => void) => () => void>(() => () => {}),
 );
-const resolveSessionTargetServerIdSpy = vi.hoisted(() => vi.fn());
-const preferredServerIdState = vi.hoisted(() => ({
-  current: 'server-owned' as string | null,
-}));
-const preferredServerListeners = vi.hoisted(() => new Set<() => void>());
-const subscribePreferredServerSpy = vi.hoisted(() => vi.fn((listener: () => void) => {
-  preferredServerListeners.add(listener);
-  return () => {
-    preferredServerListeners.delete(listener);
-  };
-}));
-const noopSubscribe = vi.hoisted(() => () => () => {});
+const preferredServerListeners = vi.hoisted(() => new Set<unknown>());
+const subscribePreferredServerSpy = vi.hoisted(() => vi.fn());
 const appState = vi.hoisted(() => ({ currentState: 'active' as string }));
 const acceptedTailCursorState = vi.hoisted(() => ({
   current: null as string | null,
@@ -66,21 +55,6 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
     isCurrent: () => activeAccountIsCurrent,
     onRetire: () => ({ dispose() {} }),
   }),
-}));
-vi.mock('./resolveSessionTargetServerId', () => ({
-  resolveSessionTargetServerId: (sessionId: string, fallbackServerId?: string | null) =>
-    resolveSessionTargetServerIdSpy(sessionId, fallbackServerId),
-}));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-  usePreferredServerIdForSession: (
-    _sessionId: string,
-    _fallbackServerId?: string | null,
-    enabled = true,
-  ) => React.useSyncExternalStore(
-    enabled ? subscribePreferredServerSpy : noopSubscribe,
-    () => enabled ? preferredServerIdState.current : null,
-    () => null,
-  ),
 }));
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -114,6 +88,14 @@ type HookValue = Readonly<{
   status: unknown;
   refreshNow: () => Promise<unknown>;
 }>;
+
+const { storage } = await import('@/sync/domains/state/storage');
+const initialSessions = storage.getState().sessions;
+const subscribeStorage = storage.subscribe;
+
+function setPreferredSessionHome(serverId: string) {
+  storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId }) } });
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -222,20 +204,29 @@ describe('useExternalSessionRuntime', () => {
     machineExternalSessionDetachSpy.mockReset();
     replaceExternalSessionStatusDemandViewportSpy.mockReset();
     subscribeActiveServerSpy.mockClear();
-    resolveSessionTargetServerIdSpy.mockReset();
-    resolveSessionTargetServerIdSpy.mockImplementation(() => {
-      throw new Error('legacy wrapper should not be used in useExternalSessionRuntime');
-    });
-    preferredServerIdState.current = 'server-owned';
+    setPreferredSessionHome('server-owned');
     preferredServerListeners.clear();
     subscribePreferredServerSpy.mockClear();
+    // Measure the real preferred-Home selector subscription without replacing its logic.
+    vi.spyOn(storage, 'subscribe').mockImplementation((listener) => {
+      subscribePreferredServerSpy();
+      preferredServerListeners.add(listener);
+      const unsubscribe = subscribeStorage(listener);
+      return () => {
+        preferredServerListeners.delete(listener);
+        unsubscribe();
+      };
+    });
     acceptedTailCursorState.current = null;
     acceptedTailCursorState.listeners.clear();
     machineExternalSessionAttachSpy.mockResolvedValue({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 });
     machineExternalSessionDetachSpy.mockResolvedValue({ ok: true, detached: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await standardCleanup();
+    vi.restoreAllMocks();
+    storage.setState({ sessions: initialSessions });
     resetDemoModeDepthForTests();
     vi.clearAllMocks();
   });
@@ -609,7 +600,7 @@ describe('useExternalSessionRuntime', () => {
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'idle', runnerActive: false })
       .mockResolvedValueOnce({ ok: true, machineOnline: true, activity: 'running', runnerActive: true })
       .mockResolvedValue({ ok: true, machineOnline: true, activity: 'running', runnerActive: true });
-    preferredServerIdState.current = 'server-owned-a';
+    setPreferredSessionHome('server-owned-a');
 
     const harness = await renderHarness();
     await act(async () => {
@@ -620,7 +611,7 @@ describe('useExternalSessionRuntime', () => {
     machineExternalSessionStatusGetSpy.mockClear();
 
     await act(async () => {
-      preferredServerIdState.current = 'server-owned-b';
+      setPreferredSessionHome('server-owned-b');
     });
 
     await harness.rerender();

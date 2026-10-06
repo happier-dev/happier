@@ -1,13 +1,11 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installTerminalRouteCommonModuleMocks } from './terminalRouteTestHelpers';
+import { standardCleanup } from '@/dev/testkit';
+import { installTerminalRouteCommonModuleMocks, initializeTerminalRouteRuntimeForTests, renderTerminalRoute } from './terminalRouteTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const clearPendingMock = vi.fn();
 
 installTerminalRouteCommonModuleMocks({
     router: async () => {
@@ -19,47 +17,26 @@ installTerminalRouteCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/session/useConnectTerminal', () => ({
-    useConnectTerminal: () => ({ processParsedAuthUrl: vi.fn(async () => {}), isLoading: false }),
-}));
-
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true, credentials: { token: 't', secret: 's' } }),
-}));
-
-vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    setPendingTerminalConnect: vi.fn(),
-    clearPendingTerminalConnect: (...args: any[]) => clearPendingMock(...args),
-    getPendingTerminalConnect: () => null,
-}));
-
-vi.mock('@/sync/domains/server/serverConfig', () => ({
-    getServerUrl: () => 'https://api.happier.dev',
-}));
+await initializeTerminalRouteRuntimeForTests();
 
 afterEach(() => {
     standardCleanup();
 });
 
 describe('TerminalScreen authenticated buttons', () => {
-    beforeEach(() => {
-        vi.resetModules();
-        clearPendingMock.mockClear();
+    beforeEach(async () => {
+        const { clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
+        clearPendingTerminalConnect();
     });
 
     it('exposes stable testIDs for approve/reject buttons on /terminal', async () => {
         const Screen = (await import('@/app/(app)/terminal/index')).default;
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderTerminalRoute(Screen);
         await act(async () => {});
 
         expect(screen.findByTestId('terminal-connect-surface-card')).toBeTruthy();
-        const buttonTestIds = screen
-            .findAllByType('RoundButton')
-            .map((node) => node.props?.testID)
-            .filter(Boolean);
-
-        expect(buttonTestIds).toContain('terminal-connect-approve');
-        expect(buttonTestIds).toContain('terminal-connect-reject');
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
+        expect(screen.findByTestId('terminal-connect-reject')).toBeTruthy();
     });
 });

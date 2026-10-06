@@ -43,6 +43,7 @@ let authCredentials: any = { token: 't', secret: 's' };
 const sessionState = vi.hoisted(() => ({
     session: {
         id: 's1',
+        serverId: 'server-1',
         seq: 0,
         presence: 'offline',
         active: false,
@@ -553,8 +554,13 @@ installSessionShellCommonModuleMocks({
     },
     storage: async (importOriginal) => {
         const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const { createSessionAccessFixture, createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { settingsDefaults } = await import('@/sync/domains/settings/settings');
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        sessionState.session = createSessionFixture({
+            ...sessionState.session,
+            access: createSessionAccessFixture('edit'),
+        });
         const fixture = createStorageModuleStub({
             storage: createStorageStoreMock({
                     sessions: { s1: sessionState.session },

@@ -4,6 +4,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+// The manifest tool validates the updater envelope; cryptographic verification is owned by signing/artifact checks.
+function makeUpdaterSignature(label: string) {
+    return Buffer.from([
+        'untrusted comment: signature from tauri secret key',
+        'A'.repeat(88) + '==',
+        `trusted comment: timestamp:0\tfile:${label}`,
+        'B'.repeat(88) + '==',
+        '',
+    ].join('\n'), 'utf8').toString('base64');
+}
+
 function writeFile(filePath: string, contents: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents);
@@ -39,10 +50,10 @@ describe('make-latest-json (tool)', () => {
             const notes = 'Rolling preview build.';
 
             const filesByPlatform: Record<string, { name: string; sig: string }> = {
-                'linux-x86_64': { name: 'happier-ui-desktop-preview-linux-x86_64.AppImage.tar.gz', sig: 'sig-linux' },
-                'windows-x86_64': { name: 'happier-ui-desktop-preview-windows-x86_64.msi.zip', sig: 'sig-windows' },
-                'darwin-x86_64': { name: 'happier-ui-desktop-preview-darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel' },
-                'darwin-aarch64': { name: 'happier-ui-desktop-preview-darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm' },
+                'linux-x86_64': { name: 'happier-ui-desktop-preview-linux-x86_64.AppImage.tar.gz', sig: makeUpdaterSignature('linux') },
+                'windows-x86_64': { name: 'happier-ui-desktop-preview-windows-x86_64.msi.zip', sig: makeUpdaterSignature('windows') },
+                'darwin-x86_64': { name: 'happier-ui-desktop-preview-darwin-x86_64.app.tar.gz', sig: makeUpdaterSignature('macos-intel') },
+                'darwin-aarch64': { name: 'happier-ui-desktop-preview-darwin-aarch64.app.tar.gz', sig: makeUpdaterSignature('macos-arm') },
             };
 
             for (const [platformKey, { name, sig }] of Object.entries(filesByPlatform)) {
@@ -105,23 +116,23 @@ describe('make-latest-json (tool)', () => {
             const filesByPlatform: Record<string, { name: string; sig: string; expected: string }> = {
                 'linux-x86_64': {
                     name: 'linux.AppImage.tar.gz',
-                    sig: 'sig-linux\n',
-                    expected: 'sig-linux',
+                    sig: `${makeUpdaterSignature('linux')}\n`,
+                    expected: makeUpdaterSignature('linux'),
                 },
                 'windows-x86_64': {
                     name: 'windows.msi.zip',
-                    sig: ' sig-windows \n',
-                    expected: 'sig-windows',
+                    sig: ` ${makeUpdaterSignature('windows')} \n`,
+                    expected: makeUpdaterSignature('windows'),
                 },
                 'darwin-x86_64': {
                     name: 'darwin-x86_64.app.tar.gz',
-                    sig: '\n sig-macos-intel',
-                    expected: 'sig-macos-intel',
+                    sig: `\n ${makeUpdaterSignature('macos-intel')}`,
+                    expected: makeUpdaterSignature('macos-intel'),
                 },
                 'darwin-aarch64': {
                     name: 'darwin-aarch64.app.tar.gz',
-                    sig: '\tsig-macos-arm\t',
-                    expected: 'sig-macos-arm',
+                    sig: `\t${makeUpdaterSignature('macos-arm')}\t`,
+                    expected: makeUpdaterSignature('macos-arm'),
                 },
             };
 
@@ -164,10 +175,10 @@ describe('make-latest-json (tool)', () => {
             const outPath = path.join(tmp, 'latest.json');
 
             const filesByPlatform: Record<string, { name: string; sig: string }> = {
-                'linux-x86_64': { name: 'linux.AppImage.tar.gz', sig: 'sig-linux' },
-                'windows-x86_64': { name: 'windows.msi.zip', sig: 'sig-windows' },
-                'darwin-x86_64': { name: 'darwin-x86_64.app.tar.gz', sig: 'sig-macos-intel' },
-                'darwin-aarch64': { name: 'darwin-aarch64.app.tar.gz', sig: 'sig-macos-arm' },
+                'linux-x86_64': { name: 'linux.AppImage.tar.gz', sig: makeUpdaterSignature('linux') },
+                'windows-x86_64': { name: 'windows.msi.zip', sig: makeUpdaterSignature('windows') },
+                'darwin-x86_64': { name: 'darwin-x86_64.app.tar.gz', sig: makeUpdaterSignature('macos-intel') },
+                'darwin-aarch64': { name: 'darwin-aarch64.app.tar.gz', sig: makeUpdaterSignature('macos-arm') },
             };
             for (const [platformKey, { name, sig }] of Object.entries(filesByPlatform)) {
                 const basePath = path.join(artifactsDir, platformKey, name);

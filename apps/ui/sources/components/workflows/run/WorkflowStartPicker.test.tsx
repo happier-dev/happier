@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUILTIN_WORKFLOW_CATALOG_V1, WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol';
+import { BUILTIN_WORKFLOW_CATALOG_V1, WORKFLOW_STARTER_EXAMPLES_V1, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { t } from '@/text';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -21,8 +22,16 @@ import { WorkflowStartPicker } from './WorkflowStartPicker';
 import { WorkflowRunComposer } from './WorkflowRunComposer';
 import { resetWorkflowLibraryReadsForTests } from '../library/workflowLibraryReads';
 import { WorkflowsColumnActions } from '../column/WorkflowsColumnActions';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
+import { createWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 
-const execute = vi.hoisted(() => vi.fn());
+const withPanes = ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider>;
+
+const machineRpc = vi.hoisted(() => vi.fn());
 const routing = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 const routeParams = vi.hoisted(() => ({ id: 'plugin:example.recipe/check', intent: undefined as string | undefined }));
 vi.mock('expo-router', async () => {
@@ -33,13 +42,8 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock().module;
 });
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-// Applied network identity is a system boundary; the Account lifetime stays real.
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => snapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
+installDisconnectedServerSocketBoundary();
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' });
@@ -53,16 +57,78 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-let snapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 let previousState = storage.getState();
+let home: Awaited<ReturnType<typeof serveActionHomes>>;
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+const artifacts = new Map<string, Artifact>();
+let delayedRead: Promise<Response> | null = null;
+const plugin = {
+    workflow: 'plugin:example.recipe/check', pluginId: 'example.recipe', version: '1.2.3',
+    title: 'Check changes', definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition,
+};
+function installPluginProjection() {
+    machineRpc.mockImplementation(async (request: { method: string; payload: Record<string, unknown> }) => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                installedPackagesById: { [plugin.pluginId]: { id: plugin.pluginId, displayName: plugin.title,
+                    version: plugin.version, enabled: true, source: { kind: 'path', locator: '/plugins/example.recipe' } } },
+                familiesById: { workflows: { family: 'workflows', entriesById: {
+                    'example.recipe/check': { id: 'example.recipe/check', pluginId: plugin.pluginId, pluginVersion: plugin.version,
+                        definition: { id: 'check', title: plugin.title, definition: plugin.definition } },
+                } } },
+            }) };
+        }
+        if (request.method === 'workflow.run.start') {
+            const input = request.payload.input as { runId: string };
+            return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId }) };
+        }
+        throw new Error(`Unexpected workflow machine RPC: ${request.method}`);
+    });
+}
+function writes() {
+    return home.requests.filter((request) => {
+        if (request.method === 'GET') return false;
+        const body = request.body as { operation?: string } | undefined;
+        return request.path !== '/v3/automations/runs/workflow-storage' || !['list', 'summaries'].includes(body?.operation ?? '');
+    });
+}
+function starts() { return machineRpc.mock.calls.map(([request]) => request).filter((request) => request.method === 'workflow.run.start'); }
 beforeEach(async () => {
     routeParams.id = 'plugin:example.recipe/check';
     routeParams.intent = undefined;
     previousState = storage.getState();
-    const runtime = await import('@/sync/domains/server/serverRuntime');
-    snapshot = runtime.getActiveServerSnapshot;
-    const server = await runtime.upsertAndActivateServer({ serverUrl: 'http://workflow-picker.test', name: 'Workflow Home' });
-    storage.setState({ profileScope: { serverId: server.id, accountId: 'workflow-picker-account' } });
+    artifacts.clear();
+    delayedRead = null;
+    machineRpc.mockReset();
+    machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1 }) });
+    connection = await restoreServerAccountForTest({ serverUrl: 'http://workflow-picker.test', accountId: 'workflow-picker-account' });
+    home = await serveActionHomes({ homes: [{ key: 'picker', serverUrl: 'http://workflow-picker.test', accountId: 'workflow-picker-account' }],
+        route: async (request) => {
+            if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (request.path === '/v1/artifacts') {
+                if (request.method !== 'POST') return delayedRead ?? Response.json([...artifacts.values()]);
+                const input = request.body as ArtifactCreateRequest;
+                const artifact: Artifact = { ...input, ownerAccountId: request.accountId!, access: 'owner', encryptionMode: 'plain',
+                    headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+                artifacts.set(artifact.id, artifact);
+                return Response.json(artifact);
+            }
+            if (request.path.startsWith('/v1/artifacts/')) {
+                const artifact = artifacts.get(request.path.slice('/v1/artifacts/'.length));
+                return Response.json(artifact ?? { error: 'not_found' }, { status: artifact ? 200 : 404 });
+            }
+            if (request.path === '/v3/automations') return Response.json({ automations: [], nextCursor: null });
+            if (request.path === '/v3/automations/runs/workflow-storage') {
+                const input = request.body as { operation: string };
+                return Response.json(input.operation === 'summaries'
+                    ? { summaries: [], remainingSourceArtifactIds: [] }
+                    : { runs: [] });
+            }
+            return undefined;
+        } });
+    const server = home.homes.picker!;
+    const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now() });
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [server.id]: [machine] } });
     storage.setState({ settings: { ...storage.getState().settings, experiments: true,
         featureToggles: { ...storage.getState().settings.featureToggles, automations: true } } });
     primeServerFeaturesSnapshot({ serverId: server.id, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
@@ -71,7 +137,10 @@ afterEach(async () => {
     standardCleanup();
     resetWorkflowLibraryReadsForTests();
     (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
-    execute.mockReset();
+    home.dispose();
+    await connection.dispose();
+    machineRpc.mockReset();
+    clearDaemonMergedProjectionCacheForTests();
     resetServerFeaturesClientForTests();
     routing.push.mockClear();
     routing.replace.mockClear();
@@ -83,18 +152,18 @@ describe('WorkflowStartPicker plugin workflows', () => {
     it.each(['builtin:keep-going', 'builtin:review-and-converge'])('offers Choose a session, never Run now, for %s', async (id) => {
         routeParams.id = id;
         routeParams.intent = 'run';
-        const screen = await renderScreen(<SavedWorkflowRoute />);
+        const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
         expect(screen.findByTestId('workflow-builtin:session')).not.toBeNull();
         expect(screen.findByTestId('workflow-builtin:run')).toBeNull();
         expect(Modal.show).not.toHaveBeenCalled();
-        expect(execute.mock.calls.some(([action]) => action === 'workflow.run.start')).toBe(false);
+        expect(starts()).toEqual([]);
         await screen.pressByTestIdAsync('workflow-builtin:duplicate');
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
         expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toMatchObject({
             definition: BUILTIN_WORKFLOW_CATALOG_V1.find((entry) => entry.id === id)!.definition,
         });
-        expect(execute.mock.calls.some(([action]) => action === 'workflow.definition.create')).toBe(false);
+        expect(writes()).toEqual([]);
     });
     it('opens the shared example picker from the column + menu without saving', async () => {
         const screen = await renderScreen(<WorkflowsColumnActions canCreate />);
@@ -103,33 +172,31 @@ describe('WorkflowStartPicker plugin workflows', () => {
         for (const example of WORKFLOW_STARTER_EXAMPLES_V1) expect(screen.findByTestId(`workflow-examples:${example.key}:use`)).not.toBeNull();
         await screen.pressByTestIdAsync('workflow-examples:review-pull-request:use');
         expect(routing.push).toHaveBeenCalledWith({ pathname: '/workflows/new', params: { example: 'review-pull-request' } });
-        expect(execute.mock.calls.some(([action]) => action === 'workflow.definition.create' || action === 'workflow.run.start')).toBe(false);
+        expect(writes()).toEqual([]);
+        expect(starts()).toEqual([]);
     });
     it('reviews a built-in in the canonical composer before admitting its catalog source', async () => {
         routeParams.id = 'builtin:open-a-pull-request';
         storage.setState({ machines: { 'machine-1': createMachineFixture({ id: 'machine-1' }) },
             authoringMemory: { ...storage.getState().authoringMemory, recentMachinePaths: [{ machineId: 'machine-1', path: '/project' }] } });
-        execute.mockImplementation(async (id: string, input: { runId: string }) => ({ ok: true, result: id === 'workflow.run.start'
-            ? { admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId }) }
-            : { definitions: [] } }));
-        const screen = await renderScreen(<SavedWorkflowRoute />);
+        installPluginProjection();
+        const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
         await screen.pressByTestIdAsync('workflow-builtin:run');
-        expect(execute.mock.calls.some(([id]) => id === 'workflow.run.start')).toBe(false);
+        expect(starts()).toEqual([]);
         expect(Modal.show).not.toHaveBeenCalled();
         expect(screen.findAllByType(WorkflowRunComposer)).toHaveLength(1);
         await act(async () => { screen.findByType(WorkflowRunComposer).props.onRun(undefined); });
-        expect(execute.mock.calls.find(([id]) => id === 'workflow.run.start')?.[1]).toMatchObject({
-            source: { kind: 'catalog', workflow: 'builtin:open-a-pull-request' },
-        });
-        expect(execute.mock.calls.find(([id]) => id === 'workflow.run.start')?.[2]).toMatchObject({
-            externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { directory: '/project' } },
+        expect(starts()[0]?.payload).toMatchObject({
+            input: { source: { kind: 'catalog', workflow: 'builtin:open-a-pull-request' } },
+            target: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/project' } },
         });
     });
     it.each([false, true])('renders the canonical examples and built-ins on the home (saved=%s) without seeding persistence', async (saved) => {
-        execute.mockImplementation(async (actionId: string) => ({ ok: true, result: actionId === 'workflow.definition.list'
-            ? { definitions: saved ? [{ kind: 'workflow-definition.v1', definitionId: 'saved-workflow',
-                metadata: { title: 'Saved' }, revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null }] : [] }
-            : actionId === 'workflow.run.summaries' ? { summaries: [] } : { runs: [] } }));
+        if (saved) {
+            await createWorkflowDefinition({ definitionId: '00000000-0000-4000-8000-000000000003',
+                definition: plugin.definition, metadata: { title: 'Saved' } });
+            home.requests.length = 0;
+        }
         const screen = await renderScreen(<WorkflowsLibraryHome />);
         await act(async () => { await Promise.resolve(); });
         for (const example of WORKFLOW_STARTER_EXAMPLES_V1) {
@@ -141,30 +208,26 @@ describe('WorkflowStartPicker plugin workflows', () => {
         }
         await screen.pressByTestIdAsync('workflow-examples:morning-digest:use');
         expect(routing.push).toHaveBeenCalledWith({ pathname: '/workflows/new', params: { example: 'morning-digest' } });
-        expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.create' || id === 'workflow.run.start')).toBe(false);
+        expect(writes()).toEqual([]);
+        expect(starts()).toEqual([]);
     });
-    const plugin = {
-        workflow: 'plugin:example.recipe/check', pluginId: 'example.recipe', version: '1.2.3',
-        title: 'Check changes', definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition,
-    };
     it('shows the plugin library even when no saved definitions or runs exist', async () => {
-        execute.mockImplementation(async (actionId: string) => ({ ok: true, result: actionId === 'workflow.definition.list'
-            ? { definitions: [], pluginWorkflows: [plugin] } : { runs: [] } }));
+        installPluginProjection();
         const screen = await renderScreen(<WorkflowsLibraryHome />);
         await act(async () => { await Promise.resolve(); });
         await screen.pressByTestIdAsync(`workflows-home:row:${plugin.workflow}`);
         expect(routing.push).toHaveBeenCalledWith(`/workflows/${encodeURIComponent(plugin.workflow)}`);
-        expect(execute.mock.calls.filter(([id]) => id === 'workflow.run.summaries')).toHaveLength(0);
+        expect(home.requests.filter((request) => request.path === '/v3/automations/runs/workflow-storage')).toEqual([]);
     });
 
     it('opens the contribution read-only and duplicates as an unsaved portable draft without a write', async () => {
-        execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [plugin] } });
-        const screen = await renderScreen(<SavedWorkflowRoute />);
+        installPluginProjection();
+        const screen = await renderScreen(<SavedWorkflowRoute />, { wrapper: withPanes });
         await act(async () => { await Promise.resolve(); });
         expect(screen.findAllByTestId('workflow-plugin:read-only').length).toBeGreaterThan(0);
         expect(screen.findAllByTestId('workflow-editor-name').length).toBe(0);
         await screen.pressByTestIdAsync('workflow-plugin:duplicate');
-        expect(execute.mock.calls.some(([id]) => id === 'workflow.definition.create' || id === 'workflow.definition.update')).toBe(false);
+        expect(writes()).toEqual([]);
         const route = routing.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { definitionDraftSeedId: string } };
         expect(route.pathname).toBe('/workflows/new');
         expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId)).toEqual({
@@ -176,9 +239,7 @@ describe('WorkflowStartPicker plugin workflows', () => {
         const session = createSessionFixture({ serverId: storage.getState().profileScope!.serverId });
         const machine = createMachineFixture();
         storage.setState({ sessions: { [session.id]: session }, machines: { [machine.id]: machine } });
-        execute.mockImplementation(async (_actionId: string, input: { runId: string }) => ({ ok: true, result: {
-            admission: 'created', run: createWorkflowRunSummaryFixture({ id: input.runId }),
-        } }));
+        installPluginProjection();
         const hook = await renderHook(() => useSessionBuiltinWorkflowStart({ sessionId: session.id }));
         await act(async () => {
             hook.getCurrent()(plugin);
@@ -187,13 +248,14 @@ describe('WorkflowStartPicker plugin workflows', () => {
         const config = vi.mocked(Modal.show).mock.calls[0]![0];
         const props = config.props as { onRun(inputs: Record<string, never>): void };
         await act(async () => { props.onRun({}); await Promise.resolve(); });
-        expect(execute.mock.calls.find(([id]) => id === 'workflow.run.start')).toEqual([
-            'workflow.run.start', expect.objectContaining({ source: { kind: 'catalog', workflow: plugin.workflow, pluginVersion: plugin.version } }),
-            expect.objectContaining({ defaultSessionId: session.id, externalActionTarget: expect.objectContaining({ machineId: 'machine-1' }) }),
-        ]);
+        expect(starts()).toEqual([expect.objectContaining({ machineId: 'machine-1', payload: expect.objectContaining({
+            input: expect.objectContaining({ source: { kind: 'catalog', workflow: plugin.workflow, pluginVersion: plugin.version } }),
+            defaultSessionId: session.id,
+            target: expect.objectContaining({ kind: 'machine', machineId: 'machine-1' }),
+        }) })]);
     });
     it('offers the contribution in the Work launch submenu and selects that exact source', async () => {
-        execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [plugin] } });
+        installPluginProjection();
         const startPluginWorkflow = vi.fn();
         const launcher = {
             unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
@@ -212,19 +274,24 @@ describe('WorkflowStartPicker plugin workflows', () => {
         expect(startPluginWorkflow).toHaveBeenCalledWith(plugin);
     });
     it('does not retain or select a previous Account catalog while the closed menu changes Account', async () => {
-        execute.mockResolvedValueOnce({ ok: true, result: { definitions: [{ kind: 'workflow-definition.v1',
-            definitionId: '00000000-0000-4000-8000-000000000003', revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Private saved recipe' } }], pluginWorkflows: [plugin] } });
+        installPluginProjection();
+        await createWorkflowDefinition({ definitionId: '00000000-0000-4000-8000-000000000003',
+            definition: plugin.definition, metadata: { title: 'Private saved recipe' } });
+        home.requests.length = 0;
+        machineRpc.mockClear();
         const startPluginWorkflow = vi.fn();
         const launcher = { unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
             openConversation: vi.fn(), openRun: vi.fn(), openDetails: vi.fn(), startBuiltinWorkflow: vi.fn(), startPluginWorkflow };
         const screen = await renderScreen(<SessionAgentsLaunchMenu launcher={launcher} />);
-        expect(execute).not.toHaveBeenCalled();
+        expect(home.requests).toEqual([]);
+        expect(machineRpc).not.toHaveBeenCalled();
         await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
         await act(async () => { await Promise.resolve(); });
         await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(false); });
-        const next = createDeferred<unknown>();
-        execute.mockReturnValueOnce(next.promise);
+        const next = createDeferred<Response>();
+        delayedRead = next.promise;
         await act(async () => {
+            home.switchAccount('picker', 'next-account');
             (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
             storage.setState({ profileScope: { serverId: storage.getState().profileScope!.serverId, accountId: 'next-account' } });
         });
@@ -237,14 +304,14 @@ describe('WorkflowStartPicker plugin workflows', () => {
         await act(async () => { menu.props.onOpenChange(true); });
         const pendingItems: React.ComponentProps<typeof DropdownMenu>['items'] = screen.findByType(DropdownMenu).props.items;
         expect(pendingItems.find((item) => item.id === 'run-workflow')!.submenu!.items.some((item) => item.title === plugin.title)).toBe(false);
-        await act(async () => { next.resolve({ ok: true, result: { definitions: [] } }); await next.promise; });
+        await act(async () => { next.resolve(Response.json([])); await next.promise; });
     });
     it('selects the catalog definition with its qualified identity and observed plugin version', async () => {
         const plugin = {
             workflow: 'plugin:example.recipe/check', pluginId: 'example.recipe', version: '1.2.3',
             title: 'Check changes', definition: BUILTIN_WORKFLOW_CATALOG_V1[0]!.definition,
         };
-        execute.mockResolvedValue({ ok: true, result: { definitions: [], pluginWorkflows: [plugin] } });
+        installPluginProjection();
         const selected = vi.fn();
         const closed = vi.fn();
         const screen = await renderScreen(<WorkflowStartPicker onSelect={selected} onRequestClose={closed} maxHeight={600} />);

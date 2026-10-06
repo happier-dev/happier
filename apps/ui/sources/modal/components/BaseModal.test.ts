@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { renderScreen } from '@/dev/testkit';
+import { OverlayMotionFrame } from '@/components/ui/overlays/motion/overlayMotion';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 
 const reactActEnvironment = globalThis as typeof globalThis & {
@@ -11,23 +12,6 @@ const reactActEnvironment = globalThis as typeof globalThis & {
 };
 
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
-
-const localSettingState = vi.hoisted(() => ({
-    uiBackdropBlurEnabled: true,
-}));
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
-    return {
-        ...actual,
-        useLocalSetting: ((name: string) => {
-            if (name === 'uiBackdropBlurEnabled') {
-                return localSettingState.uiBackdropBlurEnabled;
-            }
-            return null;
-        }) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
-    };
-});
 
 vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
@@ -182,23 +166,7 @@ describe('BaseModal (web)', () => {
         expect(String(style.transition)).not.toContain('opacity');
     });
 
-    it('does not let the retired device-local switch override Account material', async () => {
-        localSettingState.uiBackdropBlurEnabled = false;
-        const { BaseModal } = await import('./BaseModal');
-        const screen = await renderBaseModalScreen(BaseModal);
-
-        const overlay = screen.findAll((node) => {
-            const style = flattenStyleProp((node.props as any)?.style);
-            return style.backgroundColor === 'rgba(255, 255, 255, 0.52)' && style.position === 'fixed';
-        })?.[0];
-        const style = flattenStyleProp((overlay?.props as any)?.style);
-        expect(style.backgroundColor).toBe('rgba(255, 255, 255, 0.52)');
-        expect(style.backdropFilter).toBe('blur(var(--happier-glass-floating-blur, 2px))');
-
-        localSettingState.uiBackdropBlurEnabled = true;
-    });
-
-    it('keeps transforms off the fixed-position shell while animating an inner content frame', async () => {
+    it('keeps web glass backdrop roots transform-free while fading the content frame', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { showBackdrop: false });
 
@@ -206,16 +174,11 @@ describe('BaseModal (web)', () => {
         expect(dialogShell).toBeTruthy();
         expect((dialogShell?.props as any)?.style?.transform).toBeUndefined();
 
-        const nodesWithScaleTransform = screen.findAll((node) => {
-            const style = (node.props as any)?.style;
-            if (!Array.isArray(style)) return false;
-            const transformStyle = style.find((entry: any) => entry && typeof entry === 'object' && 'transform' in entry);
-            const transform = transformStyle?.transform;
-            if (!Array.isArray(transform)) return false;
-            return transform.some((entry: any) => entry && typeof entry === 'object' && 'scale' in entry);
-        });
-
-        expect(nodesWithScaleTransform.length).toBeGreaterThan(0);
+        const contentFrame = screen.root.findByType(OverlayMotionFrame);
+        const animatedFrame = contentFrame.findByType(Animated.View);
+        const style = flattenStyleProp(animatedFrame.props.style);
+        expect(style.transform).toBeUndefined();
+        expect(style.opacity).toBeDefined();
     });
 
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {

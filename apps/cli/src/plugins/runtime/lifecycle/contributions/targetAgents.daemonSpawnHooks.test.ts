@@ -58,7 +58,7 @@ describe('Agent daemon spawn-hook lease', () => {
             });
             return { ok: true as const };
         });
-        const registry = createTargetAgentRuntimeRegistry({
+        const registry = await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'spawn-agent',
                 identity: { pluginId: 'acme.spawn-hooks', localId: 'spawn-agent' },
@@ -97,7 +97,7 @@ describe('Agent daemon spawn-hook lease', () => {
     });
 
     it('fails closed when environment augmentation throws instead of silently dropping the required environment', async () => {
-        const registry = createTargetAgentRuntimeRegistry({
+        const registry = await createTargetAgentRuntimeRegistry({
             agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
             activationTargets: [target()],
             targetRegistrations: [registration({
@@ -135,8 +135,8 @@ describe('Agent daemon spawn-hook lease', () => {
         );
     });
 
-    it('fails closed when environment augmentation returns a non-string value', () => {
-        const registry = createTargetAgentRuntimeRegistry({
+    it('fails closed when environment augmentation returns a non-string value', async () => {
+        const registry = await createTargetAgentRuntimeRegistry({
             agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
             activationTargets: [target()],
             targetRegistrations: [registration({
@@ -174,7 +174,7 @@ describe('Agent daemon spawn-hook lease', () => {
             });
             return { ok: true as const };
         });
-        const registry = createTargetAgentRuntimeRegistry({
+        const registry = await createTargetAgentRuntimeRegistry({
             agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
             activationTargets: [target()],
             targetRegistrations: [registration({ resolveRuntimePrerequisites })],

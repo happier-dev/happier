@@ -1,8 +1,14 @@
-import { renderHook } from '@/dev/testkit';
+import { renderHook as renderBaseHook, standardCleanup } from '@/dev/testkit';
+import type { RenderHookOptions } from '@/dev/testkit/hooks/renderHook';
+import { storage } from '@/sync/domains/state/storageStore';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
     CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
+    AccountProfileSchema,
     type PluginProjectedAgentConnectedAccountPurposeV2,
 } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
@@ -34,6 +40,20 @@ const profileState = vi.hoisted(() => ({
         connectedServiceCredentialRevisionsV1: [] as Array<Record<string, unknown>>,
     },
 }));
+
+installDisconnectedServerSocketBoundary();
+const initialStorage = storage.getState();
+
+async function renderHook<Value, Props = void>(
+    useValue: (props: Props) => Value,
+    options?: Partial<RenderHookOptions<Props>>,
+) {
+    storage.setState({
+        profileScope: { serverId: 'server-1', accountId: 'account-a' },
+        profile: AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current }),
+    });
+    return renderBaseHook(useValue, options);
+}
 
 function v4Account(params: Readonly<{
     pluginId: string;
@@ -273,10 +293,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (...args: unknown[]) => useFeatureEnabledMock(...args),
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useProfile: () => profileState.current,
-}));
-
 vi.mock('@/sync/ops/connectedServices/sessionAuthSwitch', () => ({
     setSessionConnectedServiceAuthBinding: (...args: unknown[]) => setSessionConnectedServiceAuthBindingMock(...args),
 }));
@@ -373,7 +389,8 @@ function renderChipPopover(
 }
 
 describe('useSessionConnectedServicesAuthSwitch', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await loadSyncSingletonForTests();
         installConnectedAccountDescriptorProjection(authSwitchConnectedAccountProjection);
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
@@ -387,6 +404,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     afterEach(() => {
+        standardCleanup();
+        storage.setState(initialStorage, true);
         installConnectedAccountDescriptorProjection(
             createConnectedAccountDescriptorProjectionLoadingState('auth-switch-test-cleanup'),
         );

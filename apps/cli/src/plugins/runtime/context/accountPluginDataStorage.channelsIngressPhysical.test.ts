@@ -150,7 +150,6 @@ function createCurrentConnection(
             providerPluginId: 'happier.channel.telegram',
             providerContributionSelection: {
                 contributionId: 'telegram-test-provider',
-                immutableGenerationId: 'telegram-test-generation',
             },
             providerSetupInput: { source: 'channels-c3-physical' },
             credentialRef: {

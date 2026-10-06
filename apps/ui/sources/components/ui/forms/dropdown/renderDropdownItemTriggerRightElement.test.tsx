@@ -1,32 +1,20 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
+import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
-const mockComponents = vi.hoisted(() => {
-    const MockIonicons = function MockIonicons(props: Record<string, unknown>) {
-        return React.createElement('MockIoniconsHost', props);
-    };
-
-    const MockText = function MockText(props: Record<string, unknown> & { children?: React.ReactNode }) {
-        return React.createElement('MockTextHost', props, props.children);
-    };
-
-    return {
-        MockIonicons,
-        MockText,
-    };
+installDropdownCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key: string) => key === 'common.choose' ? 'Choose…' : key });
+    },
 });
-
-vi.mock('@/components/ui/icons/SafeIonicons', () => ({
-    SafeIonicons: mockComponents.MockIonicons,
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: mockComponents.MockText,
-}));
+vi.unmock('@/components/ui/icons/Icon');
 
 describe('renderDropdownItemTriggerRightElement', () => {
     it('renders the closed-trigger chevron directly instead of wrapping it in Text', async () => {
         const { renderDropdownItemTriggerRightElement } = await import('./renderDropdownItemTriggerRightElement');
+        const { Icon } = await import('@/components/ui/icons/Icon');
 
         const node = renderDropdownItemTriggerRightElement({
             detail: null,
@@ -38,7 +26,7 @@ describe('renderDropdownItemTriggerRightElement', () => {
         expect(React.isValidElement(node)).toBe(true);
         // The chevron is drawn by the icon seam now; the contract worth asserting is that it is
         // returned as a bare element rather than wrapped in a Text node.
-        expect((node as React.ReactElement).type).toBe('Icon');
+        expect((node as React.ReactElement).type).toBe(Icon);
     });
 
     it('shows a placeholder in an empty page field instead of a blank box', async () => {
@@ -52,8 +40,9 @@ describe('renderDropdownItemTriggerRightElement', () => {
             field: { borderColor: '#ccc', backgroundColor: '#fff', valueColor: '#111', placeholderColor: '#aaa' },
         });
 
-        const [valueText] = React.Children.toArray((node as React.ReactElement<{ children: React.ReactNode }>).props.children) as React.ReactElement<{ children: React.ReactNode; style: { color: string } }>[];
-        expect(valueText.props.children).toBe('Choose…');
-        expect(valueText.props.style.color).toBe('#aaa');
+        const screen = await renderScreen(<>{node}</>);
+        const valueText = screen.tree.findAll((child) => child.type === 'Text' && child.props.children === 'Choose…');
+        expect(valueText).toHaveLength(1);
+        expect(flattenTestStyle(valueText[0]!.props.style).color).toBe('#aaa');
     });
 });

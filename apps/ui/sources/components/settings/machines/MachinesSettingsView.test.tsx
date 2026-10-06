@@ -59,7 +59,10 @@ installMachinesSettingsCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
-vi.mock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => desktopState.value }));
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
+    isDesktopHost: () => desktopState.value,
+}));
 vi.mock('@/components/ui/icons/Icon', () => ({ Icon: 'Icon', ICON_SIZE: { xs: 12 } }));
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemList', null, children),
@@ -162,16 +165,16 @@ describe('MachinesSettingsView', () => {
         expect(tree.findAll((node) => node.props?.testID === 'settings.machines.thisComputer')).toHaveLength(0);
     });
 
-    it('offers this computer and SSH setup from the browser, and the SSH wizard alone from the desktop app', async () => {
+    it('opens the canonical add-machine draft from both the browser and desktop collection', async () => {
         const webTree = await renderPage();
-        expect(addMenuItemIds(webTree)).toEqual(['thisComputer', 'ssh']);
+        expect(addMenuItemIds(webTree)).toEqual(['machine']);
 
         desktopState.value = true;
         const desktopTree = await renderPage();
-        expect(addMenuItemIds(desktopTree)).toEqual(['ssh']);
+        expect(addMenuItemIds(desktopTree)).toEqual(['machine']);
         const menu = desktopTree.findByType('DropdownMenu' as never) as unknown as { props: { onSelect: (id: string) => void } };
-        await act(async () => menu.props.onSelect('ssh'));
-        expect(routerPushSpy).toHaveBeenCalledWith('/setup/wizard?action=remote&step=remote_ssh_setup&scope=machine');
+        await act(async () => menu.props.onSelect('machine'));
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines/add');
     });
 
     it('lists this computer in the desktop app and opens its page in the collection', async () => {
@@ -194,8 +197,8 @@ describe('MachinesSettingsView', () => {
             props: { options: Array<{ id: string }>; onPress: (id: string) => void };
         };
         // The pool is added from its own section, so the tiles do not offer it twice.
-        expect(tiles.props.options.map((option) => option.id)).toEqual(['thisComputer', 'ssh']);
-        expect(addMenuItemIds(tree)).toEqual(['thisComputer', 'ssh', 'pool']);
+        expect(tiles.props.options.map((option) => option.id)).toEqual(['machine']);
+        expect(addMenuItemIds(tree)).toEqual(['machine', 'pool']);
         const menu = tree.findByType('DropdownMenu' as never) as unknown as { props: { onSelect: (id: string) => void } };
         await act(async () => menu.props.onSelect('pool'));
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines/pools/new?serverId=srv-a');

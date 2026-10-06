@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,8 +12,28 @@ async function importSetupModule() {
 
 describe('CLI test global setup', () => {
     const originalSkipBuild = process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+    const fixtureRoots: string[] = [];
 
-    afterEach(() => {
+    async function createSetupFixture() {
+        const repoRoot = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-'));
+        fixtureRoots.push(repoRoot);
+        const projectRoot = join(repoRoot, 'apps', 'cli');
+        await mkdir(projectRoot, { recursive: true });
+        await writeFile(join(repoRoot, 'package.json'), '{}');
+        await writeFile(join(repoRoot, 'yarn.lock'), '');
+        const executablePath = join(projectRoot, 'tools', 'unpacked',
+            `happier-process-custody${process.platform === 'win32' ? '.exe' : ''}`);
+        // The Go process is the system boundary; setup, staging and publication
+        // coordination remain real and publish the requested executable.
+        const runCommand = vi.fn(async (_command: string, args: string[]) => {
+            const output = args[args.indexOf('-o') + 1];
+            if (!output) throw new Error('Native custody compilation requires an output path');
+            await writeFile(output, 'compiled native custody');
+        });
+        return { projectRoot, executablePath, runCommand };
+    }
+
+    afterEach(async () => {
         if (typeof originalSkipBuild === 'string') {
             process.env.HAPPIER_CLI_TEST_SKIP_BUILD = originalSkipBuild;
         } else {
@@ -22,39 +44,50 @@ describe('CLI test global setup', () => {
         vi.doUnmock('node:fs');
         vi.doUnmock('./testSetupBuildCoordinator');
         vi.resetModules();
+        await Promise.all(fixtureRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
     });
 
-    it('does not publish build outputs in source-only mode', async () => {
+    it('prepares native custody in source-only mode without a full CLI dist build', async () => {
+        const { projectRoot, executablePath, runCommand } = await createSetupFixture();
         const { setup } = await importSetupModule();
         const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
             buildMode: 'none',
             dependencies: {
-                resolveProjectRoot: () => '/tmp/happier-cli-project',
+                resolveProjectRoot: () => projectRoot,
                 ensureDistBuiltOnce,
+                runCommand,
             },
         });
 
+        await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
+        await expect(stat(join(projectRoot, 'dist'))).rejects.toMatchObject({ code: 'ENOENT' });
+        if (process.platform !== 'win32') {
+            expect((await stat(executablePath)).mode & 0o111).toBe(0o111);
+        }
         expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
     });
 
     it('runs the canonical dist build for full mode', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
         const { setup } = await importSetupModule();
         const ensureDistBuiltOnce = vi.fn(async () => undefined);
 
         await setup({
             buildMode: 'full',
             dependencies: {
-                resolveProjectRoot: () => '/tmp/happier-cli-project',
+                resolveProjectRoot: () => projectRoot,
                 ensureDistBuiltOnce,
+                runCommand,
             },
         });
 
-        expect(ensureDistBuiltOnce).toHaveBeenCalledWith('/tmp/happier-cli-project');
+        expect(ensureDistBuiltOnce).toHaveBeenCalledWith(projectRoot);
     });
 
-    it('respects the global skip-build override', async () => {
+    it('prepares native custody while respecting the full-dist skip-build override', async () => {
+        const { projectRoot, executablePath, runCommand } = await createSetupFixture();
         const { setup } = await importSetupModule();
         process.env.HAPPIER_CLI_TEST_SKIP_BUILD = 'true';
 
@@ -63,12 +96,44 @@ describe('CLI test global setup', () => {
         await setup({
             buildMode: 'full',
             dependencies: {
-                resolveProjectRoot: () => '/tmp/happier-cli-project',
+                resolveProjectRoot: () => projectRoot,
                 ensureDistBuiltOnce,
+                runCommand,
             },
         });
 
+        await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
         expect(ensureDistBuiltOnce).not.toHaveBeenCalled();
+    });
+
+    it('reuses prepared native custody on a later source setup', async () => {
+        const { projectRoot, executablePath, runCommand } = await createSetupFixture();
+        const { setup } = await importSetupModule();
+        const options = {
+            buildMode: 'none' as const,
+            dependencies: { resolveProjectRoot: () => projectRoot, runCommand },
+        };
+
+        await setup(options);
+        await setup(options);
+
+        await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
+        expect(runCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails setup when native custody cannot be prepared', async () => {
+        const { projectRoot, executablePath } = await createSetupFixture();
+        const { setup } = await importSetupModule();
+        const unavailable = Object.assign(new Error('Go toolchain is unavailable'), { code: 'ENOENT' });
+
+        await expect(setup({
+            buildMode: 'none',
+            dependencies: {
+                resolveProjectRoot: () => projectRoot,
+                runCommand: async () => { throw unavailable; },
+            },
+        })).rejects.toBe(unavailable);
+        await expect(stat(executablePath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('uses the canonical repo dist build lock for mutable CLI dist outputs', async () => {
@@ -87,7 +152,6 @@ describe('CLI test global setup', () => {
             },
         });
 
-        expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledTimes(1);
         expect(ensureBuildArtifactsReadyOnce).toHaveBeenCalledWith(
             expect.objectContaining({
                 lockPath: join(resolve(cliProjectRoot, '..', '..'), '.project', 'tmp', 'cli-dist-build.lock'),

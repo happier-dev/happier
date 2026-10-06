@@ -7,26 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // never shows for the most common catch-up. The first-ever snapshot load is intentionally NOT
 // bracketed (initial open shows the normal transcript, not a catch-up overlay).
 
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -38,54 +18,59 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/log', () => ({
-    log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
-}));
-
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
-
 const requestMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-    },
-}));
-
 const externalTranscriptPageMock = vi.hoisted(() => vi.fn());
 const externalTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/ops/machineExternalSessions', () => ({
-    machineExternalSessionTranscriptPage: externalTranscriptPageMock,
-    machineExternalSessionTranscriptReadAfter: externalTranscriptReadAfterMock,
-    machineExternalSessionTranscriptRefreshReadAfter: vi.fn(),
-}));
-
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import { storage } from './domains/state/storage';
+
+installDisconnectedServerSocketBoundary((socket) => {
+    socket.connected = true;
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+        if (payload.method === `machine-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE}`) {
+            return { ok: true, result: await externalTranscriptPageMock(payload.params) };
+        }
+        if (payload.method === `machine-1:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`) {
+            return { ok: true, result: await externalTranscriptReadAfterMock(payload.params) };
+        }
+        return { ok: false, error: 'Machine method unavailable', errorCode: 'METHOD_NOT_AVAILABLE' };
+    });
+});
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let webLocks: ReturnType<typeof installWebLockManagerMock>;
+
+async function restoreTestHome(serverUrl = 'https://transcript-tests.example'): Promise<void> {
+    await account?.dispose();
+    account = await restoreServerAccountForTest({
+        serverUrl,
+        accountId: 'transcript-account',
+        request: async (url, init) => {
+            const requestUrl = new URL(String(url));
+            const path = requestUrl.pathname + requestUrl.search;
+            if (requestUrl.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (requestUrl.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (requestUrl.pathname === '/v1/account/encryption/currentness') return Response.json({
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+                updatedAt: 1, recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+            });
+            if (requestUrl.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            if (requestUrl.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (requestUrl.pathname.includes('/messages') || requestUrl.pathname === '/v2/sessions/parent') {
+                return await requestMock(path, init);
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        },
+    });
+}
 import {
     markSessionSurfaceHidden,
     markSessionSurfaceVisible,
@@ -95,7 +80,6 @@ import type { Machine, Session } from './domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 
 type SyncCatchUpTestAccess = {
-    encryption: { getSessionEncryption: (sessionId: string) => null };
     activeServerSessionIds: Set<string>;
     hasFetchedSessionsSnapshotForActiveServer: boolean;
     isForeground: boolean;
@@ -242,13 +226,11 @@ async function seedLoadedSession(
 ): Promise<typeof import('./sync').sync> {
     const { sync } = await import('./syncEngine');
     const t = sync as unknown as SyncCatchUpTestAccess;
-    sync.disconnectServer();
     storage.getState().applySessions([createSession(SESSION_ID, sessionSeq)]);
     if (options.withMaterializedMessage !== false && materializedMaxSeq > 0) {
         storage.getState().applyMessages(SESSION_ID, [buildMessage(`m${materializedMaxSeq}`, materializedMaxSeq)]);
     }
     storage.getState().applyMessagesLoaded(SESSION_ID);
-    t.encryption = { getSessionEncryption: () => null };
     t.activeServerSessionIds = new Set<string>([SESSION_ID]);
     t.hasFetchedSessionsSnapshotForActiveServer = true;
     t.isForeground = true;
@@ -258,16 +240,22 @@ async function seedLoadedSession(
 }
 
 describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        webLocks = installWebLockManagerMock();
+        await loadSyncSingletonForTests();
+        getPersistenceStorage().clearAll();
         storage.setState(initialStorageState, true);
-        kvStore.clear();
         requestMock.mockReset();
+        await restoreTestHome();
         externalTranscriptPageMock.mockReset();
         externalTranscriptReadAfterMock.mockReset();
         resetSessionSurfaceVisibilityForTests();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await account?.dispose();
+        account = undefined;
+        webLocks.restore();
         markSessionSurfaceHidden(SESSION_ID);
         resetSessionSurfaceVisibilityForTests();
         vi.unstubAllGlobals();
@@ -297,11 +285,9 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
     it('does NOT flip the signal for a first-ever snapshot load (initial open is not "catching up")', async () => {
         const { sync } = await import('./syncEngine');
         const t = sync as unknown as SyncCatchUpTestAccess;
-        sync.disconnectServer();
-        // Never-loaded session → fetchMessages takes the snapshot branch, which is intentionally
+            // Never-loaded session → fetchMessages takes the snapshot branch, which is intentionally
         // NOT bracketed (initial load shows the normal transcript, not a "Catching up…" overlay).
         storage.getState().applySessions([createSession(SESSION_ID, 20)]);
-        t.encryption = { getSessionEncryption: () => null };
         t.activeServerSessionIds = new Set<string>([SESSION_ID]);
         t.hasFetchedSessionsSnapshotForActiveServer = true;
         t.isForeground = true;
@@ -338,10 +324,9 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
     it('flips the signal while a loaded empty external transcript recovers from its live Agent', async () => {
         const { sync } = await import('./sync');
         const t = sync as unknown as SyncCatchUpTestAccess;
-        sync.disconnectServer();
-        storage.getState().applySessions([createExternalSession('machine_only')]);
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', active: true, storageMode: 'plain' })]);
+            storage.getState().applySessions([createExternalSession('machine_only')]);
         storage.getState().applyMessagesLoaded(SESSION_ID);
-        t.encryption = { getSessionEncryption: () => null };
         t.activeServerSessionIds = new Set([SESSION_ID]);
         t.hasFetchedSessionsSnapshotForActiveServer = true;
         t.isForeground = true;
@@ -381,11 +366,9 @@ describe('§13 catch-up-newer signal brackets the on-open catch-up', () => {
     it('flips the signal while a loaded empty external transcript recovers from its server snapshot', async () => {
         const { sync } = await import('./sync');
         const t = sync as unknown as SyncCatchUpTestAccess;
-        sync.disconnectServer();
-        storage.getState().applyMachines([createOfflineMachine()]);
+            storage.getState().applyMachines([createOfflineMachine()]);
         storage.getState().applySessions([createExternalSession('snapshot_complete')]);
         storage.getState().applyMessagesLoaded(SESSION_ID);
-        t.encryption = { getSessionEncryption: () => null };
         t.activeServerSessionIds = new Set([SESSION_ID]);
         t.hasFetchedSessionsSnapshotForActiveServer = true;
         t.isForeground = true;

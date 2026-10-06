@@ -1,13 +1,21 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     type BrowserLocalServicePreviewTargetV1,
+    type ActionExecuteResult,
+    PluginProjectionInstalledPackageV2Schema,
 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
     applyLocalServicePreviewSnapshot,
     createLocalServicePreviewState,
@@ -16,80 +24,8 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const endpointConnectivityState = vi.hoisted(() => ({
-    status: 'online' as 'online' | 'offline',
-}));
-
-const pluginSurfaceAccountLifetime = vi.hoisted(() => Object.freeze({
-    scope: Object.freeze({ serverId: 'server-1', accountId: 'account-1' }),
-    isCurrent: () => true,
-    onRetire: () => Object.freeze({ dispose: () => {} }),
-}));
-
-const accountEncryptionModeCredentials = vi.hoisted(() => ({
-    value: { token: 'browser-placement-account-mode-test-token' } as Readonly<{ token: string }> | null,
-}));
-const accountEncryptionModeFetch = vi.hoisted(() => vi.fn<
-    typeof import('@/sync/api/account/apiAccountEncryptionMode').fetchAccountEncryptionMode
->());
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({
-        Platform: { OS: 'web' },
-        View: (props: any) => React.createElement('View', props, props.children),
-    });
-});
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: any) => React.createElement('Text', props, props.children),
-}));
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/state/storage')>(),
-    useEndpointStatus: () => endpointConnectivityState.status,
-    useMachineCliDetectionTarget: () => ({ daemonStateVersion: 1, isOnline: true }),
-}));
-
-vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
-    captureActiveServerAccountScopeLifetime: () => pluginSurfaceAccountLifetime,
-}));
-
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>();
-    return {
-        ...original,
-        fetchAccountEncryptionMode: (...args: Parameters<typeof original.fetchAccountEncryptionMode>) => (
-            accountEncryptionModeFetch(...args)
-        ),
-    };
-});
-
-vi.mock('@/sync/sync', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/sync/sync')>();
-    return {
-        ...original,
-        sync: new Proxy(original.sync, {
-            get(target, property) {
-                if (property === 'getCredentials') {
-                    return () => accountEncryptionModeCredentials.value;
-                }
-                const value = Reflect.get(target, property, target);
-                return typeof value === 'function' ? value.bind(target) : value;
-            },
-        }),
-    };
-});
+installTerminalRouteCommonModuleMocks();
+await initializeTerminalRouteRuntimeForTests();
 
 const focusedTarget: BrowserLocalServicePreviewTargetV1 = {
     kind: 'localServicePreview',
@@ -156,8 +92,9 @@ const browserPanelPlacement = {
     // it rather than downgrading to a host presentation action.
     hostOrigin: {
         machineId: 'machine-admitted',
-        serverId: 'server-admitted',
+        serverId: 'srv_account_one',
         generation: 9,
+        phase: 'current',
         interactionEnabled: true,
         executionOrigin: {
             serverIdentityId: 'srv_account_one',
@@ -172,11 +109,18 @@ const browserPanelPlacement = {
 
 const pluginUiProjection: PluginUiProjectionModel = {
     ...EMPTY_PLUGIN_UI_PROJECTION,
+    installedPackagesById: { 'acme.browser': PluginProjectionInstalledPackageV2Schema.parse({
+        id: 'acme.browser', displayName: 'Browser panel', version: '1.0.0', enabled: true,
+        source: { kind: 'localPath', locator: 'acme.browser' },
+        occurrenceId: 'acme-browser-occurrence',
+        sourceCustody: { kind: 'development', registeredRootId: 'browser-panel-root' },
+        declaresContributionPoints: false,
+    }) },
     hostedWebById: {
         'hostedWeb:acme.browser:panel': {
             id: 'hostedWeb:acme.browser:panel',
             pluginId: 'acme.browser',
-            occurrenceId: 'acme-browser-occurrence-1',
+            occurrenceId: 'acme-browser-occurrence',
             contributionKind: 'hostedWeb',
             contributionId: 'panel',
             service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
@@ -199,24 +143,6 @@ const pluginUiProjection: PluginUiProjectionModel = {
         [browserPanelPlacement.id]: browserPanelPlacement,
     },
 };
-
-type LegacyGrantActionsProbe = Readonly<{
-    list: ReturnType<typeof vi.fn>;
-    request: ReturnType<typeof vi.fn>;
-    grant: ReturnType<typeof vi.fn>;
-    revoke: ReturnType<typeof vi.fn>;
-    dismissRequest: ReturnType<typeof vi.fn>;
-}>;
-
-function createLegacyGrantActionsProbe(): LegacyGrantActionsProbe {
-    return {
-        list: vi.fn(async () => ({ grants: [], pendingRequests: [] })),
-        request: vi.fn(),
-        grant: vi.fn(),
-        revoke: vi.fn(),
-        dismissRequest: vi.fn(),
-    };
-}
 
 /**
  * Post the predecessor outer host-method envelope. The direct cut admits Host
@@ -262,8 +188,7 @@ async function dispatchPredecessorExecuteActionEnvelope(params: Readonly<{
 }
 
 async function withBrowserPanelHarness(
-    legacyGrantActions: LegacyGrantActionsProbe,
-    runtimeResult: () => unknown,
+    runtimeResult: () => ActionExecuteResult,
     run: (ctx: Readonly<{
         screen: Awaited<ReturnType<typeof renderScreen>>;
         iframeSource: WindowProxy;
@@ -285,7 +210,9 @@ async function withBrowserPanelHarness(
     const previousWindow = (globalThis as { window?: Window }).window;
     const executeAction = vi.fn(async () => runtimeResult());
     const executionSessionId = options.executionSessionId ?? 'session_1';
-    endpointConnectivityState.status = options.endpointStatus ?? 'online';
+    storage.getState().setEndpointConnectivity({ status: options.endpointStatus ?? 'online',
+        reason: null, attempt: 0, nextRetryAt: null, lastConnectedAt: Date.now(),
+        lastDisconnectedAt: null, lastErrorMessage: null });
     (globalThis as { window: unknown }).window = new EventTarget();
 
     try {
@@ -295,12 +222,11 @@ async function withBrowserPanelHarness(
                 platform="desktop"
                 pluginUiProjection={options.projection ?? pluginUiProjection}
                 localServicePreviewState={createPreviewState()}
-                executionMachineId={options.executionMachineId ?? 'machine_1'}
-                executionServerId={options.executionServerId ?? 'server_1'}
+                executionMachineId={options.executionMachineId ?? 'machine-admitted'}
+                executionServerId={options.executionServerId ?? 'srv_account_one'}
                 executionSessionId={executionSessionId}
-                executeAction={executeAction as never}
+                executeAction={executeAction}
                 isFeatureEnabled={options.isFeatureEnabled ?? (() => true)}
-                {...({ grantActions: legacyGrantActions } as Record<string, unknown>)}
             />,
             {
                 createNodeMock: (element) => (
@@ -312,11 +238,11 @@ async function withBrowserPanelHarness(
         );
         // Allow hosted-frame bridge effects to settle before dispatching.
         await flushHookEffects({ cycles: 3 });
-        const frame = screen.root.findByType('iframe');
+        const frame = screen.root.findAllByType('iframe')[0];
         const nonce = new URL(String(frame?.props.src ?? 'https://unused.test/')).searchParams.get('happierBridgeNonce') ?? '';
         await run({ screen, iframeSource, executeAction, nonce, sessionId: executionSessionId });
     } finally {
-        endpointConnectivityState.status = 'online';
+        await standardCleanup();
         if (previousWindow) {
             (globalThis as { window?: Window }).window = previousWindow;
         } else {
@@ -325,16 +251,26 @@ async function withBrowserPanelHarness(
     }
 }
 
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 beforeEach(async () => {
-    endpointConnectivityState.status = 'online';
-    accountEncryptionModeCredentials.value = { token: 'browser-placement-account-mode-test-token' };
-    accountEncryptionModeFetch.mockReset();
-    accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 1 });
     const { invalidateAccountEncryptionModeCache } = await import(
         '@/sync/api/account/apiAccountEncryptionMode'
     );
     invalidateAccountEncryptionModeCache();
+    const serverUrl = 'https://browser-placement.example.test';
+    await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: 'srv_account_one',
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+        source: 'qr', descriptorAuthority: 'current_connection_observation' });
+    account = await restoreServerAccountForTest({ serverUrl, accountId: 'account-1', request: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        return new Response('{}', { status: 404 });
+    } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-admitted', activeAt: Date.now() })], true,
+        { sourceServerId: account.home.id });
 });
+afterEach(async () => { await standardCleanup(); await account?.dispose(); });
 
 describe('BrowserPluginSurfacePlacements', () => {
     it('uses browser host feature context when filtering renderable placements', async () => {
@@ -343,14 +279,14 @@ describe('BrowserPluginSurfacePlacements', () => {
             surfacePlacementsById: {
                 [browserPanelPlacement.id]: {
                     ...browserPanelPlacement,
-                    featureGate: 'plugins.ui.hostedWeb',
+                    availability: { ...browserPanelPlacement.availability,
+                        when: { fact: 'host.feature', operator: 'enabled', value: 'plugins.ui.hostedWeb' } },
                 },
             },
         };
 
         await withBrowserPanelHarness(
-            createLegacyGrantActionsProbe(),
-            () => ({ state: 'available' }),
+            () => ({ ok: true, result: { state: 'available' } }),
             async ({ screen }) => {
                 expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
             },
@@ -359,14 +295,18 @@ describe('BrowserPluginSurfacePlacements', () => {
                 isFeatureEnabled: (featureId) => featureId === 'plugins.ui.hostedWeb',
             },
         );
+        await withBrowserPanelHarness(
+            () => ({ ok: true, result: { state: 'available' } }), async ({ screen }) => {
+                expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
+            }, { projection: gatedProjection, isFeatureEnabled: () => false });
     });
 
     it('keeps a loaded browser-panel surface non-interactive while the endpoint is offline', async () => {
         await withBrowserPanelHarness(
-            createLegacyGrantActionsProbe(),
-            () => ({ state: 'available' }),
+            () => ({ ok: true, result: { state: 'available' } }),
             async ({ screen, iframeSource, executeAction, nonce, sessionId }) => {
                 expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
+                expect(nonce.length).toBeGreaterThan(0);
                 // `inert`/`aria-hidden` are owned by the snapshot node inside the
                 // boundary, not by the boundary wrapper itself.
                 expect(
@@ -394,9 +334,9 @@ describe('BrowserPluginSurfacePlacements', () => {
 
     it('rejects a predecessor direct browser-panel action envelope', async () => {
         await withBrowserPanelHarness(
-            createLegacyGrantActionsProbe(),
             () => ({ ok: true, result: { state: 'available', snapshotId: 'snapshot_1' } }),
             async ({ iframeSource, executeAction, nonce, sessionId }) => {
+                expect(nonce.length).toBeGreaterThan(0);
                 await dispatchPredecessorExecuteActionEnvelope({
                     sequence: 2,
                     nonce,
@@ -409,7 +349,7 @@ describe('BrowserPluginSurfacePlacements', () => {
             },
             {
                 executionMachineId: 'machine-admitted',
-                executionServerId: 'server-admitted',
+                executionServerId: 'srv_account_one',
                 executionSessionId: 'session-admitted',
             },
         );

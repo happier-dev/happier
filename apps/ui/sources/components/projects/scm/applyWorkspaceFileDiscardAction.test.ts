@@ -24,20 +24,6 @@ vi.mock('@/sync/ops/scm/machineScm', () => ({
     machineScmChangeDiscard: (...args: Parameters<typeof machineScmChangeDiscardSpy>) => machineScmChangeDiscardSpy(...args),
 }));
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createPartialStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-        storage: createStorageStoreMock({
-            beginWorkspaceScmOperation: () => ({
-                started: true,
-                operation: { id: 'op-1', startedAt: 1, sessionId: 'session-1', operation: 'discard' },
-            }),
-            finishWorkspaceScmOperation: () => true,
-            appendWorkspaceScmOperation: () => {},
-        } as any),
-    });
-});
-
 function createSnapshot(): ScmWorkingSnapshot {
     return {
         projectKey: 'server-1:machine-1:/repo',
@@ -62,7 +48,11 @@ function createSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('applyWorkspaceFileDiscardAction', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+        projectManager.clear();
+        storage.setState(storage.getInitialState(), true);
         machineScmChangeDiscardSpy.mockClear();
         modalConfirmSpy.mockClear();
     });

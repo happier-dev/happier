@@ -399,7 +399,7 @@ describe('happier attach', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     };
-    const fetchSessionsPageFn = vi.fn(async () => ({
+    const fetchSessionsPageFn = vi.fn(async ({ activeOnly = false }: { activeOnly?: boolean } = {}) => ({
       sessions: [
         createSessionRecordFixture({
           id: 'sid_attachable_1',
@@ -482,7 +482,7 @@ describe('happier attach', () => {
             },
           }),
         }),
-      ],
+      ].filter((session) => !activeOnly || session.active),
       nextCursor: null,
       hasNext: false,
     }));
@@ -543,6 +543,7 @@ describe('happier attach', () => {
       runTmuxAttachFn,
     });
 
+    expect(fetchSessionsPageFn).toHaveBeenCalledWith(expect.objectContaining({ activeOnly: true }));
     expect(runTmuxAttachFn).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sid_attachable_1' }));
     expect(resolveBackendExecutionSurfaces).toHaveBeenCalled();
     expect(fetchAccountEncryptionCurrentness).toHaveBeenCalledOnce();

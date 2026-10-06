@@ -11,18 +11,9 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 installPopoverCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'ios',
-                select: (value: any) => value.ios ?? value.default ?? null,
-            },
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' }, {
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
-            StyleSheet: {
-                absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-            },
-            View: (props: any) => React.createElement('View', props, props.children),
-            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
         });
     },
 });

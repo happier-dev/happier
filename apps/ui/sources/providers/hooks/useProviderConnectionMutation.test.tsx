@@ -596,7 +596,7 @@ describe('useProviderConnectionMutation', () => {
                 result = await hook.getCurrent().run(testCase.request);
             });
             expect(result).toEqual(testCase.response);
-            expect(hook.getCurrent().error).toEqual(createProviderErrorV1('provider_machine_unavailable', {
+            expect(hook.getCurrent().error).toEqual(createProviderErrorV1('agent_error', {
                 connectionId: 'pc_a',
                 machineId: 'machine-a',
             }));

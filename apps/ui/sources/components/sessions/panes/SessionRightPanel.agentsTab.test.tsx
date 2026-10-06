@@ -1,19 +1,10 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import { act } from 'react-test-renderer';
+import { renderScreen as renderPanelScreen, type RenderScreenResult } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let terminalFeatureEnabled = false;
-
-const openRightSpy = vi.fn();
-const setRightTabSpy = vi.fn();
-
-let scopeState: any = {
-    right: { isOpen: true, activeTabId: 'git', tabState: {} },
-};
+let initialTabId = 'git';
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -39,59 +30,9 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useLocalSetting: () => 'sidebar',
-        });
-    },
 });
 
 // Typography is the real type scale (plain constants), not a partial stub that drifts from it.
-
-vi.mock('@/utils/platform/deferOnWeb', () => ({
-    deferOnWeb: (fn: any) => fn(),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'terminal.embeddedPty' ? terminalFeatureEnabled : false,
-}));
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useDeviceType: () => 'tablet',
-}));
-
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        scopeState,
-        openRight: openRightSpy,
-        setRightTab: setRightTabSpy,
-        closeRight: vi.fn(),
-        openDetailsTab: vi.fn(),
-    }),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', () => ({
-    SessionRepositoryTreeBrowserView: () => React.createElement('FilesView'),
-}));
-
-vi.mock('@/components/sessions/panes/git/SessionRightPanelGitView', () => ({
-    SessionRightPanelGitView: () => React.createElement('GitView'),
-}));
-
-vi.mock('@/components/sessions/work/SessionWorkView', () => ({
-    SessionWorkView: () => React.createElement('AgentsView'),
-}));
-
-vi.mock('@/components/sessions/panes/SessionTranscriptNavigationPane', () => ({
-    SessionTranscriptNavigationPane: (props: Record<string, unknown>) => (
-        React.createElement('SessionTranscriptNavigationPane', props)
-    ),
-}));
-
-vi.mock('@/components/sessions/panes/terminal/SessionRightPanelTerminalView', () => ({
-    SessionRightPanelTerminalView: () => React.createElement('TerminalView'),
-}));
 
 function findHostByTestId(screen: RenderScreenResult, testID: string) {
     return screen.findAllByTestId(testID).find((node) => typeof node.type === 'string') ?? null;
@@ -107,12 +48,17 @@ function getStyleValue(style: unknown, key: string): unknown {
     return undefined;
 }
 
+import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+const runtime = installSessionPaneRuntimeTestHarness();
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderPanelScreen(<runtime.Wrapper>{element}</runtime.Wrapper>);
+    await act(async () => runtime.pane.openRight({ tabId: initialTabId }));
+    return screen;
+}
+
 describe('SessionRightPanel (core tabs)', () => {
     beforeEach(() => {
-        terminalFeatureEnabled = false;
-        scopeState = { right: { isOpen: true, activeTabId: 'git', tabState: {} } };
-        openRightSpy.mockClear();
-        setRightTabSpy.mockClear();
+        initialTabId = 'git';
         vi.clearAllMocks();
     });
 
@@ -140,29 +86,31 @@ describe('SessionRightPanel (core tabs)', () => {
     });
 
     it('renders the transcript navigation surface when the navigation tab is active', async () => {
-        scopeState = { right: { isOpen: true, activeTabId: 'navigation', tabState: {} } };
+        initialTabId = 'navigation';
         const { SessionRightPanel } = await import('./SessionRightPanel');
+        const { SessionTranscriptNavigationPane } = await import('./SessionTranscriptNavigationPane');
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
         const navigationSurface = findHostByTestId(screen, 'session-rightpanel-surface-navigation');
         expect(navigationSurface).not.toBeNull();
         expect(navigationSurface?.props.pointerEvents).toBe('auto');
-        expect(screen.findAllByType('SessionTranscriptNavigationPane')).toHaveLength(1);
-        expect(screen.findByType('SessionTranscriptNavigationPane')?.props.sessionId).toBe('s1');
+        expect(screen.findAllByType(SessionTranscriptNavigationPane)).toHaveLength(1);
+        expect(screen.findByType(SessionTranscriptNavigationPane)?.props.sessionId).toBe('s1');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
     });
 
     it('only asks the navigation pane to reveal the transcript when this panel replaces it', async () => {
-        scopeState = { right: { isOpen: true, activeTabId: 'navigation', tabState: {} } };
+        initialTabId = 'navigation';
         const { SessionRightPanel } = await import('./SessionRightPanel');
+        const { SessionTranscriptNavigationPane } = await import('./SessionTranscriptNavigationPane');
 
         // Desktop pane: the transcript is mounted beside this panel, so a jump must not
         // close the reader's navigation list to "reveal" something already visible.
         const beside = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
-        expect(beside.findByType('SessionTranscriptNavigationPane')?.props.onRevealTranscript).toBeUndefined();
+        expect(beside.findByType(SessionTranscriptNavigationPane)?.props.onRevealTranscript).toBeUndefined();
 
         // Mobile screen presentation: this panel IS the route, the transcript is another one.
         const onRequestClose = vi.fn();
@@ -174,14 +122,14 @@ describe('SessionRightPanel (core tabs)', () => {
                 onRequestClose={onRequestClose}
             />,
         );
-        const reveal = asScreen.findByType('SessionTranscriptNavigationPane')?.props.onRevealTranscript;
+        const reveal = asScreen.findByType(SessionTranscriptNavigationPane)?.props.onRevealTranscript;
         expect(typeof reveal).toBe('function');
         (reveal as () => void)();
         expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
     it('keeps a single agents surface test id when the agents tab is active', async () => {
-        scopeState = { right: { isOpen: true, activeTabId: 'agents', tabState: {} } };
+        initialTabId = 'agents';
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
@@ -194,7 +142,7 @@ describe('SessionRightPanel (core tabs)', () => {
     });
 
     it('uses git as an in-memory default when persisted pane state points at an unregistered tab', async () => {
-        scopeState = { right: { isOpen: true, activeTabId: 'reviews', tabState: {} } };
+        initialTabId = 'reviews';
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
@@ -202,7 +150,7 @@ describe('SessionRightPanel (core tabs)', () => {
         const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
         expect(gitSurface).not.toBeNull();
         expect(gitSurface?.props.pointerEvents).toBe('auto');
-        expect(setRightTabSpy).not.toHaveBeenCalled();
+        expect(runtime.pane.scopeState?.right.activeTabId).toBe('reviews');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-reviews')).toBeNull();

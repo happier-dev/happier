@@ -25,7 +25,7 @@ describe('readSessionConnectedServiceBindings', () => {
         expect(readSessionConnectedServiceBindings({
             metadata: {
                 connectedServices: {
-                    v: 1,
+                    v: 2,
                     bindingsByServiceId: {
                         [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
                     },
@@ -33,7 +33,7 @@ describe('readSessionConnectedServiceBindings', () => {
             },
             agentId: 'claude',
         })).toEqual({
-            v: 1,
+            v: 2,
             bindingsByServiceId: {
                 [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
             },
@@ -55,7 +55,7 @@ describe('readSessionConnectedServiceBindings', () => {
             },
             agentId: 'claude',
         })).toEqual({
-            v: 1,
+            v: 2,
             bindingsByServiceId: {
                 [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
             },
@@ -89,7 +89,7 @@ describe('readSessionConnectedServiceBindings', () => {
                 },
             },
             agentId: 'codex',
-        })).toEqual({ v: 1, bindingsByServiceId: {} });
+        })).toEqual({ v: 2, bindingsByServiceId: {} });
     });
 
     it('normalizes the bounded descriptor fallback for older sessions to qualified keys', () => {
@@ -110,7 +110,7 @@ describe('readSessionConnectedServiceBindings', () => {
             },
             agentId: 'codex',
         })).toEqual({
-            v: 1,
+            v: 2,
             bindingsByServiceId: {
                 'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'happier' },
             },

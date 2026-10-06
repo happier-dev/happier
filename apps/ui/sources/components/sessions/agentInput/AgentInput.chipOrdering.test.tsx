@@ -1,187 +1,45 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { ReactTestRendererJSON } from 'react-test-renderer';
+import { renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'ios',
-                select: (v: any) => v?.ios ?? v?.default ?? v?.web ?? v?.native ?? v?.android,
-            },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock().module;
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
-                if (key === 'agentInputChipDensity') return 'labels';
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                return null;
-            },
-            useSettings: () => ({
-                profiles: [],
-                agentInputEnterToSend: true,
-                agentInputActionBarLayout: 'wrap',
-                agentInputChipDensity: 'labels',
-                sessionPermissionModeApplyTiming: 'immediate',
-            }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesReducerState: () => null,
-        });
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' });
     },
 });
-
-vi.mock('expo-image', () => ({
-    Image: 'Image',
-}));
-
-vi.mock('@/hooks/session/useUserMessageHistory', () => ({
-    useUserMessageHistory: () => ({ reset: () => {}, moveUp: () => {}, moveDown: () => {}, setText: () => {} }),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => false,
-}));
-
-vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentIconSvgXml: () => null,
-    getAgentIconSource: () => null,
-    getAgentIconTintColor: () => undefined,
-    AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
-    DEFAULT_AGENT_ID: 'codex',
-    resolveAgentIdFromFlavor: () => null,
-    getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
-}));
-
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
-        options?.find?.((option: any) => option.value === effectiveModelId)
-            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
-            ?? null,
-    getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    supportsFreeformModelSelectionForSession: () => false,
-}));
-
-vi.mock('@/sync/domains/models/describeEffectiveModelMode', () => ({
-    describeEffectiveModelMode: () => ({ selectedModelId: 'default', appliedModelId: null, effectiveModelId: 'default' }),
-}));
-
-vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
-    getPermissionModeBadgeLabelForAgentType: () => 'Default',
-    getPermissionModeLabelForAgentType: () => 'Default',
-    getPermissionModeOptionsForSession: () => [{ value: 'default', label: 'Default' }],
-    getPermissionModeTitleForAgentType: () => 'Permissions',
-}));
-
-vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
-    describeEffectivePermissionMode: () => ({ effectiveMode: 'default' }),
-}));
-
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
-}));
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: (props: Record<string, unknown>) => React.createElement('Switch', props, null),
-}));
-
-vi.mock('@/components/ui/theme/haptics', () => ({
-    hapticsLight: () => {},
-    hapticsError: () => {},
-}));
-
-vi.mock('@/components/ui/feedback/Shaker', () => ({
-    Shaker: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
-}));
-
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: () => null,
-}));
-
-vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [[], 0, () => {}, () => {}],
-}));
-
-vi.mock('@/components/autocomplete/applySuggestion', () => ({
-    applySuggestion: (text: string) => ({ text, cursorPosition: text.length }),
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    Popover: () => null,
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
-    useScrollEdgeFades: () => ({
-        canScrollX: false,
-        visibility: { left: false, right: false },
-        onViewportLayout: () => {},
-        onContentSizeChange: () => {},
-        onScroll: () => {},
-        onMomentumScrollEnd: () => {},
-    }),
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
-    ScrollEdgeFades: () => null,
-}));
-
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
-    ScrollEdgeIndicators: () => null,
-}));
-
-vi.mock('@/components/sessions/sourceControl/status', () => ({
-    SourceControlStatusBadge: () => null,
-    useHasMeaningfulScmStatus: () => false,
-}));
-
-vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
-    OptionPickerOverlay: () => null,
-}));
-
-vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
-    computeSessionModePickerControl: () => null,
-}));
-
-vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
-    computeSessionConfigOptionControls: () => null,
-}));
+const runtime = installSessionPaneRuntimeTestHarness();
+beforeEach(() => {
+    storage.setState({ settings: { ...storage.getState().settings,
+        agentInputEnterToSend: true, agentInputActionBarLayout: 'wrap', agentInputChipDensity: 'labels',
+        sessionPermissionModeApplyTiming: 'immediate' } });
+});
+async function renderScreen(element: React.ReactElement) {
+    return renderPanelScreen(element, { wrapper: runtime.Wrapper });
+}
+function flattenJson(
+    node: ReactTestRendererJSON | ReactTestRendererJSON[] | string | number | null,
+    out: ReactTestRendererJSON[] = [],
+): ReactTestRendererJSON[] {
+    if (node === null || typeof node === 'string' || typeof node === 'number') return out;
+    if (Array.isArray(node)) {
+        for (const entry of node) flattenJson(entry, out);
+    } else {
+        out.push(node);
+        for (const child of node.children ?? []) flattenJson(child, out);
+    }
+    return out;
+}
 
 describe('AgentInput (chip ordering)', () => {
     it('keeps the engine controls grouped ahead of permission in wrap layout', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(AgentInput, {
+        const tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -195,31 +53,12 @@ describe('AgentInput (chip ordering)', () => {
                     acpSessionModeOptionsOverride: [{ id: 'plan', name: 'Plan' }],
                 }))).tree;
 
-        type JsonNode =
-            | renderer.ReactTestRendererJSON
-            | renderer.ReactTestRendererJSON[]
-            | string
-            | number
-            | null;
-
-        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
-            if (!node) return out;
-            if (typeof node === 'string' || typeof node === 'number') return out;
-            if (Array.isArray(node)) {
-                for (const entry of node) flattenJson(entry, out);
-                return out;
-            }
-            out.push(node);
-            if (node.children) flattenJson(node.children as JsonNode, out);
-            return out;
-        }
-
-        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const allNodes = flattenJson(tree.toJSON());
         const pressables = allNodes.filter((n) => n.type === 'Pressable');
 
-        const permissionIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-permission-chip');
-        const agentIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-agent-chip');
-        const modeIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-session-mode-chip');
+        const permissionIndex = pressables.findIndex((n) => n.props?.testID === 'agent-input-permission-chip');
+        const agentIndex = pressables.findIndex((n) => n.props?.testID === 'agent-input-agent-chip');
+        const modeIndex = pressables.findIndex((n) => n.props?.testID === 'agent-input-session-mode-chip');
 
         expect(permissionIndex).toBeGreaterThanOrEqual(0);
         expect(agentIndex).toBeGreaterThanOrEqual(0);
@@ -231,8 +70,7 @@ describe('AgentInput (chip ordering)', () => {
     it('keeps machine on the secondary wrap row before path/resume, with the trailing cluster read last', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(AgentInput, {
+        const tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -247,26 +85,7 @@ describe('AgentInput (chip ordering)', () => {
                     resumeSessionId: 'session-1',
                 }))).tree;
 
-        type JsonNode =
-            | renderer.ReactTestRendererJSON
-            | renderer.ReactTestRendererJSON[]
-            | string
-            | number
-            | null;
-
-        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
-            if (!node) return out;
-            if (typeof node === 'string' || typeof node === 'number') return out;
-            if (Array.isArray(node)) {
-                for (const entry of node) flattenJson(entry, out);
-                return out;
-            }
-            out.push(node);
-            if (node.children) flattenJson(node.children as JsonNode, out);
-            return out;
-        }
-
-        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const allNodes = flattenJson(tree.toJSON());
         const sendIndex = allNodes.findIndex((node) => node.props?.testID === 'new-session-composer-send');
         const wrapRowIndex = allNodes.findIndex((node) => node.props?.testID === 'agentInput-pathResumeRow');
         const machineIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-machine-chip');
@@ -285,8 +104,7 @@ describe('AgentInput (chip ordering)', () => {
     it('keeps recipient ahead of delivery in the primary wrap row', async () => {
         const { AgentInput } = await import('./AgentInput');
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(AgentInput, {
+        const tree = (await renderScreen(React.createElement(AgentInput, {
                     value: '',
                     placeholder: 'placeholder',
                     onChangeText: () => {},
@@ -320,26 +138,7 @@ describe('AgentInput (chip ordering)', () => {
                     ],
                 }))).tree;
 
-        type JsonNode =
-            | renderer.ReactTestRendererJSON
-            | renderer.ReactTestRendererJSON[]
-            | string
-            | number
-            | null;
-
-        function flattenJson(node: JsonNode, out: renderer.ReactTestRendererJSON[] = []): renderer.ReactTestRendererJSON[] {
-            if (!node) return out;
-            if (typeof node === 'string' || typeof node === 'number') return out;
-            if (Array.isArray(node)) {
-                for (const entry of node) flattenJson(entry, out);
-                return out;
-            }
-            out.push(node);
-            if (node.children) flattenJson(node.children as JsonNode, out);
-            return out;
-        }
-
-        const allNodes = flattenJson(tree!.toJSON() as JsonNode);
+        const allNodes = flattenJson(tree.toJSON());
         const permissionIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-permission-chip');
         const recipientIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-recipient-chip');
         const deliveryIndex = allNodes.findIndex((node) => node.props?.testID === 'agent-input-delivery-chip');

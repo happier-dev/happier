@@ -52,6 +52,7 @@ describe('ACP replay sidechain durable outbox integration', () => {
     const sessionId = 'session-replay-restart';
     const disconnectedOutbox = createRuntimeSessionClientDurableMutationOutbox({
       token: 'token',
+      serverUrl: 'http://localhost:3005',
       sessionId,
       getSocket: () => null,
       requestReconnect: () => undefined,
@@ -120,6 +121,7 @@ describe('ACP replay sidechain durable outbox integration', () => {
     };
     const restartedOutbox = createRuntimeSessionClientDurableMutationOutbox({
       token: 'token',
+      serverUrl: 'http://localhost:3005',
       sessionId,
       getSocket: () => socket,
       requestReconnect: () => undefined,

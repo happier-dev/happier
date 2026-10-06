@@ -69,8 +69,10 @@ describe('home governance mutations', () => {
         })).toEqual({ kind: 'approval_pending', artifactId: 'approval-home-1' });
     });
 
-    it('rejects an explicit Home intent without a bound port instead of mutating the focused Home', async () => {
-        const homeA = await addHome();
+    it('rejects an explicitly signed-out Home intent instead of mutating the focused Home', async () => {
+        const homeA = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: null,
+        });
         const homeB = await harness.addHome({
             name: 'Home B',
             serverUrl: 'https://home-b.example',
@@ -83,13 +85,11 @@ describe('home governance mutations', () => {
         });
 
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const result = await createDefaultActionExecutor().execute(
+        await expect(createDefaultActionExecutor().execute(
             'home.accounts.role.set',
             { accountId: 'acc_target', homeRole: 'admin' },
             { surface: 'ui', serverId: homeA },
-        );
-
-        expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        )).rejects.toThrow('action_home_signed_out');
         expect(harness.requestsFor('/v1/home/accounts/role/set')).toEqual([]);
     });
 

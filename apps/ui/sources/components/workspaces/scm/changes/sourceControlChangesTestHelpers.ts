@@ -7,7 +7,6 @@ type InstallSourceControlChangesCommonModuleMocksOptions = Readonly<{
     modal?: SourceControlChangesModuleFactory;
     reactNative?: SourceControlChangesModuleFactory;
     text?: SourceControlChangesModuleFactory;
-    typography?: SourceControlChangesModuleFactory;
     uiText?: SourceControlChangesModuleFactory;
     unistyles?: SourceControlChangesModuleFactory;
 }>;
@@ -18,7 +17,6 @@ const sourceControlChangesModuleState = vi.hoisted(() => ({
         modal: undefined as SourceControlChangesModuleFactory | undefined,
         reactNative: undefined as SourceControlChangesModuleFactory | undefined,
         text: undefined as SourceControlChangesModuleFactory | undefined,
-        typography: undefined as SourceControlChangesModuleFactory | undefined,
         uiText: undefined as SourceControlChangesModuleFactory | undefined,
         unistyles: undefined as SourceControlChangesModuleFactory | undefined,
     },
@@ -32,7 +30,6 @@ export function installSourceControlChangesCommonModuleMocks(
         modal: options.modal,
         reactNative: options.reactNative,
         text: options.text,
-        typography: options.typography,
         uiText: options.uiText,
         unistyles: options.unistyles,
     };
@@ -76,20 +73,6 @@ export function installSourceControlChangesCommonModuleMocks(
         return {
             Text: 'Text',
             TextInput: 'TextInput',
-        };
-    });
-
-    vi.mock('@/constants/Typography', async () => {
-        const activeOptions = sourceControlChangesModuleState.options;
-        if (activeOptions.typography) {
-            return await activeOptions.typography();
-        }
-
-        return {
-            Typography: {
-                default: () => ({}),
-                mono: () => ({}),
-            },
         };
     });
 

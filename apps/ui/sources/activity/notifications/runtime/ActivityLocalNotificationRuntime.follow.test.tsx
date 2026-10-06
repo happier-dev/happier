@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { handleNewMessageSocketUpdate } from '@/sync/engine/sessions/sessionSocketUpdate';
 import { handleEphemeralSocketUpdate, handleUpdateContainer } from '@/sync/engine/socket/socket';
 import { ActivityLocalNotificationRuntime } from './ActivityLocalNotificationRuntime';
@@ -18,7 +19,7 @@ type ExpoNotificationParams = Parameters<typeof import('../channels/sendExpoLoca
 
 const boundary = vi.hoisted(() => ({
     desktop: false,
-    active: { serverId: 'server-a', serverUrl: 'https://stack.example.test', generation: 1 },
+    active: { serverId: 'srv_home_a', serverUrl: 'https://stack.example.test', generation: 1 },
     expo: vi.fn(async (_params: ExpoNotificationParams) => 'notification-1'),
     tauri: vi.fn(async () => true),
 }));
@@ -30,13 +31,6 @@ vi.mock('react-native', async () => {
 vi.mock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => boundary.desktop }));
 vi.mock('../channels/sendExpoLocalNotification', () => ({ sendExpoLocalNotification: boundary.expo }));
 vi.mock('../channels/sendTauriLocalNotification', () => ({ sendTauriLocalNotification: boundary.tauri }));
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
-    return createPartialServerProfilesModuleMock(importOriginal, {
-        profiles: [{ id: 'server-a', serverUrl: boundary.active.serverUrl }],
-        overrides: { getActiveServerSnapshot: () => boundary.active },
-    });
-});
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
     return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
@@ -50,7 +44,7 @@ const applySessions: Parameters<typeof handleUpdateContainer>[0]['applySessions'
 
 async function deliverMessage(seq: number, human: boolean, recovered = false, sourceAccountId = 'other-account'): Promise<void> {
     if (!recovered) {
-        await handleEphemeralSocketUpdate({ sourceServerId: 'server-a',
+        await handleEphemeralSocketUpdate({ sourceServerId: 'srv_home_a',
             update: { type: 'session-personal-event', sessionId: 'session-1', eventId: `message-${seq}`,
                 event: human ? 'human_message' : 'message', message: { sequenceDomain: 'session_transcript', messageSeq: seq },
                 ...(human ? { sourceAccountId } : {}),
@@ -61,7 +55,7 @@ async function deliverMessage(seq: number, human: boolean, recovered = false, so
         return;
     }
     await handleNewMessageSocketUpdate({
-        serverId: 'server-a',
+        serverId: 'srv_home_a',
         updateData: { body: { sid: 'session-1', message: {
             id: `message-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq,
             messageRole: human ? 'user' : 'agent',
@@ -87,19 +81,19 @@ describe('live Follow socket notifications', () => {
         let reconciled = 0;
         const reconcile = async () => {
             reconciled++;
-            notifyActivityReady({ serverId: 'server-a', sessionId: 'session-1' }, [], undefined, undefined, 'reconciliation');
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, undefined, 'reconciliation');
             return true;
         };
         await act(async () => {
             await applySessionChangedBackgroundWakePayload({
-                payload: { type: 'session_changed', serverId: 'server-a', sessionId: 'session-1', alert: 'muted' }, reconcile,
+                payload: { type: 'session_changed', serverId: 'srv_home_a', sessionId: 'session-1', alert: 'muted' }, reconcile,
             });
         });
         expect(reconciled).toBe(1);
         expect(boundary.expo).not.toHaveBeenCalled();
         await act(async () => {
             await applySessionChangedBackgroundWakePayload({
-                payload: { type: 'session_changed', serverId: 'server-a', sessionId: 'session-1' }, reconcile,
+                payload: { type: 'session_changed', serverId: 'srv_home_a', sessionId: 'session-1' }, reconcile,
             });
         });
         expect(reconciled).toBe(2);
@@ -110,15 +104,15 @@ describe('live Follow socket notifications', () => {
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         const deferred = createDeferred<boolean>();
         const pending = applySessionChangedBackgroundWakePayload({
-            payload: { type: 'session_changed', serverId: 'server-a', sessionId: 'session-1', alert: 'muted' },
+            payload: { type: 'session_changed', serverId: 'srv_home_a', sessionId: 'session-1', alert: 'muted' },
             reconcile: async () => {
-                notifyActivityReady({ serverId: 'server-a', sessionId: 'session-1' }, [], undefined, undefined, 'reconciliation');
+                notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, undefined, 'reconciliation');
                 return deferred.promise;
             },
         });
         try {
             expect(boundary.expo).not.toHaveBeenCalled();
-            await act(async () => notifyActivityReady({ serverId: 'server-a', sessionId: 'session-1' }, []));
+            await act(async () => notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []));
             expect(boundary.expo).toHaveBeenCalledTimes(1);
         } finally {
             deferred.resolve(true);
@@ -126,11 +120,16 @@ describe('live Follow socket notifications', () => {
         }
     });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
-    beforeEach(() => {
+    let savedProfileId: string | undefined;
+    beforeEach(async () => {
+        const profile = await upsertServerProfile({ serverUrl: boundary.active.serverUrl, name: 'Home A' });
+        savedProfileId = profile.id;
+        await setServerProfileIdentityForUrl(profile.serverUrl, 'srv_home_a');
+        await setActiveServerId('srv_home_a');
         storage.setState(initialState, true);
         storage.setState({ settings: settingsParse({}), localSettings: localSettingsParse({}) });
-        saveAccountSettings({ serverId: 'server-a', accountId: 'account-a' }, settingsParse({}), 1);
-        applySessions([createSessionFixture({ id: 'session-1', serverId: 'server-a', seq: 0, active: true, viewer: {
+        saveAccountSettings({ serverId: 'srv_home_a', accountId: 'account-a' }, settingsParse({}), 1);
+        applySessions([createSessionFixture({ id: 'session-1', serverId: 'srv_home_a', seq: 0, active: true, viewer: {
             readState: { state: 'not_started' }, relevance: { relevant: true, reasons: ['owned_by_me'] },
             follow: { follows: false, notificationLevel: null },
             attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
@@ -145,6 +144,8 @@ describe('live Follow socket notifications', () => {
         resetActivityLocalNotificationRuntimeForTests();
         resetActivityAlertPresentationNotesForTests();
         storage.setState(initialState, true);
+        if (savedProfileId) await removeServerProfile(savedProfileId);
+        savedProfileId = undefined;
     });
 
     it.each([false, true])('delivers live Follow messages on desktop=%s without remote enrollment or history replay', async (desktop) => {
@@ -164,7 +165,7 @@ describe('live Follow socket notifications', () => {
         await act(async () => { applySessions([{ ...getSession(), viewer: { ...getSession().viewer!, follow: { follows: true, notificationLevel: 'all_messages' } } }]); });
         await act(async () => { await deliverMessage(3, false); });
         expect(submit).toHaveBeenCalledTimes(2);
-        await act(async () => { await handleEphemeralSocketUpdate({ sourceServerId: 'server-a',
+        await act(async () => { await handleEphemeralSocketUpdate({ sourceServerId: 'srv_home_a',
             update: { type: 'session-personal-event', sessionId: 'session-1', eventId: 'discussion-message-3', event: 'message',
                 message: { sequenceDomain: 'discussion', discussionId: 'discussion-1', messageSeq: 3 } },
             addActivityUpdate: () => undefined, addMachineActivityUpdate: () => undefined,
@@ -182,7 +183,7 @@ describe('live Follow socket notifications', () => {
 
     it('delivers live source-unavailable only for personally tracked sessions', async () => {
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
-        const deliver = () => handleEphemeralSocketUpdate({ sourceServerId: 'server-a',
+        const deliver = () => handleEphemeralSocketUpdate({ sourceServerId: 'srv_home_a',
             update: { type: 'session-personal-event', sessionId: 'session-1', eventId: 'source-occurrence-1', event: 'source_unavailable' },
             addActivityUpdate: () => undefined, addMachineActivityUpdate: () => undefined,
             getSessionEncryption: () => null, getSession, applyMessages: () => undefined,
@@ -202,7 +203,7 @@ describe('live Follow socket notifications', () => {
     it('delivers committed failed and cancelled occurrences through the live socket', async () => {
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         const transition = (event: 'failed' | 'cancelled', turnId: string) => handleEphemeralSocketUpdate({
-            sourceServerId: 'server-a', update: { type: 'session-personal-event', sessionId: 'session-1', eventId: `mutation-${turnId}`, event, turnId },
+            sourceServerId: 'srv_home_a', update: { type: 'session-personal-event', sessionId: 'session-1', eventId: `mutation-${turnId}`, event, turnId },
             addActivityUpdate: () => undefined, addMachineActivityUpdate: () => undefined,
             getSessionEncryption: () => null, getSession, applyMessages: () => undefined,
         });
@@ -215,12 +216,12 @@ describe('live Follow socket notifications', () => {
     it('does not let native scheduling overwrite the foreground presentation owner', async () => {
         const settings = settingsParse({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'full' } });
         storage.setState({ settings });
-        saveAccountSettings({ serverId: 'server-a', accountId: 'account-a' }, settings, 2);
+        saveAccountSettings({ serverId: 'srv_home_a', accountId: 'account-a' }, settings, 2);
         const accepted = createDeferred<string>();
         boundary.expo.mockImplementationOnce(() => accepted.promise);
         screen = await renderScreen(<ActivityLocalNotificationRuntime />);
         await act(async () => {
-            notifyActivityReady({ serverId: 'server-a', sessionId: 'session-1' }, [],
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [],
                 { sequenceDomain: 'session_transcript', sequence: 21 }, 'ready-21');
         });
         expect(boundary.expo).toHaveBeenCalledTimes(1);

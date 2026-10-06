@@ -3,10 +3,16 @@ import {
     PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 
 describe('serverFetch account-stored-content compatibility', () => {
-    afterEach(() => {
-        vi.resetModules();
+    afterEach(async () => {
+        await resetServerReachabilitySupervisors();
+        resetRuntimeFetch();
         vi.restoreAllMocks();
     });
 
@@ -15,35 +21,9 @@ describe('serverFetch account-stored-content compatibility', () => {
             _input: RequestInfo | URL,
             _init?: RequestInit,
         ) => new Response('{}', { status: 200 }));
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch,
-            setRuntimeFetch: vi.fn(),
-            resetRuntimeFetch: vi.fn(),
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', () => ({
-            TokenStorage: {
-                getCredentials: vi.fn(async () => ({ token: 'token' })),
-                classifyPendingExternalAuthFirstKeyRejectedCredential:
-                    vi.fn(async () => ({ kind: 'allowed' as const })),
-                invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-            },
-        }));
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server',
-                serverUrl: 'https://server.example',
-                generation: 1,
-            }),
-        }));
-        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', () => ({
-            peekServerReachabilityToken: () => null,
-            reportServerUnreachable: vi.fn(),
-            waitForServerReachable: vi.fn(async () => {}),
-            ServerReachabilityWaitTimeoutError: class extends Error {},
-        }));
-        vi.doMock('@/sync/runtime/connectivity/endpointSupervisorPool', () => ({
-            getEndpointSupervisorForServer: () => null,
-        }));
+        await upsertAndActivateServer({ serverUrl: 'https://server.example', name: 'Compatibility Home' });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('compatibility-account') });
+        setRuntimeFetch(runtimeFetch);
 
         const {
             recordAccountStoredContentServerRequirements,

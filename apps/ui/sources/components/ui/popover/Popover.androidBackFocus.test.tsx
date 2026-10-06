@@ -43,19 +43,12 @@ const nativeBack = vi.hoisted(() => {
 
 installPopoverCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'android',
-                select: (value: any) => value.android ?? value.native ?? value.default ?? null,
-            },
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'android' }, {
             BackHandler: {
                 addEventListener: nativeBack.addEventListener,
             },
             useWindowDimensions: () => ({ width: 1000, height: 800 }),
-            StyleSheet: {
-                absoluteFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-            },
         });
     },
 });

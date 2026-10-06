@@ -16,7 +16,11 @@ function createProjection() {
         contributionId: 'acme',
         serverId: 'opencode',
         instanceId: 'instance-1',
-        immutableGenerationId,
+        sourceCustody: {
+            kind: 'managed' as const,
+            immutableGenerationId,
+            installSource: 'npm' as const,
+        },
         custodyOwner: 'sessionRunner' as const,
         mode: 'managedSpawn' as const,
         endpoint: {

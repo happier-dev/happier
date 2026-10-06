@@ -75,38 +75,6 @@ vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['codex'],
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-
-    return {
-        ...actual,
-        AGENT_IDS: ['codex'],
-        DEFAULT_AGENT_ID: 'codex',
-        isBundledAgentId: (value: unknown): value is typeof actual.DEFAULT_AGENT_ID =>
-            typeof value === 'string' && value === 'codex',
-        getAgentCore: () => {
-            const core = actual.getAgentCore('codex');
-            return {
-                ...core,
-                permissions: { ...core.permissions, modeGroup: 'codexLike' },
-                cli: { ...core.cli, machineLoginKey: 'codex' },
-                ui: { ...core.ui, agentPickerIconName: 'terminal-outline' },
-                sessionStorage: { ...core.sessionStorage, direct: false },
-            };
-        },
-        getAgentBehavior: () => {
-            const behavior = actual.getAgentBehavior('codex');
-            return {
-                ...behavior,
-                newSession: {
-                    ...behavior.newSession,
-                    supportsTranscriptStorageMode: () => true,
-                },
-            };
-        },
-    };
-});
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: ({ title, onPress }: any) => {
         if (title === 'Custom Backend' && typeof onPress === 'function') {
@@ -128,6 +96,7 @@ function buildProfile(): AIBackendProfile {
         compatibility: { codex: true },
         compatibilityByTargetKey: {
             [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+            [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'custom-backend', configuredBackendId: 'custom-backend', sourceKind: 'configured' })]: false,
         },
         envVarRequirements: [],
         isBuiltIn: false,
@@ -172,7 +141,7 @@ describe('ProfileEditForm backend targets', () => {
         }));
     });
 
-    it('persists canonical machine-login target when exactly one backend target is compatible', async () => {
+    it('persists the canonical machine-login target when exactly one login-capable Agent is compatible', async () => {
         const saveRef = { current: null as null | (() => boolean) };
         const onSave = vi.fn((_: AIBackendProfile) => true);
         const { ProfileEditForm } = await loadProfileEditForm();
@@ -183,7 +152,8 @@ describe('ProfileEditForm backend targets', () => {
                 authMode: 'machineLogin',
                 compatibility: { codex: false, customAcp: false },
                 compatibilityByTargetKey: {
-                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: true,
+                    [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'codex' })]: true,
+                    [buildBackendTargetKey({ kind: 'configuredAcpBackend', backendId: 'custom-backend' })]: false,
                 },
             }),
             machineId: null,
@@ -198,9 +168,7 @@ describe('ProfileEditForm backend targets', () => {
             authMode: 'machineLogin',
             requiresMachineLoginTargetKey: buildBackendTargetKeyV2({
                 kind: 'backend',
-                backendId: 'custom-backend',
-                configuredBackendId: 'custom-backend',
-                sourceKind: 'configured',
+                backendId: 'codex',
             }),
             requiresMachineLogin: undefined,
         }));

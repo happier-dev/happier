@@ -1,14 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-    machineRpcWithServerScope: machineRpcWithServerScopeMock,
-}));
+let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
 
 const mountedTarget = {
     pluginId: 'acme.preview',
@@ -62,9 +61,40 @@ function automationEligibleEventsSnapshot() {
 }
 
 describe('machine contribution registry projection ops', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.resetModules();
         machineRpcWithServerScopeMock.mockReset();
+        network = await installSessionOpsNetworkBoundary();
+        const homes = await Promise.all([
+            network.addHome('https://server-a', 'account-a'),
+            network.addHome('https://server-b', 'account-a'),
+        ]);
+        // Record the request at the physical Socket.IO boundary. Scoped Home /
+        // Account routing, framing, projection parsing and currentness stay real.
+        network.setRpcAckResponder(async (request) => {
+            try {
+                return { ok: true, result: await machineRpcWithServerScopeMock({
+                    machineId: request.targetId,
+                    serverId: homes.find((home) => home.serverUrl === request.serverUrl)?.id,
+                    method: request.method,
+                    payload: request.payload,
+                    timeoutMs: request.timeoutMs,
+                }) };
+            } catch (error) {
+                const errorCode = readRpcErrorCode(error);
+                if (errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND || errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+                    return { ok: false, error: 'Daemon method unavailable', errorCode };
+                }
+                throw error; // A physical timeout/disconnect rejects the transport, not a daemon ACK.
+            }
+        });
+    });
+    afterEach(async () => {
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
+        network.dispose();
     });
 
     async function installReactNativeRuntimeMocks(platform: 'ios' | 'android' | 'web') {
@@ -111,11 +141,13 @@ describe('machine contribution registry projection ops', () => {
             createdAt: null,
             isEmbeddedLaunch: true,
         }));
-        vi.doMock('@/components/plugins/hostedWeb/hostedWebFrameCapability', () => ({
-            resolveHostedWebFrameCapability: () => platform === 'web'
-                ? { platform: 'web' as const, adapter: 'domIframe' as const }
-                : null,
-        }));
+        if (platform === 'web') {
+            // The real capability owner probes a physical browser iframe.
+            vi.stubGlobal('document', {
+                body: { appendChild: vi.fn(), removeChild: vi.fn() },
+                createElement: (tag: string) => ({ nodeName: tag.toUpperCase(), contentWindow: {}, setAttribute: vi.fn() }),
+            });
+        }
     }
 
     it('routes projection.describe through server-scoped machine rpc within the machine RPC budget', async () => {
@@ -139,16 +171,16 @@ describe('machine contribution registry projection ops', () => {
             method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
             payload: expect.not.objectContaining({ mountedTarget: expect.anything() }),
         }));
-        // No caller-chosen deadline: the machine RPC owner's own budget applies.
-        expect(machineRpcWithServerScopeMock.mock.calls[0]?.[0]).not.toHaveProperty('timeoutMs', expect.any(Number));
+        // The emitted request consumes, rather than replaces, its owning RPC budget.
+        const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
+        expect(network.requests[0]?.timeoutMs).toBeGreaterThan(0);
+        expect(network.requests[0]?.timeoutMs).toBeLessThanOrEqual(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS);
     });
 
     it('classifies why a projection read failed', async () => {
         const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
 
-        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(new Error('timed out'), {
-            code: 'MACHINE_RPC_TIMEOUT',
-        }));
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(createSocketIoAckTimeoutError());
         await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' }))
             .resolves.toEqual({ supported: false, reason: 'timeout' });
 
@@ -223,8 +255,7 @@ describe('machine contribution registry projection ops', () => {
 
         const first = machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
         const second = machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
-        await Promise.resolve();
-        await Promise.resolve();
+        await vi.waitFor(() => expect(resolveRpc).toBeTypeOf('function'));
         const issuedRpcCount = machineRpcWithServerScopeMock.mock.calls.length;
 
         resolveRpc({ protocolVersion: 1, projection: v2Projection() });
@@ -244,11 +275,14 @@ describe('machine contribution registry projection ops', () => {
         const reads = [
             machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-a') }),
             machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-a') }),
-            machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-b') }),
         ];
+        await vi.waitFor(() => expect(pendingResolvers).toHaveLength(1));
+        network.setAccount('https://server-a', 'account-b');
+        reads.push(machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a', accountLifetime: handle('account-b') }));
         await vi.waitFor(() => expect(pendingResolvers.length).toBeGreaterThanOrEqual(2));
-        await new Promise((resolve) => setTimeout(resolve, 0));
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
+        const { parseToken } = await import('@/utils/auth/parseToken');
+        expect(network.requests.map(({ token }) => token ? parseToken(token) : null)).toEqual(['account-a', 'account-b']);
         for (const resolve of pendingResolvers) resolve({ protocolVersion: 1, projection: v2Projection() });
         await expect(Promise.all(reads)).resolves.toEqual([
             expect.objectContaining({ supported: true }),
@@ -258,13 +292,9 @@ describe('machine contribution registry projection ops', () => {
     });
 
     it('does not join an in-flight fallback projection after the browser observes an exact frame fact', async () => {
-        let browserFrameReady = false;
         const pendingResolvers: Array<(value: unknown) => void> = [];
-        vi.doMock('@/components/plugins/hostedWeb/hostedWebFrameCapability', () => ({
-            resolveHostedWebFrameCapability: () => browserFrameReady
-                ? { platform: 'web' as const, adapter: 'domIframe' as const }
-                : null,
-        }));
+        await installReactNativeRuntimeMocks('web');
+        vi.stubGlobal('document', undefined);
         machineRpcWithServerScopeMock.mockImplementation(async () => await new Promise((resolve) => {
             pendingResolvers.push(resolve);
         }));
@@ -272,7 +302,10 @@ describe('machine contribution registry projection ops', () => {
 
         const beforeBrowserFrame = machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
         await vi.waitFor(() => expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1));
-        browserFrameReady = true;
+        vi.stubGlobal('document', {
+            body: { appendChild: vi.fn(), removeChild: vi.fn() },
+            createElement: (tag: string) => ({ nodeName: tag.toUpperCase(), contentWindow: {}, setAttribute: vi.fn() }),
+        });
         const afterBrowserFrame = machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
 
         await vi.waitFor(() => expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2));
@@ -305,15 +338,13 @@ describe('machine contribution registry projection ops', () => {
         const mod = await import('./machineContributionRegistryProjection');
 
         const first = mod.machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
-        await Promise.resolve();
-        await Promise.resolve();
+        await vi.waitFor(() => expect(pendingResolvers).toHaveLength(1));
         mod.publishMachineContributionRegistryProjectionInvalidation({
             machineId: 'machine-1',
             serverId: 'server-a',
         });
         const refreshed = mod.machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
-        await Promise.resolve();
-        await Promise.resolve();
+        await vi.waitFor(() => expect(pendingResolvers).toHaveLength(2));
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(2);
         pendingResolvers[0]?.({ protocolVersion: 1, projection: v2Projection(1) });
@@ -383,8 +414,7 @@ describe('machine contribution registry projection ops', () => {
         });
         // Desktop capability discovery is an async native boundary. Wait for
         // the shared flight to issue before exercising waiter-only cancellation.
-        await Promise.resolve();
-        await Promise.resolve();
+        await vi.waitFor(() => expect(resolveRpc).toBeTypeOf('function'));
         controller.abort();
         resolveRpc({ protocolVersion: 1, projection: v2Projection() });
 
@@ -482,11 +512,7 @@ describe('machine contribution registry projection ops', () => {
             .mockResolvedValueOnce({ status: 'ready', revision: 'settings-r1' })
             .mockResolvedValueOnce({ status: 'changed', revision: 'settings-r1' })
             .mockResolvedValueOnce({ status: 'changed', revision: 'settings-r2' })
-            .mockImplementationOnce((input: Readonly<{ signal?: AbortSignal }>) => new Promise<never>((_resolve, reject) => {
-                input.signal?.addEventListener('abort', () => {
-                    reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-                }, { once: true });
-            }));
+            .mockImplementationOnce(() => new Promise<never>(() => {}));
         const { watchMachinePluginSettingsChanges } = await import('./machineContributionRegistryProjection');
         const onInvalidated = vi.fn();
 
@@ -506,7 +532,7 @@ describe('machine contribution registry projection ops', () => {
                 machineId: 'machine-1',
                 serverId: 'server-a',
                 method: RPC_METHODS.DAEMON_PLUGIN_SETTINGS_WATCH,
-                timeoutMs: 35_000,
+                timeoutMs: expect.any(Number),
                 payload: {
                     serverIdentityId: 'srv_server_a',
                     machineId: 'machine-1',
@@ -533,6 +559,10 @@ describe('machine contribution registry projection ops', () => {
                 },
             }),
         ]);
+        for (const request of network.requests.slice(0, 3)) {
+            expect(request.timeoutMs).toBeGreaterThan(30_000);
+            expect(request.timeoutMs).toBeLessThanOrEqual(35_000);
+        }
         expect(JSON.stringify(machineRpcWithServerScopeMock.mock.calls)).not.toContain('values');
 
         watch.dispose();
@@ -887,6 +917,7 @@ describe('machine contribution registry projection ops', () => {
         // Concurrent readers of the same Action occurrence share one request.
         const first = read('occurrence-a');
         const second = read('occurrence-a');
+        await vi.waitFor(() => expect(answerFirst).toBeTypeOf('function'));
         answerFirst({ ok: true, inputSchema, outputSchema: { type: 'object' } });
         const expected = {
             supported: true,
@@ -986,10 +1017,7 @@ describe('machine contribution registry projection ops', () => {
     });
 
     it('preserves the stable machine-RPC timeout fact for Resource transport consumers', async () => {
-        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(
-            new Error('opaque transport failure'),
-            { code: 'MACHINE_RPC_TIMEOUT' },
-        ));
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(createSocketIoAckTimeoutError());
         const { machinePluginUiResourceRead } = await import('./machineContributionRegistryProjection');
 
         await expect(machinePluginUiResourceRead('machine-1', {
@@ -1028,19 +1056,15 @@ describe('machine contribution registry projection ops', () => {
         const request = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0] as {
             payload?: Record<string, unknown>;
         };
-        expect(request.payload).toMatchObject({
-            machineId: 'machine-1',
-            reactNativeHostRuntimeIdentity: {
-                platform: 'ios',
-                channel: 'internal',
-                appVersion: '0.2.1',
-                nativeApplicationVersion: '0.2.0',
-                nativeBuildVersion: '101',
-                applicationId: 'dev.happier.app',
-                reactNativeVersion: '0.83.4',
-                expoRuntimeVersion: 'runtime-55',
-                availableNativeCapabilities: [],
-            },
+        expect(request.payload?.machineId).toBe('machine-1');
+        expect(request.payload?.reactNativeHostRuntimeIdentity).toEqual({
+            platform: 'ios',
+            channel: 'internal',
+            rawUpdateChannel: 'internal',
+            appVersion: '0.2.1',
+            nativeApplicationVersion: '0.2.0',
+            nativeBuildVersion: '101',
+            applicationId: 'dev.happier.app',
         });
         expect(request.payload?.reactNativeHostRuntimeIdentity).not.toHaveProperty('scriptManagerRuntimeIntegrated');
     });
@@ -1058,15 +1082,12 @@ describe('machine contribution registry projection ops', () => {
         const request = machineRpcWithServerScopeMock.mock.calls.at(-1)?.[0] as {
             payload?: Record<string, unknown>;
         };
-        // Web requests omit the native RN identity but report the real web
-        // executable loader capability so the daemon can project loadability.
+        // Web requests report the hosted frame adapter without manufacturing
+        // a native identity or an executable React Native loader capability.
         expect(request.payload).not.toHaveProperty('reactNativeHostRuntimeIdentity');
+        expect(request.payload).not.toHaveProperty('reactNativeWebLoaderCapability');
         expect(request.payload).toMatchObject({
             machineId: 'machine-1',
-            reactNativeWebLoaderCapability: {
-                integrated: true,
-                installedArtifactLoaderAvailable: true,
-            },
             hostedWebFrameCapability: {
                 platform: 'web',
                 adapter: 'domIframe',

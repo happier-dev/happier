@@ -1,111 +1,42 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const mockEnv = vi.hoisted(() => ({
-    iconsRenderAsText: false,
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+installUiListsCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            // Exercise fallback scheduling when this native boundary never invokes its callback.
+            InteractionManager: { runAfterInteractions: () => ({ cancel: () => {} }) },
+            useWindowDimensions: () => ({ width: 320, height: 800, scale: 1, fontScale: 1 }),
+        });
+    },
+});
+
+vi.unmock('@/components/ui/icons/Icon');
+
+const vendorIconState = vi.hoisted(() => ({ renderText: false }));
+
+// Keep Icon and its normalization real; only the third-party glyph leaves emit fallback text.
+vi.mock('phosphor-react-native/src/icons/DotsThree', () => ({
+    DotsThreeIcon: () => vendorIconState.renderText ? '.' : React.createElement('Svg'),
 }));
-
-const popoverCapture = vi.hoisted(() => ({
-    lastProps: null as Record<string, any> | null,
+vi.mock('phosphor-react-native/src/icons/Star', () => ({
+    StarIcon: () => vendorIconState.renderText ? '.' : React.createElement('Svg'),
 }));
-
-// The remote source mirror intentionally omits build-generated app artifact bytes.
-vi.mock('@/sync/domains/plugins/availability/bundledAppExactArtifactSource', () => ({
-    createBundledPluginUiAppExactArtifactSource: () => Object.freeze({
-        kind: 'appExact' as const,
-        fetch: vi.fn(async () => null),
-    }),
-}));
-vi.mock('@/sync/domains/plugins/availability/reader', () => ({
-    createPluginAccountAvailabilityReader: vi.fn(() => null),
-    createPluginAccountAvailabilityReaderStore: vi.fn(() => ({
-        get: vi.fn(() => null),
-        subscribe: vi.fn(() => () => {}),
-    })),
-    projectPluginAccountAvailabilityMaterializationIdentity: vi.fn(() => null),
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => {
-    const React = require('react');
-    return {
-        FloatingOverlay: (props: any) => React.createElement('FloatingOverlay', props, props.children),
-    };
-});
-
-vi.mock('@/components/ui/popover', () => {
-    const React = require('react');
-    return {
-        usePopoverBoundaryRef: () => null,
-        PopoverScope: (props: any) => React.createElement(React.Fragment, null, props.children),
-        Popover: (props: any) => {
-            popoverCapture.lastProps = props;
-            if (!props.open) return null;
-            return React.createElement(
-                'Popover',
-                props,
-                props.children({
-                    maxHeight: 400,
-                    maxWidth: 400,
-                    placement: props.placement === 'auto' ? 'bottom' : (props.placement ?? 'bottom'),
-                }),
-            );
-        },
-    };
-});
-
-vi.mock('@expo/vector-icons', () => {
-    const React = require('react');
-    return {
-        Ionicons: (props: any) => (
-            mockEnv.iconsRenderAsText ? React.createElement(React.Fragment, null, '.') : React.createElement('Ionicons', props, props.children)
-        ),
-    };
-});
-
-vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock(
-        {
-                                            Platform: {
-                                                OS: 'web',
-                                                select: (m: any) => m?.web ?? m?.default,
-                                            },
-                                            AppState: {
-                                                addEventListener: () => ({ remove: () => {} }),
-                                            },
-                                            InteractionManager: {
-                                                runAfterInteractions: () => {},
-                                            },
-                                            useWindowDimensions: () => ({ width: 320, height: 800 }),
-                                            StyleSheet: {
-                                                absoluteFill: {
-                                                    position: 'absolute',
-                                                    top: 0,
-                                                    left: 0,
-                                                    right: 0,
-                                                    bottom: 0,
-                                                },
-                                            },
-                                            View: (props: any) => React.createElement('View', props, props.children),
-                                            Text: (props: any) => React.createElement('Text', props, props.children),
-                                            Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-                                        }
-    );
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
-});
 
 describe('ItemRowActions', () => {
+    let restoreWebGlobals: (() => void) | undefined;
     beforeEach(() => {
-        popoverCapture.lastProps = null;
+        restoreWebGlobals = withPopoverWebGlobals();
     });
+    afterEach(() => restoreWebGlobals?.());
 
     it('forwards the press event to inline actions so modifier-aware navigation stays centralized', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
@@ -353,19 +284,24 @@ describe('ItemRowActions', () => {
 
         await screen.pressByTestIdAsync('custom-trigger');
 
-        expect(popoverCapture.lastProps?.placement).toBe('bottom');
-        expect(popoverCapture.lastProps?.portal).toEqual(expect.objectContaining({
+        const { Popover } = await import('@/components/ui/popover');
+        const popover = screen.tree.root.findByType(Popover);
+        expect(popover.props.placement).toBe('bottom');
+        expect(popover.props.portal).toEqual(expect.objectContaining({
             anchorAlign: 'center',
         }));
-        expect((popoverCapture.lastProps?.backdrop as Record<string, any> | undefined)?.anchorOverlay).toMatchObject({
+        expect(popover.props.backdrop?.anchorOverlay).toMatchObject({
             props: expect.objectContaining({
                 testID: 'custom-anchor-overlay',
             }),
         });
     });
 
-    it('does not emit raw text nodes under Pressable when row action icons render as text on web', async () => {
-        mockEnv.iconsRenderAsText = true;
+    it('does not emit raw text nodes under Pressable when the vendor overflow glyph renders text on web', async () => {
+        const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
+        const previousFamily = getIconFamily();
+        setIconFamily('phosphor');
+        vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -380,17 +316,23 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByTestId('row-actions-trigger')).toBeTruthy();
 
+            expect(screen.tree.root.findAllByType('Text' as never).some(node => node.children.includes('.'))).toBe(true);
+
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
-            mockEnv.iconsRenderAsText = false;
+            vendorIconState.renderText = false;
+            setIconFamily(previousFamily);
             act(() => {
                 screen?.tree.unmount();
             });
         }
     });
 
-    it('does not emit raw text nodes for inline action icons when icons render as text on web', async () => {
-        mockEnv.iconsRenderAsText = true;
+    it('does not emit raw text nodes when the vendor inline glyph renders text on web', async () => {
+        const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
+        const previousFamily = getIconFamily();
+        setIconFamily('phosphor');
+        vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -405,9 +347,12 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByProps({ accessibilityLabel: 'Favorite' })).toBeTruthy();
 
+            expect(screen.tree.root.findAllByType('Text' as never).some(node => node.children.includes('.'))).toBe(true);
+
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
-            mockEnv.iconsRenderAsText = false;
+            vendorIconState.renderText = false;
+            setIconFamily(previousFamily);
             act(() => {
                 screen?.tree.unmount();
             });

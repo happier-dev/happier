@@ -7,10 +7,12 @@
  */
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import {
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
@@ -19,16 +21,15 @@ import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/orga
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
-
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const SERVER_ID = 'server_a';
+let SERVER_ID: string;
 const SESSION_ID = 'sess_standing';
-const SESSION_KEY = `${SERVER_ID}:${SESSION_ID}`;
-
-const setAttentionStandingSpy = vi.fn(async () => ({ success: true as const }));
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const standingPath = `/v2/session-organization/attention-standings/${SESSION_ID}`;
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -45,20 +46,6 @@ vi.mock('react-native-gesture-handler', () => ({
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
-}));
-
-vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/utils/sessions/sessionUtils')>(),
-    getSessionName: () => 'Session',
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    useSessionStatus: () => ({
-        isConnected: false,
-        statusText: '',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
 }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
@@ -81,56 +68,21 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
 }));
 
-vi.mock('@/sync/ops/sessionOrganization', async (importOriginal) => ({
-    ...(await importOriginal<Record<string, unknown>>()),
-    sessionSetAttentionStandingWithServerScope: (...args: readonly unknown[]) => setAttentionStandingSpy(...(args as [])),
-}));
-
-installSessionShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: { OS: 'ios' },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock().module;
-    },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useHasUnreadMessages: () => false,
-                useProfile: () => ({
-                    id: 'u1',
-                    timestamp: 0,
-                    firstName: null,
-                    lastName: null,
-                    username: null,
-                    avatar: null,
-                    linkedProviders: [],
-                    connectedServices: [],
-                    connectedServicesV2: [],
-                    connectedServiceCredentialRevisionsV1: [],
-                    connectedAccountsV4: [],
-                    connectedAccountGroupsV4: [],
-                }),
-                useSession: () => null,
-                useSessionListMeaningfulActivityAt: () => null,
-                useSetting: createUseSettingMock({ fallback: () => false }),
-            },
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
 });
 
 function createRenderableSession(): SessionListRenderableSession {
-    return {
+    return createSessionListRenderableSessionFixture({
         id: SESSION_ID,
         seq: 4,
         lastViewedSessionSeq: 4,
@@ -147,13 +99,12 @@ function createRenderableSession(): SessionListRenderableSession {
         thinking: false,
         thinkingAt: 0,
         presence: 0,
-    };
+    });
 }
 
 const BASE_ITEM = {
     type: 'session',
     sessionId: SESSION_ID,
-    serverId: SERVER_ID,
     storageKind: 'persisted',
     groupKey: 'attention-placement-v1',
     groupKind: 'attention',
@@ -170,7 +121,7 @@ async function renderRow(params: Readonly<{
     const rowKey = buildSessionListServerScopedRowKey(SERVER_ID, SESSION_ID);
     if (!rowKey) throw new Error('expected a row key');
     const rowViewModel = buildSessionListRowViewModels({
-        listItems: [{ ...BASE_ITEM, attentionPlacementReason: params.attentionPlacementReason }],
+        listItems: [{ ...BASE_ITEM, serverId: SERVER_ID, attentionPlacementReason: params.attentionPlacementReason }],
         reachableSessionDisplayById: new Map(),
         rowRenderableByKey: new Map([[rowKey, session]]),
         relativeNowMs: 1_000,
@@ -219,9 +170,16 @@ function listRowMenuActionIds(screen: RenderedRow): string[] {
 }
 
 describe('SessionItem attention standing action', () => {
-    afterEach(() => {
-        setAttentionStandingSpy.mockClear();
-        standardCleanup();
+    beforeEach(async () => {
+        await home.reset();
+        SERVER_ID = await home.addHome({ name: 'Session Home', serverUrl: 'https://session-standing.test', accountId: 'u1' });
+        home.answer(SERVER_ID, standingPath, {
+            body: { standing: { sessionId: SESSION_ID, standing: true, updatedAt: 1 } },
+        });
+    });
+    afterEach(async () => {
+        await standardCleanup();
+        await home.reset();
     });
 
     it('offers Keep in Needs attention for a session with no stored standing', async () => {
@@ -240,7 +198,7 @@ describe('SessionItem attention standing action', () => {
             attentionStandingEnabled: true,
             attentionStandingPolicy: {
                 defaultStanding: false,
-                overridesBySessionKey: { [SESSION_KEY]: true },
+                overridesBySessionKey: { [buildSessionOrganizationSessionKey(SERVER_ID, SESSION_ID)]: true },
             },
             // Placed as unread, so the presentation flag is false while the STORED bit is true.
             attentionPlacementReason: 'unread',
@@ -256,7 +214,7 @@ describe('SessionItem attention standing action', () => {
             attentionStandingEnabled: false,
             attentionStandingPolicy: {
                 defaultStanding: false,
-                overridesBySessionKey: { [SESSION_KEY]: true },
+                overridesBySessionKey: { [buildSessionOrganizationSessionKey(SERVER_ID, SESSION_ID)]: true },
             },
         });
 
@@ -277,6 +235,11 @@ describe('SessionItem attention standing action', () => {
             await menu?.props.onSelect(SESSION_ACTION_SET_ATTENTION_STANDING_ID);
         });
 
-        expect(setAttentionStandingSpy).toHaveBeenCalledWith(SESSION_ID, true, { serverId: SERVER_ID });
+        expect(home.requestsFor(standingPath)).toMatchObject([
+            { serverId: SERVER_ID, input: { standing: true } },
+        ]);
+        const { storage } = await import('@/sync/domains/state/storage');
+        expect(storage.getState().sessionOrganizationAttentionStandingsBySessionKey[buildSessionOrganizationSessionKey(SERVER_ID, SESSION_ID)])
+            .toMatchObject({ sessionId: SESSION_ID, standing: true });
     });
 });

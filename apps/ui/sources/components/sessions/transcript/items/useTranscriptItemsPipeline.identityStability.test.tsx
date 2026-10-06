@@ -5,12 +5,16 @@
  * must keep stable callbacks and stable derived arrays when individual fields are
  * unchanged.
  */
-import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { useTranscriptItemsPipeline } from './useTranscriptItemsPipeline';
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 type ItemsPipelineDeps = Parameters<typeof useTranscriptItemsPipeline>[0];
 
@@ -42,8 +46,11 @@ function createStableMembers() {
         expandedToolCallsAnchorMessageIds: new Set<string>(),
         getMessageById: vi.fn((messageId: string) => ({
             id: messageId,
-            kind: 'user',
+            kind: 'user-text' as const,
             seq: messageId === 'm2' ? 2 : 1,
+            localId: null,
+            createdAt: 1,
+            text: 'Prompt',
         })),
         getMessageRevisionById: vi.fn(() => 1),
         items,
@@ -54,8 +61,7 @@ function createStableMembers() {
         renderWindowIndexMapRef: createRef(null),
         resolveThinkingExpanded: vi.fn(() => false),
         targetWindowActiveRef: createRef(false),
-        webHotColdCountsRef: createRef({ coldCount: 0, hotCount: 0 }),
-        wrapTranscriptItemForAnchor: vi.fn((_: unknown, node: React.ReactNode) => node),
+        resolveActionDraftFieldOptions: () => [],
     };
 }
 
@@ -75,10 +81,8 @@ function buildDeps(members: ReturnType<typeof createStableMembers>): ItemsPipeli
         sessionId: 's1',
         sessionThinking: false,
         targetWindowState: inactiveWindowState,
-        transcriptNativeHotTailItemCount: 0,
         transcriptToolCallsCollapsedPreviewCountSetting: 3,
-        transcriptWebHotTailItemCount: 0,
-    } as unknown as ItemsPipelineDeps;
+    } satisfies ItemsPipelineDeps;
 }
 
 describe('useTranscriptItemsPipeline identity stability', () => {

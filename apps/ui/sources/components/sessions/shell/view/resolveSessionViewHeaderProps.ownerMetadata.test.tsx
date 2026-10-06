@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -191,7 +191,7 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
 
     it('keeps a deduplicated workspace conflict discoverable from the session header', () => {
         const session = createSessionFixture({ id: 'workspace-conflict-header' });
-        const onOpenWorkspaceSyncConflicts = () => {};
+        const onOpenWorkspaceSyncConflicts = vi.fn();
         const result = resolveSessionViewHeaderProps({
             isDataReady: true,
             session,
@@ -219,11 +219,20 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         const children = React.Children.toArray(
             (result.rightElement as React.ReactElement<{ children?: React.ReactNode }>).props.children,
         );
-        const conflictButton = children.find((child) => React.isValidElement<{ accessibilityLabel?: string }>(child)
-            && child.props.accessibilityLabel === 'Open 1 workspace conflict');
+        const conflictButtons = children.filter((child): child is React.ReactElement<{
+            accessibilityRole?: string;
+            accessibilityLabel?: string;
+            onPress?: () => void;
+        }> => React.isValidElement<{ onPress?: () => void }>(child)
+            && child.props.onPress === onOpenWorkspaceSyncConflicts);
 
-        expect(conflictButton).toBeDefined();
-        expect((conflictButton as React.ReactElement<{ onPress?: () => void }>).props.onPress).toBe(onOpenWorkspaceSyncConflicts);
+        expect(conflictButtons).toHaveLength(1);
+        expect(conflictButtons[0].props.accessibilityRole).toBe('button');
+        expect(conflictButtons[0].props.accessibilityLabel).toBe(
+            t('workspaceSync.attention.conflictedLinks', { count: 1 }),
+        );
+        conflictButtons[0].props.onPress?.();
+        expect(onOpenWorkspaceSyncConflicts).toHaveBeenCalledTimes(1);
     });
 
     it('keeps one direct plugin action but moves a large ordered header contribution list into overflow', () => {

@@ -1,17 +1,21 @@
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
-import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 import type { CustomModalChromeConfig } from '@/modal';
 
-const refreshMachinesThrottledMock = vi.fn(async () => {});
-const listWorkspaceSyncStatusesMock = vi.hoisted(() => vi.fn(async (_input: unknown) => [] as unknown[]));
-const openMachinePathBrowserModalMock = vi.fn<(params: unknown) => Promise<string>>(async () => '/home/leeroy.guest/.happier-stack/workspace/0.3');
 const pathBrowserModuleLoadedMock = vi.fn();
 let credentialsReady = true;
-let activeServerIdState = 'server_a';
+let activeServerIdState = '';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,112 +56,104 @@ function findElementByTestId(node: React.ReactNode, testID: string): React.React
     return findElementByTestId(props.children, testID);
 }
 
-vi.mock('@happier-dev/protocol', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
-    return {
-        ...actual,
-        getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
-    };
-});
-
 installSessionHandoffCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useMachineListByServerId: () => machineListByServerIdState,
-            useMachineRecordValues: () => allMachinesState,
-            useAllSessionListRenderables: () => sessionsState,
-            useSession: (id: string) => sessionsByIdState[id] ?? null,
-            useSessionListRenderable: (id: string) => sessionsState.find((session) => session?.id === id) ?? null,
-            useSetting: (key: string) => settingsState[key],
-            useSettingMutable: (key: string) => [
-                settingsState[key],
-                (next: any) => {
-                    settingsState[key] = next;
-                },
-            ],
-        });
-    },
+    storage: async importOriginal => importOriginal(),
+    modal: async () => modalMock.module,
 });
+vi.doUnmock('@/components/ui/text/Text');
+const modalMock = createModalModuleMock();
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { sync } = await import('@/sync/sync');
+const { storage } = await import('@/sync/domains/state/storage');
+const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+const { MachineSelector } = await import('@/components/ui/machines/MachineSelector');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { ItemList } = await import('@/components/ui/lists/ItemList');
+const { renderScreen: renderScreenBase, invokeTestInstanceHandler, standardCleanup } = await import('@/dev/testkit');
+const homeA = { id: await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' }) };
+const homeB = { id: await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b' }) };
+home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+home.answer(homeA.id, '/v1/machines', { body: { machines: [] } });
+const refreshMachinesThrottledMock = vi.spyOn(sync, 'refreshMachinesThrottled');
+const workspaceOps = await import('@/sync/ops/workspaceSync');
+const listWorkspaceSyncStatusesMock = vi.spyOn(workspaceOps, 'listWorkspaceSyncStatuses');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+const initialStorage = storage.getState();
 
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => ({ serverId: activeServerIdState, serverUrl: '', generation: 1 }),
-}));
+async function applyFixtureState() {
+    if (!credentialsReady) {
+        await connection?.dispose();
+        connection = undefined;
+    }
+    await setActiveServerId(activeServerIdState);
+    const machines = allMachinesState.map(machine => createMachineFixture({
+        ...machine, metadata: { ...createMachineFixture().metadata, ...machine.metadata },
+    }));
+    const scoped = Object.fromEntries(Object.entries(machineListByServerIdState).map(([id, values]) =>
+        [id, values.map((machine: Partial<Machine>) => createMachineFixture({
+            ...machine, metadata: { ...createMachineFixture().metadata, ...machine.metadata },
+        }))]));
+    storage.setState({ isDataReady: true, machineListByServerId: scoped, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])) });
+    storage.getState().applySessions(Object.values(sessionsByIdState).map(session => createSessionFixture({
+        ...session, serverId: homeA.id, metadata: session.metadata,
+    })));
+    storage.setState({ sessionListRowsByServerId: { [homeA.id]: Object.fromEntries(sessionsState.map(session => [session.id,
+        createSessionListRenderableSessionFixture({ ...session, metadata: session.metadata }),
+    ])) } });
+    const { recentMachinePaths = [], ...settings } = settingsState;
+    storage.getState().applySettingsLocal(settings);
+    storage.getState().applyAuthoringMemory({ recentMachinePaths });
+}
 
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
-    getServerProfileLegacyServerIds: () => [],
-}));
+async function renderScreen(element: React.ReactElement) {
+    await applyFixtureState();
+    return await renderScreenBase(element);
+}
 
-vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
-    MachineSelector: (props: any) => React.createElement('MachineSelector', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.rightElement ?? null, props.children ?? null),
-}));
-
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-    RoundButton: (props: any) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/utils/sessions/recentMachines', () => ({
-    getRecentMachinesFromSessions: () => [],
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        refreshMachinesThrottled: refreshMachinesThrottledMock,
-        getCredentials: () => (credentialsReady ? ({ token: 'test' } as any) : null),
-    },
-}));
-
-vi.mock('@/sync/ops/workspaceSync', () => ({
-    listWorkspaceSyncStatuses: (input: unknown) => listWorkspaceSyncStatusesMock(input),
-    getWorkspaceSyncStatus: async () => null,
-}));
-
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => {
+// This loader observation retains the real browser implementation and deferred
+// selection; only the modal presentation/user-response boundary is replaced.
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', async importOriginal => {
     pathBrowserModuleLoadedMock();
-    return {
-        openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalMock(params),
-    };
+    return await importOriginal();
 });
+
+afterEach(async () => {
+    standardCleanup();
+    await connection?.dispose();
+    connection = undefined;
+    storage.setState(initialStorage, true);
+});
+afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncStatusesMock.mockRestore(); });
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: async (url, init) => {
+            const { serverFetch } = await import('@/sync/http/client');
+            const target = new URL(String(url));
+            return serverFetch(target.pathname + target.search, init);
+        } });
+        storage.setState(initialStorage, true);
         ({ resetWorkspaceSyncStatusStoreForTests, setWorkspaceSyncStatus } = await import(
             '@/sync/domains/sessionHandoff/workspaceSyncStatusStore'
         ));
         refreshMachinesThrottledMock.mockClear();
-        openMachinePathBrowserModalMock.mockClear();
-        listWorkspaceSyncStatusesMock.mockReset();
-        listWorkspaceSyncStatusesMock.mockResolvedValue([]);
+        listWorkspaceSyncStatusesMock.mockClear();
         const readinessStore = await import('@/sync/domains/sessionHandoff/workspaceSyncEngineReadinessStore');
         readinessStore.resetWorkspaceSyncEngineReadinessStoreForTests();
         for (const machineId of ['machine_source', 'machine_target']) {
-            readinessStore.applyWorkspaceSyncEngineReadinessEvent({ serverId: 'server_a', machineId }, {
+            readinessStore.applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId }, {
                 engine: { state: 'ready' },
                 carrier: { state: 'ready' },
             });
         }
         resetWorkspaceSyncStatusStoreForTests();
         credentialsReady = true;
-        activeServerIdState = 'server_a';
+        activeServerIdState = homeA.id;
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 {
                     id: 'machine_target',
                     active: true,
@@ -241,10 +237,10 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
-        expect(screen.findByType('ItemList').props.keyboardAware).toBe(true);
+        expect(screen.findByType(ItemList).props.keyboardAware).toBe(true);
     });
 
     it('keeps comma-separated include patterns editable until the handoff choice is committed', async () => {
@@ -257,11 +253,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target', active: true,
                 metadata: { displayName: 'Target machine', homeDir: '/home/target' },
             });
@@ -294,12 +290,12 @@ describe('SessionHandoffPickerModal', () => {
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
         const renderPicker = (awaitingAdmission: boolean) => <SessionHandoffPickerModal
             onClose={vi.fn()} setChrome={(next) => { chrome = next; }} onResolve={onResolve}
-            sessionId="sess_1" sourceMachineId="machine_source" serverId="server_a"
+            sessionId="sess_1" sourceMachineId="machine_source" serverId={homeA.id}
             awaitingAdmission={awaitingAdmission}
         />;
         const screen = await renderScreen(renderPicker(false));
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
             screen.changeTextByTestId('path-selection-list:header:input', '/home/target/repo');
         });
         await act(async () => screen.tree.update(renderPicker(true)));
@@ -311,10 +307,10 @@ describe('SessionHandoffPickerModal', () => {
             React.isValidElement(child) && (child.props as { title?: string; disabled?: boolean }).title === 'common.close'
             && (child.props as { disabled?: boolean }).disabled !== true)).toBe(true);
         expect((findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-awaiting-admission')!.props as { accessibilityLiveRegion?: string }).accessibilityLiveRegion).toBe('polite');
-        const pendingMenus = screen.tree.findAllByType('DropdownMenu' as any);
+        const pendingMenus = screen.tree.findAllByType(DropdownMenu);
         expect(pendingMenus.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title')?.props.itemTrigger.itemProps.disabled).toBe(true);
         expect(pendingMenus.find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title')?.props.itemTrigger.itemProps.disabled).toBe(true);
-        invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', { id: 'another-machine' });
+        invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', { id: 'another-machine' });
         await act(async () => screen.tree.update(renderPicker(false)));
         const readyStart = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         expect((readyStart!.props as { disabled?: boolean }).disabled).toBe(false);
@@ -323,7 +319,7 @@ describe('SessionHandoffPickerModal', () => {
     });
 
     it('uses one authoritative machine hydration request without a QA polling timer', async () => {
-        machineListByServerIdState = { server_a: [] };
+        machineListByServerIdState = { [homeA.id]: [] };
         allMachinesState = [];
         credentialsReady = false;
         const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
@@ -335,7 +331,7 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
         await act(async () => {});
 
@@ -361,13 +357,13 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
         await act(async () => {});
         expect(refreshMachinesThrottledMock).toHaveBeenCalled();
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.testIdPrefix).toBe('session-handoff-machine');
         expect(machineSelector.props.presentation).toBe('dropdown');
         expect(machineSelector.props.showSearch).toBe(true);
@@ -378,10 +374,10 @@ describe('SessionHandoffPickerModal', () => {
             invokeTestInstanceHandler(pathInput, 'onChangeText', '/home/target/happier');
         });
 
-        const modeMenu = tree.findAllByType('DropdownMenu' as any)
+        const modeMenu = tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title');
         expect(modeMenu?.props.items.map((item: any) => item.id)).toEqual(['keep_synced', 'copy_once', 'none']);
-        expect(tree.findAllByType('DropdownMenu' as any)
+        expect(tree.findAllByType(DropdownMenu)
             .some((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.targetBootstrap.title')).toBe(false);
         const advanced = tree.find((node: any) => node.props?.testID === 'session-handoff-advanced');
         expect(advanced.props.expanded).toBe(false);
@@ -427,11 +423,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 metadata: { displayName: 'Target machine' },
             });
@@ -443,7 +439,7 @@ describe('SessionHandoffPickerModal', () => {
             );
         });
 
-        const contentSelectionMenu = screen.tree.findAllByType('DropdownMenu' as any)
+        const contentSelectionMenu = screen.tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.contentSelection.title');
         await act(async () => {
             invokeTestInstanceHandler(contentSelectionMenu!, 'onSelect', 'all_files');
@@ -482,11 +478,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 active: true,
                 metadata: { displayName: 'Target machine', homeDir: '/home/target' },
@@ -515,7 +511,7 @@ describe('SessionHandoffPickerModal', () => {
         settingsState.workspaceRefsV1 = [
             {
                 id: 'workspace-source',
-                serverId: 'server_a',
+                serverId: homeA.id,
                 machineId: 'machine_source',
                 rootPath: '/Users/tester/projects/happier',
                 label: 'Source project',
@@ -523,7 +519,7 @@ describe('SessionHandoffPickerModal', () => {
             },
             {
                 id: 'workspace-target',
-                serverId: 'server_a',
+                serverId: homeA.id,
                 machineId: 'machine_target',
                 rootPath: '/home/target/happier',
                 label: 'Destination project',
@@ -531,7 +527,7 @@ describe('SessionHandoffPickerModal', () => {
             },
             {
                 id: 'workspace-other-target',
-                serverId: 'server_a',
+                serverId: homeA.id,
                 machineId: 'machine_target',
                 rootPath: '/home/target/other',
                 label: 'Other project',
@@ -575,7 +571,7 @@ describe('SessionHandoffPickerModal', () => {
             },
         ];
         setWorkspaceSyncStatus({
-            serverId: 'server_a',
+            serverId: homeA.id,
             controllerMachineId: 'machine_source',
             relationshipId: 'relationship-secret',
         }, {
@@ -590,7 +586,7 @@ describe('SessionHandoffPickerModal', () => {
             lastCycleObservedAtMs: 1,
         });
         setWorkspaceSyncStatus({
-            serverId: 'server_a',
+            serverId: homeA.id,
             controllerMachineId: 'machine_source',
             relationshipId: 'relationship-wrong-target',
         }, {
@@ -614,11 +610,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 active: true,
                 metadata: { displayName: 'Target machine', homeDir: '/home/target' },
@@ -626,7 +622,7 @@ describe('SessionHandoffPickerModal', () => {
             screen.changeTextByTestId('path-selection-list:header:input', '/home/target/happier');
         });
 
-        let modeMenu = screen.tree.findAllByType('DropdownMenu' as any)
+        let modeMenu = screen.tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title');
         const existingChoice = modeMenu?.props.items.find((item: any) => item.title === 'Source project → Destination project');
         expect(existingChoice).toMatchObject({
@@ -640,14 +636,14 @@ describe('SessionHandoffPickerModal', () => {
             invokeTestInstanceHandler(modeMenu!, 'onSelect', existingChoice.id);
         });
 
-        modeMenu = screen.tree.findAllByType('DropdownMenu' as any)
+        modeMenu = screen.tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.selectedId === existingChoice.id);
         expect(modeMenu?.props.itemTrigger).toMatchObject({
             title: 'Source project → Destination project',
             subtitle: 'workspaceSync.mode.keepSynced',
         });
         expect(screen.tree.findAll((node: any) => node.props?.testID === 'session-handoff-advanced')).toHaveLength(0);
-        expect(screen.tree.findAllByType('DropdownMenu' as any)
+        expect(screen.tree.findAllByType(DropdownMenu)
             .some((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.targetBootstrap.title')).toBe(false);
 
         const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
@@ -670,18 +666,18 @@ describe('SessionHandoffPickerModal', () => {
         const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
         const policy = { ...policyFields, policyDigest: computeWorkspaceSyncPolicyDigest(policyFields) };
         settingsState.workspaceRefsV1 = [
-            { id: 'source-c', serverId: 'server_a', machineId: 'machine_source', rootPath: '/Users/tester/projects/happier', label: 'Source project', createdAtMs: 1 },
-            { id: 'hub-a', serverId: 'server_a', machineId: 'machine_hub', rootPath: '/Users/hub/projects/happier', label: 'Hub project', createdAtMs: 1 },
-            { id: 'target-b', serverId: 'server_a', machineId: 'machine_target', rootPath: '/home/target/happier', label: 'Destination project', createdAtMs: 1 },
+            { id: 'source-c', serverId: homeA.id, machineId: 'machine_source', rootPath: '/Users/tester/projects/happier', label: 'Source project', createdAtMs: 1 },
+            { id: 'hub-a', serverId: homeA.id, machineId: 'machine_hub', rootPath: '/Users/hub/projects/happier', label: 'Hub project', createdAtMs: 1 },
+            { id: 'target-b', serverId: homeA.id, machineId: 'machine_target', rootPath: '/home/target/happier', label: 'Destination project', createdAtMs: 1 },
         ];
         settingsState.workspaceSyncRelationshipsV1 = [
             { v: 1, relationshipId: 'c-a', controllerMachineId: 'machine_hub', alphaWorkspaceRefId: 'hub-a', betaWorkspaceRefId: 'source-c', mode: 'keep_both_in_sync', contentPolicy: policy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
             { v: 1, relationshipId: 'a-b', controllerMachineId: 'machine_hub', alphaWorkspaceRefId: 'hub-a', betaWorkspaceRefId: 'target-b', mode: 'keep_synced', contentPolicy: policy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
         ];
-        machineListByServerIdState.server_a.push({ id: 'machine_hub', active: true, metadata: { displayName: 'Mac Studio' } });
+        machineListByServerIdState[homeA.id].push({ id: 'machine_hub', active: true, metadata: { displayName: 'Mac Studio' } });
         allMachinesState.push({ id: 'machine_hub', active: true, metadata: { displayName: 'Mac Studio' } });
         const readinessStore = await import('@/sync/domains/sessionHandoff/workspaceSyncEngineReadinessStore');
-        readinessStore.applyWorkspaceSyncEngineReadinessEvent({ serverId: 'server_a', machineId: 'machine_hub' }, {
+        readinessStore.applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId: 'machine_hub' }, {
             engine: { state: 'ready' }, carrier: { state: 'ready' },
         });
         const onResolve = vi.fn();
@@ -693,15 +689,15 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target', active: true, metadata: { displayName: 'Target machine', homeDir: '/home/target' },
             });
             screen.changeTextByTestId('path-selection-list:header:input', '/home/target/happier');
         });
-        const menu = screen.tree.findAllByType('DropdownMenu' as any)
+        const menu = screen.tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.itemProps?.testID === 'session-handoff-workspace-sync-mode-trigger');
         const linkedChoice = menu?.props.items.find((item: any) => item.id === 'linked_workspace');
         expect(linkedChoice).toMatchObject({
@@ -738,11 +734,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 active: true,
                 metadata: { displayName: 'Target machine', homeDir: '/home/target' },
@@ -750,7 +746,7 @@ describe('SessionHandoffPickerModal', () => {
             screen.changeTextByTestId('path-selection-list:header:input', '/');
         });
 
-        const policyMenu = screen.tree.findAllByType('DropdownMenu' as any)
+        const policyMenu = screen.tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.includeIgnoredMode.title');
         expect(policyMenu?.props.itemTrigger.itemProps.disabled).toBe(false);
 
@@ -776,7 +772,7 @@ describe('SessionHandoffPickerModal', () => {
             chrome = next;
         });
 
-        machineListByServerIdState.server_a[0]!.metadata.homeDir = '/home/target';
+        machineListByServerIdState[homeA.id][0]!.metadata.homeDir = '/home/target';
         allMachinesState[0]!.metadata.homeDir = '/home/target';
         settingsState.recentMachinePaths = [{
             machineId: 'machine_target',
@@ -789,11 +785,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 active: true,
                 activeAt: Date.now(),
@@ -810,13 +806,16 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => {
             screen.changeTextByTestId('path-selection-list:header:input', '/home/target/pasted-project');
         });
-        openMachinePathBrowserModalMock.mockResolvedValueOnce('/home/target/browser-project');
+        modalMock.spies.show.mockImplementationOnce(config => {
+            (config.props as { onResolve: (path: string) => void }).onResolve('/home/target/browser-project');
+            return 'browser-modal';
+        });
         await screen.pressByTestIdAsync('path-selection-list:open-tree-browser');
-        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(modalMock.spies.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
             machineId: 'machine_target',
-            serverId: 'server_a',
+            serverId: homeA.id,
             initialPath: '/home/target/pasted-project',
-        }));
+        }) }));
 
         const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         await act(async () => {
@@ -865,11 +864,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         const directModeMenu = rendered.tree
-            .findAllByType('DropdownMenu' as any)
+            .findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.directTargetMode.title');
         expect(directModeMenu).toBeTruthy();
     });
@@ -890,17 +889,17 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
         await act(async () => {});
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType(MachineSelector);
         await act(async () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
 
-        const modeMenu = tree.findAllByType('DropdownMenu' as any)
+        const modeMenu = tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title');
         expect(modeMenu?.props.selectedId).toBe('copy_once');
 
@@ -910,7 +909,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const advanced = tree.find((node: any) => node.props?.testID === 'session-handoff-advanced');
         expect(advanced.props.expanded).toBe(false);
-        const targetBootstrapMenu = tree.findAllByType('DropdownMenu' as any)
+        const targetBootstrapMenu = tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.targetBootstrap.title');
         expect(targetBootstrapMenu).toBeUndefined();
 
@@ -974,10 +973,10 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType(MachineSelector);
         await act(async () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
@@ -985,7 +984,7 @@ describe('SessionHandoffPickerModal', () => {
         let startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
         expect((startButton?.props as { disabled?: boolean } | undefined)?.disabled).toBe(true);
 
-        const modeMenu = tree.findAllByType('DropdownMenu' as any)
+        const modeMenu = tree.findAllByType(DropdownMenu)
             .find((node: any) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title');
         expect(modeMenu?.props.selectedId).toBe('copy_once');
         await act(async () => {
@@ -1024,7 +1023,7 @@ describe('SessionHandoffPickerModal', () => {
             },
         ];
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
@@ -1043,11 +1042,11 @@ describe('SessionHandoffPickerModal', () => {
                     onClose={onClose}
                     onResolve={onResolve}
                     sessionId="sess_1"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
-        expect(machineSelector.props.machines).toEqual([
+        const machineSelector = tree.findByType(MachineSelector);
+        expect(machineSelector.props.machines).toMatchObject([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1074,7 +1073,7 @@ describe('SessionHandoffPickerModal', () => {
             },
         ];
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
@@ -1093,28 +1092,28 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_target"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
-        expect(machineSelector.props.machines).toEqual([
+        const machineSelector = tree.findByType(MachineSelector);
+        expect(machineSelector.props.machines).toMatchObject([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
 
     it('uses only the session Home machine inventory when another Home is focused', async () => {
-        activeServerIdState = 'server_b';
+        activeServerIdState = homeB.id;
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'A source', homeDir: '/Users/tester' } },
                 { id: 'machine_shared', metadata: { displayName: 'A target' } },
             ],
-            server_b: [
+            [homeB.id]: [
                 { id: 'machine_shared', metadata: { displayName: 'B collision' } },
                 { id: 'machine_b_only', metadata: { displayName: 'B only' } },
             ],
         };
-        allMachinesState = machineListByServerIdState.server_b;
+        allMachinesState = machineListByServerIdState[homeB.id];
 
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
         const screen = await renderScreen(<SessionHandoffPickerModal
@@ -1122,17 +1121,17 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
-        expect(screen.tree.findByType('MachineSelector' as any).props.machines).toEqual([
+        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([
             { id: 'machine_shared', metadata: { displayName: 'A target' } },
         ]);
     });
 
     it('does not start when the selected machine is structurally offline', async () => {
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 {
                     id: 'machine_target',
                     active: false,
@@ -1141,7 +1140,7 @@ describe('SessionHandoffPickerModal', () => {
                 },
             ],
         };
-        allMachinesState = machineListByServerIdState.server_a;
+        allMachinesState = machineListByServerIdState[homeA.id];
         const onResolve = vi.fn();
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
@@ -1156,10 +1155,10 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType(MachineSelector);
         await act(async () => {
             invokeTestInstanceHandler(machineSelector, 'onSelect', { id: 'machine_target', metadata: { displayName: 'Target machine' } });
         });
@@ -1182,7 +1181,7 @@ describe('SessionHandoffPickerModal', () => {
 
     it('falls back to the active machine record when the server-scoped list lags behind', async () => {
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             ],
         };
@@ -1201,11 +1200,11 @@ describe('SessionHandoffPickerModal', () => {
                     onResolve={onResolve}
                     sessionId="sess_1"
                     sourceMachineId="machine_source"
-                    serverId="server_a"
+                    serverId={homeA.id}
                 />)).tree;
 
-        const machineSelector = tree.findByType('MachineSelector' as any);
-        expect(machineSelector.props.machines).toEqual([
+        const machineSelector = tree.findByType(MachineSelector);
+        expect(machineSelector.props.machines).toMatchObject([
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1222,7 +1221,7 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {});
@@ -1238,7 +1237,7 @@ describe('SessionHandoffPickerModal', () => {
         credentialsReady = true;
 
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             ],
         };
@@ -1255,7 +1254,7 @@ describe('SessionHandoffPickerModal', () => {
                 onResolve={onResolve}
                 sessionId="sess_1"
                 sourceMachineId="machine_source"
-                serverId="server_a"
+                serverId={homeA.id}
             />
         );
 
@@ -1266,19 +1265,20 @@ describe('SessionHandoffPickerModal', () => {
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
 
         machineListByServerIdState = {
-            server_a: [
+            [homeA.id]: [
                 { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
                 { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
             ],
         };
-        allMachinesState = machineListByServerIdState.server_a;
+        allMachinesState = machineListByServerIdState[homeA.id];
         await act(async () => {
+            await applyFixtureState();
             tree.update(renderModal());
         });
         await act(async () => {});
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
-        const machineSelector = tree.findByType('MachineSelector' as any);
+        const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_target']);
     });
 
@@ -1291,7 +1291,7 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
         await act(async () => {});
 
@@ -1318,11 +1318,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 metadata: { displayName: 'Target machine' },
             });
@@ -1340,11 +1340,11 @@ describe('SessionHandoffPickerModal', () => {
             .toBe('workspaceSync.engine.checking');
 
         await act(async () => {
-            applyWorkspaceSyncEngineReadinessEvent({ serverId: 'server_a', machineId: 'machine_source' }, {
+            applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId: 'machine_source' }, {
                 engine: { state: 'ready' },
                 carrier: { state: 'ready' },
             });
-            applyWorkspaceSyncEngineReadinessEvent({ serverId: 'server_a', machineId: 'machine_target' }, {
+            applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId: 'machine_target' }, {
                 engine: { state: 'unavailable', errorCode: 'engine_unavailable' },
                 carrier: { state: 'ready' },
             });
@@ -1373,11 +1373,11 @@ describe('SessionHandoffPickerModal', () => {
             onResolve={vi.fn()}
             sessionId="sess_1"
             sourceMachineId="machine_source"
-            serverId="server_a"
+            serverId={homeA.id}
         />);
 
         await act(async () => {
-            invokeTestInstanceHandler(screen.tree.findByType('MachineSelector' as any), 'onSelect', {
+            invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', {
                 id: 'machine_target',
                 metadata: { displayName: 'Target machine' },
             });

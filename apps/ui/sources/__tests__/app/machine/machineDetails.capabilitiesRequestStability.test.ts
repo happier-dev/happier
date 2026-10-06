@@ -1,249 +1,64 @@
-import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
-import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelpers';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createMachineFixture, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import { arrangeMachineDetailsHomeForTests, initializeMachineDetailsRuntimeForTests } from './machineDetailsRuntimeHarness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { CHECKLIST_IDS } from '@/sync/api/capabilities/checklistIds';
 
+const route = { params: { id: 'machine-1' } as Record<string, string> };
+installTerminalRouteCommonModuleMocks({
+    router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ params: () => route.params }).module,
+});
+const network = await initializeMachineDetailsRuntimeForTests();
+const MachineDetailScreen = (await import('@/app/(app)/machine/[id]')).default;
+const { CAPABILITIES_REQUEST_MACHINE_DETAILS } = await import('@/capabilities/requests');
 
-type ReactActEnvironmentGlobal = typeof globalThis & {
-    IS_REACT_ACT_ENVIRONMENT?: boolean;
-    expo?: unknown;
-};
-(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as any).expo = { EventEmitter: class {} };
-
-const { requests } = vi.hoisted(() => ({
-    requests: [] as Array<Record<string, unknown>>,
-}));
-const hookCalls = vi.hoisted(() => ({
-    capabilities: [] as Array<{ machineId: string | null; serverId?: string | null; enabled: boolean }>,
-}));
-const modalSpies = vi.hoisted(() => ({
-    alert: vi.fn(),
-    confirm: vi.fn(),
-    prompt: vi.fn(),
-    show: vi.fn(),
-}));
-const routeParamsRef = vi.hoisted(() => ({
-    current: { id: 'machine-1' } as Record<string, string>,
-}));
-const activeServerIdRef = vi.hoisted(() => ({
-    current: 'server-a',
-}));
-
-installMachineDetailsCommonModuleMocks({
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({
-            router: { back: vi.fn(), push: vi.fn(), replace: vi.fn() },
-            params: () => routeParamsRef.current,
-        }).module;
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: modalSpies }).module;
-    },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: { getState: () => ({ applyFriends: vi.fn() }) },
-            useSessions: () => [],
-            useAllMachines: () => [],
-            useMachine: () => null,
-            useSettings: () => {
-                React.useMemo(() => 0, []);
-                return {
-                    experiments: true,
-                    codexBackendMode: 'acp',
-                };
-            },
-            useSetting: (name: string) => {
-                React.useMemo(() => 0, [name]);
-                if (name === 'experiments') return true;
-                return false;
-            },
-            useSettingMutable: (name: string) => {
-                React.useMemo(() => 0, [name]);
-                return [null, vi.fn()];
-            },
-            useLocalSetting: (name: string) => {
-                React.useMemo(() => 0, [name]);
-                if (name === 'uiFontScale') return 1;
-                return null;
-            },
-        });
-    },
+let home: Awaited<ReturnType<typeof arrangeMachineDetailsHomeForTests>> | undefined;
+afterEach(async () => {
+    await standardCleanup();
+    await home?.dispose();
+    home = undefined;
+    route.params = { id: 'machine-1' };
+    network.resetRequests();
 });
 
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
-}));
-vi.mock('@/components/ui/lists/ItemGroupTitleWithAction', () => ({
-    ItemGroupTitleWithAction: () => null,
-}));
-
-vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
-}));
-
-vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: () => null,
-}));
-vi.mock('@/components/ui/pathBrowser/PathInputBrowseButton', () => ({
-    PathInputBrowseButton: () => null,
-}));
-vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
-    openMachinePathBrowserModal: vi.fn(async () => null),
-}));
-
-
-vi.mock('@/components/ui/forms/Switch', () => ({
-    Switch: () => null,
-}));
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
-
-vi.mock('@/hooks/session/useNavigateToSession', () => {
-    return { useNavigateToSession: () => () => {} };
-});
-vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
-    useMountedShouldContinue: () => () => true,
-}));
-
-vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {
-    type UseMachineCapabilitiesParams = {
-        machineId: string | null;
-        serverId?: string | null;
-        enabled: boolean;
-        request: Record<string, unknown>;
-    };
-    return {
-        useMachineCapabilitiesCache: (params: UseMachineCapabilitiesParams) => {
-            requests.push(params.request);
-            hookCalls.capabilities.push({
-                machineId: params.machineId,
-                serverId: params.serverId,
-                enabled: params.enabled,
-            });
-            return { state: { status: 'idle' }, refresh: vi.fn() };
-        },
-    };
-});
-
-vi.mock('@/sync/ops', () => {
-    return {
-        machineCapabilitiesInvoke: vi.fn(),
-        machineSpawnNewSession: vi.fn(),
-        machineStopDaemon: vi.fn(),
-        machineStopSession: vi.fn(),
-        machineUpdateMetadata: vi.fn(),
-        machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
-        machineRevokeFromAccount: vi.fn(async () => ({ ok: true })),
-    };
-});
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
-}));
-
-vi.mock('@/sync/sync', () => {
-    return { sync: { refreshMachines: vi.fn(), retryNow: vi.fn() } };
-});
-vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>, options?: { onError?: (error: unknown) => void }) => {
-        void promise.catch((error) => {
-            options?.onError?.(error);
-        });
-    },
-}));
-vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
-    tryShowDaemonUnavailableAlertForRpcError: () => false,
-    tryShowDaemonUnavailableAlertForRpcFailure: () => false,
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => {
-    return { isMachineOnline: () => true };
-});
-
-vi.mock('@/utils/sessions/sessionUtils', () => {
-    return {
-        formatOSPlatform: (platform?: string) => platform ?? '',
-        formatPathRelativeToHome: () => '',
-        getSessionName: () => '',
-        getSessionSubtitle: () => '',
-    };
-});
-
-vi.mock('@/utils/path/pathUtils', () => {
-    return { resolveAbsolutePath: () => '' };
-});
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
-    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
-    getActiveServerId: () => activeServerIdRef.current,
-}));
-
-vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
-    readMachineWindowsRemoteSessionLaunchMode: () => undefined,
-    resolveEffectiveWindowsRemoteSessionLaunchMode: () => ({ mode: 'visible' }),
-}));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: () => null,
-}));
-vi.mock('@/components/machines/InstallableDepInstaller', () => ({
-    InstallableDepInstaller: () => null,
-}));
-vi.mock('@/components/sessions/runs/ExecutionRunRow', () => ({
-    ExecutionRunRow: () => null,
-}));
-vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions', () => ({
-    WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS: [],
-}));
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-    setActiveServerAndSwitch: vi.fn(async () => true),
-}));
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => null,
-}));
+const detailsRequests = () => network.requests.filter(request =>
+    request.method === RPC_METHODS.CAPABILITIES_DETECT
+    && request.payload !== null && typeof request.payload === 'object'
+    && 'checklistId' in request.payload && request.payload.checklistId === CHECKLIST_IDS.MACHINE_DETAILS,
+);
 
 describe('MachineDetailScreen capabilities request', () => {
-    it('passes a stable request object to useMachineCapabilitiesCache', async () => {
-        requests.length = 0;
-        hookCalls.capabilities.length = 0;
-        routeParamsRef.current = { id: 'machine-1' };
-        activeServerIdRef.current = 'server-a';
-
-        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        tree = (await renderScreen(React.createElement(MachineDetailScreen))).tree;
-
-        act(() => {
-            tree!.update(React.createElement(MachineDetailScreen));
+    it('loads the canonical checklist without issuing another detection on unchanged renders', async () => {
+        home = await arrangeMachineDetailsHomeForTests(network, {
+            serverUrl: 'https://machine-capabilities-stable.example.test',
+            machines: [createMachineFixture({ activeAt: Date.now() })],
         });
-
-        expect(requests.length).toBeGreaterThanOrEqual(2);
-        expect(requests[0]).toBe(requests[1]);
+        network.respond(RPC_METHODS.CAPABILITIES_DETECT, { protocolVersion: 1, results: {} });
+        const screen = await home.render(MachineDetailScreen);
+        await flushHookEffects({ cycles: 3, turns: 2 });
+        expect(detailsRequests()).toHaveLength(1);
+        expect(detailsRequests()[0]).toMatchObject({ serverUrl: home.home.serverUrl, targetId: 'machine-1', payload: CAPABILITIES_REQUEST_MACHINE_DETAILS });
+        expect(screen.findAllByProps({ testID: 'machine-detail-header' }).length).toBeGreaterThan(0);
+        await screen.update(home.element(MachineDetailScreen));
+        await flushHookEffects({ cycles: 3, turns: 2 });
+        await screen.update(home.element(MachineDetailScreen));
+        await flushHookEffects({ cycles: 3, turns: 2 });
+        expect(detailsRequests()).toHaveLength(1);
     });
 
-    it('prefers the requested route server for machine-scoped capability hooks', async () => {
-        requests.length = 0;
-        hookCalls.capabilities.length = 0;
-        routeParamsRef.current = { id: 'machine-1', serverId: 'server-b' };
-        activeServerIdRef.current = 'server-a';
-
-        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
-        await renderScreen(React.createElement(MachineDetailScreen));
-
-        expect(hookCalls.capabilities.at(0)).toMatchObject({
-            machineId: 'machine-1',
-            serverId: 'server-b',
+    it('detects capabilities on the requested Home rather than the previously focused Home', async () => {
+        home = await arrangeMachineDetailsHomeForTests(network, {
+            serverUrl: 'https://machine-capabilities-focused.example.test',
+            machines: [createMachineFixture({ activeAt: Date.now() })],
         });
+        const target = await network.addHome('https://machine-capabilities-requested.example.test', 'machine-viewer');
+        route.params = { id: 'machine-1', serverId: target.id };
+        network.respond(RPC_METHODS.CAPABILITIES_DETECT, { protocolVersion: 1, results: {} });
+        const screen = await home.render(MachineDetailScreen);
+        await flushHookEffects({ cycles: 6, turns: 3 });
+        expect(detailsRequests().length).toBeGreaterThan(0);
+        expect(detailsRequests().every(request => request.serverUrl === target.serverUrl && request.token === target.token)).toBe(true);
+        expect(screen.findAllByProps({ testID: 'machine-detail-header' }).length).toBeGreaterThan(0);
     });
 });

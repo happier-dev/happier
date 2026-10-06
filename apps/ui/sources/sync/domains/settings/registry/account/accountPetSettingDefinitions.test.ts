@@ -13,11 +13,17 @@ describe('Protocol pet Account settings', () => {
     });
 
     it('allows only built-in and account-pet references in account settings', () => {
-        const schema = ACCOUNT_SETTING_DEFINITIONS.petsSelectedPetRef.schema;
+        const definition = ACCOUNT_SETTING_DEFINITIONS.petsSelectedPetRef;
+        const { parseMutationValue } = definition;
 
-        expect(schema.safeParse({ kind: 'builtIn', petId: 'blink' }).success).toBe(true);
-        expect(schema.safeParse({ kind: 'accountPet', accountPetId: 'acct_pet_1' }).success).toBe(true);
-        expect(schema.safeParse({ kind: 'detectedCodexHome', sourceKey: 'codex:local' }).success).toBe(false);
-        expect(schema.safeParse({ kind: 'happierManagedLocal', sourceKey: 'local:blink' }).success).toBe(false);
+        expect(parseMutationValue({ kind: 'builtIn', petId: 'blink' }).success).toBe(true);
+        expect(parseMutationValue({ kind: 'accountPet', accountPetId: 'acct_pet_1' }).success).toBe(true);
+        for (const value of [
+            { kind: 'detectedCodexHome', sourceKey: 'codex:local' },
+            { kind: 'happierManagedLocal', sourceKey: 'local:blink' },
+        ]) {
+            expect(parseMutationValue(value).success).toBe(false);
+            expect(definition.schema.parse(value)).toEqual({ kind: 'builtIn', petId: 'blink' });
+        }
     });
 });

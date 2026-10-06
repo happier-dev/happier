@@ -22,17 +22,18 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import {
   formatQualifiedPluginActionId,
+  DaemonPluginStructuredMessageActionExecuteRequestSchema,
   PluginProjectedActionV2Schema,
-  type DaemonPluginStructuredMessageActionExecuteRequest,
   type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
-import { createCurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
 import { composeCurrentUiContextSnapshotFromNavigation } from './currentUiContextModel';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -80,14 +81,18 @@ import { projectTriageCurrentUiContextV1 } from '../../../../../../packages/plug
 import { useTriageCurrentUiContextPublication } from '../../../../../../packages/plugins/triage/src/ui/shell/root';
 import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../../../../../../packages/plugins/triage/src/ui/state/surface';
 
-const machineRpcBoundary = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-  machineRpcWithServerScope: machineRpcBoundary,
-}));
+let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
+beforeAll(async () => {
+  network = await installSessionOpsNetworkBoundary();
+});
+afterAll(async () => {
+  (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool')).serverScopedRpcSocketPool.resetForTests();
+  (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool')).resetScopedMachineTransportCacheForTests();
+  network.dispose();
+});
 
 const MACHINE_ID = 'machine-triage-proof';
-const SERVER_ID = 'server-triage-proof';
+const TRIAGE_OCCURRENCE_ID = 'triage-voice-proof-occurrence-7';
 const TRIAGE_PLUGIN_ID = 'happier.triage';
 const TRIAGE_ACTION_ID = `${TRIAGE_PLUGIN_ID}/${TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1}`;
 const TRIAGE_DISCOVERY_ACTION_ID = formatQualifiedPluginActionId({
@@ -190,7 +195,7 @@ async function createTriageVertical(): Promise<Readonly<{
   return Object.freeze({ triage, collections });
 }
 
-function createTriageVoiceProjection() {
+function createTriageVoiceProjection(serverId: string) {
   const executionOrigin: PluginMachineExecutionOriginV1 = {
     serverIdentityId: 'srv_triage_proof',
     materializationRef: {
@@ -206,14 +211,13 @@ function createTriageVoiceProjection() {
   const projectedAction = PluginProjectedActionV2Schema.parse({
     id: declaration.id,
     pluginId: TRIAGE_PLUGIN_ID,
+    occurrenceId: TRIAGE_OCCURRENCE_ID,
     title: declaration.title,
     description: declaration.description,
     scopes: declaration.scopes,
     surfaces: declaration.surfaces,
     placementBindings: declaration.placementBindings,
     execution: declaration.execution,
-    inputSchema: declaration.inputSchema,
-    outputSchema: declaration.resultSchema,
     dangerLevel: declaration.dangerLevel,
     available: true,
     serverIdentityId: executionOrigin.serverIdentityId,
@@ -236,7 +240,7 @@ function createTriageVoiceProjection() {
   });
   return unionPluginUiProjections([{
     machineId: MACHINE_ID,
-    serverId: SERVER_ID,
+    serverId,
     projection,
     phase: 'current',
     interactionEnabled: true,
@@ -330,6 +334,7 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
         }));
       });
 
+      const { createCurrentUiContextVoiceToolPort } = await import('./currentUiContextVoiceToolPort');
       const port = createCurrentUiContextVoiceToolPort({
         reader: {
           readCurrentUiContext: () => published === null
@@ -370,22 +375,28 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
 
   it('projects the registered Triage list Action into the dynamic Voice catalog and delegates through the unified dispatcher', async () => {
     const vertical = await createTriageVertical();
-    const projection = createTriageVoiceProjection();
+    const home = await network.addHome('https://triage-voice-proof.example.test', 'triage-proof-account');
+    const projection = createTriageVoiceProjection(home.id);
     if (projection === null) throw new Error('Expected the Triage action projection');
     let handlerCalls = 0;
     let handlerError: unknown = null;
-    machineRpcBoundary.mockReset();
-    machineRpcBoundary.mockImplementation(async (request: Readonly<{
-      payload: DaemonPluginStructuredMessageActionExecuteRequest;
-    }>) => {
+    network.setRpcResponder(async (request) => {
+      expect(request.serverUrl).toBe(home.serverUrl);
+      expect(request.token).toBe(home.token);
+      expect(request.targetId).toBe(MACHINE_ID);
+      expect(request.method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+      const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
+      expect(payload.expectedContributorOccurrenceId).toBe(TRIAGE_OCCURRENCE_ID);
+      expect(payload.qualifiedActionId).toBe(TRIAGE_ACTION_ID);
+      expect(payload.executionSurface).toBe('voice');
       handlerCalls += 1;
       try {
-        if (request.payload.input === undefined) throw new Error('Expected the projected Triage input');
+        if (payload.input === undefined) throw new Error('Expected the projected Triage input');
         return {
           ok: true,
           result: await vertical.triage.invokeAction(
             TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-            request.payload.input,
+            payload.input,
             { surface: 'voice' },
           ),
         };
@@ -395,6 +406,7 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
       }
     });
     try {
+      const { createCurrentUiContextVoiceToolPort } = await import('./currentUiContextVoiceToolPort');
       const port = createCurrentUiContextVoiceToolPort({
         reader: {
           readCurrentUiContext: () => null,

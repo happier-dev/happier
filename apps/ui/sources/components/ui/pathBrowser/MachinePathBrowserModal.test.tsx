@@ -1,6 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import {
+    DaemonFilesystemListDirectoryRequestSchema,
+    DaemonWorkspaceFileListRequestSchema,
+    type DaemonFilesystemListRootsResponse,
+    type DaemonWorkspaceFileListResponse,
+} from '@happier-dev/protocol';
+import { storage } from '@/sync/domains/state/storage';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 import {
     getPathBrowserRowTestId,
@@ -47,18 +56,20 @@ async function waitForTestId(screen: ReturnType<typeof renderScreen> extends Pro
     return screen.findByTestId(testID);
 }
 
-const listMachineFileBrowserRootsMock = vi.hoisted(() => vi.fn<(params: unknown) => Promise<{
-    ok: true;
-    roots: Array<{ id: string; label: string; path: string }>;
-}>>(async () => ({
+const listMachineFileBrowserRootsMock = vi.hoisted(() => vi.fn<(params: unknown) => Promise<DaemonFilesystemListRootsResponse>>(async () => ({
     ok: true as const,
     roots: [{ id: '/', label: '/', path: '/' }],
 })));
-const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(params: { directoryPath: string }) => Promise<{
+const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(params: {
+    directoryPath: string;
+    includeFiles?: boolean;
+    machineId?: string;
+    serverId?: string | null;
+}) => Promise<{
     ok: true;
     entries: Array<{ name: string; path: string; type: 'directory' | 'file' }>;
     truncated: boolean;
-}>>(async (params: { directoryPath: string }) => {
+} | { ok: false; error: string }>>(async (params: { directoryPath: string }) => {
     if (params.directoryPath === '/') {
         return {
             ok: true as const,
@@ -83,12 +94,7 @@ const flatListScrollToIndexMock = vi.hoisted(() => vi.fn());
 const machineCreateDirectoryMock = vi.hoisted(() => vi.fn<(machineId: string, path: string, options?: unknown) => Promise<{ success: true } | { success: false; error: string }>>(
     async () => ({ success: true as const }),
 ));
-const machineWorkspaceFileListMock = vi.hoisted(() => vi.fn<(machineId: string, input: Readonly<{ rootPath: string; query?: string; includeHidden?: boolean }>, options?: unknown) => Promise<{
-    ok: boolean;
-    paths?: string[];
-    truncated?: boolean;
-    exitCode?: number;
-}>>(async () => ({
+const machineWorkspaceFileListMock = vi.hoisted(() => vi.fn<(machineId: string, input: Readonly<{ rootPath: string; query?: string; includeHidden?: boolean }>, options?: unknown) => Promise<DaemonWorkspaceFileListResponse>>(async () => ({
     ok: true,
     paths: [],
     truncated: false,
@@ -200,18 +206,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => {
-        if (key === 'uiItemDensity') return 'comfortable';
-        if (key === 'uiFontScale') return 1;
-        return null;
-    },
-    // The browsed machine's store record: only its home directory is read, to show paths relative to it.
-    useServerScopedMachine: (_serverId: string | null | undefined, machineId: string) => (
-        machineId === 'machine-1' ? { id: 'machine-1', metadata: { homeDir: '/Users/leeroy' } } : null
-    ),
-}));
-
 vi.mock('@/components/ui/popover', () => ({
     Popover: (props: any) => {
         if (!props.open) return null;
@@ -228,27 +222,43 @@ vi.mock('@/modal', () => createModalModuleMock({
     },
 }).module);
 
-vi.mock('@/sync/ops/machines', () => ({
-    machineCreateDirectory: (machineId: string, path: string, options?: unknown) => machineCreateDirectoryMock(machineId, path, options),
-}));
-
-vi.mock('@/sync/ops/machineWorkspaceFileList', () => ({
-    machineWorkspaceFileList: (machineId: string, input: Readonly<{ rootPath: string; query?: string; includeHidden?: boolean }>, options?: unknown) =>
-        machineWorkspaceFileListMock(machineId, input, options),
-}));
+// Only daemon transport is replaced: settings, scope binding, parsing and caches remain real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(async (params) => {
+        const options = { serverId: params.serverId, accountId: params.accountId, signal: params.signal };
+        switch (params.method) {
+            case RPC_METHODS.CREATE_DIRECTORY: {
+                // The daemon transport boundary receives the real owner's serialized request.
+                const payload = params.payload as { path: string };
+                return machineCreateDirectoryMock(params.machineId, payload.path, options);
+            }
+            case RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST:
+                return machineWorkspaceFileListMock(
+                    params.machineId,
+                    DaemonWorkspaceFileListRequestSchema.parse(params.payload),
+                    options,
+                );
+            case RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS:
+                return listMachineFileBrowserRootsMock({ machineId: params.machineId, serverId: params.serverId });
+            case RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY: {
+                const payload = DaemonFilesystemListDirectoryRequestSchema.parse(params.payload);
+                const response = await listMachineFileBrowserDirectoryEntriesMock({
+                    directoryPath: payload.path,
+                    includeFiles: payload.includeFiles,
+                    machineId: params.machineId,
+                    serverId: params.serverId,
+                });
+                return response.ok ? { ...response, path: payload.path } : response;
+            }
+            default:
+                throw new Error(`Unexpected path-browser RPC: ${params.method}`);
+        }
+    });
+});
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: (props: any) => React.createElement('RoundButton', props),
-}));
-
-vi.mock('@/sync/domains/input/machineFileBrowser', () => ({
-    getCachedMachineFileBrowserDirectoryMetadata: () => null,
-    getCachedMachineFileBrowserEntries: () => null,
-    getCachedMachineFileBrowserRoots: () => null,
-    listMachineFileBrowserDirectoryEntries: (params: unknown) => listMachineFileBrowserDirectoryEntriesMock(params as any),
-    listMachineFileBrowserRoots: (params: unknown) => listMachineFileBrowserRootsMock(params as any),
-    warmMachineFileBrowserDirectoryCache: (params: unknown) => listMachineFileBrowserDirectoryEntriesMock(params as any),
-    warmMachineFileBrowserRoots: (params: unknown) => listMachineFileBrowserRootsMock(params as any),
 }));
 
 const defaultDirectoryEntries = listMachineFileBrowserDirectoryEntriesMock.getMockImplementation()!;
@@ -260,6 +270,20 @@ describe('MachinePathBrowserModal', () => {
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         const home = await upsertServerProfile({ serverUrl: 'https://path-browser-active.example.test', name: 'Active Home' });
         await setActiveServerId(home.id);
+        const machine = createMachineFixture({
+            metadata: {
+                host: 'path-browser.test', platform: 'darwin', happyCliVersion: 'test',
+                happyHomeDir: '/Users/leeroy/.happier', homeDir: '/Users/leeroy',
+            },
+        });
+        storage.setState({
+            machines: { [machine.id]: machine },
+            machineListByServerId: { [home.id]: [machine] },
+            localSettings: { ...storage.getState().localSettings, uiItemDensity: 'comfortable', uiFontScale: 1 },
+        });
+        const { clearCachedMachineFileBrowserRoots, clearCachedMachineFileBrowserEntries } = await import('@/sync/domains/input/machineFileBrowser');
+        clearCachedMachineFileBrowserRoots({ machineId: machine.id });
+        clearCachedMachineFileBrowserEntries({ machineId: machine.id });
         listMachineFileBrowserRootsMock.mockReset().mockImplementation(defaultRoots);
         listMachineFileBrowserDirectoryEntriesMock.mockReset().mockImplementation(defaultDirectoryEntries);
         flatListScrollToIndexMock.mockClear();
@@ -316,11 +340,11 @@ describe('MachinePathBrowserModal', () => {
             listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({
                 ok: false,
                 error: 'RPC method not available',
-            } as never);
+            });
             listMachineFileBrowserRootsMock.mockResolvedValue({
                 ok: false,
                 error: 'RPC method not available',
-            } as never);
+            });
             const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
             const screen = await renderInModalChrome(<MachinePathBrowserModal
@@ -401,6 +425,7 @@ describe('MachinePathBrowserModal', () => {
         machineWorkspaceFileListMock.mockResolvedValueOnce({
             ok: true,
             paths: ['apps/ui/README.md', 'apps/ui/src/index.ts'],
+            truncated: false,
         });
 
         const screen = await renderScreen(
@@ -474,6 +499,7 @@ describe('MachinePathBrowserModal', () => {
         machineWorkspaceFileListMock.mockResolvedValueOnce({
             ok: true,
             paths: ['leeroy/.ssh/config'],
+            truncated: false,
         });
 
         const screen = await renderInModalChrome(
@@ -529,6 +555,7 @@ describe('MachinePathBrowserModal', () => {
 
         machineWorkspaceFileListMock.mockResolvedValueOnce({
             ok: false,
+            errorCode: 'ripgrep_failed',
             exitCode: 1,
         });
 

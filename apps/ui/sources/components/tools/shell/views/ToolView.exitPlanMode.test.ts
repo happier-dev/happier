@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    renderScreen,
+    renderWithSessionTranscriptSource as renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
 import {
@@ -98,13 +98,14 @@ vi.mock('@/agents/catalog/catalog', () => ({
     resolveAgentIdFromFlavor: () => null,
 }));
 
+const { ToolView } = await import('./ToolView');
+
 describe('ToolView (ExitPlanMode)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('does not render PermissionFooter for ExitPlanMode', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'ExitPlanMode',
@@ -122,7 +123,6 @@ describe('ToolView (ExitPlanMode)', () => {
     });
 
     it('renders PermissionFooter for normal tools', async () => {
-        const { ToolView } = await import('./ToolView');
 
         const tool = makeToolCall({
             name: 'Write',

@@ -117,10 +117,17 @@ describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () =>
             thisMachineId: 'laptop',
             thisComputerItem: null,
             runs: NO_RUNS,
-            machineAgents: new Map([['laptop', { status: 'ready', lastCheckedAt: 8_000, agents: [{
-                ...projectMachineAgent({ agentId: 'claude', title: 'Claude Code', facts: null, checking: false, stale: false, connectedServices: [], job: null }),
-                installed: true, version: '2.1.4', latestVersion: '2.1.4', update: { supported: true, command: null },
-            }] }]]),
+            machineAgents: new Map([['laptop', { status: 'ready', lastCheckedAt: 8_000, agents: [projectMachineAgent({
+                agentId: 'claude', title: 'Claude Code', checking: false, stale: false, connectedServices: [], job: null,
+                facts: {
+                    agentId: 'claude', title: 'Claude Code',
+                    installed: true, version: '2.1.4', latestVersion: '2.1.4', update: { supported: true, command: null },
+                    signIn: { status: 'signedIn', loginSupport: 'login_terminal' },
+                    platform: { supported: true },
+                    install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
+                    dependencies: [],
+                },
+            })] }]]),
             snapshots: new Map([['laptop', snapshot]]),
         });
         expect(groups.map((group) => group.kind)).toEqual(['thisComputer']);

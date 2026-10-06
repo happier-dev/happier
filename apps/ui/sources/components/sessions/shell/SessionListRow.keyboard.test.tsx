@@ -59,8 +59,8 @@ describe('SessionListRow keyboard carry', () => {
         );
         const row = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onKeyDownCapture === 'function')[0]!;
         // DOM boundary: closest identifies the focused control; the first primary action is the row surface.
-        const primary = {};
-        const secondary = {};
+        const primary = { matches: () => false };
+        const secondary = { matches: () => false };
         const currentTarget = { querySelector: () => primary };
         for (const key of [' ', 'Enter']) {
             const event = { key, nativeEvent: { target: { closest: () => secondary } }, currentTarget, preventDefault: vi.fn(), stopPropagation: vi.fn() };

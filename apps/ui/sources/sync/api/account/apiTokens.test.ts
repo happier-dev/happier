@@ -1,9 +1,13 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+installDisconnectedServerSocketBoundary();
 
 beforeAll(async () => {
     // Load the real scoped store once; repeated graph transforms obscure the
     // HTTP contract and can outlive a test while the shared VM is busy.
-    await import('@/sync/domains/state/storageStore');
+    await loadSyncSingletonForTests();
 }, 600_000);
 
 const token = {
@@ -89,9 +93,6 @@ async function loadClient(params?: Readonly<{
         }
         return await transport(`${url.pathname}${url.search}`, init);
     });
-    vi.doMock('@/sync/api/session/apiSocket', () => ({
-        apiSocket: { request: vi.fn() },
-    }));
     const client = await import('./apiTokens');
     return {
         ...client,

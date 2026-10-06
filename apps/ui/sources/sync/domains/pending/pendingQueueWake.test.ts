@@ -1,51 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getPendingQueueWakeResumeOptions } from './pendingQueueWake';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { attachAgentPluginSettings } from '@/agents/registry/agentUiSettingLookup';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { getStorage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
     clearProjectedAgentUiBehaviorDescriptors,
     publishProjectedAgentUiBehaviorDescriptors,
 } from '@/agents/registry/agentUiBehaviorProjection';
 
-let storageState: any = {
-    sessions: {},
-    machines: {},
-    getProjectForSession: () => null,
-};
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: { getState: () => storageState },
-    });
-});
+const storage = getStorage();
+const initialStorageState = storage.getState();
 
 function setCanonicalSessionTarget(machineId: string, path: string): void {
-    storageState = {
+    storage.setState({
         sessions: {
-            s1: {
+            s1: createSessionFixture({
+                id: 's1',
                 active: false,
                 updatedAt: 10,
                 metadata: { machineId, path, homeDir: '/Users/test', host: 'host.local' },
-            },
+            }),
         },
         machines: {
-            [machineId]: {
+            [machineId]: createMachineFixture({
                 id: machineId,
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local' },
-            },
+                metadata: { ...createMachineFixture().metadata!, host: 'host.local' },
+            }),
         },
-        getProjectForSession: (sessionId: string) =>
-            sessionId === 's1'
-                ? {
-                    key: {
-                        machineId,
-                        rootPath: path,
-                    },
-                }
-                : null,
-    };
+    });
 }
 
 function agentTarget(agentId: string, pluginId = `happier.agent.${agentId}`) {
@@ -56,15 +43,12 @@ function agentTarget(agentId: string, pluginId = `happier.agent.${agentId}`) {
 }
 
 beforeEach(() => {
+    storage.setState(initialStorageState, true);
     setCanonicalSessionTarget('m1', '/tmp');
 });
 
 afterEach(() => {
-    storageState = {
-        sessions: {},
-        machines: {},
-        getProjectForSession: () => null,
-    };
+    storage.setState(initialStorageState, true);
     vi.restoreAllMocks();
 });
 
@@ -160,11 +144,10 @@ describe('getPendingQueueWakeResumeOptions', () => {
     });
 
     it('does not use raw metadata as a wake target when canonical reachability is unavailable', () => {
-        storageState = {
+        storage.setState({
             sessions: {},
             machines: {},
-            getProjectForSession: () => null,
-        };
+        });
         const session: any = {
             thinking: false,
             agentState: null,
@@ -212,45 +195,37 @@ describe('getPendingQueueWakeResumeOptions', () => {
             metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'claude', claudeSessionId: 'c1', claudeTranscriptPath: '/tmp/c1.jsonl' },
         };
 
-        storageState = {
+        storage.setState({
             sessions: {
-                s1: {
+                s1: createSessionFixture({
+                    id: 's1',
                     active: false,
                     updatedAt: 10,
                     metadata: {
-                        machineId: 'm-stale',
-                        path: '/tmp/stale',
+                        machineId: 'm-target',
+                        path: '/tmp/target',
                         homeDir: '/Users/test',
-                        host: 'stale.local',
+                        host: 'target.local',
                     },
-                },
+                }),
             },
             machines: {
-                'm-stale': {
+                'm-stale': createMachineFixture({
                     id: 'm-stale',
                     active: false,
                     activeAt: 5,
-                    metadata: { host: 'stale.local' },
+                    metadata: { ...createMachineFixture().metadata!, host: 'stale.local' },
                     replacedByMachineId: 'm-target',
                     replacedAt: 15,
-                },
-                'm-target': {
+                }),
+                'm-target': createMachineFixture({
                     id: 'm-target',
                     active: true,
                     activeAt: 20,
-                    metadata: { host: 'target.local' },
-                },
+                    metadata: { ...createMachineFixture().metadata!, host: 'target.local' },
+                }),
             },
-            getProjectForSession: (sessionId: string) =>
-                sessionId === 's1'
-                    ? {
-                        key: {
-                            machineId: 'm-target',
-                            rootPath: '/tmp/target',
-                        },
-                    }
-                    : null,
-        };
+        });
 
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
@@ -496,6 +471,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 agentId: 'codex',
                 agent: {
                     backendMode: 'appServer',
+                    providerSessionId: 'x1',
                 },
             },
         });
@@ -513,11 +489,6 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             agentTarget: agentTarget('codex'),
             resume: 'x1',
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'appServer' },
-            },
         });
     });
 
@@ -537,11 +508,6 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             agentTarget: agentTarget('codex'),
             resume: 'x1',
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'appServer' },
-            },
         });
     });
 
@@ -561,11 +527,6 @@ describe('getPendingQueueWakeResumeOptions', () => {
             directory: '/tmp',
             agentTarget: agentTarget('codex'),
             resume: 'x1',
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'appServer' },
-            },
         });
     });
 
@@ -604,6 +565,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 agentId: 'codex',
                 agent: {
                     backendMode: 'appServer',
+                    providerSessionId: 'x1',
                 },
             },
         });
@@ -650,7 +612,7 @@ describe('getPendingQueueWakeResumeOptions', () => {
         });
     });
 
-    it('adds OpenCode environment variables for wake resumes', () => {
+    it('adds Account-configured OpenCode environment variables for wake resumes', () => {
         const session: any = {
             thinking: false,
             agentState: null,
@@ -659,15 +621,19 @@ describe('getPendingQueueWakeResumeOptions', () => {
                 path: '/tmp',
                 flavor: 'opencode',
                 opencodeSessionId: 'oc-1',
-                opencodeBackendMode: 'server',
-                opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
-                opencodeServerBaseUrlExplicit: true,
             },
         };
         expect(getPendingQueueWakeResumeOptions({
             sessionId: 's1',
             session,
-            resumeCapabilityOptions: { accountSettings: {} },
+            resumeCapabilityOptions: {
+                accountSettings: attachAgentPluginSettings(settingsDefaults, {
+                    account: {
+                        opencodeBackendMode: 'server',
+                        opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+                    },
+                }),
+            },
         })).toEqual({
             sessionId: 's1',
             machineId: 'm1',

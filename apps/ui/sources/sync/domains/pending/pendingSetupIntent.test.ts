@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StorageState } from '@/sync/store/types';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { buildDismissedThisComputerSetupIntent } from './pendingSetupIntent.shared';
 
 async function importFresh() {
@@ -8,6 +8,7 @@ async function importFresh() {
 }
 
 async function applyActiveServer(serverUrl: string) {
+    await loadSyncSingletonForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
 
@@ -26,19 +27,22 @@ async function applyActiveServer(serverUrl: string) {
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
     const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const { storage } = await import('@/sync/domains/state/storage');
 
     const server = await applyActiveServer(serverUrl);
     const scope = createServerAccountScope(server.id, accountId);
     expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    if (!scope) throw new Error('Expected Account scope');
+    storage.getState().activateProfileScope(scope);
+    await storage.getState().activateSettingsScope(scope);
 }
 
 async function activateServerWithoutAccount(serverUrl: string) {
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const { storage } = await import('@/sync/domains/state/storage');
 
     await applyActiveServer(serverUrl);
-    registerStorageStateReader(() => ({ profileScope: null } as unknown as StorageState));
+    storage.getState().clearProfileScope();
+    storage.getState().clearSettingsScope();
 }
 
 describe('pendingSetupIntent', () => {

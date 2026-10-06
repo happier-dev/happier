@@ -1,4 +1,5 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { SystemTaskSpec } from '@happier-dev/protocol';
 import { useThisComputerCliUpdate } from '@/updates/useThisComputerCliUpdate';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
@@ -54,6 +55,10 @@ vi.mock('socket.io-client', async (importOriginal) => {
         return socket;
     } };
 });
+beforeEach(async () => {
+    await loadSyncSingletonForTests();
+});
+
 afterEach(async () => {
     // Even a failed assertion must settle the shell task before clearing its SDK listeners.
     await act(async () => {

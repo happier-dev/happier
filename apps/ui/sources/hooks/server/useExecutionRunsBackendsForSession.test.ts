@@ -1,17 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@/dev/testkit';
-import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
-import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { createMachineFixture, createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionState = vi.hoisted(() => ({
-  value: null as any,
+  value: null as Partial<Session> | null,
 }));
 
-const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => any>(() => sessionState.value));
 const capabilitiesState = vi.hoisted(() => ({
   lastArgs: null as null | { machineId: string | null; serverId?: string | null; enabled: boolean; request: any },
 }));
@@ -19,15 +18,8 @@ const machineTargetState = vi.hoisted(() => ({
   value: null as null | { machineId: string; basePath: string },
 }));
 
-// V-2 (2026-08-11): the hook takes the session's machine id as a PRIMITIVE instead of subscribing to
-// the whole `Session`, so the store seam moved from `useSession` to `useSessionMachineId`. The
-// fixtures below still supply the session record and the REAL `resolveSessionMachineId` still decides
-// — including the `externalSessionV1` link leg — so this is the same coverage through the new seam,
-// not a weaker stub.
 installServerHookCommonModuleMocks({
-  storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-    useSessionMachineId: (sessionId: string) => resolveSessionMachineId(useSessionSpy(sessionId)?.metadata),
-  }),
+  storage: async (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
 });
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -58,11 +50,24 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
   },
 }));
 
-vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
-  useSessionMachineTarget: () => machineTargetState.value,
-}));
-
 async function renderExecutionRunsBackendsHook(sessionId: string, serverId?: string | null) {
+  const { storage } = await import('@/sync/domains/state/storage');
+  const session = createSessionFixture({
+    ...sessionState.value,
+    serverId: serverId ?? undefined,
+    metadata: { path: '/tmp/linked', ...sessionState.value?.metadata },
+  });
+  const resolvedSession = machineTargetState.value ? createSessionFixture({
+    ...session,
+    metadata: { ...session.metadata, machineId: machineTargetState.value.machineId, path: machineTargetState.value.basePath },
+  }) : session;
+  const machine = createMachineFixture({ id: 'machine-direct', active: true });
+  storage.setState({
+    sessions: { [session.id]: session },
+    machines: { [machine.id]: machine },
+    machineListByServerId: serverId ? { [serverId]: [machine] } : {},
+    sessionListRowsByServerId: serverId ? { [serverId]: { [session.id]: buildSessionListRenderableFromSession(resolvedSession) } } : {},
+  });
   const { useExecutionRunsBackendsForSession } = await import('./useExecutionRunsBackendsForSession');
   return renderHook(
     (props: { sessionId: string; serverId?: string | null }) =>
@@ -72,14 +77,19 @@ async function renderExecutionRunsBackendsHook(sessionId: string, serverId?: str
 }
 
 describe('useExecutionRunsBackendsForSession', () => {
-  beforeEach(() => {
+  let restoreStorage = () => {};
+  beforeEach(async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sessions, machines, machineListByServerId, sessionListRowsByServerId } = storage.getState();
+    restoreStorage = () => storage.setState({ sessions, machines, machineListByServerId, sessionListRowsByServerId });
     sessionState.value = null;
     capabilitiesState.lastArgs = null;
     machineTargetState.value = null;
-    useSessionSpy.mockClear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await standardCleanup();
+    restoreStorage();
     vi.clearAllMocks();
   });
 
@@ -120,7 +130,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     };
     machineTargetState.value = { machineId: 'machine-direct', basePath: '/tmp/reachable' };
 
-    const hook = await renderExecutionRunsBackendsHook('session-1');
+    const hook = await renderExecutionRunsBackendsHook('session-1', 'server-resolved');
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
@@ -180,6 +190,16 @@ describe('useExecutionRunsBackendsForSession', () => {
     }));
     expect(capabilitiesState.lastArgs?.serverId).toBeUndefined();
 
+    const { storage } = await import('@/sync/domains/state/storage');
+    const exactSession = createSessionFixture({
+      ...sessionState.value,
+      serverId: 'server-canonical',
+      metadata: { path: '/tmp/linked', ...sessionState.value?.metadata },
+    });
+    storage.setState({
+      machineListByServerId: { 'server-canonical': [createMachineFixture({ id: 'machine-direct', active: true })] },
+      sessionListRowsByServerId: { 'server-canonical': { 'session-1': buildSessionListRenderableFromSession(exactSession) } },
+    });
     await hook.rerender({ sessionId: 'session-1', serverId: 'server-canonical' });
 
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
@@ -207,7 +227,6 @@ describe('useExecutionRunsBackendsForSession', () => {
 
     const hook = await renderExecutionRunsBackendsHook('  session-1  ');
 
-    expect(useSessionSpy).toHaveBeenCalledWith('session-1');
     expect(capabilitiesState.lastArgs).toEqual(expect.objectContaining({
       machineId: 'machine-direct',
       enabled: true,

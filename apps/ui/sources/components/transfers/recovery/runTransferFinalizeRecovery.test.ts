@@ -1,312 +1,218 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ComponentProps } from 'react';
+import { AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { IModal } from '@/modal';
+import type { TransferFinalizeRecoveryAction } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
 import { createDirectTransferFinalizeRecovery } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
-
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit';
+import { installTransferProjection, transferFeatures, transferMachine } from '@/components/sessions/files/sessionFileTransferTestkit';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { runTransferFinalizeRecovery } from './runTransferFinalizeRecovery';
+import type { TransferFinalizeRecoveryModal } from './TransferFinalizeRecoveryModal';
 
-const modalShowMock = vi.hoisted(() => vi.fn());
-const finalizeDirectImportSessionMock = vi.hoisted(() => vi.fn());
-const abortPreparedDirectImportSessionViaMachineRpcMock = vi.hoisted(() => vi.fn());
+const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>());
+const finalizeHttp = vi.hoisted(() => vi.fn<(url: RequestInfo | URL, init?: RequestInit) => Promise<Response>>());
+const abortRpc = vi.hoisted(() => vi.fn<(request: { method: string; payload: unknown }) => Promise<unknown>>());
 
-vi.mock('@/modal', () => ({
-    Modal: {
-        show: (...args: unknown[]) => modalShowMock(...args),
-    },
-}));
+vi.mock('react-native', async () => (await import('@/dev/testkit')).createReactNativeNativeMock({ platformOS: 'ios' }));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit')).createExpoRouterMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit')).createModalModuleMock({ spies: { show: modalShowMock } }).module);
 
-vi.mock('@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferImportClient', () => ({
-    abortPreparedDirectImportSessionViaMachineRpc: (...args: unknown[]) =>
-        abortPreparedDirectImportSessionViaMachineRpcMock(...args),
-    DIRECT_IMPORT_FINALIZE_OUTCOME_INDETERMINATE_ERROR_CODE:
-        'DIRECT_IMPORT_FINALIZE_OUTCOME_INDETERMINATE',
-    DIRECT_IMPORT_REMOTE_COMMITTED_RESULT_UNUSABLE_ERROR_CODE:
-        'DIRECT_IMPORT_REMOTE_COMMITTED_RESULT_UNUSABLE',
-    finalizeDirectImportSession: (...args: unknown[]) =>
-        finalizeDirectImportSessionMock(...args),
-    TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE:
-        'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
-}));
-
-function createRecovery() {
-    return createDirectTransferFinalizeRecovery({
-        machineId: 'machine-1',
-        serverId: 'server-1',
-        uploadId: 'upload-1',
-        baseUrl: 'https://machine.example.test/direct/imports/upload-1',
-        expiresAt: Date.now() + 60_000,
-        parseFinalizeResponse: (response) => response.finalized.path,
+// Real Socket, encryption, routing and Account owners remain above the wire boundary.
+installDisconnectedServerSocketBoundary(socket => {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
     });
+    vi.spyOn(socket, 'emit').mockReturnValue(socket);
+    vi.spyOn(socket, 'disconnect').mockImplementation(() => {
+        socket.connected = false;
+        for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
+        return socket;
+    });
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
+        if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+        // Socket's untyped wire payload is narrowed at this genuine transport boundary.
+        const request = payload as { method: string; params: unknown };
+        expect(request.method).toBe(`machine-1:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT}`);
+        return { ok: true, result: await abortRpc({ method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT, payload: request.params }) };
+    });
+});
+
+const machineOrigin = 'https://machine.example.test';
+const finalizedBody = { success: true, finalized: { success: true, path: '/repo/file.txt', sizeBytes: 4 }, sha256: 'a'.repeat(64) };
+
+function choose(config: Parameters<IModal['show']>[0], action: TransferFinalizeRecoveryAction) {
+    // The modal SDK carries generic props; this invocation mounts the known recovery modal.
+    const props = config.props as ComponentProps<typeof TransferFinalizeRecoveryModal>;
+    props.onResolve(action);
 }
 
 describe('runTransferFinalizeRecovery', () => {
-    beforeEach(() => {
+    let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    beforeAll(loadSyncSingletonForTests);
+    beforeEach(async () => {
         modalShowMock.mockReset();
-        finalizeDirectImportSessionMock.mockReset();
-        abortPreparedDirectImportSessionViaMachineRpcMock.mockReset();
+        finalizeHttp.mockReset().mockImplementation(async () => Response.json(finalizedBody));
+        abortRpc.mockReset().mockResolvedValue({ success: true, aborted: true });
+        const features = createRootLayoutFeaturesResponse({ features: { machines: transferFeatures().features.machines } });
+        const homeRequest = async (url: RequestInfo | URL) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health') return Response.json({ status: 'ok' });
+            if (path === '/v1/features') return Response.json(features);
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
+                content: { t: 'plain', v: {} }, version: 0,
+            }));
+            if (path === '/v1/machines/machine-1') return Response.json({ machine: {
+                id: 'machine-1', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } });
+            if (path.includes('/machines')) return Response.json({ machines: [] });
+            return Response.json({}, { status: 404 });
+        };
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://finalize-recovery.test', accountId: 'alice', request: homeRequest });
+        installTransferProjection({ serverId: connection.home.id, session: null,
+            machine: transferMachine({ id: 'machine-1', storageMode: 'plain', activeAt: Date.now() }), features });
+        setRuntimeFetch(async (url, init) => {
+            const request = new URL(String(url));
+            if (request.origin === machineOrigin) {
+                expect(request.pathname).toBe('/direct/imports/upload-1/finalize');
+                expect(init?.method).toBe('POST');
+                return finalizeHttp(url, init);
+            }
+            expect(request.origin).toBe(connection.home.serverUrl);
+            if (request.pathname === '/v1/auth/ping') return Response.json({});
+            return homeRequest(url);
+        });
+    });
+    afterEach(async () => {
+        await connection?.dispose();
+        resetRuntimeFetch();
     });
 
-    it('invokes only the explicitly selected finalize retry action', async () => {
-        const invoke = vi.fn(async () => ({ status: 'finalized' as const, response: { ok: true } }));
-        modalShowMock.mockImplementationOnce((config) => {
-            config.props.onResolve('retry_finalize');
-            return 'recovery-modal';
+    function createRecovery() {
+        return createDirectTransferFinalizeRecovery({
+            machineId: 'machine-1', serverId: connection.home.id, uploadId: 'upload-1',
+            baseUrl: `${machineOrigin}/direct/imports/upload-1`, expiresAt: Date.now() + 60_000,
+            parseFinalizeResponse: response => response.finalized.path,
         });
+    }
 
-        await expect(runTransferFinalizeRecovery({
-            recovery: {
-                kind: 'transfer_finalize_recovery',
-                expiresAt: Date.now() + 60_000,
-                actions: ['retry_finalize', 'discard_staged'],
-                isActionable: () => false,
-                invoke,
-            },
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({ status: 'finalized', response: { ok: true } });
+    function run(recovery = createRecovery()) {
+        return runTransferFinalizeRecovery({ recovery, title: 'Upload needs attention', message: 'The upload is staged.' });
+    }
 
-        expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke).toHaveBeenCalledWith('retry_finalize');
+    it('invokes only the explicitly selected finalize retry action', async () => {
+        modalShowMock.mockImplementationOnce(config => { choose(config, 'retry_finalize'); return 'recovery-modal'; });
+        await expect(run()).resolves.toEqual({ status: 'finalized', response: '/repo/file.txt' });
+        expect(finalizeHttp).toHaveBeenCalledTimes(1);
+        expect(abortRpc).not.toHaveBeenCalled();
     });
 
     it('retains invocation-local custody by disabling shared modal dismissal', async () => {
-        const invoke = vi.fn(async () => ({ status: 'discarded' as const }));
-        modalShowMock.mockImplementationOnce((config) => {
+        modalShowMock.mockImplementationOnce(config => {
             expect(config.closeOnBackdrop).toBe(false);
             expect(config.dismissible).toBe(false);
             expect(config.onRequestClose).toBeUndefined();
-            config.props.onResolve('discard_staged');
+            choose(config, 'discard_staged');
             return 'recovery-modal';
         });
-
-        await expect(runTransferFinalizeRecovery({
-            recovery: {
-                kind: 'transfer_finalize_recovery',
-                expiresAt: Date.now() + 60_000,
-                actions: ['retry_finalize', 'discard_staged'],
-                isActionable: () => false,
-                invoke,
-            },
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({ status: 'discarded' });
-        expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke).toHaveBeenCalledWith('discard_staged');
+        await expect(run()).resolves.toEqual({ status: 'discarded' });
+        expect(abortRpc).toHaveBeenCalledWith({ method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT, payload: { uploadId: 'upload-1' } });
+        expect(abortRpc).toHaveBeenCalledTimes(1);
+        expect(finalizeHttp).not.toHaveBeenCalled();
     });
 
     it('keeps the same continuation actionable after another recovery-required result', async () => {
-        const invoke = vi.fn()
-            .mockResolvedValueOnce({ status: 'recovery_required', error: 'Still staged' })
-            .mockResolvedValueOnce({ status: 'discarded' });
+        finalizeHttp.mockResolvedValueOnce(Response.json({ success: false, error: 'Still staged', errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED', keepSession: true }, { status: 500 }));
         modalShowMock
-            .mockImplementationOnce((config) => {
-                config.props.onResolve('retry_finalize');
-                return 'first-modal';
-            })
-            .mockImplementationOnce((config) => {
-                config.props.onResolve('discard_staged');
-                return 'second-modal';
-            });
-
-        await expect(runTransferFinalizeRecovery({
-            recovery: {
-                kind: 'transfer_finalize_recovery',
-                expiresAt: Date.now() + 60_000,
-                actions: ['retry_finalize', 'discard_staged'],
-                isActionable: () => invoke.mock.calls.length < 2,
-                invoke,
-            },
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({ status: 'discarded' });
-        expect(invoke.mock.calls).toEqual([
-            ['retry_finalize'],
-            ['discard_staged'],
-        ]);
+            .mockImplementationOnce(config => { choose(config, 'retry_finalize'); return 'first-modal'; })
+            .mockImplementationOnce(config => { choose(config, 'discard_staged'); return 'second-modal'; });
+        const recovery = createRecovery();
+        await expect(run(recovery)).resolves.toEqual({ status: 'discarded' });
+        expect(finalizeHttp).toHaveBeenCalledTimes(1);
+        expect(abortRpc).toHaveBeenCalledTimes(1);
+        expect(recovery.isActionable()).toBe(false);
     });
 
     it('re-presents an indeterminate finalize outcome and waits for another explicit Retry before finalizing', async () => {
-        finalizeDirectImportSessionMock
-            .mockResolvedValueOnce({
-                success: false,
-                error: 'Direct import finalize outcome is indeterminate after request issuance',
-                errorCode: 'DIRECT_IMPORT_FINALIZE_OUTCOME_INDETERMINATE',
-            })
-            .mockResolvedValueOnce({
-                success: true,
-                finalized: {
-                    success: true,
-                    path: '/repo/file.txt',
-                    sizeBytes: 4,
-                },
-                sha256: 'sha256:finalized',
-            });
-        let chooseSecondAction!: (action: 'retry_finalize') => void;
+        finalizeHttp.mockRejectedValueOnce(new Error('Acknowledgement lost after issuance'));
+        let chooseSecondAction!: (action: TransferFinalizeRecoveryAction) => void;
         modalShowMock
-            .mockImplementationOnce((config) => {
-                config.props.onResolve('retry_finalize');
-                return 'first-modal';
-            })
-            .mockImplementationOnce((config) => {
-                chooseSecondAction = config.props.onResolve;
-                return 'second-modal';
-            });
+            .mockImplementationOnce(config => { choose(config, 'retry_finalize'); return 'first-modal'; })
+            .mockImplementationOnce(config => { chooseSecondAction = action => choose(config, action); return 'second-modal'; });
         const recovery = createRecovery();
-
-        const result = runTransferFinalizeRecovery({
-            recovery,
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        });
+        const result = run(recovery);
         await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledTimes(2));
-
-        expect(finalizeDirectImportSessionMock).toHaveBeenCalledTimes(1);
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).not.toHaveBeenCalled();
-
+        expect(finalizeHttp).toHaveBeenCalledTimes(1);
+        expect(abortRpc).not.toHaveBeenCalled();
+        expect(recovery.isActionable()).toBe(true);
         chooseSecondAction('retry_finalize');
-        await expect(result).resolves.toEqual({
-            status: 'finalized',
-            response: '/repo/file.txt',
-        });
-        expect(finalizeDirectImportSessionMock).toHaveBeenCalledTimes(2);
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).not.toHaveBeenCalled();
+        await expect(result).resolves.toEqual({ status: 'finalized', response: '/repo/file.txt' });
+        expect(finalizeHttp).toHaveBeenCalledTimes(2);
+        expect(abortRpc).not.toHaveBeenCalled();
     });
 
     it('re-presents a transient discard rejection and waits for another explicit Discard before settling', async () => {
-        abortPreparedDirectImportSessionViaMachineRpcMock
-            .mockRejectedValueOnce(new Error('transport unavailable'))
-            .mockResolvedValueOnce({ aborted: true });
-        let chooseSecondAction!: (action: 'discard_staged') => void;
+        abortRpc.mockRejectedValueOnce(new Error('transport unavailable'));
+        let chooseSecondAction!: (action: TransferFinalizeRecoveryAction) => void;
         modalShowMock
-            .mockImplementationOnce((config) => {
-                config.props.onResolve('discard_staged');
-                return 'first-modal';
-            })
-            .mockImplementationOnce((config) => {
-                chooseSecondAction = config.props.onResolve;
-                return 'second-modal';
-            });
+            .mockImplementationOnce(config => { choose(config, 'discard_staged'); return 'first-modal'; })
+            .mockImplementationOnce(config => { chooseSecondAction = action => choose(config, action); return 'second-modal'; });
         const recovery = createRecovery();
-
-        const result = runTransferFinalizeRecovery({
-            recovery,
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        });
+        const result = run(recovery);
         await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledTimes(2));
-
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).toHaveBeenCalledTimes(1);
-        expect(finalizeDirectImportSessionMock).not.toHaveBeenCalled();
-
+        expect(abortRpc).toHaveBeenCalledTimes(1);
+        expect(finalizeHttp).not.toHaveBeenCalled();
         chooseSecondAction('discard_staged');
         await expect(result).resolves.toEqual({ status: 'discarded' });
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).toHaveBeenCalledTimes(2);
-        expect(finalizeDirectImportSessionMock).not.toHaveBeenCalled();
+        expect(abortRpc).toHaveBeenCalledTimes(2);
+        expect(finalizeHttp).not.toHaveBeenCalled();
     });
 
     it('does not re-present after the daemon authoritatively reports the staged session unavailable', async () => {
-        abortPreparedDirectImportSessionViaMachineRpcMock.mockResolvedValueOnce({
-            aborted: false,
-        });
-        modalShowMock.mockImplementationOnce((config) => {
-            config.props.onResolve('discard_staged');
-            return 'only-modal';
-        });
-        const recovery = createRecovery();
-
-        await expect(runTransferFinalizeRecovery({
-            recovery,
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({
-            status: 'unavailable',
-            reason: 'session_unavailable',
-            error: 'The staged upload could not be discarded because its session is unavailable',
-        });
-
+        abortRpc.mockResolvedValueOnce({ success: true, aborted: false });
+        modalShowMock.mockImplementationOnce(config => { choose(config, 'discard_staged'); return 'only-modal'; });
+        await expect(run()).resolves.toEqual({ status: 'unavailable', reason: 'session_unavailable',
+            error: 'The staged upload could not be discarded because its session is unavailable' });
         expect(modalShowMock).toHaveBeenCalledTimes(1);
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).toHaveBeenCalledTimes(1);
-        expect(finalizeDirectImportSessionMock).not.toHaveBeenCalled();
+        expect(abortRpc).toHaveBeenCalledTimes(1);
+        expect(finalizeHttp).not.toHaveBeenCalled();
     });
 
     it('does not re-present after retry discovers that the staged session is missing or expired', async () => {
-        finalizeDirectImportSessionMock.mockRejectedValueOnce(
-            new Error('Direct import request failed with status 404'),
-        );
-        modalShowMock.mockImplementationOnce((config) => {
-            config.props.onResolve('retry_finalize');
-            return 'only-modal';
-        });
-        const recovery = createRecovery();
-
-        await expect(runTransferFinalizeRecovery({
-            recovery,
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({
-            status: 'unavailable',
-            reason: 'session_unavailable',
-            error: 'The staged upload is no longer available',
-        });
-
+        finalizeHttp.mockResolvedValueOnce(Response.json({}, { status: 404 }));
+        modalShowMock.mockImplementationOnce(config => { choose(config, 'retry_finalize'); return 'only-modal'; });
+        await expect(run()).resolves.toEqual({ status: 'unavailable', reason: 'session_unavailable',
+            error: 'The staged upload is no longer available' });
         expect(modalShowMock).toHaveBeenCalledTimes(1);
-        expect(finalizeDirectImportSessionMock).toHaveBeenCalledTimes(1);
-        expect(abortPreparedDirectImportSessionViaMachineRpcMock).not.toHaveBeenCalled();
+        expect(finalizeHttp).toHaveBeenCalledTimes(1);
+        expect(abortRpc).not.toHaveBeenCalled();
     });
 
     it('re-presents through restored modal hosts after repeated provider churn and invokes only the eventual explicit action', async () => {
-        const invoke = vi.fn(async () => ({ status: 'discarded' as const }));
         modalShowMock
-            .mockImplementationOnce((config) => {
-                config.onHostUnmount();
-                return 'route-modal';
-            })
-            .mockImplementationOnce((config) => {
-                config.onHostUnmount();
-                return 'nested-modal';
-            })
-            .mockImplementationOnce((config) => {
-                config.props.onResolve('discard_staged');
-                return 'outer-modal';
-            });
-
-        await expect(runTransferFinalizeRecovery({
-            recovery: {
-                kind: 'transfer_finalize_recovery',
-                expiresAt: Date.now() + 60_000,
-                actions: ['retry_finalize', 'discard_staged'],
-                isActionable: () => false,
-                invoke,
-            },
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toEqual({ status: 'discarded' });
-
+            .mockImplementationOnce(config => { config.onHostUnmount?.(); return 'route-modal'; })
+            .mockImplementationOnce(config => { config.onHostUnmount?.(); return 'nested-modal'; })
+            .mockImplementationOnce(config => { choose(config, 'discard_staged'); return 'outer-modal'; });
+        await expect(run()).resolves.toEqual({ status: 'discarded' });
         expect(modalShowMock).toHaveBeenCalledTimes(3);
-        expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke).toHaveBeenCalledWith('discard_staged');
+        expect(abortRpc).toHaveBeenCalledTimes(1);
+        expect(finalizeHttp).not.toHaveBeenCalled();
     });
 
     it('settles without a transfer action when no modal host remains after provider unmount', async () => {
-        const invoke = vi.fn();
-        modalShowMock
-            .mockImplementationOnce((config) => {
-                config.onHostUnmount();
-                return 'route-modal';
-            })
-            .mockReturnValueOnce('');
-
-        await expect(runTransferFinalizeRecovery({
-            recovery: {
-                kind: 'transfer_finalize_recovery',
-                expiresAt: Date.now() + 60_000,
-                actions: ['retry_finalize', 'discard_staged'],
-                isActionable: () => true,
-                invoke,
-            },
-            title: 'Upload needs attention',
-            message: 'The upload is staged.',
-        })).resolves.toBeNull();
+        modalShowMock.mockImplementationOnce(config => { config.onHostUnmount?.(); return 'route-modal'; }).mockReturnValueOnce('');
+        await expect(run()).resolves.toBeNull();
         expect(modalShowMock).toHaveBeenCalledTimes(2);
-        expect(invoke).not.toHaveBeenCalled();
+        expect(abortRpc).not.toHaveBeenCalled();
+        expect(finalizeHttp).not.toHaveBeenCalled();
     });
 });

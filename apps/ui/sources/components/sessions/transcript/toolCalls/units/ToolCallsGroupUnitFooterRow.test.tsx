@@ -8,6 +8,10 @@ import { createTranscriptSessionCommonPropsFixture, flattenStyleProp } from './t
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installToolCallsGroupViewCommonModuleMocks({
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock({ theme: { borderRadius: { xl: 37 } } });
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -17,9 +21,9 @@ installToolCallsGroupViewCommonModuleMocks({
 });
 
 const interaction = { canSendMessages: true, canApprovePermissions: true } as const;
+const { ToolCallsGroupUnitFooterRowWithSessionCommon } = await import('./ToolCallsGroupUnitFooterRow');
 
 async function renderFooterRow(props: Record<string, unknown>) {
-    const { ToolCallsGroupUnitFooterRowWithSessionCommon } = await import('./ToolCallsGroupUnitFooterRow');
     return renderScreen(React.createElement(ToolCallsGroupUnitFooterRowWithSessionCommon, {
         sessionId: 's1',
         groupId: 'toolCalls:t1:m1',
@@ -42,8 +46,8 @@ describe('ToolCallsGroupUnitFooterRow', () => {
         const style = flattenStyleProp(container?.props.style);
         expect(style.marginHorizontal).toBe(16);
         expect(style.marginBottom).toBe(22);
-        expect(style.borderBottomLeftRadius).toBe(14);
-        expect(style.borderBottomRightRadius).toBe(14);
+        expect(style.borderBottomLeftRadius).toBe(37);
+        expect(style.borderBottomRightRadius).toBe(37);
         expect(style.borderTopLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
     });
@@ -70,7 +74,7 @@ describe('ToolCallsGroupUnitFooterRow', () => {
         expect(style.paddingHorizontal).toBe(10);
         expect(style.paddingBottom).toBe(6);
         expect(style.paddingTop).toBeUndefined();
-        expect(style.borderBottomLeftRadius).toBe(14);
+        expect(style.borderBottomLeftRadius).toBe(37);
         expect(style.borderTopLeftRadius).toBeUndefined();
         expect(style.backgroundColor).toBeTruthy();
     });

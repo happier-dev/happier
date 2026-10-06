@@ -1,37 +1,38 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
-const { fetchEncryptedTranscriptMessagesPage, fetchSessionTurnsProjection, resolveSessionTransportContext } = vi.hoisted(() => ({
-  fetchEncryptedTranscriptMessagesPage: vi.fn(),
-  fetchSessionTurnsProjection: vi.fn(),
-  resolveSessionTransportContext: vi.fn(),
-}));
-
-vi.mock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
-  fetchEncryptedTranscriptMessagesPage,
-}));
-
-vi.mock('@/session/transport/http/sessionsHttp', () => ({
-  fetchSessionTurnsProjection,
-}));
-
-vi.mock('./resolveSessionTransportContext', () => ({
-  resolveSessionTransportContext,
-}));
+import { createAccountEncryptionCurrentnessFixture, createSessionListResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const credentials = { token: 'token', encryption: null } as const;
+const transcriptResponse = vi.fn<() => Promise<unknown>>();
+let get: MockInstance<typeof axios.get>;
+
+function transcriptRequests() {
+  return get.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith('/messages'));
+}
 
 describe('getSessionTranscript', () => {
   beforeEach(() => {
-    fetchEncryptedTranscriptMessagesPage.mockReset();
-    fetchSessionTurnsProjection.mockReset();
-    resolveSessionTransportContext.mockReset();
+    transcriptResponse.mockReset();
+    // HTTP is the only substituted boundary; Account currentness, Session lookup,
+    // envelope parsing and both transcript projectors remain real.
+    get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      const session = createSessionRecordFixture({ id: 'sess-1', encryptionMode: 'plain' });
+      if (path === '/v2/sessions') return { status: 200, data: createSessionListResponseFixture([session]) };
+      if (path === '/v2/sessions/sess-1') return { status: 200, data: { session } };
+      if (path === '/v1/sessions/sess-1/messages') return { status: 200, data: await transcriptResponse() };
+      throw new Error(`Unexpected HTTP path: ${path}`);
+    });
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   it('routes the closed external projection through publication rows and exact completed turn anchors', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
     const admittedUser = {
       id: 'm1', seq: 1, localId: 'local-1', sidechainId: null, messageRole: 'user', createdAt: 1,
       externalShareableActor: 'machine',
@@ -47,7 +48,7 @@ describe('getSessionTranscript', () => {
         } },
       } },
     };
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         admittedUser,
         { id: 'm3', seq: 3, localId: 'local-3', sidechainId: null, messageRole: 'agent', createdAt: 3,
@@ -79,19 +80,13 @@ describe('getSessionTranscript', () => {
         { kind: 'assistantText', seq: 3, final: 'completed' },
       ],
     });
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({
-      projection: 'externalShareableV1',
-      afterSeq: 0,
-      limit: 100,
-    }));
-    expect(fetchSessionTurnsProjection).not.toHaveBeenCalled();
+    const pageRequest = new URL(String(transcriptRequests()[0]?.[0]));
+    expect(Object.fromEntries(pageRequest.searchParams)).toMatchObject({ projection: 'externalShareableV1', afterSeq: '0', limit: '100' });
+    expect(get.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/turns'))).toBe(false);
   });
 
   it('uses same-snapshot referenced user rows for an out-of-page final without a second transcript read', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
     const admittedUser = {
       id: 'm1', seq: 1, localId: 'local-1', sidechainId: null, messageRole: 'user', createdAt: 1,
       externalShareableActor: 'machine',
@@ -104,7 +99,7 @@ describe('getSessionTranscript', () => {
         } },
       } },
     };
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         { id: 'm101', seq: 101, localId: 'local-101', sidechainId: null, messageRole: 'agent', createdAt: 101,
           content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'draft' } } } },
@@ -148,15 +143,12 @@ describe('getSessionTranscript', () => {
         consumedInputs: [expect.objectContaining({ localId: 'local-1' })],
       }),
     ]);
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledTimes(1);
+    expect(transcriptRequests()).toHaveLength(1);
   });
 
   it('holds the cursor at a publication-blocked completed turn until the same snapshot exposes it', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [{
         id: 'm7', seq: 7, localId: 'local-7', sidechainId: null, messageRole: 'user', createdAt: 7,
         externalShareableActor: 'machine',
@@ -183,15 +175,12 @@ describe('getSessionTranscript', () => {
       scannedThroughSeq: 0,
       hasMore: true,
     });
-    expect(fetchSessionTurnsProjection).not.toHaveBeenCalled();
+    expect(get.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/turns'))).toBe(false);
   });
 
   it('holds the cursor at the same-transaction turn-settlement barrier without reconstructing active state', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [{
         id: 'm7', seq: 7, localId: 'local-7', sidechainId: null, messageRole: 'user', createdAt: 7,
         externalShareableActor: 'machine',
@@ -222,10 +211,7 @@ describe('getSessionTranscript', () => {
 
   it('fails closed when an old server successfully returns rows without the required external snapshot', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [{
         id: 'm1', seq: 1, localId: 'local-1', sidechainId: null, messageRole: 'user', createdAt: 1,
         content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'old server row' } } },
@@ -248,17 +234,14 @@ describe('getSessionTranscript', () => {
       errorCode: 'external_shareable_snapshot_unavailable',
       errorMessage: 'external_shareable_snapshot_unavailable',
     });
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledTimes(1);
-    expect(fetchSessionTurnsProjection).not.toHaveBeenCalled();
+    expect(transcriptRequests()).toHaveLength(1);
+    expect(get.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/turns'))).toBe(false);
   });
 
   it('passes external transcript read cancellation through the raw page reader', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const cancellation = new AbortController();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [],
       hasMore: false,
       nextBeforeSeq: null,
@@ -275,24 +258,14 @@ describe('getSessionTranscript', () => {
 
     await getSessionTranscript(request);
 
-    expect(resolveSessionTransportContext).toHaveBeenCalledWith({
-      credentials,
-      idOrPrefix: 'sess-1',
-      signal: cancellation.signal,
-    });
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({
-      projection: 'externalShareableV1',
-      signal: cancellation.signal,
-    }));
+    expect(transcriptRequests()[0]?.[1]?.signal).toBe(cancellation.signal);
+    expect(new URL(String(transcriptRequests()[0]?.[0])).searchParams.get('projection')).toBe('externalShareableV1');
   });
 
   it('stops after the authoritative page returns when cancellation wins before local projection', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const cancellation = new AbortController();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true, sessionId: 'sess-1', rawSession: { id: 'sess-1' }, mode: 'plain', ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockImplementationOnce(async () => {
+    transcriptResponse.mockImplementationOnce(async () => {
       cancellation.abort();
       return {
         messages: [],
@@ -315,17 +288,10 @@ describe('getSessionTranscript', () => {
   it('does not truncate semantic transcript message text by default', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const longText = 'x'.repeat(5001);
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: { id: 'sess-1' },
-      mode: 'plain',
-      ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         {
-          seq: 1,
+          id: '1', seq: 1,
           createdAt: 10,
           messageRole: 'user',
           content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: longText } } },
@@ -350,17 +316,10 @@ describe('getSessionTranscript', () => {
 
   it('truncates semantic transcript message text when a numeric truncation budget is supplied', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: { id: 'sess-1' },
-      mode: 'plain',
-      ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         {
-          seq: 1,
+          id: '1', seq: 1,
           createdAt: 10,
           messageRole: 'user',
           content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'abcdef' } } },
@@ -383,17 +342,10 @@ describe('getSessionTranscript', () => {
 
   it('does not stored-role prefilter when optional event-like transcript items are requested', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: { id: 'sess-1' },
-      mode: 'plain',
-      ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         {
-          seq: 3,
+          id: '3', seq: 3,
           createdAt: 30,
           messageRole: 'event',
           content: {
@@ -430,24 +382,15 @@ describe('getSessionTranscript', () => {
         },
       ],
     });
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.not.objectContaining({
-      roles: expect.anything(),
-    }));
+    expect(new URL(String(transcriptRequests()[0]?.[0])).searchParams.has('roles')).toBe(false);
   });
 
   it('keeps raw transcript page batches large enough for small semantic history requests', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'sess-1',
-      rawSession: { id: 'sess-1' },
-      mode: 'plain',
-      ctx: null,
-    });
-    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+    transcriptResponse.mockResolvedValueOnce({
       messages: [
         {
-          seq: 1,
+          id: '1', seq: 1,
           createdAt: 10,
           messageRole: 'user',
           content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
@@ -466,8 +409,6 @@ describe('getSessionTranscript', () => {
       includeTools: true,
     });
 
-    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({
-      limit: 20,
-    }));
+    expect(new URL(String(transcriptRequests()[0]?.[0])).searchParams.get('limit')).toBe('20');
   });
 });

@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createToolCallMessageFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createToolCallMessageFixture, renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 
@@ -75,6 +75,8 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
+
+await import('./MessageView');
 
 describe('MessageView (tool-call chrome in activity feed)', () => {
     afterEach(standardCleanup);

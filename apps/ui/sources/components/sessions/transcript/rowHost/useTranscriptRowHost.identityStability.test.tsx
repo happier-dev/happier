@@ -11,8 +11,13 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ExternalSessionOperationProgressV1Schema,
+    ExternalSessionOperationResumeInputV1Schema,
+    ExternalSessionOperationRetryInputV1Schema,
+    ExternalSessionOperationCancelInputV1Schema,
+    ExternalSessionOperationDiscardInputV1Schema,
     type ExternalSessionOperationProgressV1,
 } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { ChatListItem } from '@/components/sessions/chatListItems';
 
@@ -20,45 +25,35 @@ const resumeOperationSpy = vi.hoisted(() => vi.fn());
 const retryOperationSpy = vi.hoisted(() => vi.fn());
 const cancelOperationSpy = vi.hoisted(() => vi.fn());
 const discardOperationSpy = vi.hoisted(() => vi.fn());
-const useMachineSpy = vi.hoisted(() => vi.fn());
-const onlineMachine = vi.hoisted(() => ({
-    id: 'machine-1',
-    active: true,
-    activeAt: Date.now(),
-}));
 
 vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn() },
 }));
-vi.mock('@/components/ui/feedback/ShimmerView', () => ({
-    ShimmerView: ({ children }: { children?: unknown }) => children ?? null,
-}));
-vi.mock('@/sync/ops/machineExternalSessions', () => ({
-    machineExternalSessionOperationCancel: cancelOperationSpy,
-    machineExternalSessionOperationDiscard: discardOperationSpy,
-    machineExternalSessionOperationResume: resumeOperationSpy,
-    machineExternalSessionOperationRetry: retryOperationSpy,
-}));
-vi.mock('@/sync/store/hooks', () => ({
-    useMachine: (...args: unknown[]) => {
-        useMachineSpy(...args);
-        return onlineMachine;
-    },
-}));
-vi.mock('@/components/sessions/external/progress/externalSessionOperationRowCapabilities', () => ({
-    resolveExternalSessionOperationRowCapabilities: () => ({
-        originAvailability: 'online',
-        canInvokeOwnerActions: true,
-    }),
-}));
-vi.mock('@/components/sessions/transcript/PluginTranscriptActivityCard', () => ({
-    PluginTranscriptActivityCard: () => null,
-}));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
-    usePreferredServerIdForSession: () => 'server-1',
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(async (request) => {
+        const operation = request.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RESUME
+            ? { schema: ExternalSessionOperationResumeInputV1Schema, transport: resumeOperationSpy }
+            : request.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_RETRY
+                ? { schema: ExternalSessionOperationRetryInputV1Schema, transport: retryOperationSpy }
+                : request.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL
+                    ? { schema: ExternalSessionOperationCancelInputV1Schema, transport: cancelOperationSpy }
+                    : request.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD
+                        ? { schema: ExternalSessionOperationDiscardInputV1Schema, transport: discardOperationSpy }
+                        : null;
+        if (!operation) throw new Error(`Unexpected external operation RPC ${request.method}`);
+        return operation.transport({ machineId: request.machineId, ...operation.schema.parse(request.payload) }, {
+            serverId: request.serverId,
+        });
+    });
+});
 
-import { renderHook } from '@/dev/testkit';
+import { createMachineFixture, renderHook } from '@/dev/testkit';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createTranscriptMeasurementReconciler } from '@/components/sessions/transcript/measurement/transcriptMeasurementReconciler';
+import { buildTranscriptRowShellSignature } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
+import { createReducer } from '@happier-dev/session-core/reducer';
 
 import { TranscriptRowShell } from '@/components/sessions/transcript/ChatListRows';
 import { TranscriptWindowGapRow } from '@/components/sessions/transcript/viewport/window/TranscriptWindowGapRow';
@@ -91,7 +86,7 @@ function createExternalSessionOperationProgress(input: Readonly<{
         timeline: ['validating', 'staging', 'importing', 'publishing'],
         updatedAtMs: 1,
         priorStableStorage: { state: 'machine_only' },
-        currentStorageState: 'machine_only',
+        currentStorageState: input.status === 'completed' ? 'snapshot_complete' : 'machine_only',
         checkpoint: {
             sourcePagesRead: 0,
             stagedItemCount: 0,
@@ -105,12 +100,32 @@ function createExternalSessionOperationProgress(input: Readonly<{
             },
         },
         fence: { kind: 'none' },
+        ...(input.status === 'completed' ? {
+            publication: {
+                materializationPublicationId: `publication-${input.operationId}`,
+                materializedThroughSourceAt: 1,
+                publishedThroughServerSeq: 0,
+            },
+        } : {}),
     });
 }
 
-function createRendererProps(overrides?: Partial<Record<string, unknown>>): TranscriptItemRendererDeps['props'] {
+function createRendererProps(overrides?: Partial<TranscriptItemRendererDeps['props']>): TranscriptItemRendererDeps['props'] {
     return {
         sessionId: 's1',
+        sessionSurfaceKey: 'surface-s1',
+        sessionActive: true,
+        sessionThinking: false,
+        groupingMode: 'linear',
+        items: [],
+        maxTurnEntriesPerListItem: 1,
+        transcriptNavigationEntries: [],
+        eventEmphasisByMessageId: {},
+        hostWakeCountByMessageId: {},
+        committedMessagesCount: 0,
+        latestCommittedActivityKey: null,
+        isLoaded: true,
+        forkMessageMetadataById: null,
         metadata: null,
         interaction: {
             canSendMessages: true,
@@ -122,24 +137,33 @@ function createRendererProps(overrides?: Partial<Record<string, unknown>>): Tran
         onEditPendingMessage: vi.fn(),
         onDismissExternalSessionOperation: vi.fn(),
         onDismissPluginTranscriptActivity: vi.fn(),
+        onOpenPluginTranscriptActivityAction: vi.fn(),
+        onCheckAgainExternalSessionOperation: null,
         onExternalSessionOperationActionResult: vi.fn(),
         externalSessionOperationOwnerTarget: null,
-        forkCommon: { forkNoticesByMessageId: {} },
-        messageDisplayCommon: {},
-        toolChromeCommon: {},
+        forkCommon: { ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null },
+        messageDisplayCommon: { ...settingsDefaults, workspacePath: null, debugInformationEnabled: false },
+        toolChromeCommon: settingsDefaults,
+        toolRouteCommon: { messagesById: {}, reducerState: createReducer() },
         rollbackActionsByMessageId: {},
         rollbackRanges: [],
         messagesById: {},
         activeThinkingMessageId: null,
         forkedTranscriptEnabled: false,
         ...overrides,
-    } as unknown as TranscriptItemRendererDeps['props'];
+    };
 }
 
 function createRendererDeps(props: TranscriptItemRendererDeps['props']): TranscriptItemRendererDeps {
     const items: readonly never[] = [];
     return {
-        buildRowShellSignature: vi.fn(() => ({ kind: 'message' } as never)),
+        buildRowShellSignature: (item) => buildTranscriptRowShellSignature({
+            item, activeThinkingMessageId: null, expandedToolCallsAnchorMessageIds: new Set(),
+            forkMessageMetadataById: props.forkMessageMetadataById, getMessageById: () => null,
+            getMessageRevisionById: () => 1, groupingMode: 'linear', latestCommittedActivityKey: null,
+            resolveActionDraftFieldOptions: () => [], resolveThinkingExpanded: () => false,
+            sessionActive: props.sessionActive, widthBucket: 'w', fontScaleKey: 'default',
+        }),
         expandedToolCallsAnchorMessageIds: new Set<string>(),
         getMessageById: vi.fn(() => null),
         getMessageRevisionById: vi.fn(() => 1),
@@ -147,8 +171,8 @@ function createRendererDeps(props: TranscriptItemRendererDeps['props']): Transcr
         handleRowShellMeasured: vi.fn(),
         itemsRef: createRef(items),
         listData: items,
-        listOrientation: 'top-down' as never,
-        measurementReconciler: {} as never,
+        listOrientation: 'standard',
+        measurementReconciler: createTranscriptMeasurementReconciler(),
         props,
         resolveKindForMessageId: vi.fn(() => null),
         resolveThinkingExpanded: vi.fn(() => false),
@@ -157,7 +181,7 @@ function createRendererDeps(props: TranscriptItemRendererDeps['props']): Transcr
         setThinkingExpanded: vi.fn(),
         setToolCallsGroupExpanded: vi.fn(),
         toolTimelineChromeMode: 'cards',
-        toolRouteCommon: undefined as never,
+        toolRouteCommon: props.toolRouteCommon,
     };
 }
 
@@ -167,15 +191,21 @@ describe('useTranscriptItemRenderer identity stability', () => {
         retryOperationSpy.mockReset();
         cancelOperationSpy.mockReset();
         discardOperationSpy.mockReset();
-        useMachineSpy.mockClear();
+        getStorage().setState({ machines: { 'machine-1': createMachineFixture({ id: 'machine-1' }) } });
     });
 
-    it('does not create a second machine subscription inside the row renderer', async () => {
-        const hook = await renderHook(() => useTranscriptItemRenderer(
-            createRendererDeps(createRendererProps()),
-        ));
-
-        expect(useMachineSpy).not.toHaveBeenCalled();
+    it('does not rerender the row renderer for unrelated machine publications', async () => {
+        let renders = 0;
+        const deps = createRendererDeps(createRendererProps());
+        const hook = await renderHook(() => {
+            renders += 1;
+            return useTranscriptItemRenderer(deps);
+        });
+        const baseline = renders;
+        await act(async () => getStorage().setState({ machines: {
+            'machine-1': createMachineFixture({ id: 'machine-1', active: false }),
+        } }));
+        expect(renders).toBe(baseline);
         await hook.unmount();
     });
 
@@ -316,7 +346,6 @@ describe('useTranscriptItemRenderer identity stability', () => {
         });
         const hook = await renderHook(() => useTranscriptItemRenderer(
             createRendererDeps(createRendererProps({
-                metadata: { machineId: 'machine-1' },
                 externalSessionOperationOwnerTarget: {
                     machineId: 'machine-1',
                     machineOnline: true,
@@ -433,7 +462,6 @@ describe('useTranscriptItemRenderer identity stability', () => {
         };
         const hook = await renderHook(() => useTranscriptItemRenderer(
             createRendererDeps(createRendererProps({
-                metadata: { machineId: 'machine-1' },
                 onDismissExternalSessionOperation,
             })),
         ));

@@ -1,254 +1,175 @@
-import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CachedMachineDoctorSnapshot } from '@/components/machines/doctorSnapshot/machineDoctorSnapshotCache';
+import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
+import type { ActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
-import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
-import { renderScreen } from '@/dev/testkit';
-import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
-import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
-import { installServerSettingsHooksCommonModuleMocks } from './hooks/serverSettingsHooksTestHelpers';
 import type { RelayDriftBanner } from './relayDriftTypes';
 
-type ActiveServerSnapshot = Readonly<{
-    serverId: string;
-    serverUrl: string;
-    activeLocalRelayUrl?: string | null;
-    generation: number;
-}>;
-
-type CachedDoctorSnapshot = Readonly<{
-    cachedAt: number;
-    snapshot: {
-        capturedAt: string;
-        server: {
-            activeServerId: string;
-            serverUrl: string;
-            publicServerUrl: string;
-            webappUrl: string;
-        };
-        accountId: string | null;
-        settings: {
-            activeServerId: string | null;
-            servers: readonly [];
-            knownAccountIds: readonly string[];
-        };
-        daemonStatus?: {
-            service?: {
-                installed?: boolean;
-                running?: boolean;
-            };
-        };
-        serviceHealth?: {
-            backgroundService?: {
-                installed?: boolean;
-                running?: boolean;
-            };
-        };
-    };
-}> | null;
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
+import { renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { buildRelayDriftRepairSystemTaskSpec } from '@/sync/domains/server/relayDrift/relayDriftSystemTask';
+import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 
 const state = vi.hoisted(() => ({
-    activeServerSnapshot: {
-        serverId: 'server-a',
-        serverUrl: 'https://relay.example.test',
-        generation: 1,
-    } as ActiveServerSnapshot,
-    cachedDoctorSnapshot: null as CachedDoctorSnapshot,
-    profiles: [
-        {
-            id: 'server-a',
-            name: 'Relay A',
-            serverUrl: 'https://relay.example.test',
-            createdAt: 0,
-            updatedAt: 0,
-            lastUsedAt: 0,
-        },
-    ],
+    activeServerSnapshot: { serverId: 'server-a', serverUrl: 'https://relay.example.test', generation: 1 } as ActiveServerSnapshot,
+    cachedDoctorSnapshot: null as CachedMachineDoctorSnapshot | null,
     runner: null as SystemTaskRunner | null,
 }));
 const administrationTargetState = vi.hoisted(() => ({
     current: {
-        target: { serverIdentityId: 'identity-a', machineId: 'machine-1' },
+        target: { serverIdentityId: 'srv_identity_a', machineId: 'machine-1' },
         serverId: 'server-a',
-        machine: {
-            id: 'machine-1',
-            metadata: { displayName: 'Machine 1', host: 'machine-1.local' },
-        },
+        machine: { id: 'machine-1', metadata: { displayName: 'Machine 1', host: 'machine-1.local' } },
     } as {
         target: { serverIdentityId: string; machineId: string };
         serverId: string;
         machine: { id: string; metadata: { displayName: string; host: string } };
     } | null,
 }));
-// The real shape of `useLocalDaemonControl().status` (`LocalDaemonStatusData`): the desktop's
-// live read of the local daemon. The old stub returned only `{ machineId }`, so it could not
-// express the reachable case where the desktop knows the daemon's relay and the doctor cache is
-// empty — which is exactly where the R10 rule has to decide.
-type LocalDaemonStatusStub = {
-    serviceInstalled: boolean;
-    daemonRunning: boolean;
-    needsAuth: boolean;
-    machineId: string | null;
-    daemonServerUrl?: string | null;
-    daemonComparableKey?: string | null;
-    daemonAccountId?: string | null;
-    daemonMachineRegistered?: boolean | null;
-};
-
 const localDaemonControlState = vi.hoisted(() => ({
-    status: null as LocalDaemonStatusStub | null,
+    status: null as LocalDaemonStatusData | null,
     isUnavailable: false,
 }));
-
-installServerSettingsHooksCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
-    },
-});
-
-vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
-    useMachineAdministrationTargetSelection: () => ({
-        selectedTarget: administrationTargetState.current?.target ?? null,
-        canExecute: administrationTargetState.current !== null,
-        resolveExecutionTarget: () => administrationTargetState.current,
-    }),
-}));
-
-vi.mock('@/components/machines/doctorSnapshot/machineDoctorSnapshotCache', () => ({
-    readCachedMachineDoctorSnapshot: () => state.cachedDoctorSnapshot,
-}));
-
-vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () => ({
-    useLocalDaemonControl: () => {
-        const [repairTaskId, setRepairTaskId] = React.useState<string | null>(null);
-        // Every test installs its runner before rendering the hook. Keep the mock on
-        // the same canonical runner boundary as production rather than inventing a
-        // second local task state machine for this suite.
-        const runner = state.runner!;
-        const activeTaskSnapshot = useSystemTaskSnapshot(runner, repairTaskId);
-        const repairBackgroundService = React.useCallback(async () => {
-            const taskId = await runner.start(buildRelayDriftRepairSystemTaskSpec({
-                activeRelayUrl: state.activeServerSnapshot.serverUrl,
-                activeWebappUrl: state.activeServerSnapshot.serverUrl,
-                activeLocalRelayUrl: state.activeServerSnapshot.activeLocalRelayUrl ?? null,
-            }));
-            setRepairTaskId(taskId);
-            return taskId;
-        }, [runner]);
-        const cancel = React.useCallback(() => {
-            if (repairTaskId) void runner.cancel(repairTaskId);
-        }, [repairTaskId, runner]);
-        return {
-            status: localDaemonControlState.status,
-            isUnavailable: localDaemonControlState.isUnavailable,
-            activeTaskSnapshot,
-            repairBackgroundService,
-            cancel,
-            lastErrorMessage: null,
-        };
-    },
-}));
-
-// Partial mock: the rest of the profile owner keeps its real exports so an
-// unrelated addition there cannot silently break this suite's module graph.
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    return {
-        ...actual,
-        getActiveServerSnapshot: () => state.activeServerSnapshot,
-        listServerProfiles: () => state.profiles,
-        areServerProfileIdentifiersEquivalent: () => true,
-    };
-});
-
-const upsertAndActivateServerSpy = vi.hoisted(() => vi.fn((..._args: any[]) => ({ id: 'server-daemon', serverUrl: 'https://daemon-relay.example.test' })));
-vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>();
-    return {
-        ...actual,
-        upsertAndActivateServer: (...args: unknown[]) => upsertAndActivateServerSpy(...args),
-    };
-});
-
-const switchConnectionToActiveServerSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
-vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
-}));
-
-const refreshFromActiveServerSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ refreshFromActiveServer: (...args: unknown[]) => refreshFromActiveServerSpy(...args) }),
-}));
-
 const approvalMocks = vi.hoisted(() => ({
     readCredentials: vi.fn(async (..._args: unknown[]) => ({ token: 'relay-a-bearer' }) as { token: string } | null),
     endpointFetch: vi.fn(async (..._args: unknown[]) => new Response('{}', { status: 200 })),
     createServerFetchAtEndpoint: vi.fn((..._args: unknown[]) => approvalMocks.endpointFetch),
 }));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key) => key });
+});
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getCredentialsForServerUrl: (...args: unknown[]) => approvalMocks.readCredentials(...args),
-        },
-    };
+    return { ...actual, TokenStorage: {
+        ...actual.TokenStorage,
+        getCredentialsForServerUrl: (...args: unknown[]) => approvalMocks.readCredentials(...args),
+    } };
 });
-
 vi.mock('@/sync/http/client', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/http/client')>();
-    return {
-        ...actual,
-        createServerFetchAtEndpoint: (...args: unknown[]) => approvalMocks.createServerFetchAtEndpoint(...args),
-    };
+    return { ...actual, createServerFetchAtEndpoint: (...args: unknown[]) => approvalMocks.createServerFetchAtEndpoint(...args) };
 });
-
+// The OS task fixture injects a real runner. Prompt custody and the daemon/setup
+// hooks beneath this system-task facade are never replaced.
 vi.mock('@/components/systemTasks', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/components/systemTasks')>();
-    return {
-        ...actual,
-        getDefaultSystemTaskRunner: () => state.runner!,
-    };
+    return { ...actual, getDefaultSystemTaskRunner: () => state.runner! };
 });
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+let localStorageHandle: ReturnType<typeof installLocalStorageMock>;
+const seededProfiles = new Set<string>();
 
+async function renderScreen(element: React.ReactElement) {
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    if (state.activeServerSnapshot.activeLocalRelayUrl) {
+        vi.stubGlobal('window', { location: { origin: state.activeServerSnapshot.activeLocalRelayUrl } });
+    }
+    const profile = await profiles.adoptHomeProfile({
+        descriptor: {
+            serverUrl: state.activeServerSnapshot.serverUrl,
+            homeServerIdentityId: 'srv_identity_a',
+            displayName: 'Relay A',
+        },
+        source: 'manual', suggestedName: 'Relay A',
+    });
+    seededProfiles.add(profile.id);
+    await profiles.setActiveServerId(profile.id, { scope: 'device' });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } = await import('@/sync/domains/machines/administration/selectionPreferences');
+    const selected = administrationTargetState.current;
+    const machine = selected ? createMachineFixture({
+        id: selected.machine.id,
+        metadata: { ...createMachineFixture().metadata!, ...selected.machine.metadata },
+        active: true, activeAt: Date.now(),
+    }) : null;
+    const current = storage.getState();
+    storage.setState({
+        isDataReady: true,
+        machines: machine ? { [machine.id]: machine } : {},
+        machineListByServerId: {},
+        machineListStatusByServerId: {},
+        settings: {
+            ...current.settings,
+            machineAdministrationTargetsLocalV1: selected ? {
+                [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.relayDrift]: {
+                    serverIdentityId: 'srv_identity_a', machineId: selected.machine.id,
+                },
+            } : {},
+        },
+    });
+    const { clearCachedMachineDoctorSnapshot, writeCachedMachineDoctorSnapshot } = await import('@/components/machines/doctorSnapshot/machineDoctorSnapshotCache');
+    const cacheScope = { serverId: 'srv_identity_a', machineId: selected?.machine.id ?? 'machine-1' };
+    clearCachedMachineDoctorSnapshot(cacheScope);
+    if (state.cachedDoctorSnapshot) {
+        const snapshot = state.cachedDoctorSnapshot.snapshot;
+        // The published DoctorSnapshot schema requires configured URLs even
+        // before authentication; blank strings were invalid boundary fixtures.
+        const server = Object.fromEntries(Object.entries(snapshot.server).map(([key, value]) => [
+            key, value || (key === 'activeServerId' ? 'srv_identity_a' : state.activeServerSnapshot.serverUrl),
+        ]));
+        const { DoctorSnapshotSchema } = await import('@happier-dev/protocol');
+        writeCachedMachineDoctorSnapshot({
+            ...cacheScope, cachedAt: state.cachedDoctorSnapshot.cachedAt,
+            snapshot: DoctorSnapshotSchema.parse({ ...snapshot, server }),
+        });
+    }
+    if (localDaemonControlState.status) {
+        const { publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+        publishLocalDaemonStatus(state.runner!, localDaemonControlState.status);
+    }
+    return renderCanonicalScreen(element);
+}
+
+afterEach(async () => {
+    standardCleanup();
+    const profiles = await import('@/sync/domains/server/serverProfiles');
+    for (const id of seededProfiles) if (profiles.getServerProfileById(id)) await profiles.removeServerProfile(id);
+    seededProfiles.clear();
+    localStorageHandle.restore();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+});
 describe('useRelayDriftBanner', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        vi.stubGlobal('window', { location: {} });
+        vi.stubGlobal('document', {});
+        vi.stubEnv('EXPO_PUBLIC_HAPPY_STORAGE_SCOPE', `relay-drift-${crypto.randomUUID()}`);
+        localStorageHandle = installLocalStorageMock();
+        (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
         Reflect.deleteProperty(globalThis as { location?: unknown }, 'location');
         state.activeServerSnapshot = {
             serverId: 'server-a',
             serverUrl: 'https://relay.example.test',
             generation: 1,
         } as ActiveServerSnapshot;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        storage.setState({ profile: { ...profileDefaults } });
         state.cachedDoctorSnapshot = null;
-        state.profiles = [
-            {
-                id: 'server-a',
-                name: 'Relay A',
-                serverUrl: 'https://relay.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-            },
-        ];
-        state.runner = {
-            ...createManualSystemTaskRunner('dev').runner,
-            mode: 'dev',
-            start: async () => 'task_1',
-            cancel: async () => {},
-            respond: async () => {},
-            getSnapshot: () => null,
-            subscribe: () => () => {},
-        } satisfies SystemTaskRunner;
+        state.runner = createManualSystemTaskRunner('dev').runner;
         administrationTargetState.current = {
-            target: { serverIdentityId: 'identity-a', machineId: 'machine-1' },
+            target: { serverIdentityId: 'srv_identity_a', machineId: 'machine-1' },
             serverId: 'server-a',
             machine: {
                 id: 'machine-1',
@@ -280,8 +201,10 @@ describe('useRelayDriftBanner', () => {
                 settings: { activeServerId: 'server-a', servers: [], knownAccountIds: [] },
             },
         };
-        const start = vi.fn(async () => 'task_1');
-        state.runner = { ...state.runner!, start };
+        const start = vi.fn(async (spec: import('@happier-dev/protocol').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
+        const manual = createManualSystemTaskRunner('dev');
+        manual.bridge.start.mockImplementation(start);
+        state.runner = manual.runner;
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         let banner: RelayDriftBanner | null = null;
         function Probe() {
@@ -297,7 +220,7 @@ describe('useRelayDriftBanner', () => {
         await renderer.act(async () => {
             await banner?.onPress();
         });
-        expect(start).not.toHaveBeenCalled();
+        expect(start.mock.calls.some(([spec]) => spec.kind !== 'daemon.service.status.v1')).toBe(false);
     });
 
     it('does not show drift when the daemon public relay matches the active relay', async () => {
@@ -477,8 +400,10 @@ describe('useRelayDriftBanner', () => {
             daemonServerUrl: 'https://relay.example.test',
             daemonAccountId: 'acct_other',
         };
-        const start = vi.fn(async () => 'task_1');
-        state.runner = { ...state.runner!, start };
+        const start = vi.fn(async (spec: import('@happier-dev/protocol').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
+        const manual = createManualSystemTaskRunner('dev');
+        manual.bridge.start.mockImplementation(start);
+        state.runner = manual.runner;
         const confirm = vi.mocked(Modal.confirm);
         confirm.mockClear();
         confirm.mockResolvedValueOnce(false);
@@ -495,7 +420,7 @@ describe('useRelayDriftBanner', () => {
         });
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(confirm.mock.calls[0]?.[0]).toBe('machine.thisComputer.moveConfirm.title');
-        expect(start).not.toHaveBeenCalled();
+        expect(start.mock.calls.some(([spec]) => spec.kind !== 'daemon.service.status.v1')).toBe(false);
 
         confirm.mockResolvedValueOnce(true);
         await renderer.act(async () => {
@@ -505,6 +430,7 @@ describe('useRelayDriftBanner', () => {
             activeRelayUrl: 'https://relay.example.test',
             activeWebappUrl: 'https://relay.example.test',
             activeLocalRelayUrl: null,
+            activeAccountId: 'acct_app',
         }));
         storage.setState({ profile: { ...profileDefaults } });
     });
@@ -543,7 +469,7 @@ describe('useRelayDriftBanner', () => {
 
     it('does not show drift when the active relay is public but the app same-origin matches the daemon local relay', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
-        Object.defineProperty(globalThis, 'location', {
+        Object.defineProperty(globalThis.window, 'location', {
             configurable: true,
             value: { origin: 'http://127.0.0.1:3000' },
         } as PropertyDescriptor);
@@ -582,8 +508,8 @@ describe('useRelayDriftBanner', () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_1';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1';
         });
         const cancelMock = vi.fn(async (_taskId: string) => {});
         const listeners = new Map<string, {
@@ -693,8 +619,8 @@ describe('useRelayDriftBanner', () => {
         state.runner = createSystemTaskRunner({
             mode: 'dev',
             bridge: {
-                async start() {
-                    return 'task_repair_approval';
+                async start(spec) {
+                    return spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_repair_approval';
                 },
                 async subscribe(taskId, listenerSet) {
                     listeners.set(taskId, listenerSet);
@@ -730,7 +656,11 @@ describe('useRelayDriftBanner', () => {
         });
 
         await renderer.act(async () => {
-            listeners.get('task_repair_approval')?.onEvent({
+            approvalMocks.readCredentials.mockClear();
+            approvalMocks.createServerFetchAtEndpoint.mockClear();
+            const taskListener = listeners.get('task_repair_approval');
+            expect(taskListener).toBeDefined();
+            taskListener?.onEvent({
                 protocolVersion: 1,
                 taskId: 'task_repair_approval',
                 tsMs: 120,
@@ -753,11 +683,13 @@ describe('useRelayDriftBanner', () => {
 
         // Repair is answered by the one approval owner: the Home-scoped credential for the
         // explicit target is read, the opaque response is posted, and the task resumes.
+        await waitForHomeGovernance(() => expect(respondMock).toHaveBeenCalledWith('task_repair_approval', { approved: true }));
         expect(approvalMocks.readCredentials).toHaveBeenCalledWith(
             'https://relay.example.test',
-            { serverId: 'server-a' },
+            { serverId: 'srv_identity_a' },
         );
-        expect(respondMock).toHaveBeenCalledWith('task_repair_approval', { approved: true });
+        expect(JSON.stringify(respondMock.mock.calls)).not.toContain('relay-a-bearer');
+        expect(JSON.stringify(respondMock.mock.calls)).not.toContain('opaque-token-only-response-b64');
     });
 
     it('declines a repair pairing prompt whose target identity does not match the active relay', async () => {
@@ -774,8 +706,8 @@ describe('useRelayDriftBanner', () => {
         state.runner = createSystemTaskRunner({
             mode: 'dev',
             bridge: {
-                async start() {
-                    return 'task_repair_mismatch';
+                async start(spec) {
+                    return spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_repair_mismatch';
                 },
                 async subscribe(taskId, listenerSet) {
                     listeners.set(taskId, listenerSet);
@@ -810,7 +742,11 @@ describe('useRelayDriftBanner', () => {
         });
 
         await renderer.act(async () => {
-            listeners.get('task_repair_mismatch')?.onEvent({
+            approvalMocks.readCredentials.mockClear();
+            approvalMocks.createServerFetchAtEndpoint.mockClear();
+            const taskListener = listeners.get('task_repair_mismatch');
+            expect(taskListener).toBeDefined();
+            taskListener?.onEvent({
                 protocolVersion: 1,
                 taskId: 'task_repair_mismatch',
                 tsMs: 120,
@@ -830,9 +766,9 @@ describe('useRelayDriftBanner', () => {
             await Promise.resolve();
         });
 
+        await waitForHomeGovernance(() => expect(respondMock).toHaveBeenCalledWith('task_repair_mismatch', { approved: false, reason: 'relay_mismatch' }));
         expect(approvalMocks.readCredentials).not.toHaveBeenCalled();
         expect(approvalMocks.createServerFetchAtEndpoint).not.toHaveBeenCalled();
-        expect(respondMock).toHaveBeenCalledWith('task_repair_mismatch', { approved: false, reason: 'relay_mismatch' });
     });
 
     it('infers the active webapp url when repairing Happier Cloud relay drift', async () => {
@@ -841,8 +777,8 @@ describe('useRelayDriftBanner', () => {
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
 
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_1';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1';
         });
 
         state.runner = createSystemTaskRunner({
@@ -895,7 +831,7 @@ describe('useRelayDriftBanner', () => {
 
         expect(startMock).toHaveBeenCalledWith(buildRelayDriftRepairSystemTaskSpec({
             activeRelayUrl: 'https://api.happier.dev',
-            activeWebappUrl: 'https://app.happier.dev',
+            activeWebappUrl: 'https://cloud.happier.dev',
             activeLocalRelayUrl: null,
         }));
     });
@@ -906,8 +842,8 @@ describe('useRelayDriftBanner', () => {
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
 
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_1';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1';
         });
 
         state.runner = createSystemTaskRunner({
@@ -971,8 +907,8 @@ describe('useRelayDriftBanner', () => {
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
 
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_1';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1';
         });
 
         state.runner = createSystemTaskRunner({
@@ -1115,9 +1051,8 @@ describe('useRelayDriftBanner', () => {
         expect(resolvedBanner).not.toBeNull();
         expect((resolvedBanner as unknown as { secondaryActionLabel?: unknown }).secondaryActionLabel).toBeUndefined();
         expect((resolvedBanner as unknown as { onSecondaryPress?: unknown }).onSecondaryPress).toBeUndefined();
-        expect(upsertAndActivateServerSpy).not.toHaveBeenCalled();
-        expect(switchConnectionToActiveServerSpy).not.toHaveBeenCalled();
-        expect(refreshFromActiveServerSpy).not.toHaveBeenCalled();
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        expect(getActiveServerSnapshot().serverUrl).toBe('https://relay.example.test');
     });
 
     it('uses an authenticate action label when the relay matches but the daemon still needs auth', async () => {
@@ -1160,8 +1095,8 @@ describe('useRelayDriftBanner', () => {
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
 
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_restart';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_restart';
         });
 
         state.runner = createSystemTaskRunner({
@@ -1192,9 +1127,22 @@ describe('useRelayDriftBanner', () => {
                     knownAccountIds: ['acct_1'],
                 },
                 daemonStatus: {
+                    server: {
+                        activeServerId: 'srv_identity_a',
+                        serverUrl: 'https://relay.example.test',
+                        localServerUrl: null,
+                        publicServerUrl: 'https://relay.example.test',
+                        webappUrl: 'https://relay.example.test',
+                        comparableKey: null,
+                    },
+                    daemon: { running: false, pid: null, httpPort: null },
                     service: {
                         installed: true,
                         running: false,
+                    },
+                    auth: {
+                        authenticated: true, machineRegistered: true,
+                        machineId: 'machine-1', needsAuth: false, accountId: 'acct_1',
                     },
                 },
             },
@@ -1224,8 +1172,8 @@ describe('useRelayDriftBanner', () => {
         const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
 
         const startMock = vi.fn(async (spec: unknown) => {
-            SystemTaskSpecSchema.parse(spec);
-            return 'task_restart';
+            const parsed = SystemTaskSpecSchema.parse(spec);
+            return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_restart';
         });
 
         state.runner = createSystemTaskRunner({
@@ -1259,6 +1207,7 @@ describe('useRelayDriftBanner', () => {
                     backgroundService: {
                         installed: true,
                         running: false,
+                        healthy: null,
                     },
                 },
             },

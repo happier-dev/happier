@@ -61,7 +61,12 @@ vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({ useSessi
     canLaunchExecutionRuns: false, canShowExecutionRunLauncher: false, executionRunsBackends: {}, executionRunsSupported: false, sessionServerId: 'server-a',
 }) }));
 vi.mock('@/components/sessions/shell/sessionViewStableSession', () => ({ useSessionViewShellSession: () => null }));
-vi.mock('@/utils/platform/responsive', () => ({ useDeviceType: () => 'phone' }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+    });
+});
 vi.mock('@/sync/domains/state/storage', () => ({ useSetting: (key: string) => key === 'transcriptBulkCopyFormat' ? 'markdown_labeled' : '{{MESSAGES}}' }));
 vi.mock('@/keyboard/KeyboardShortcutProvider', () => ({ useKeyboardShortcutHandlers: () => true }));
 vi.mock('@/sync/sync', () => ({ sync: { patchSessionMetadataWithRetry: vi.fn() } }));

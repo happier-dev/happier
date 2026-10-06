@@ -1,11 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-// HTTP and machine RPC below are the only external systems in this composed path.
-vi.mock('@/sync/api/session/apiSocket', () => ({ apiSocket: { request: vi.fn() } }));
+const resourceRead = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock((params) => {
+        if (params.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error(`Unexpected brand fixture RPC: ${params.method}`);
+        return resourceRead();
+    });
+});
+
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let homeId: string;
 
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     PluginProjectionV2Schema,
+    DaemonPluginUiResourceReadResponseSchema,
     PluginManifestV2Schema,
     createAccountScopedCryptoMaterialSnapshotV1,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -21,21 +37,38 @@ import {
     type PluginMachineMaterializationV1,
 } from '@happier-dev/protocol/plugins/availability';
 
-import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { readInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
-import type { PluginSurfaceResourceReadTransport } from '@/components/plugins/surfaces/pluginSurfaceResourceRead';
-import { createValidPluginBrandPngFixture } from '@/dev/testkit';
+const { readInstalledPluginBrandPresentation } = await import('@/components/plugins/shared/installedPluginBrandPresentation');
+import { createValidPluginBrandPngFixture } from '@/dev/testkit/fixtures/pluginImageFixtures';
 import { encodeBase64 } from '@/encryption/base64';
-import { createActivePluginAccountPackageAssetSource } from '@/sync/api/plugins/availability/activePluginAccountPackageAssetRead';
-import { createLifetime, createPublisher } from '@/sync/api/plugins/availability/activePluginAccountHostedArtifactPublish.testkit';
+const { createActivePluginAccountPackageAssetSource } = await import('@/sync/api/plugins/availability/activePluginAccountPackageAssetRead');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 
-import { acquireAndPublishPluginAccountPackageAssets } from './accountPackageAssetPublication';
+const { acquireAndPublishPluginAccountPackageAssets } = await import('./accountPackageAssetPublication');
 import { createPluginAccountAvailabilityReader, createPluginAccountAvailabilityReaderStore } from './reader';
 
 describe('portable brand publication and daemon-offline consumption', () => {
+    beforeEach(async () => {
+        resourceRead.mockReset();
+        await harness.reset();
+        await loadSyncSingletonForTests();
+        homeId = await harness.addHome({ name: 'Brand publication', serverUrl: 'https://brand-publication.test', serverIdentityId: 'server-a', accountId: 'account-a' });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://brand-publication.test', accountId: 'account-a' });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const scope = { serverId: 'server-a', accountId: 'account-a' };
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: 'account-a' }, isDataReady: true });
+    });
+
+    afterEach(async () => {
+        await connection?.dispose();
+        connection = null;
+        await harness.reset();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState(storage.getInitialState(), true);
+    });
+
     it.each(['plain', 'e2ee'] as const)('publishes only after opt-in, then a fresh %s client opens the brand with no daemon', async (mode) => {
         const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
-        const active = createLifetime(scope);
         const pluginId = 'acme.portable-brand';
         const bytes = createValidPluginBrandPngFixture();
         const manifest = {
@@ -61,6 +94,7 @@ describe('portable brand publication and daemon-offline consumption', () => {
             v: 2, generation: 7, familiesById: {}, installedPackagesById: { [pluginId]: {
                 id: pluginId, version: manifest.version, displayName: manifest.displayName, enabled: true,
                 source: { kind: 'archive', locator: 'package.tgz' }, immutableGenerationId: 'generation-a',
+                occurrenceId: 'portable-brand-occurrence-a',
                 brand: { state: 'available', resource: { pluginId, localId: 'brand' }, width: 128, height: 128, digest: resource.digestSha256 },
             } },
         });
@@ -76,83 +110,73 @@ describe('portable brand publication and daemon-offline consumption', () => {
         };
         store.replace({ scope, snapshot });
         const stored: { current: PluginAvailabilityPackageAssetReadActionOutputV1 | null } = { current: null };
-        const request = vi.fn(async (path: string, init?: RequestInit) => {
-            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.publish']) {
-                const payload = PluginAvailabilityPackageAssetPublishActionInputV1Schema.parse(JSON.parse(String(init?.body)));
+        const publishPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.publish'];
+        const readPath = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.read'];
+        harness.answer(homeId, publishPath, { select: (input) => {
+                const payload = PluginAvailabilityPackageAssetPublishActionInputV1Schema.parse(input);
                 stored.current = PluginAvailabilityPackageAssetReadActionOutputV1Schema.parse({
                     link: { release: payload.release, artifactId: payload.artifactId, descriptor: archive.descriptor },
                     artifact: { ...payload.artifact, headerVersion: 1, bodyVersion: 1, seq: 0 },
                 });
-                return Response.json({ outcome: 'created', link: stored.current.link });
-            }
-            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.read'] && stored.current) {
-                return Response.json(stored.current);
-            }
-            return new Response(null, { status: 404 });
-        });
+                return { body: { outcome: 'created', link: stored.current.link } };
+        } });
+        harness.answer(homeId, readPath, { select: () => stored.current ? { body: stored.current } : { status: 404 } });
         const secret = new Uint8Array(32).fill(7);
-        const credentials = { token: 'fixture-account-token', secret: encodeBase64(secret, 'base64url') };
+        const credentials = { token: connection!.credentials.token, ...(mode === 'e2ee' ? { secret: encodeBase64(secret, 'base64url') } : {}) };
         const contentKeyFingerprint = mode === 'e2ee'
             ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(createAccountScopedCryptoMaterialSnapshotV1({
                 accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret },
             }).contentPublicKeyFingerprint)
             : null;
-        const { publisher } = createPublisher({
-            lifetime: active.lifetime, request, currentness: { mode, contentKeyFingerprint },
-            ...(mode === 'e2ee' ? { credentials } : {}),
-        });
-        const resourceRead = vi.fn<PluginSurfaceResourceReadTransport>(async () => ({
-            supported: true,
-            result: { ok: true, resource: { pluginId, localId: 'brand' }, kind: 'asset',
-                contentType: 'image/png', digest: resource.digestSha256, bytesBase64: encodeBase64(bytes, 'base64') },
+        harness.answer(homeId, '/v1/account/encryption', { body: { mode, updatedAt: 0 } });
+        harness.answer(homeId, '/v1/account/encryption/currentness', { body: { mode, version: 1, signingKeyFingerprint: null, updatedAt: 0, contentKeyFingerprint } });
+        await connection?.dispose();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://brand-publication.test', credentials });
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: scope.accountId }, isDataReady: true });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Brand publication requires a restored Account lifetime.');
+        resourceRead.mockResolvedValue(DaemonPluginUiResourceReadResponseSchema.parse({
+            ok: true, resource: { pluginId, localId: 'brand' }, kind: 'asset',
+            contentType: 'image/png', digest: resource.digestSha256, bytesBase64: encodeBase64(bytes, 'base64'),
         }));
         const acquisition = {
-            pluginId, reader: store.bind(scope), accountLifetime: active.lifetime, projection,
+            pluginId, reader: store.bind(scope), accountLifetime: lifetime, projection,
             daemon: { serverId: scope.serverId, serverIdentityId: 'identity-a', machineId: 'machine-a' }, isCurrent: () => true,
         };
-        await acquireAndPublishPluginAccountPackageAssets(acquisition, { publisher, resourceRead });
+        await acquireAndPublishPluginAccountPackageAssets(acquisition);
         expect(resourceRead).not.toHaveBeenCalled();
-        expect(request).not.toHaveBeenCalled();
+        expect(harness.requestsFor(publishPath)).toHaveLength(0);
 
         // This is the authoritative projection after the existing present-user consent CAS.
         const optedIn = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
             ...response, intent: { ...response.intent, offlineUiHosting: 'enabled', revision: 'intent-2' },
         });
         store.replace({ scope, snapshot: { ...snapshot, intentReads: [{ pluginId, response: optedIn }] } });
-        await acquireAndPublishPluginAccountPackageAssets(acquisition, { publisher, resourceRead });
+        await acquireAndPublishPluginAccountPackageAssets(acquisition);
         expect(resourceRead).toHaveBeenCalledTimes(1);
         expect(stored.current).not.toBeNull();
         if (!stored.current) throw new Error('Expected protected Account publication.');
         const published = stored.current;
 
-        active.retire();
+        await connection?.dispose();
         resourceRead.mockRejectedValue(new Error('Every daemon is offline.'));
-        const fresh = createLifetime(scope);
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://brand-publication.test', credentials });
+        storage.setState({ profileScope: scope, settingsScope: scope, profile: { ...profileDefaults, id: scope.accountId }, isDataReady: true });
+        const freshLifetime = captureActiveServerAccountScopeLifetime();
+        if (!freshLifetime) throw new Error('Fresh client requires a restored Account lifetime.');
         const freshReader = createPluginAccountAvailabilityReader({ scope, snapshot: {
             availabilityCursor: 1, materializations: [], snapshots: [],
             intentReads: [{ pluginId, response: { ...optedIn, packageAssets: [published.link] } }],
         } });
-        const encryption = mode === 'e2ee' ? await createEncryptionFromAuthCredentials(credentials) : null;
-        const source = createActivePluginAccountPackageAssetSource({
-            captureLifetime: () => fresh.lifetime,
-            getServerSnapshot: () => ({ serverId: scope.serverId, serverUrl: 'https://server.example', generation: 8 }),
-            captureRequestAuthority: async () => ({ request,
-                ...(encryption ? { decryptDataEncryptionKey: (value: string) => encryption.decryptEncryptionKey(value) } : {}),
-            }),
-            readAccountCurrentness: async () => ({ mode, version: 1, signingKeyFingerprint: null, updatedAt: 0, contentKeyFingerprint }),
-            resolveStoredContentCompatibility: () => ({ status: 'available',
-                declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, headers: new Headers(),
-            }),
-        });
+        const source = createActivePluginAccountPackageAssetSource();
         await expect(readInstalledPluginBrandPresentation({
             installedPackage: projection.installedPackagesById[pluginId], machineId: null, serverId: scope.serverId,
-            signal: new AbortController().signal, accountLifetime: fresh.lifetime,
+            signal: new AbortController().signal, accountLifetime: freshLifetime,
             isCurrent: () => true, packageAssets: { reader: freshReader, source },
         })).resolves.toEqual({ displayName: manifest.displayName, bytes });
         expect(resourceRead).toHaveBeenCalledTimes(1);
-        expect(request.mock.calls.map(([path]) => path)).toEqual([
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.publish'],
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.packageAsset.read'],
-        ]);
+        expect(harness.requests.filter((request) => request.path === publishPath || request.path === readPath).map((request) => request.path)).toEqual([publishPath, readPath]);
     });
 });

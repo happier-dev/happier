@@ -105,7 +105,7 @@ describe('serverReachabilitySupervisorPool (probe timeouts)', () => {
         let lastPhase: string | null = null;
         const unsubscribe = subscribeServerReachabilityState('https://example.test', (state) => {
             lastPhase = state.phase;
-        });
+        }, 'token');
 
         const startPromise = startServerReachabilitySupervisor({
             serverUrl: 'https://example.test',

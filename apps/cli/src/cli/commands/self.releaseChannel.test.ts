@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
 import {
     promoteVersionedPayload,
@@ -91,7 +92,7 @@ describe('happier self release-channel', () => {
         const previousHome = process.env.HAPPIER_HOME_DIR;
         const previousPath = process.env.PATH;
         const previousArgv = [...process.argv];
-        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const output = captureConsoleJsonOutput();
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
             throw new Error(`process.exit(${code ?? 0})`);
@@ -125,14 +126,14 @@ describe('happier self release-channel', () => {
                 rawArgv: ['happier', 'self', 'release-channel', 'use', 'preview'],
                 terminalRuntime: null,
             });
-            logSpy.mockClear();
+            output.logs.length = 0;
             await handleSelfCliCommand({
                 args: ['self', 'release-channel', 'status', '--json'],
                 rawArgv: ['happier', 'self', 'release-channel', 'status', '--json'],
                 terminalRuntime: null,
             });
 
-            const parsed = JSON.parse(logSpy.mock.calls.map((call) => call.join(' ')).join('\n'));
+            const parsed = output.json();
             expect(parsed.defaultReleaseChannel).toBe('preview');
             expect(parsed.happierShimMatchesDefaultReleaseChannel).toBe(true);
             expect(parsed.managedReleaseChannels).toEqual([
@@ -163,7 +164,7 @@ describe('happier self release-channel', () => {
                 process.env.PATH = previousPath;
             }
             process.argv = previousArgv;
-            logSpy.mockRestore();
+            output.restore();
             errorSpy.mockRestore();
             exitSpy.mockRestore();
             await rm(homeDir, { recursive: true, force: true });

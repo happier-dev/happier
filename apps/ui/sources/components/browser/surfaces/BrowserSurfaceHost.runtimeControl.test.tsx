@@ -1,14 +1,21 @@
 import * as React from 'react';
-import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserCommandV1,
-    BrowserEventV1,
-    BrowserViewTargetV1,
+import {
+    BrowserEventV1Schema,
+    type BrowserAdapterCapabilitiesV1,
+    type BrowserCommandV1,
+    type BrowserEventV1,
+    type BrowserViewTargetV1,
 } from '@happier-dev/protocol';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
+import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
+import { BrowserShell } from '@/components/browser/BrowserShell';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import {
     applyBrowserControlEvent,
@@ -19,23 +26,19 @@ import { clearBrowserRuntimeControlRegistryForTests } from '@/sync/domains/brows
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 
-vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => ({ state: 'enabled' }),
-}));
+installTerminalRouteCommonModuleMocks();
+await initializeTerminalRouteRuntimeForTests();
 
-vi.mock('@/components/browser/BrowserShell', async () => {
-    const ReactModule = await import('react');
-    return {
-        BrowserShell: (props: Record<string, unknown>) => ReactModule.createElement('BrowserShellMock', {
-            ...props,
-            testID: props.testID ?? 'browser-shell',
-        }),
-    };
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+beforeEach(async () => {
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://browser-control-home.example.test', request: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { browser: { enabled: true, viewTargets: { enabled: true } } } }));
+        return new Response('{}', { status: 404 });
+    } });
 });
-
-vi.mock('./BrowserPluginSurfacePlacements', () => ({
-    BrowserPluginSurfacePlacements: () => null,
-}));
 
 const target = {
     kind: 'localServicePreview',
@@ -90,7 +93,9 @@ function openViewState(input: Readonly<{
 }
 
 describe('BrowserSurfaceHost runtime control registration', () => {
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
+        await connection?.dispose();
         clearBrowserRuntimeControlRegistryForTests();
     });
 
@@ -160,8 +165,9 @@ describe('BrowserSurfaceHost runtime control registration', () => {
             adapterKind: 'localPreview',
             events: [],
         });
-        const shell = screen.findByTestId('browser-surface');
+        const shell = screen.findByType(BrowserShell);
         expect(shell?.props.state.viewsById[viewId]?.pendingUrl).toBe('https://preview.happier.test/surface');
+        expect(screen.findByType('iframe').props.src).toBe('https://preview.happier.test/surface');
     });
 
     it('A3: routes a daemon-authoritative navigate through the supplied sendDaemonCommand seam (no route_unavailable)', async () => {
@@ -213,8 +219,17 @@ describe('BrowserSurfaceHost runtime control registration', () => {
             occurredAt: 1_002,
         }]);
 
-        const sendDaemonCommand = vi.fn();
-        await renderScreen(
+        const daemonReply = createDeferred<void>();
+        const sendDaemonCommand = vi.fn<BrowserDaemonControlCommandSender>(async (command, onEvents) => {
+            // The real sender awaits its daemon RPC before publishing response
+            // events; hold that external reply until local dispatch has settled.
+            await daemonReply.promise;
+            const events = [BrowserEventV1Schema.parse({ kind: 'navigationCommitted', eventId: 'event_committed',
+                browserSessionId, viewId, currentUrl: command.kind === 'navigate' ? command.url : '', occurredAt: 1_003 })];
+            onEvents?.(events);
+            return { ok: true, result: { v: 1, commandId: command.commandId, status: 'dispatched', adapterKind: 'chromiumSidecar', events } };
+        });
+        const screen = await renderScreen(
             <BrowserSurfaceHost
                 browserSessionId={browserSessionId}
                 platform="desktop"
@@ -255,6 +270,16 @@ describe('BrowserSurfaceHost runtime control registration', () => {
             events: [],
         });
         expect(result).not.toMatchObject({ error: 'runtime_action_disabled:browser:browser_control_route_unavailable' });
-        expect(sendDaemonCommand).toHaveBeenCalledWith(command);
+        expect(sendDaemonCommand).toHaveBeenCalledWith(command, expect.any(Function));
+        expect(screen.findByType(BrowserShell).props.state.viewsById[viewId]?.currentUrl).toBe('https://browser.example.test/start');
+        await act(async () => {
+            daemonReply.resolve();
+            await sendDaemonCommand.mock.results[0]?.value;
+        });
+        await flushHookEffects();
+        expect(screen.findByType(BrowserShell).props.state.viewsById[viewId]).toMatchObject({
+            currentUrl: 'https://browser.example.test/next', pendingUrl: null,
+        });
+        expect(screen.findByTestId('browser-surface-address')?.props.value).toBe('browser.example.test/next');
     });
 });

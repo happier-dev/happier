@@ -1,3 +1,5 @@
+import { storage } from '@/sync/domains/state/storage';
+import { seedAutocompleteSessions, seedAutocompleteSessionRows } from './autocompleteTestFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,33 +44,11 @@ const searchCommandsMock = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params: unknown) => ({} as unknown)));
 
-const storageStateMock = vi.hoisted(() => ({
-    sessions: {} as Record<string, {
-        id?: string;
-        serverId?: string;
-        active?: boolean;
-        metadata?: Record<string, unknown>;
-    }>,
-    sessionListRowsByServerId: {} as Record<string, Record<string, unknown>>,
-    machines: {} as Record<string, unknown>,
-    artifacts: {} as Record<string, { body?: string }>,
-    getProjectForSession: vi.fn(),
-    applySessions: vi.fn(),
-    updateArtifact: vi.fn(),
-}));
-
 vi.mock('@/log', () => ({ log: { log: vi.fn() } }));
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
-});
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        storage: { getState: () => storageStateMock },
-    });
 });
 
 vi.mock('@/sync/domains/input/suggestionFile', () => ({ searchFiles: searchFilesMock }));
@@ -90,16 +70,6 @@ vi.mock(
         const { installServerScopedMachineRpcModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
         return installServerScopedMachineRpcModuleMock({
             machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeMock(params) as never,
-        })(importOriginal);
-    },
-);
-
-vi.mock(
-    '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId',
-    async (importOriginal) => {
-        const { installResolvePreferredServerIdForSessionIdModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-        return installResolvePreferredServerIdForSessionIdModuleMock({
-            resolvePreferredServerIdForSessionId: () => 'server-a',
         })(importOriginal);
     },
 );
@@ -147,6 +117,7 @@ function composerReferenceHost(): ComposerReferenceSearchHost {
                     qualifiedId: 'acme.issues/issues',
                     localId: 'issues',
                 },
+                occurrenceId: '7',
                 progression: { declared: true, normalized: true, merged: true },
                 registration: { requirement: 'required', state: 'bound', occurrenceId: '7' },
                 activation: { state: 'active', occurrenceId: '7' },
@@ -294,9 +265,8 @@ describe('composer suggestion picker — host wiring', () => {
         sessionRpcWithServerScopeMock.mockResolvedValue({});
         machineRpcWithServerScopeMock.mockReset();
         machineRpcWithServerScopeMock.mockResolvedValue({});
-        storageStateMock.applySessions.mockReset();
-        storageStateMock.machines = {};
-        storageStateMock.sessions = {
+        storage.setState({ machines: {} });
+        seedAutocompleteSessions({
             [SESSION_ID]: {
                 id: SESSION_ID,
                 serverId: 'server-a',
@@ -306,8 +276,8 @@ describe('composer suggestion picker — host wiring', () => {
                     sessionVendorPluginCatalogV1: { vendorPlugins: [] },
                 },
             },
-        };
-        storageStateMock.sessionListRowsByServerId = {};
+        });
+        seedAutocompleteSessionRows({});
     });
 
     it('opens the picker with the Files section for a warm session', async () => {
@@ -348,7 +318,7 @@ describe('composer suggestion picker — host wiring', () => {
     });
 
     it('offers the declared spawn server\'s Sessions to the new-session composer, excluding nothing', async () => {
-        storageStateMock.sessionListRowsByServerId = {
+        seedAutocompleteSessionRows({
             'server-a': {
                 [SESSION_ID]: {
                     id: SESSION_ID,
@@ -365,7 +335,7 @@ describe('composer suggestion picker — host wiring', () => {
                     metadata: { name: 'Fix Detached Dev Stack Startup', path: '/repo' },
                 },
             },
-        };
+        });
 
         const hook = await renderNewSessionComposerPicker('@session:fix');
         await flushHookEffects();
@@ -405,7 +375,7 @@ describe('composer suggestion picker — host wiring', () => {
     });
 
     it('offers a same-server Session through the actual SessionView eligible-kind list', async () => {
-        storageStateMock.sessionListRowsByServerId = {
+        seedAutocompleteSessionRows({
             'server-a': {
                 cmslj08960ku1tmhrd0v4a0a7: {
                     id: 'cmslj08960ku1tmhrd0v4a0a7',
@@ -425,7 +395,7 @@ describe('composer suggestion picker — host wiring', () => {
                     },
                 },
             },
-        };
+        });
 
         const hook = await renderComposerPicker('@session:fix');
         await flushHookEffects();
@@ -538,7 +508,7 @@ describe('composer suggestion picker — host wiring', () => {
     it('opens with the healthy section at the deadline while another kind is still hung', async () => {
         searchFilesMock.mockResolvedValue([file('README.md')]);
         sessionRpcWithServerScopeMock.mockImplementation(() => new Promise(() => {}));
-        storageStateMock.sessions[SESSION_ID]!.metadata = { path: '/repo' };
+        seedAutocompleteSessions({ [SESSION_ID]: { ...storage.getState().sessions[SESSION_ID], metadata: { path: '/repo' } } });
 
         const { COMPOSER_SUGGESTION_KIND_DEADLINE_MS } = await import('./suggestions');
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

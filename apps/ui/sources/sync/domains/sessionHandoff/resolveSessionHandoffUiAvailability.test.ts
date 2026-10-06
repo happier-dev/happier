@@ -1,30 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import { resolveSessionHandoffUiAvailability } from './resolveSessionHandoffUiAvailability';
 
-const state = vi.hoisted(() => ({
-    storageState: {
-        machines: {} as Record<string, { daemonState?: unknown | null }>,
-        machineListByServerId: {} as Record<string, { id: string; daemonState?: unknown | null }[] | null>,
-    },
-    preferredServerId: 'server-1',
-    reachableMachineId: 'machine_source' as string | null,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => createStorageModuleStub({
-    storage: {
-        getState: () => state.storageState,
-    },
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
-    resolvePreferredServerIdForSessionId: () => state.preferredServerId,
-}));
-
-vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => ({ machineId: state.reachableMachineId }),
-}));
+beforeEach(() => storage.setState(storage.getInitialState(), true));
 
 function buildReadyServerSnapshot(input?: Readonly<{
     directPeerEnabled?: boolean;
@@ -93,7 +74,7 @@ const EXTERNAL_AGENT_HANDOFF_SESSION = {
     },
 } as const;
 
-function buildActiveDaemonTransferState(): unknown {
+function buildActiveDaemonTransferState(): NonNullable<Machine['daemonState']> {
     return {
         transfer: {
             supported: {
@@ -126,7 +107,7 @@ function buildActiveDaemonTransferState(): unknown {
     };
 }
 
-function buildConfiguredInactiveDaemonTransferState(): unknown {
+function buildConfiguredInactiveDaemonTransferState(): NonNullable<Machine['daemonState']> {
     return {
         transfer: {
             supported: {
@@ -210,14 +191,12 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('reads source-machine daemon transfer state from an explicit server scope when callers pass one', () => {
-        state.preferredServerId = 'server-preferred-ignored';
-        state.storageState.machineListByServerId = {
-            'server-explicit': [{
+        storage.setState({ machineListByServerId: {
+            'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            }],
-        };
-        state.storageState.machines = {};
+            })],
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
@@ -235,14 +214,12 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('does not infer a server-scoped source-machine daemon state from the preferred server when callers omit serverId', () => {
-        state.preferredServerId = 'server-preferred';
-        state.storageState.machineListByServerId = {
-            'server-preferred': [{
+        storage.setState({ machineListByServerId: {
+            'server-preferred': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            }],
-        };
-        state.storageState.machines = {};
+            })],
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
@@ -259,14 +236,14 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('uses an explicitly reachable machine target even when the session cache reader is stale', () => {
-        state.reachableMachineId = 'stale-machine';
-        state.storageState.machineListByServerId = {
-            'server-explicit': [{
+        storage.setState({ machines: { 'stale-machine': createMachineFixture({ id: 'stale-machine' }) },
+            sessions: { 'session-1': createSessionFixture({ id: 'session-1',
+            metadata: { machineId: 'stale-machine', path: '/tmp/stale' } }) }, machineListByServerId: {
+            'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            }],
-        };
-        state.storageState.machines = {};
+            })],
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
@@ -277,8 +254,8 @@ describe('resolveSessionHandoffUiAvailability', () => {
                 directPeerEnabled: true,
                 serverRoutedEnabled: true,
             }),
-            reachableMachineId: 'machine_source' as any,
-        } as any)).toEqual({
+            reachableMachineId: 'machine_source',
+        })).toEqual({
             available: true,
             reason: 'available',
         });
@@ -301,17 +278,17 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('fails closed when the explicit server-scoped machine record exists but has no daemon state yet, even if the global machine cache is stale-active', () => {
-        state.storageState.machineListByServerId = {
-            'server-explicit': [{
+        storage.setState({ machineListByServerId: {
+            'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: null,
-            }],
-        };
-        state.storageState.machines = {
-            machine_source: {
+            })],
+        }, machines: {
+            machine_source: createMachineFixture({
+                id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            },
-        };
+            }),
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-1',
@@ -420,17 +397,16 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('keeps handoff available for a layout-v1 session with no owner metadata view when a canonical reachable source target exists', () => {
-        state.reachableMachineId = 'machine_source';
-        state.storageState.machineListByServerId = {
-            'server-explicit': [{
+        storage.setState({ machineListByServerId: {
+            'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            }],
-        };
-        state.storageState.machines = {};
+            })],
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-cold-owner-view',
+            reachableMachineId: 'machine_source',
             serverId: 'server-explicit',
             session: COLD_OWNER_VIEW_LAYOUT_V1_SESSION,
             sessionHandoffFeatureEnabled: true,
@@ -445,14 +421,12 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('stays session-ineligible when neither a reachable source target nor a readable owner metadata machine exists', () => {
-        state.reachableMachineId = null;
-        state.storageState.machineListByServerId = {
-            'server-explicit': [{
+        storage.setState({ machineListByServerId: {
+            'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            }],
-        };
-        state.storageState.machines = {};
+            })],
+        } });
 
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-cold-owner-view',

@@ -339,7 +339,7 @@ describe('registerSessionHandlers session controls', () => {
       expected: { generation: 42 },
     })).resolves.toEqual({
       ok: true,
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       identity: {
         strategy: 'provider_account_id',
         proofStrength: 'exact',

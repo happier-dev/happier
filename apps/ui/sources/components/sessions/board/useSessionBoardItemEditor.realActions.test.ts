@@ -2,14 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
-
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { projectSessionBoard } from '@/sync/domains/session/board';
-import { createSessionBoardActionAdapter } from '@/sync/api/session/sessionBoardActions';
-import { createSessionBoardActionsPort } from '@/sync/domains/session/board/sessionBoardActionsPort';
-import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
 import { runUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 
 import { useSessionBoardNoteEditor, type SessionBoardNoteEditor } from './note/useSessionBoardNoteEditor';
@@ -17,6 +11,7 @@ import { SessionBoardContinuityProvider } from './SessionBoardContinuity';
 import { useSessionBoardController, type SessionBoardController } from './useSessionBoardController';
 import type { SessionBoardItemRecoveryObservation } from './useSessionBoardItemEditor';
 import type { SessionBoardMutationApprovalRequest } from './sessionBoardMutationApproval';
+import { realBoardActions } from './sessionBoardActionsTestkit';
 
 /**
  * The shared Board editor composed with the real Board Action adapter, Action
@@ -24,38 +19,6 @@ import type { SessionBoardMutationApprovalRequest } from './sessionBoardMutation
  */
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
 const session = { serverId: 'home-a', sessionId: 'session-one' };
-
-function realBoardActions(
-    request: Parameters<typeof createSessionBoardActionAdapter>[0]['request'],
-    approvalsCreate?: ActionExecutorDeps['approvalsCreate'],
-) {
-    const scope = { serverId: session.serverId, accountId: 'alice' };
-    const adapter = createSessionBoardActionAdapter({
-        scope,
-        session,
-        request,
-        repository: createSessionSystemRecordRepository({ scope, request }),
-        contentContext: { mode: 'plain' },
-        capabilities: { readTranscript: true, editSessionRecords: true },
-    });
-    // Only Board execution and approval's Artifact storage boundary are needed.
-    const settings = ActionsSettingsV1Schema.parse({
-        v: 1,
-        actions: approvalsCreate ? { 'session.board.item.upsert': { approvalRequiredSurfaces: ['ui'] } } : {},
-    });
-    const deps: Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired' | 'approvalsCreate'> = {
-        sessionBoardAction: adapter,
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
-        ...(approvalsCreate ? { approvalsCreate } : {}),
-    };
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
-    return createSessionBoardActionsPort({
-        ...session,
-        execute: (actionId, input, context) => executor.execute(actionId, input, {
-            ...context, authority: 'present_user', runtimeAccountId: 'alice', actionRequestId: 'request-one',
-        }),
-    });
-}
 
 function createdAck(itemId: string): Response {
     return new Response(JSON.stringify({

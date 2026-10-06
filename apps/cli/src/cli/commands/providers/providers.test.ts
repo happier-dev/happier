@@ -537,10 +537,10 @@ describe('happier providers command domain', () => {
   });
 
   it('creates a custom connection, binds only a SavedSecret id, and preserves the strict template', async () => {
-    const h = harness({}, [{ id: 'secret-1' }]);
+    const h = harness({}, [existingSavedSecret]);
     const result = await executeProvidersCommand([
       'add', '--custom', '--name', 'Company', '--protocol', 'openai-responses',
-      '--base-url', 'https://gateway.example/v1', '--saved-secret-id', 'secret-1',
+      '--base-url', 'https://gateway.example/v1', '--saved-secret-id', existingSavedSecret.id,
       '--credential-style', 'bearer', '--catalog', 'probe', '--models-path', '/models',
     ], h.deps);
     expect(result).toMatchObject({ ok: true, data: { connectionId: 'pc_1', contributionKey: null } });
@@ -548,7 +548,7 @@ describe('happier providers command domain', () => {
     expect(providerSettings.connections[0]?.source).toMatchObject({
       kind: 'custom', template: { endpointTemplates: [{ capabilities: { streaming: 'unknown' } }] },
     });
-    expect(Object.values(providerSettings.secretBindingsByConnectionId)[0]?.account).toEqual({ apiKey: 'secret-1' });
+    expect(Object.values(providerSettings.secretBindingsByConnectionId)[0]?.account).toEqual({ apiKey: existingSavedSecret.id });
     expect(JSON.stringify(providerSettings)).not.toContain('sk-');
   });
 

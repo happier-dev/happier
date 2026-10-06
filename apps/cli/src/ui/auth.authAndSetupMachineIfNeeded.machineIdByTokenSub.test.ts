@@ -1,75 +1,70 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify, { type FastifyInstance } from 'fastify';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  AuthTokenProvenanceSchema,
   parseTerminalConnectLinkV4Parameters,
   sealTerminalProvisioningV3Payload,
 } from '@happier-dev/protocol';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-const machineRegistrationMocks = vi.hoisted(() => ({
-  apiCreate: vi.fn(async () => ({})),
-  ensureMachineRegistered: vi.fn(async ({ machineId }: { machineId: string }) => ({
-    machine: { id: machineId },
-    machineId,
-    didRotateMachineId: false,
-  })),
-}));
-const descriptorRuntimeMocks = vi.hoisted(() => ({
-  acquire: vi.fn(),
-  fetchFeatures: vi.fn(),
-}));
-const terminalAuthMocks = vi.hoisted(() => ({
+const homeBoundary = vi.hoisted(() => ({
+  origin: 'https://api.happier.dev',
+  accountMode: 'plain' as 'plain' | 'e2ee',
+  descriptor: null as import('@happier-dev/protocol').HomeConnectionDescriptorV1 | null,
   response: '',
   approvedToken: '',
-  createRequest: vi.fn(async () => ({ state: 'requested' })),
-  readStatus: vi.fn(async () => ({ status: 'pending', supportsV2: true })),
-  claimRequest: vi.fn(async () => ({ state: 'requested' })),
+  requests: [] as Array<{ method: string; path: string; body: unknown }>,
+  events: [] as string[],
+  activeTunnel: false,
 }));
 
-vi.mock('@/api/api', () => ({
-  ApiClient: { create: machineRegistrationMocks.apiCreate },
-}));
-
-vi.mock('@/api/machine/ensureMachineRegistered', () => ({
-  ensureMachineRegistered: machineRegistrationMocks.ensureMachineRegistered,
-}));
-
-vi.mock('@/auth/terminalAuthEnrollmentRuntime', () => ({
-  acquireTerminalAuthEnrollmentRuntime: descriptorRuntimeMocks.acquire,
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-  fetchServerFeaturesSnapshot: descriptorRuntimeMocks.fetchFeatures,
-}));
-
-vi.mock('@/auth/terminalAuthEnrollmentClient', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/auth/terminalAuthEnrollmentClient')>();
+vi.mock('@happier-dev/iroh-native/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@happier-dev/iroh-native/node')>();
+  type Native = NonNullable<Parameters<typeof actual.createNodeIrohHomeTunnelSession>[0]['native']>;
+  const unexpected = async (): Promise<never> => { throw new Error('Unexpected native operation'); };
+  // Inject only the native addon boundary; the session, carrier and enrollment owners stay real.
+  const native = {
+    getAvailability: (): never => { throw new Error('Unexpected availability read'); },
+    startHomeAcceptor: unexpected, stopHomeAcceptor: unexpected,
+    getEndpointStatus: unexpected, getTunnelStatus: unexpected,
+    startMachineAcceptor: unexpected, stopMachineAcceptor: unexpected,
+    getMachineAcceptorStatus: unexpected, startMachineTunnel: unexpected,
+    startMachineHttpTunnel: unexpected, stopMachineTunnel: unexpected,
+    getMachineTunnelStatus: unexpected,
+    createEndpoint: async () => ({ endpointHandle: 'auth-helper', endpointId: 'b'.repeat(64),
+      relayPolicy: 'automatic' as const, relayMode: 'custom' as const,
+      capProfile: 'account_client', relayUrls: [] }),
+    ensureHomeTunnel: async (request) => {
+      homeBoundary.activeTunnel = true;
+      return { tunnelId: 'auth-tunnel', endpointHandle: request.endpointHandle,
+        homeServerIdentityId: request.homeServerIdentityId, homeEndpointId: request.endpointId,
+        runtimeOrigin: homeBoundary.origin, observedPath: 'relay' as const,
+        carrier: 'iroh' as const, startedAtMs: 1 };
+    },
+    releaseHomeTunnel: async () => { homeBoundary.activeTunnel = false; },
+    shutdownEndpoint: async () => { homeBoundary.events.push('close'); },
+  } satisfies Native;
   return {
     ...actual,
-    createTerminalAuthRequest: terminalAuthMocks.createRequest,
-    readTerminalAuthRequestStatus: terminalAuthMocks.readStatus,
-    claimTerminalAuthRequest: terminalAuthMocks.claimRequest,
+    createNodeIrohHomeTunnelSession: async (input: Parameters<typeof actual.createNodeIrohHomeTunnelSession>[0]) =>
+      await actual.createNodeIrohHomeTunnelSession({ ...input, native }),
   };
 });
 
-vi.mock('./logger', () => ({
-  logger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
-function makeJwtWithSub(sub: string): string {
+function makeJwtWithSub(sub: string, signature = 'signature'): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
-  return `${header}.${payload}.signature`;
+  const provenance = AuthTokenProvenanceSchema.parse({ v: 1, kind: 'terminal', authority: 'account_automation' });
+  const payload = Buffer.from(JSON.stringify({ sub, provenance })).toString('base64url');
+  return `${header}.${payload}.${signature}`;
 }
 
 describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
+  const envScope = createEnvKeyScope(['HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_API_TOKEN', 'HAPPIER_HOME_CARRIER_POLICY', 'HAPPIER_SESSION_AUTOSTART_DAEMON']);
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
   const previousActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
   const previousServerUrl = process.env.HAPPIER_SERVER_URL;
@@ -78,8 +73,60 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
   const previousAuthMethod = process.env.HAPPIER_AUTH_METHOD;
   const previousNoBrowser = process.env.HAPPIER_NO_BROWSER_OPEN;
   const previousPollInterval = process.env.HAPPIER_AUTH_POLL_INTERVAL_MS;
+  let app: FastifyInstance;
+  let restoreAxios: (() => void) | undefined;
 
-  afterEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
+    homeBoundary.origin = 'https://api.happier.dev';
+    homeBoundary.accountMode = 'plain';
+    homeBoundary.descriptor = null;
+    homeBoundary.response = '';
+    homeBoundary.approvedToken = '';
+    homeBoundary.requests = [];
+    homeBoundary.events = [];
+    homeBoundary.activeTunnel = false;
+    process.env.HAPPIER_SERVER_URL = homeBoundary.origin;
+    envScope.patch({ HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined,
+      HAPPIER_API_TOKEN: undefined, HAPPIER_HOME_CARRIER_POLICY: undefined, HAPPIER_SESSION_AUTOSTART_DAEMON: '0' });
+    app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      homeBoundary.requests.push({ method: request.method, path: request.url.split('?')[0]!, body: request.body });
+    });
+    app.get('/v1/account/encryption', async () => ({ mode: homeBoundary.accountMode, updatedAt: 1 }));
+    const readFeatures = async () => ({
+      features: {},
+      capabilities: homeBoundary.descriptor ? { serverIdentity: { serverIdentityId: homeBoundary.descriptor.homeServerIdentityId } } : {},
+      ...(homeBoundary.descriptor ? { homeConnectionDescriptor: homeBoundary.descriptor } : {}),
+    });
+    app.get('/v1/features', readFeatures);
+    app.get('/v1/features/authenticated', readFeatures);
+    app.post<{ Body: { id: string; metadata: string; daemonState?: string } }>('/v1/machines', async (request) => {
+      if (homeBoundary.descriptor?.endpoints.some((endpoint) => endpoint.kind === 'iroh')) {
+        expect(homeBoundary.activeTunnel).toBe(true);
+      }
+      homeBoundary.events.push('register');
+      return { machine: { ...request.body, metadataVersion: 1, daemonStateVersion: 0 } };
+    });
+    app.post('/v1/auth/request', async () => ({ state: 'requested' }));
+    app.get('/v1/auth/request/status', async () => ({ status: homeBoundary.response ? 'authorized' : 'pending', supportsV2: true }));
+    app.post('/v1/auth/request/claim', async () => ({ state: 'authorized', token: homeBoundary.approvedToken,
+      response: homeBoundary.response, serverIdentityId: homeBoundary.descriptor?.homeServerIdentityId }));
+    const { installAxiosFastifyAdapter } = await import('@/testkit/http/axiosAdapter');
+    restoreAxios = installAxiosFastifyAdapter({ app, get origin() { return homeBoundary.origin; } });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe(homeBoundary.origin);
+      const response = await app.inject({ method: 'GET', url: `${url.pathname}${url.search}`,
+        headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+      return new Response(response.payload, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+    }));
+  });
+
+  afterEach(async () => {
+    restoreAxios?.();
+    await app.close();
+    envScope.restore();
     if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
     else process.env.HAPPIER_HOME_DIR = previousHomeDir;
     if (previousActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
@@ -96,20 +143,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     else process.env.HAPPIER_NO_BROWSER_OPEN = previousNoBrowser;
     if (previousPollInterval === undefined) delete process.env.HAPPIER_AUTH_POLL_INTERVAL_MS;
     else process.env.HAPPIER_AUTH_POLL_INTERVAL_MS = previousPollInterval;
-    vi.clearAllMocks();
-    machineRegistrationMocks.apiCreate.mockResolvedValue({});
-    machineRegistrationMocks.ensureMachineRegistered.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-      machine: { id: machineId },
-      machineId,
-      didRotateMachineId: false,
-    }));
-    descriptorRuntimeMocks.acquire.mockReset();
-    descriptorRuntimeMocks.fetchFeatures.mockReset();
-    terminalAuthMocks.response = '';
-    terminalAuthMocks.approvedToken = '';
-    terminalAuthMocks.createRequest.mockClear();
-    terminalAuthMocks.readStatus.mockReset();
-    terminalAuthMocks.claimRequest.mockReset();
     vi.unstubAllGlobals();
     vi.resetModules();
   });
@@ -121,7 +154,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     process.env.HAPPIER_SERVER_URL = 'http://localhost:3010';
     process.env.HAPPIER_WEBAPP_URL = 'https://app.happier.dev';
     delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
-    const events: string[] = [];
     const descriptor = {
       v: 1 as const,
       homeServerIdentityId: 'srv_iroh_machine_home',
@@ -129,31 +161,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       revision: 1,
       endpoints: [{ kind: 'iroh' as const, endpointId: 'd'.repeat(64) }],
     };
-    const close = vi.fn(async () => { events.push('close'); });
-    descriptorRuntimeMocks.acquire.mockResolvedValue({
-      ok: true,
-      runtime: {
-        runtimeOrigin: 'http://127.0.0.1:48123',
-        carrier: 'iroh',
-        authenticatedCredentialDestination: { kind: 'iroh', endpointId: 'd'.repeat(64) },
-      },
-      close,
-    });
-    descriptorRuntimeMocks.fetchFeatures.mockResolvedValue({
-      status: 'ready',
-      features: {
-        capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
-        homeConnectionDescriptor: descriptor,
-      },
-    });
-    machineRegistrationMocks.apiCreate.mockImplementation(async () => {
-      events.push('api');
-      return {};
-    });
-    machineRegistrationMocks.ensureMachineRegistered.mockImplementation(async ({ machineId }: { machineId: string }) => {
-      events.push('register');
-      return { machine: { id: machineId }, machineId, didRotateMachineId: false };
-    });
+    homeBoundary.origin = 'http://127.0.0.1:48123';
+    homeBoundary.descriptor = descriptor;
 
     try {
       writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
@@ -177,17 +186,17 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       mkdirSync(serverDir, { recursive: true });
       writeFileSync(join(serverDir, 'access.key'), JSON.stringify({ token: makeJwtWithSub('acct-iroh') }), 'utf8');
 
-      vi.resetModules();
       const { authAndSetupMachineIfNeeded } = await import('./auth');
       await expect(authAndSetupMachineIfNeeded({ callerIntent: 'setup-managed' })).resolves.toMatchObject({
         credentials: { token: expect.any(String) },
         machineId: expect.any(String),
       });
 
-      expect(descriptorRuntimeMocks.acquire).toHaveBeenCalledWith(descriptor, 'iroh', undefined);
-      expect(events).toEqual(['api', 'register', 'close']);
-      expect(close).toHaveBeenCalledOnce();
+      expect(homeBoundary.events).toEqual(['register', 'close']);
+      expect(homeBoundary.activeTunnel).toBe(false);
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -241,21 +250,21 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         'utf8',
       );
 
-      vi.resetModules();
       const { authAndSetupMachineIfNeeded } = await import('./auth');
       const result = await authAndSetupMachineIfNeeded();
 
       expect(result.machineId).toBe('machine-acct-b');
       expect(result.credentials.token).toContain('.');
-      expect(machineRegistrationMocks.ensureMachineRegistered).toHaveBeenCalledWith(expect.objectContaining({
-        machineId: 'machine-acct-b',
-        caller: 'auth.login',
+      expect(homeBoundary.requests).toContainEqual(expect.objectContaining({
+        method: 'POST', path: '/v1/machines', body: expect.objectContaining({ id: 'machine-acct-b' }),
       }));
 
       const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
       expect(raw.machineIdByServerId.cloud).toBe('machine-acct-b');
       expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -298,37 +307,25 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         'utf8',
       );
 
-      vi.resetModules();
       const { authAndPrepareDaemonMachineIfNeeded, authAndSetupMachineIfNeeded } = await import('./auth');
-      machineRegistrationMocks.ensureMachineRegistered.mockRejectedValueOnce(
-        Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }),
-      );
-      try {
-        const result = await authAndPrepareDaemonMachineIfNeeded();
+      const result = await authAndPrepareDaemonMachineIfNeeded();
 
-        expect(result.credentials).toEqual({
-          token: makeJwtWithSub('acct-plain'),
-          encryption: null,
-          credentialProvenance: 'stored_session',
-        });
-        expect(result.machineId).toBe('machine-token-only');
-        expect(machineRegistrationMocks.ensureMachineRegistered).not.toHaveBeenCalled();
-      } finally {
-        machineRegistrationMocks.ensureMachineRegistered.mockReset();
-        machineRegistrationMocks.ensureMachineRegistered.mockImplementation(async ({ machineId }: { machineId: string }) => ({
-          machine: { id: machineId },
-          machineId,
-          didRotateMachineId: false,
-        }));
-      }
+      expect(result.credentials).toEqual({
+        token: makeJwtWithSub('acct-plain'),
+        encryption: null,
+        credentialProvenance: 'stored_session',
+      });
+      expect(result.machineId).toBe('machine-token-only');
+      expect(homeBoundary.requests).toEqual([]);
       await expect(authAndSetupMachineIfNeeded()).resolves.toMatchObject({
         machineId: 'machine-token-only',
       });
-      expect(machineRegistrationMocks.ensureMachineRegistered).toHaveBeenCalledWith(expect.objectContaining({
-        machineId: 'machine-token-only',
-        caller: 'auth.login',
+      expect(homeBoundary.requests).toContainEqual(expect.objectContaining({
+        method: 'POST', path: '/v1/machines', body: expect.objectContaining({ id: 'machine-token-only' }),
       }));
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -338,13 +335,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_ACTIVE_SERVER_ID = 'plain-home';
     process.env.HAPPIER_SERVER_URL = 'https://plain-home.example.test';
+    homeBoundary.origin = process.env.HAPPIER_SERVER_URL;
     const token = makeJwtWithSub('acct-plain-material-readiness');
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
-      if (String(input) === 'https://plain-home.example.test/v1/account/encryption') {
-        return Response.json({ mode: 'plain', updatedAt: 1 });
-      }
-      return new Response(null, { status: 404 });
-    }));
 
     try {
       writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
@@ -366,17 +358,15 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       mkdirSync(serverDir, { recursive: true });
       writeFileSync(join(serverDir, 'access.key'), JSON.stringify({ token }), 'utf8');
 
-      vi.resetModules();
       const { authAndSetupMachineIfNeeded } = await import('./auth');
       await expect(authAndSetupMachineIfNeeded({
         callerIntent: 'setup-managed',
         requireAccountMaterial: true,
       })).resolves.toMatchObject({ credentials: { token, encryption: null } });
 
-      expect(terminalAuthMocks.createRequest).not.toHaveBeenCalled();
-      expect(machineRegistrationMocks.ensureMachineRegistered).toHaveBeenCalledOnce();
+      expect(homeBoundary.requests.filter((request) => request.path === '/v1/auth/request')).toEqual([]);
+      expect(homeBoundary.requests.filter((request) => request.path === '/v1/machines')).toHaveLength(1);
 
-      terminalAuthMocks.createRequest.mockClear();
       vi.stubGlobal('fetch', vi.fn(async () => {
         throw new TypeError('Home mode transport unavailable');
       }));
@@ -384,8 +374,10 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         callerIntent: 'setup-managed',
         requireAccountMaterial: true,
       })).rejects.toThrow('Home mode transport unavailable');
-      expect(terminalAuthMocks.createRequest).not.toHaveBeenCalled();
+      expect(homeBoundary.requests.filter((request) => request.path === '/v1/auth/request')).toEqual([]);
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -395,13 +387,9 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_ACTIVE_SERVER_ID = 'legacy-home';
     process.env.HAPPIER_SERVER_URL = 'https://legacy-home.example.test';
+    homeBoundary.origin = process.env.HAPPIER_SERVER_URL;
+    homeBoundary.accountMode = 'e2ee';
     const token = makeJwtWithSub('acct-legacy-material-readiness');
-    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
-      if (String(input) === 'https://legacy-home.example.test/v1/account/encryption') {
-        return Response.json({ mode: 'e2ee', updatedAt: 1 });
-      }
-      return new Response(null, { status: 404 });
-    }));
 
     try {
       writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
@@ -426,7 +414,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         secret: Buffer.from(new Uint8Array(32).fill(17)).toString('base64'),
       }), 'utf8');
 
-      vi.resetModules();
       const { authAndSetupMachineIfNeeded } = await import('./auth');
       await expect(authAndSetupMachineIfNeeded({
         callerIntent: 'setup-managed',
@@ -435,9 +422,11 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         credentials: { token, encryption: { type: 'legacy' } },
       });
 
-      expect(terminalAuthMocks.createRequest).not.toHaveBeenCalled();
-      expect(machineRegistrationMocks.ensureMachineRegistered).toHaveBeenCalledOnce();
+      expect(homeBoundary.requests.filter((request) => request.path === '/v1/auth/request')).toEqual([]);
+      expect(homeBoundary.requests.filter((request) => request.path === '/v1/machines')).toHaveLength(1);
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -452,18 +441,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     process.env.HAPPIER_NO_BROWSER_OPEN = '1';
     process.env.HAPPIER_AUTH_POLL_INTERVAL_MS = '1';
     const accountId = 'acct-material-recovery';
-    const retainedToken = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.retained`;
-    terminalAuthMocks.approvedToken = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.approved`;
-    terminalAuthMocks.readStatus.mockImplementation(async () => ({
-      status: terminalAuthMocks.response ? 'authorized' : 'pending',
-      supportsV2: true,
-    }));
-    terminalAuthMocks.claimRequest.mockImplementation(async () => ({
-      state: 'authorized',
-      token: terminalAuthMocks.approvedToken,
-      response: terminalAuthMocks.response,
-      serverIdentityId: 'srv_material_home',
-    }));
+    const retainedToken = makeJwtWithSub(accountId, 'retained');
+    homeBoundary.approvedToken = makeJwtWithSub(accountId, 'approved');
     const descriptor = {
       v: 1 as const,
       homeServerIdentityId: 'srv_material_home',
@@ -471,23 +450,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       revision: 1,
       endpoints: [{ kind: 'https' as const, url: 'https://material-home.example.test' }],
     };
-    descriptorRuntimeMocks.acquire.mockResolvedValue({
-      ok: true,
-      runtime: {
-        runtimeOrigin: 'https://material-home.example.test',
-        carrier: 'https',
-        authenticatedCredentialDestination: { kind: 'https', applicationUrl: 'https://material-home.example.test' },
-      },
-      close: vi.fn(async () => undefined),
-    });
-    descriptorRuntimeMocks.fetchFeatures.mockResolvedValue({
-      status: 'ready',
-      features: {
-        features: {},
-        capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
-        homeConnectionDescriptor: descriptor,
-      },
-    });
+    homeBoundary.origin = descriptor.canonicalServerUrl;
+    homeBoundary.descriptor = descriptor;
 
     try {
       writeFileSync(join(homeDir, 'settings.json'), JSON.stringify({
@@ -511,7 +475,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       mkdirSync(serverDir, { recursive: true });
       writeFileSync(join(serverDir, 'access.key'), JSON.stringify({ token: retainedToken }), 'utf8');
 
-      vi.resetModules();
       const output = captureConsoleLogAndMuteStdout();
       try {
         const { doAuth } = await import('./auth');
@@ -527,7 +490,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         const envelope = parseTerminalConnectLinkV4Parameters(new URL(link).hash.slice(1));
         if (!envelope) throw new Error('Expected descriptor-bound terminal connect V4 link');
         const freshMachineKey = new Uint8Array(32).fill(29);
-        terminalAuthMocks.response = Buffer.from(sealTerminalProvisioningV3Payload({
+        homeBoundary.response = Buffer.from(sealTerminalProvisioningV3Payload({
           terminalEphemeralPublicKey: new Uint8Array(Buffer.from(envelope.publicKeyB64Url, 'base64url')),
           contentPrivateKey: freshMachineKey,
           pairingSecret: new Uint8Array(Buffer.from(envelope.pairing.secretB64Url, 'base64url')),
@@ -549,6 +512,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         output.restore();
       }
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -597,9 +562,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         'utf8',
       );
 
-      vi.resetModules();
-      const { authAndSetupMachineIfNeeded } = await import('./auth');
-      const result = await authAndSetupMachineIfNeeded();
+      const { ensureMachineIdForCredentials } = await import('./auth');
+      const result = await ensureMachineIdForCredentials({ token: 'not-a-jwt', encryption: null });
 
       expect(result.machineId).toBe('machine-server-scoped');
 
@@ -607,6 +571,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
       expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -647,7 +613,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         'utf8',
       );
 
-      vi.resetModules();
       const { ensureMachineIdForCredentials } = await import('./auth');
       const result = await ensureMachineIdForCredentials({
         token: 'opaque-token',
@@ -661,6 +626,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
       expect(raw.lastTokenSubByServerId?.cloud).toBeUndefined();
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -714,9 +681,14 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
         'utf8',
       );
 
-      vi.resetModules();
-      const { authAndSetupMachineIfNeeded } = await import('./auth');
-      const result = await authAndSetupMachineIfNeeded();
+      const output = captureConsoleLogAndMuteStdout();
+      let result: { machineId: string };
+      try {
+        const { ensureMachineIdForCredentials } = await import('./auth');
+        result = await ensureMachineIdForCredentials({ token: makeJwtWithSub('acct-b'), encryption: null });
+      } finally {
+        output.restore();
+      }
 
       expect(result.machineId).toBe('machine-shared');
 
@@ -724,13 +696,13 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       expect(raw.machineIdConfirmedByServerByServerId.cloud).toBeUndefined();
       expect(raw.lastTokenSubByServerId.cloud).toBe('acct-b');
 
-      const { logger } = await import('./logger');
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.stringContaining('[AUTH] tokenSub changed for server=cloud machineId=machine-shared'),
-      );
-      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-a'));
-      expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('acct-b'));
+      const identityChangeLogs = output.logs.filter((line) => line.includes('[AUTH] tokenSub changed'));
+      expect(identityChangeLogs).toContainEqual(expect.stringContaining('server=cloud machineId=machine-shared'));
+      expect(identityChangeLogs.join('\n')).not.toContain('acct-a');
+      expect(identityChangeLogs.join('\n')).not.toContain('acct-b');
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });
@@ -739,6 +711,7 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-auth-relay-scope-env-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:24541';
+    homeBoundary.origin = process.env.HAPPIER_SERVER_URL;
     process.env.HAPPIER_WEBAPP_URL = 'http://happier-stack.localhost:24541';
     delete process.env.HAPPIER_ACTIVE_SERVER_ID;
     delete process.env.HAPPIER_PUBLIC_SERVER_URL;
@@ -784,7 +757,6 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       writeFileSync(join(serverDir, 'access.key'), accessKeyPayload, 'utf8');
       writeFileSync(join(homeDir, 'access.key'), accessKeyPayload, 'utf8');
 
-      vi.resetModules();
       const { authAndSetupMachineIfNeeded } = await import('./auth');
       const result = await authAndSetupMachineIfNeeded();
 
@@ -792,6 +764,8 @@ describe('authAndSetupMachineIfNeeded (machine id binding)', () => {
       expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('stack_main__id_default');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('http://happier-stack.localhost:24541');
     } finally {
+      const { logger } = await import('./logger');
+      logger.flushSync();
       rmSync(homeDir, { recursive: true, force: true });
     }
   });

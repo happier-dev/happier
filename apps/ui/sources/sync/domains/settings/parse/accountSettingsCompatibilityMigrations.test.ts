@@ -137,8 +137,8 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
 
         expect(migrated.backendCliSourcePreferenceByTargetKey).toEqual({
-            'backend:codex': 'managed-first',
-            'backend:gemini': 'system-first',
+            'agent:happier.agent.codex/codex': 'managed-first',
+            'agent:happier.agent.gemini/gemini': 'system-first',
         });
     });
 
@@ -146,17 +146,17 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
         const input = {
             backendEnabledByTargetKey: {
-                'agent:happier.agent.codex/codex': false,
+                'backend:codex': false,
             },
             backendCliSourcePreferenceByTargetKey: {
-                'agent:happier.agent.codex/codex': 'managed-first',
+                'backend:codex': 'managed-first',
                 [codexTargetKey]: 'system-first',
             },
             sessionDefaultPermissionModeByTargetKey: {
-                'agent:happier.agent.codex/codex': 'read-only',
+                'backend:codex': 'read-only',
             },
             newSessionDefaultPersistenceModeByTargetKeyV1: {
-                'agent:happier.agent.codex/codex': 'direct',
+                'backend:codex': 'direct',
             },
         };
         const migrated = applyAccountSettingsCompatibilityMigrations({

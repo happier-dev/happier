@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { Item } from '@/components/ui/lists/Item';
 import { act } from 'react-test-renderer';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 
@@ -132,7 +131,9 @@ describe('SessionsListEmptyState', () => {
                 <SessionsListEmptyState kind="connect_machine" targetLabel="Computer" />
             </DestinationInstanceHost>)}
         </>);
-        const actions = screen.root.findAllByType(Item).filter((node) => node.props.testID === 'sessions-empty-state-open-setup');
+        const actions = screen.root.findAll((node) => typeof node.type === 'string'
+            && node.props.testID === 'sessions-empty-state-open-setup'
+            && typeof node.props.onPress === 'function');
         expect(actions).toHaveLength(2);
         await act(async () => { actions.forEach((node) => node.props.onPress()); });
         expect(pushes[0]).toHaveBeenCalledWith(buildMachineAddHref({ path: 'thisComputer' }));

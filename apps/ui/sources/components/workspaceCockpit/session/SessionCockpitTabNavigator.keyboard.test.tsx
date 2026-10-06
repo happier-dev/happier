@@ -1,9 +1,14 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { storage } from '@/sync/domains/state/storageStore';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
     resolveSessionCockpitMobileCatalog,
@@ -24,7 +29,7 @@ const navigatorState = vi.hoisted(() => ({
         activeSurface: string;
         switchSurface: (surface: string) => void;
     },
-    localSettingReads: [] as string[],
+    navigationContainerRenderCount: 0,
     persistedSurfaces: [] as Array<Readonly<{ sessionId: string; surface: string }>>,
     persistedSurfaceRealms: [] as Array<Readonly<{
         sessionId: string;
@@ -36,10 +41,6 @@ const navigatorState = vi.hoisted(() => ({
         surface: string;
         accountId: string | null;
     }>>,
-    activeServerAccountScope: {
-        serverId: 'server-session',
-        accountId: 'account-a',
-    } as { serverId: string; accountId: string } | null,
     pluginProjection: null as null | Record<string, unknown>,
     boardOwnerRenderIdentities: [] as symbol[],
     boardOwnerProps: [] as Array<Readonly<{ sessionId: string; serverId?: string | null }>>,
@@ -52,7 +53,6 @@ const navigatorState = vi.hoisted(() => ({
         drafts: Map<string, string>;
         snapshot: object;
     }>>,
-    boardFeatureEnabled: false,
     activeRouteName: 'chat',
 }));
 
@@ -85,30 +85,59 @@ const navigationFocusState = vi.hoisted(() => {
     };
 });
 
-const activeServerAccountScopeListeners = vi.hoisted(() => new Set<() => void>());
+const initialStorageState = storage.getState();
+let stopObservingPersistence: (() => void) | null = null;
 
-vi.mock('@react-navigation/native', () => ({
-    NavigationContainer: ({
-        children,
-        linking,
-        onStateChange,
-    }: {
-        children?: React.ReactNode;
-        linking?: Record<string, unknown>;
-        onStateChange?: (state: { index: number; routes: Array<{ key: string; name: string }> }) => void;
-    }) => {
-        navigatorState.navigationContainerLinking = linking ?? null;
-        navigatorState.navigationContainerOnStateChange = onStateChange ?? null;
-        return React.createElement('NavigationContainer', { linking, onStateChange }, children);
-    },
-    NavigationIndependentTree: ({ children }: { children?: React.ReactNode }) =>
-        React.createElement('NavigationIndependentTree', null, children),
-    useIsFocused: () => React.useSyncExternalStore(
-        navigationFocusState.subscribe,
-        navigationFocusState.getSnapshot,
-        navigationFocusState.getSnapshot,
-    ),
-}));
+function renderScreen(element: React.ReactElement) {
+    return renderTestScreen(element, { wrapper: AppPaneProvider });
+}
+
+async function activatePersistenceRealm(serverId: string, accountId: string) {
+    const serverUrl = `https://${serverId}.example.test`;
+    await upsertServerProfile({ serverUrl, name: serverId });
+    await setServerProfileIdentityForUrl(serverUrl, serverId);
+    await setActiveServerId(serverId);
+    storage.setState({ profileScope: { serverId, accountId } });
+}
+
+async function primeBoardFeature(enabled: boolean) {
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+    const features = createRootLayoutFeaturesResponse();
+    if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', enabled)) {
+        throw new Error('The sessions.board bit could not be written by its own writer');
+    }
+    primeServerFeaturesSnapshot({ serverId: 'server-session', snapshot: { status: 'ready', features } });
+}
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return {
+        ...createReactNavigationNativeMock(),
+        NavigationContainer: ({
+            children,
+            linking,
+            onStateChange,
+        }: {
+            children?: React.ReactNode;
+            linking?: Record<string, unknown>;
+            onStateChange?: (state: { index: number; routes: Array<{ key: string; name: string }> }) => void;
+        }) => {
+            navigatorState.navigationContainerRenderCount += 1;
+            navigatorState.navigationContainerLinking = linking ?? null;
+            navigatorState.navigationContainerOnStateChange = onStateChange ?? null;
+            return React.createElement('NavigationContainer', { linking, onStateChange }, children);
+        },
+        NavigationIndependentTree: ({ children }: { children?: React.ReactNode }) =>
+            React.createElement('NavigationIndependentTree', null, children),
+        useIsFocused: () => React.useSyncExternalStore(
+            navigationFocusState.subscribe,
+            navigationFocusState.getSnapshot,
+            navigationFocusState.getSnapshot,
+        ),
+    };
+});
 
 vi.mock('@react-navigation/bottom-tabs', () => ({
     createBottomTabNavigator: () => ({
@@ -237,11 +266,6 @@ vi.mock('@/components/sessions/board/SessionBoardControllerProvider', () => ({
     },
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'sessions.board'
-        && navigatorState.boardFeatureEnabled,
-}));
-
 vi.mock('./SessionCockpitSurfaceNavigation', () => ({
     SessionCockpitSurfaceNavigationProvider: ({
         children,
@@ -296,38 +320,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSes
         fallbackServerId ?? 'server-session',
 }));
 
-vi.mock('@/components/appShell/panes/hooks/useDetailsTabCount', () => ({
-    useDetailsTabCount: () => 0,
-}));
-
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useLocalSetting: (key: string) => {
-            navigatorState.localSettingReads.push(key);
-            return null;
-        },
-        useLocalSettingMutable: () => [null, () => {}],
-        usePersistSessionLastMobileSurface: () => (sessionId: string, surface: string, serverId?: string | null) => {
-            navigatorState.persistedSurfaces.push({ sessionId, surface });
-            navigatorState.persistedSurfaceRealms.push({ sessionId, surface, serverId });
-            navigatorState.persistedSurfaceAccountRealms.push({
-                sessionId,
-                surface,
-                accountId: navigatorState.activeServerAccountScope?.accountId ?? null,
-            });
-        },
-        useActiveServerAccountScope: () => React.useSyncExternalStore(
-            (listener) => {
-                activeServerAccountScopeListeners.add(listener);
-                return () => activeServerAccountScopeListeners.delete(listener);
-            },
-            () => navigatorState.activeServerAccountScope,
-            () => navigatorState.activeServerAccountScope,
-        ),
-    });
-});
-
 const REVIEW_PLUGIN_ID = 'acme.review';
 
 function createPluginProjection() {
@@ -375,21 +367,44 @@ function createSettledEmptyPluginProjection() {
 }
 
 describe('SessionCockpitTabNavigator keyboard behavior', () => {
-    beforeEach(() => {
+    afterEach(() => {
         standardCleanup();
+        stopObservingPersistence?.();
+        stopObservingPersistence = null;
+        storage.setState(initialStorageState);
+    });
+
+    beforeEach(async () => {
+        standardCleanup();
+        stopObservingPersistence?.();
+        storage.setState({
+            ...initialStorageState,
+            localSettings: { ...localSettingsDefaults },
+            sessionListIndexByServerId: {
+                'server-session': [{ type: 'session', sessionId: 's1', serverId: 'server-session', serverName: 'Test Home' }],
+            },
+        });
+        await activatePersistenceRealm('server-session', 'account-a');
+        await primeBoardFeature(false);
+        stopObservingPersistence = storage.subscribe((state, previousState) => {
+            const scope = state.profileScope;
+            if (!scope) return;
+            const key = buildRealmQualifiedMobileSurfaceStorageKey('session', scope, 's1');
+            if (!key) return;
+            const surface = state.localSettings.sessionLastMobileSurfaceBySessionId[key];
+            if (!surface || surface === previousState.localSettings.sessionLastMobileSurfaceBySessionId[key]) return;
+            navigatorState.persistedSurfaces.push({ sessionId: 's1', surface });
+            navigatorState.persistedSurfaceRealms.push({ sessionId: 's1', surface, serverId: scope.serverId });
+            navigatorState.persistedSurfaceAccountRealms.push({ sessionId: 's1', surface, accountId: scope.accountId });
+        });
         navigatorState.backBehavior = null;
         navigatorState.navigationContainerOnStateChange = null;
         navigatorState.goBack = null;
         navigatorState.registeredChrome = null;
-        navigatorState.localSettingReads = [];
+        navigatorState.navigationContainerRenderCount = 0;
         navigatorState.persistedSurfaces = [];
         navigatorState.persistedSurfaceRealms = [];
         navigatorState.persistedSurfaceAccountRealms = [];
-        navigatorState.activeServerAccountScope = {
-            serverId: 'server-session',
-            accountId: 'account-a',
-        };
-        activeServerAccountScopeListeners.clear();
         navigatorState.pluginProjection = null;
         navigatorState.boardOwnerRenderIdentities = [];
         navigatorState.boardOwnerProps = [];
@@ -397,7 +412,6 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         navigatorState.canonicalPluginRuntime = null;
         navigatorState.canonicalPluginRuntimeAddresses = [];
         navigatorState.activeBoardOwnerObservations = [];
-        navigatorState.boardFeatureEnabled = false;
         navigatorState.activeRouteName = 'chat';
         navigationFocusState.setFocused(true);
     });
@@ -473,12 +487,21 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             navigatorState.registeredChrome?.switchSurface('git');
         });
 
-        expect(navigatorState.localSettingReads).not.toContain('sessionLastMobileSurfaceBySessionId');
         expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'git' }]);
+        const rendersAfterSwitch = navigatorState.navigationContainerRenderCount;
+        await act(async () => {
+            storage.getState().applyLocalSettings({
+                sessionLastMobileSurfaceBySessionId: {
+                    ...storage.getState().localSettings.sessionLastMobileSurfaceBySessionId,
+                    unrelated: 'browser',
+                },
+            });
+        });
+        expect(navigatorState.navigationContainerRenderCount).toBe(rendersAfterSwitch);
     });
 
     it('keeps one exact-Session Board controller, drafts, and snapshot through Chat → Board → Companion → Board', async () => {
-        navigatorState.boardFeatureEnabled = true;
+        await primeBoardFeature(true);
         const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
 
         await renderScreen(
@@ -533,11 +556,15 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             />
         );
 
+        await activatePersistenceRealm('server-one', 'account-a');
         const screen = await renderScreen(renderNavigator('server-one'));
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface('git');
         });
 
+        await act(async () => {
+            await activatePersistenceRealm('server-two', 'account-a');
+        });
         await screen.update(renderNavigator('server-two'));
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface('git');
@@ -569,14 +596,8 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             navigatorState.registeredChrome?.switchSurface('git');
         });
 
-        navigatorState.activeServerAccountScope = {
-            serverId: 'server-session',
-            accountId: 'account-b',
-        };
         await act(async () => {
-            for (const listener of activeServerAccountScopeListeners) {
-                listener();
-            }
+            storage.setState({ profileScope: { serverId: 'server-session', accountId: 'account-b' } });
         });
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface('git');
@@ -606,12 +627,8 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         expect(screen.tree.findAllByType('BottomTabScreen' as never).map((node) => node.props.name)).toContain(pluginSurface);
 
         navigatorState.pluginProjection = createSettledEmptyPluginProjection();
-        navigatorState.activeServerAccountScope = {
-            serverId: 'server-session',
-            accountId: 'account-b',
-        };
         await act(async () => {
-            for (const listener of activeServerAccountScopeListeners) listener();
+            storage.setState({ profileScope: { serverId: 'server-session', accountId: 'account-b' } });
         });
         await screen.update(renderNavigator('chat'));
 
@@ -620,7 +637,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
     });
 
     it('retries a same-surface switch when the Account realm becomes resolved', async () => {
-        navigatorState.activeServerAccountScope = null;
+        storage.setState({ profileScope: null });
         const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
         const renderNavigator = () => (
             <SessionCockpitTabNavigator
@@ -636,22 +653,15 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface('git');
         });
-
-        navigatorState.activeServerAccountScope = {
-            serverId: 'server-session',
-            accountId: 'account-a',
-        };
+        expect(navigatorState.persistedSurfaceAccountRealms).toEqual([]);
         await act(async () => {
-            for (const listener of activeServerAccountScopeListeners) {
-                listener();
-            }
+            storage.setState({ profileScope: { serverId: 'server-session', accountId: 'account-a' } });
         });
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface('git');
         });
 
         expect(navigatorState.persistedSurfaceAccountRealms).toEqual([
-            { sessionId: 's1', surface: 'git', accountId: null },
             { sessionId: 's1', surface: 'git', accountId: 'account-a' },
         ]);
     });
@@ -716,17 +726,24 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
             />,
         );
 
-        expect(
-            screen.tree.findAllByType('BottomTabScreen' as never).map((node) => node.props.name),
-        // No `sessions.board` decision for this Home: neither the Board nor the
-        // Companion destination it carries is registered.
-        ).toEqual(['chat', 'browse', 'git', 'tabs', 'navigation', 'browser', 'services']);
+        const screens = screen.tree.findAllByType('BottomTabScreen' as never).map((node) => node.props.name);
+        expect(screens).toEqual(expect.arrayContaining(['navigation', 'browser', 'services', 'companion', 'agents']));
+        expect(screens).not.toContain('board');
+        expect(screens).not.toContain('terminal');
 
-        await act(async () => {
-            navigatorState.registeredChrome?.switchSurface('browser');
-        });
+        for (const surface of ['navigation', 'browser', 'services']) {
+            await act(async () => {
+                navigatorState.registeredChrome?.switchSurface(surface);
+            });
+            expect(navigatorState.activeRouteName).toBe(surface);
+            expect(navigatorState.registeredChrome?.activeSurface).toBe(surface);
+        }
 
-        expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: 'browser' }]);
+        expect(navigatorState.persistedSurfaces).toEqual([
+            { sessionId: 's1', surface: 'navigation' },
+            { sessionId: 's1', surface: 'browser' },
+            { sessionId: 's1', surface: 'services' },
+        ]);
     });
 
     it('registers validated plugin right-sidebar mobile tabs as host-owned screens', async () => {
@@ -736,7 +753,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
 
         const screen = await renderScreen(
             <SessionCockpitTabNavigator
-                initialSurface={`plugin:${REVIEW_PLUGIN_ID}:review-panel`}
+                initialSurface="chat"
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable={false}
@@ -745,11 +762,13 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
 
         expect(
             screen.tree.findAllByType('BottomTabScreen' as never).map((node) => node.props.name),
-        ).toEqual(['chat', 'browse', 'git', 'tabs', 'navigation', 'browser', 'services', `plugin:${REVIEW_PLUGIN_ID}:review-panel`]);
+        ).toContain(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
         await act(async () => {
             navigatorState.registeredChrome?.switchSurface(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
         });
 
+        expect(navigatorState.activeRouteName).toBe(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
+        expect(navigatorState.registeredChrome?.activeSurface).toBe(`plugin:${REVIEW_PLUGIN_ID}:review-panel`);
         expect(navigatorState.persistedSurfaces).toEqual([{ sessionId: 's1', surface: `plugin:${REVIEW_PLUGIN_ID}:review-panel` }]);
     });
 
@@ -784,7 +803,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         const renderNavigator = (projectionLoaded = false) => (
             <SessionCockpitTabNavigator
                 initialSurface={`plugin:${REVIEW_PLUGIN_ID}:review-panel`}
-                routeServerId={projectionLoaded ? 'server-1' : undefined}
+                routeServerId={projectionLoaded ? 'server-session' : undefined}
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable={false}

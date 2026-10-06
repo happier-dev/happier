@@ -22,17 +22,22 @@ afterEach(async () => {
     await standardCleanup();
 });
 
-async function renderSection(overrides: Record<string, unknown> = {}) {
+type SectionProps = React.ComponentProps<typeof import('./SessionManagedWorkflowSection').SessionManagedWorkflowSection>;
+
+async function renderSection(overrides: Omit<Partial<SectionProps>, 'state'> & { state?: Partial<SectionProps['state']> } = {}) {
     const { SessionManagedWorkflowSection } = await import('./SessionManagedWorkflowSection');
     return renderScreen(React.createElement(SessionManagedWorkflowSection, {
+        onOpenRun: () => {},
+        ...overrides,
         state: {
             phase: 'loaded',
             runs: [],
             attentionRunIds: new Set<string>(),
+            refreshFailed: false,
+            retry: () => {},
+            ...overrides.state,
         },
-        onOpenRun: () => {},
-        ...overrides,
-    } as never));
+    }));
 }
 
 describe('session managed workflow section', () => {
@@ -73,7 +78,7 @@ describe('session managed workflow section', () => {
             },
         });
 
-        expect(screen.findByTestId('session-managed-workflows-run-run-1-state:variant:success')).not.toBeNull();
+        expect(screen.findHostByTestId('session-managed-workflows-run-run-1-state')?.props.accessibilityLabel).toBe('workflows.runState.running');
         expect(screen.findByTestId('session-managed-workflows-run-run-1-state-marker')).not.toBeNull();
         expect(screen.findByTestId('session-managed-workflows-run-run-1-open')).not.toBeNull();
         expect(screen.findByTestId('session-managed-workflows-run-run-1-review')).toBeNull();

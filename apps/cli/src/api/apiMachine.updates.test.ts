@@ -8,27 +8,6 @@ vi.mock('socket.io-client', () => ({
   io: ioMock,
 }));
 
-vi.mock('@/configuration', () => ({
-  configuration: {
-    serverUrl: 'https://example.test',
-    apiServerUrl: 'https://example.test',
-    socketForceWebsocketOnly: false,
-    socketIoTransports: ['polling', 'websocket'],
-  },
-}));
-
-vi.mock('@/utils/proxy/socketIoProxy', () => ({
-  getSocketIoProxyOptions: () => ({}),
-}));
-
-vi.mock('@/ui/logger', () => ({
-  logger: {
-    debug: () => undefined,
-    warn: () => undefined,
-    debugLargeJson: () => undefined,
-  },
-}));
-
 describe('ApiMachineClient updates', () => {
   afterEach(() => {
     ioMock.mockReset();
@@ -69,8 +48,9 @@ describe('ApiMachineClient updates', () => {
         enabled: true,
         updatedAt: Date.now(),
       },
-    } as any);
+    });
 
     expect(handler).toHaveBeenCalledTimes(1);
+    await client.shutdown();
   });
 });

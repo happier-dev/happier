@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { SessionModelSelectionV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -858,39 +858,7 @@ describe('sessions ops server-scoped routing', () => {
         expect(call?.payload as Record<string, unknown>).not.toHaveProperty('connectedServices');
     });
 
-    it('preserves the Agent-owned Codex runtime descriptor in the resume RPC', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
-        const { resumeSession } = await sessionsModulePromise;
-        await resumeSession({
-            sessionId: 'session-1',
-            machineId: 'machine-1',
-            directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-            runtimeDescriptorV1: {
-                v: 1,
-                agentId: 'codex',
-                agent: { backendMode: 'appServer' },
-            },
-            serverId: 'server-b',
-        });
-
-        const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as { payload?: unknown } | undefined;
-        expect(call?.payload).toEqual(expect.objectContaining({
-            runtimeDescriptorV1: expect.objectContaining({
-                v: 1,
-                agentId: 'codex',
-                agent: expect.objectContaining({ backendMode: 'appServer' }),
-            }),
-        }));
-        expect(call?.payload).toEqual(expect.objectContaining({
-            agentTarget: {
-                kind: 'agent',
-                identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            },
-        }));
-    });
-
-    it('passes the canonical Agent target through resumeSession', async () => {
+   it('passes the canonical Agent target through resumeSession', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;
         await resumeSession({
@@ -989,25 +957,7 @@ describe('sessions ops server-scoped routing', () => {
         }));
     });
 
-    it('uses an extended RPC timeout for resumeSession', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
-        const { resumeSession } = await sessionsModulePromise;
-        const result = await resumeSession({
-            sessionId: 'session-1',
-            machineId: 'machine-1',
-            directory: '/tmp',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            serverId: 'server-b',
-        } as any);
-
-        expect(result.type).toBe('success');
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
-        const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0] as any;
-        expect(call).toMatchObject({ timeoutMs: expect.any(Number) });
-        expect(call.timeoutMs).toBe(5 * 60_000);
-    });
-
-    it('forwards preferScopedMachineRpc for resumeSession when requested', async () => {
+   it('forwards preferScopedMachineRpc for resumeSession when requested', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;
         const result = await resumeSession({
@@ -1046,37 +996,7 @@ describe('sessions ops server-scoped routing', () => {
         expect(result.errorMessage.length).toBeGreaterThan(0);
     });
 
-    it('routes session fork through server-scoped machine rpc with requested server id', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, childSessionId: 'sess-child' });
-        const { forkSession } = await sessionsModulePromise;
-        const replaySummaryRunner = {
-            v: 1,
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-            modelId: 'default',
-            permissionMode: 'no_tools',
-        } as const;
-
-        const result = await forkSession({
-            machineId: 'machine-1',
-            parentSessionId: 'sess-parent',
-            forkPoint: { type: 'seq', upToSeqInclusive: 12 },
-            replaySummaryRunner,
-            replayMaxSeedChars: 55_000,
-            serverId: 'server-b',
-        } as any);
-
-        expect(result).toEqual({ ok: true, childSessionId: 'sess-child' });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            method: 'session.fork',
-            serverId: 'server-b',
-            timeoutMs: 5 * 60_000,
-            onIssued: expect.any(Function),
-            payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
-        }));
-    });
-
-    it('omits fork requestId for older daemons and preserves it for the first supporting daemon', async () => {
+   it('omits fork requestId for older daemons and preserves it for the first supporting daemon', async () => {
         const setDaemonVersion = (version: string) => {
             storage.setState((state) => ({
                 profileScope: { serverId: 'server-a', accountId: 'account-a' },
@@ -1469,4 +1389,152 @@ describe('sessions ops server-scoped routing', () => {
         expect((result as any).errorCode).toBe('DAEMON_RPC_UNAVAILABLE');
     });
 
+});
+
+describe('session resume and fork routing (real scoped transport)', () => {
+    let boundary: Awaited<ReturnType<typeof import('@/dev/testkit/harness/sessionOpsNetworkBoundary').installSessionOpsNetworkBoundary>>;
+    let realStorage: typeof import('@/sync/domains/state/storage').storage;
+    let fixtures: typeof import('@/dev/testkit/fixtures/sessionFixtures');
+    let machineFixtures: typeof import('@/dev/testkit/fixtures/machineFixtures');
+    let metadata: typeof import('@happier-dev/session-core/state');
+
+    beforeAll(async () => {
+        vi.doUnmock('@/sync/domains/state/storage');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        vi.doUnmock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId');
+        vi.doUnmock('@/agents/registry/agentScopedPluginSettings');
+        vi.doUnmock('./sessionMachineTarget');
+        vi.doUnmock('./accountSettingsDaemonSpawnPreparation');
+        vi.doUnmock('../api/session/apiSocket');
+        vi.resetModules();
+        const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+        boundary = await installSessionOpsNetworkBoundary();
+        realStorage = (await import('@/sync/domains/state/storage')).storage;
+        fixtures = await import('@/dev/testkit/fixtures/sessionFixtures');
+        machineFixtures = await import('@/dev/testkit/fixtures/machineFixtures');
+        metadata = await import('@happier-dev/session-core/state');
+    });
+
+    beforeEach(() => {
+        realStorage.setState(realStorage.getInitialState(), true);
+        boundary.resetRequests();
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_SPAWN_SESSION_RPC_TIMEOUT_MS', '');
+        // Observe the ACK budget without elapsed wall time; network promises and timers stay real.
+        vi.useFakeTimers({ toFake: ['Date'] });
+    });
+
+    afterEach(() => {
+        for (const sessionId of Object.keys(realStorage.getState().sessions)) {
+            realStorage.getState().clearSessionResuming(sessionId);
+        }
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+    });
+
+    afterAll(() => boundary?.dispose());
+
+    async function installNativeSession(sessionId: string, serverId: string) {
+        realStorage.setState({
+            sessions: { [sessionId]: fixtures.createSessionFixture({
+                id: sessionId, serverId,
+                metadata: metadata.MetadataSchema.parse({ path: '/tmp', host: 'host.local', machineId: 'machine-1' }),
+            }) },
+            machines: { 'machine-1': machineFixtures.createMachineFixture() },
+            machineListByServerId: { [serverId]: [machineFixtures.createMachineFixture()] },
+        });
+    }
+
+    it('preserves the Agent-owned Codex runtime descriptor in the legacy-compatible resume RPC', async () => {
+        const home = await boundary.addHome('https://resume-descriptor.example.test', 'descriptor-account');
+        await installNativeSession('session-1', home.id);
+        boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'success', sessionId: 'session-1' });
+        const { resumeSession } = await import('./sessions');
+        const runtimeDescriptorV1 = { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } as const;
+
+        await expect(resumeSession({
+            sessionId: 'session-1', machineId: 'machine-1', directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            runtimeDescriptorV1, serverId: home.id,
+        })).resolves.toEqual({ type: 'success', sessionId: 'session-1' });
+
+        expect(boundary.requests).toEqual([expect.objectContaining({
+            serverUrl: home.serverUrl, token: home.token, targetId: 'machine-1',
+            method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            payload: {
+                type: 'resume-session', sessionId: 'session-1', directory: '/tmp',
+                backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+                runtimeDescriptorV1,
+            },
+        })]);
+    });
+
+    it('keeps the shared spawn operation budget through the resume RPC transport', async () => {
+        const home = await boundary.addHome('https://resume-budget.example.test', 'budget-account');
+        await installNativeSession('session-1', home.id);
+        boundary.respond(RPC_METHODS.SPAWN_HAPPY_SESSION, { type: 'success', sessionId: 'session-1' });
+        const { resumeSession } = await import('./sessions');
+        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } = await import('@happier-dev/protocol');
+        const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
+
+        await expect(resumeSession({
+            sessionId: 'session-1', machineId: 'machine-1', directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, serverId: home.id,
+        })).resolves.toEqual({ type: 'success', sessionId: 'session-1' });
+
+        expect(boundary.requests).toEqual([expect.objectContaining({
+            serverUrl: home.serverUrl, token: home.token, method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            timeoutMs: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS + DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
+        })]);
+    });
+
+    it('routes session fork through server-scoped machine rpc with requested server id', async () => {
+        const home = await boundary.addHome('https://fork-requested.example.test', 'fork-account');
+        await installNativeSession('sess-parent', home.id);
+        boundary.respond(RPC_METHODS.SESSION_FORK, { ok: true, childSessionId: 'sess-child' });
+        const { forkSession } = await import('./sessions');
+        const { DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS } = await import('@happier-dev/protocol');
+        const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
+        const replaySummaryRunner = {
+            v: 1, backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            modelId: 'default', permissionMode: 'no_tools',
+        } as const;
+
+        await expect(forkSession({
+            machineId: 'machine-1', parentSessionId: 'sess-parent',
+            forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+            replaySummaryRunner, replayMaxSeedChars: 55_000, serverId: home.id,
+        })).resolves.toEqual({ ok: true, childSessionId: 'sess-child' });
+
+        expect(boundary.requests).toEqual([expect.objectContaining({
+            serverUrl: home.serverUrl, token: home.token, targetId: 'machine-1', method: RPC_METHODS.SESSION_FORK,
+            timeoutMs: DEFAULT_SESSION_SPAWN_OPERATION_TIMEOUT_MS + DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
+            payload: expect.objectContaining({
+                parentSessionId: 'sess-parent', forkPoint: { type: 'seq', upToSeqInclusive: 12 },
+                replaySummaryRunner, replayMaxSeedChars: 55_000,
+            }),
+        })]);
+    });
+
+    it('denies an exact Account resume before issuing RPC with another Account credential', async () => {
+        const home = await boundary.addHome('https://resume-account.example.test', 'replacement-account');
+        const { ensureSessionRuntimeForPendingInput } = await import('./sessions');
+        const accountLifetime = {
+            scope: { serverId: home.id, accountId: 'incumbent-account' },
+            isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }),
+        };
+
+        await expect(ensureSessionRuntimeForPendingInput({
+            sessionId: 'session-1', machineId: 'machine-1', directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            serverId: home.id, accountLifetime,
+        })).resolves.toMatchObject({
+            type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+            errorMessage: expect.stringContaining(accountLifetime.scope.accountId),
+        });
+        expect(boundary.credentialRequests).toEqual([{ serverUrl: home.serverUrl, serverId: home.id }]);
+        expect(boundary.requests).toEqual([]);
+        expect(boundary.httpRequests).toEqual([]);
+    });
 });

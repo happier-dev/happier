@@ -1,121 +1,42 @@
-import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+import { createScmNetworkTestHarness, scmNetworkSnapshot } from '../sourceControl/scmNetworkTestHarness';
 
 const modalAlert = vi.hoisted(() => vi.fn());
-const sessionScmRemotePush = vi.hoisted(() => vi.fn());
-const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: any) => {
-  await input.run();
-  return { started: true, message: '' };
-}));
-
 installSessionFilesHookCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alert: modalAlert,
-                confirm: vi.fn(async () => true),
-            },
-        }).module;
+        return createModalModuleMock({ spies: { alert: modalAlert } }).module;
     },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key: string) => key });
-    },
-    storage: async (importOriginal) => importOriginal(),
+    storage: async importOriginal => importOriginal(),
 });
-
-vi.mock('@/sync/ops', () => ({
-  sessionScmRemoteFetch: vi.fn(),
-  sessionScmRemotePull: vi.fn(),
-  sessionScmRemotePush,
-}));
-
-vi.mock('@/scm/operations/withOperationLock', () => ({
-  withSessionProjectScmOperationLock,
-}));
-
-vi.mock('@/scm/core/operationPolicy', () => ({
-  evaluateScmOperationPreflight: () => ({ allowed: true, message: '' }),
-}));
-
-vi.mock('@/scm/operations/remoteTarget', () => ({
-  inferRemoteTargetFromSnapshot: () => ({ remote: 'origin', branch: 'main' }),
-}));
-
-vi.mock('@/scm/operations/remoteFeedback', () => ({
-  buildRemoteConfirmDialog: () => ({ title: 'title', body: 'body', confirmText: 'ok', cancelText: 'cancel' }),
-  buildRemoteOperationBusyLabel: () => 'busy',
-  buildRemoteOperationSuccessDetail: () => 'success',
-  buildNonFastForwardFetchPromptDialog: () => ({ title: 't', body: 'b', confirmText: 'c', cancelText: 'x' }),
-}));
-
-vi.mock('@/scm/operations/reporting', () => ({
-  reportSessionScmOperation: () => {},
-  trackBlockedScmOperation: () => {},
-}));
-
-vi.mock('@/track', () => ({
-  tracking: null,
-}));
-
-vi.mock('@/components/sessions/files/commit/showScmCommitMessageEditorModal', () => ({
-  showScmCommitMessageEditorModal: vi.fn(async () => 'feat: commit'),
-}));
+const harness = await createScmNetworkTestHarness();
+const { renderHook, standardCleanup } = await import('@/dev/testkit');
+const { useFilesScmOperations } = await import('./useFilesScmOperations');
 
 describe('useFilesScmOperations (unsupported is not daemon unavailable)', () => {
-  beforeEach(() => {
-    modalAlert.mockReset();
-    sessionScmRemotePush.mockReset();
-    withSessionProjectScmOperationLock.mockClear();
-  });
-
-  it('does not show daemon-unavailable alert for FEATURE_UNSUPPORTED even if error text is method-not-available', async () => {
-    sessionScmRemotePush.mockResolvedValueOnce({
-      success: false,
-      errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-      error: 'RPC method not available',
-    });
-
-    const { useFilesScmOperations } = await import('./useFilesScmOperations');
-
-    const refreshScmData = vi.fn(async () => {});
-    const loadCommitHistory = vi.fn(async () => {});
-
-    let current: ReturnType<typeof useFilesScmOperations> | null = null;
-    let tree: renderer.ReactTestRenderer;
-    tree = (await renderScreen(React.createElement(() => {
-        current = useFilesScmOperations({
-          sessionId: 's1',
-          sessionPath: '/tmp',
-          scmSnapshot: null,
-          scmWriteEnabled: true,
-          scmCommitStrategy: 'git_staging',
-          scmRemoteConfirmPolicy: 'never',
-          scmPushRejectPolicy: 'prompt_fetch',
-          refreshScmData,
-          loadCommitHistory,
+    beforeEach(() => {
+        harness.reset();
+        modalAlert.mockClear();
+        harness.network.respond(RPC_METHODS.SCM_REMOTE_PUSH, {
+            success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'RPC method not available',
         });
-        return React.createElement('View');
-      }))).tree;
-
-    await act(async () => {
-      await current!.runRemoteOperation('push');
     });
+    afterEach(() => standardCleanup());
+    afterAll(() => harness.dispose());
 
-    expect(modalAlert).toHaveBeenCalled();
-    const [title] = modalAlert.mock.calls[0] ?? [];
-    expect(title).toBe('common.error');
-
-    act(() => {
-      tree.unmount();
+    it('does not show daemon-unavailable alert for FEATURE_UNSUPPORTED even if error text is method-not-available', async () => {
+        const hook = await renderHook(() => useFilesScmOperations({
+            sessionId: 's1', serverId: harness.serverId, sessionPath: '/repo', scmSnapshot: scmNetworkSnapshot,
+            scmWriteEnabled: true, scmCommitStrategy: 'git_staging', scmRemoteConfirmPolicy: 'never',
+            scmPushRejectPolicy: 'prompt_fetch', refreshScmData: vi.fn(async () => {}), loadCommitHistory: vi.fn(async () => {}),
+        }));
+        await act(async () => { await hook.getCurrent().runRemoteOperation('push'); });
+        expect(harness.network.requests.filter(request => request.method === RPC_METHODS.SCM_REMOTE_PUSH)).toHaveLength(1);
+        expect(modalAlert).toHaveBeenCalled();
+        expect(modalAlert.mock.calls[0]?.[0]).toBe('common.error');
     });
-  });
 });

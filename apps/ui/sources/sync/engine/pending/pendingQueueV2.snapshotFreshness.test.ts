@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+beforeAll(loadSyncSingletonForTests);
 
 import { createPendingQueueEncryption, getSessionEncryptionOrThrow } from './pendingQueueV2.testHelpers';
 import { Encryption } from '@/sync/encryption/encryption';

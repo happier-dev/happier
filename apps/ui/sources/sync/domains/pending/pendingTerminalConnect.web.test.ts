@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StorageState } from '@/sync/store/types';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 type StorageLike = {
     readonly length: number;
@@ -37,9 +37,11 @@ async function importFreshWeb() {
 }
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
+    await loadSyncSingletonForTests();
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
 
     const server = await upsertAndActivateServer({
         serverUrl,
@@ -49,7 +51,10 @@ async function activateServerAccount(serverUrl: string, accountId: string) {
     });
     const scope = createServerAccountScope(server.id, accountId);
     expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    if (!scope) throw new Error('Expected Account scope');
+    await switchConnectionToActiveServer();
+    storage.getState().activateProfileScope(scope);
+    await storage.getState().activateSettingsScope(scope);
 }
 
 describe('pendingTerminalConnect.web', () => {

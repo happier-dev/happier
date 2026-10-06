@@ -163,7 +163,7 @@ describe('account settings raw delta merge mixed-version preservation', () => {
         });
     });
 
-    it('writes retained session-authoring carriers without leaking their typed runtime projections', () => {
+    it('retains legacy authoring memory from the raw baseline without rewriting it from pending runtime settings', () => {
         const favoriteModelSelectionsV1 = [
             {
                 backendTargetKey: 'agent:happier.agent.codex/codex',
@@ -187,19 +187,18 @@ describe('account settings raw delta merge mixed-version preservation', () => {
             },
         };
         const merged = mergePendingSettingsIntoRawBaseline({
-            rawBaseline: { schemaVersion: 7 },
+            rawBaseline: { schemaVersion: 7, lastEngineSelectionsByScopeV1 },
             pendingSettings: JSON.parse(JSON.stringify({
                 currentFavoriteModelSelectionsV1: [],
                 currentRememberedEngineSelectionsByScopeV1: {},
                 favoriteModelSelectionsV1,
-                lastEngineSelectionsByScopeV1,
+                lastEngineSelectionsByScopeV1: { 'pending-must-not-overwrite': { v: 1, modelId: 'other' } },
             })),
             normalizeForPersistedStorage: (raw) => ({ value: raw, changed: false }),
         });
 
         expect(merged.pendingRaw).toEqual({
             favoriteModelSelectionsV1,
-            lastEngineSelectionsByScopeV1,
         });
         expect(merged.outgoingRaw).toEqual({
             schemaVersion: 7,

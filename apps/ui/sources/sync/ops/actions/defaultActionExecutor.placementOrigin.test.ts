@@ -6,7 +6,8 @@ import {
     type MachinePoolSelectionOriginV1,
 } from '@happier-dev/protocol';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { apiSocket } from '@/sync/api/session/apiSocket';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -16,9 +17,12 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 
 const initialState = getStorage().getState();
-const initialSocket = Reflect.get(apiSocket, 'socket');
+const outgoing: SocketRpcRequestPayload[] = [];
 const token = createAccountTokenForTests('alice');
 const origin = { kind: 'machine_pool', poolId: '00000000-0000-4000-8000-000000000001' } satisfies MachinePoolSelectionOriginV1;
 const features = {
@@ -29,6 +33,23 @@ const features = {
         declarationTransport: 'http-header-and-socket-auth-v1',
     } },
 };
+
+// Keep the real Socket.IO client and exact Account-scoped RPC owner. Only
+// network connection and daemon acknowledgements are substituted.
+installDisconnectedServerSocketBoundary((socket) => {
+    socket.connected = true;
+    vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
+        outgoing.push(payload);
+        return { ok: true, result: {
+            type: 'success', disposition: 'created', sessionId: 'session-created',
+            executionTarget: { serverId: outgoingServerId, machineId: 'machine-a' },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: 'accepted', localId: 'initial-message-a' },
+        } };
+    });
+});
+let outgoingServerId = '';
 
 function buildSpawnInput(serverId: string) {
     const draft = buildNewSessionAuthoringDraft({
@@ -50,44 +71,33 @@ function buildSpawnInput(serverId: string) {
 
 describe('Session spawn first-dispatch placement origin', () => {
     let serverId: string;
-    const outgoing: Array<{ method: string; params: Record<string, unknown> }> = [];
     beforeEach(async () => {
         getStorage().setState(initialState, true);
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
         serverId = (await upsertAndActivateServer({ serverUrl: 'https://spawn-origin.test', name: 'Home' })).id;
+        outgoingServerId = serverId;
         getStorage().getState().activateProfileScope({ serverId, accountId: 'alice' });
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
-        setRuntimeFetch(async (url) => {
+        const request = async (url: RequestInfo | URL) => {
             const pathname = new URL(String(url)).pathname;
-            if (pathname === '/v1/auth/ping') return Response.json({ ok: true });
+            if (pathname === '/health' || pathname === '/v1/auth/ping') return Response.json({ ok: true });
             if (pathname === '/v1/features') return Response.json(features);
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (pathname === '/v1/machines/machine-a') return Response.json({ machine: {
+                id: 'machine-a', kind: 'persistent', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } });
             throw new Error(`Unexpected spawn preflight request: ${pathname}`);
-        });
-        vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
+        };
+        setRuntimeFetch(request);
+        vi.stubGlobal('fetch', vi.fn(request));
         await getServerFeaturesSnapshot({ serverId, force: true });
         outgoing.length = 0;
-        // Socket.IO is the network boundary; Action policy, authoring, Machine hydration,
-        // routing, plaintext encoding and apiSocket.machineRPC execute unchanged.
-        const socket = {
-            connected: true,
-            timeout: () => socket,
-            emitWithAck: async (_event: string, payload: typeof outgoing[number]) => {
-                outgoing.push(payload);
-                return { ok: true, result: {
-                    type: 'success', disposition: 'created', sessionId: 'session-created',
-                    executionTarget: { serverId, machineId: 'machine-a' },
-                    organizationPlacement: { folderId: null, tagIds: [] },
-                    initialInput: { status: 'accepted', localId: 'initial-message-a' },
-                } };
-            },
-        };
-        Reflect.set(apiSocket, 'socket', socket);
     });
     afterEach(() => {
-        Reflect.set(apiSocket, 'socket', initialSocket);
+        serverScopedRpcSocketPool.resetForTests();
+        resetScopedMachineTransportCacheForTests();
         getStorage().setState(initialState, true);
         resetServerFeaturesClientForTests();
         invalidateAccountEncryptionModeCache();
@@ -117,9 +127,10 @@ describe('Session spawn first-dispatch placement origin', () => {
         const result = await createDefaultActionExecutor().execute('session.spawn_new', input, { surface: 'ui', serverId });
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
         expect(outgoing).toHaveLength(1);
+        expect(outgoing[0]?.method).toBe(`machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`);
         expect(outgoing[0]?.params).toMatchObject({ executionTarget: { serverId, machineId: 'machine-a' }, creationKey: 'creation-a' });
-        expect(Object.hasOwn(outgoing[0]!.params, 'placementOrigin')).toBe(expectedOrigin);
-        if (expectedOrigin) expect(outgoing[0]?.params.placementOrigin).toEqual(origin);
+        if (expectedOrigin) expect(outgoing[0]?.params).toHaveProperty('placementOrigin', origin);
+        else expect(outgoing[0]?.params).not.toHaveProperty('placementOrigin');
     });
 
     it('returns a typed update requirement before dispatching a Saved Secret overlay to a V1 daemon', async () => {

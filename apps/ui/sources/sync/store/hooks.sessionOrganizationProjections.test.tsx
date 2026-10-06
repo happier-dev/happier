@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storageStore';
-import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
+import { buildSessionOrganizationServerKey, type SessionOrganizationProjection } from '@/sync/domains/session/organization';
 
 import * as storageHooks from './hooks';
 
@@ -37,8 +37,8 @@ describe('useSessionOrganizationProjections', () => {
             sessionOrganizationSchemaVersionByServerId: { [HOME_A]: 1, [HOME_B]: 1 },
             sessionOrganizationSnapshotVersionByServerId: { [HOME_A]: 1, [HOME_B]: 1 },
             sessionOrganizationTagsByTagKey: {
-                [`${HOME_A}:urgent`]: tag('urgent', 'Urgent'),
-                [`${HOME_B}:review`]: tag('review', 'Review'),
+                [buildSessionOrganizationServerKey(HOME_A, 'urgent')]: tag('urgent', 'Urgent'),
+                [buildSessionOrganizationServerKey(HOME_B, 'review')]: tag('review', 'Review'),
             },
         }));
     });

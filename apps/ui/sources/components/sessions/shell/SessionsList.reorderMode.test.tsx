@@ -1,20 +1,17 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-    createPartialStorageModuleMock,
-    createStorageStoreMock,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
+import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import {
     buildSessionListIndexFromViewData,
-    type SessionListIndexItem,
 } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
-import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
-import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
+import { applySessionOrganizationLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,17 +91,11 @@ const applySettings = vi.hoisted(() => vi.fn());
 const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const markSessionListScrollActivitySpy = vi.hoisted(() => vi.fn());
-const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({ token: 'folder-token', secret: 'folder-secret' })));
-const resolveSessionOrganizationMutationScopeSpy = vi.hoisted(() => vi.fn(async (serverId: string) => ({
-    ok: true as const,
-    scope: {
-        credentials: { token: 'folder-token', secret: 'folder-secret' },
-        serverId,
-        serverIdAliases: [] as string[],
-        serverUrl: 'https://server-a.example.test',
-    },
-})));
-const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+let homeA: string;
+let previousStorageState: ReturnType<typeof import('@/sync/domains/state/storageStore').storage.getState>;
+const folderAssignmentPath = '/v2/session-organization/folder-assignments/sess_a';
 
 vi.mock('@/components/appShell/search/UniversalSearchRuntimeContext', () => ({
     useUniversalSearchRuntime: () => ({
@@ -202,71 +193,6 @@ installSessionShellCommonModuleMocks({
     storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
         useAllMachines: () => [],
         useProfile: () => ({ id: 'u1' } as any),
-        useSessionListRowsByServerId: () => ({
-            server_a: {
-                sess_a: sessionA,
-                sess_b: sessionB,
-            },
-        }) as any,
-        useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) =>
-            findSessionListRenderable(sessionId),
-        useSessionListReachabilityRenderablesForItems: (
-            items: readonly SessionListIndexItem[] | null | undefined,
-        ): ReadonlyMap<string, SessionListReachabilityRenderable> => {
-            const renderables = new Map<string, SessionListReachabilityRenderable>();
-            for (const item of items ?? []) {
-                if (item?.type !== 'session') continue;
-                const serverId = String(item.serverId ?? '').trim();
-                const sessionId = String(item.sessionId ?? '').trim();
-                if (!serverId || !sessionId) continue;
-                const session = findSessionListRenderable(sessionId);
-                if (!session) continue;
-                const key = buildSessionListServerScopedRowKey(serverId, sessionId);
-                if (!key) continue;
-                renderables.set(key, {
-                    id: sessionId,
-                    metadata: session.metadata ?? null,
-                });
-            }
-            return renderables;
-        },
-        useSessionListRowRenderablesForItems: (
-            items: readonly SessionListIndexItem[] | null | undefined,
-        ): ReadonlyMap<string, SessionListRenderableSession> => {
-            const renderables = new Map<string, SessionListRenderableSession>();
-            for (const item of items ?? []) {
-                if (item?.type !== 'session') continue;
-                const serverId = String(item.serverId ?? '').trim();
-                const sessionId = String(item.sessionId ?? '').trim();
-                if (!serverId || !sessionId) continue;
-                const session = findSessionListRenderable(sessionId);
-                if (!session) continue;
-                const key = buildSessionListServerScopedRowKey(serverId, sessionId);
-                if (!key) continue;
-                renderables.set(key, session);
-            }
-            return renderables;
-        },
-        useSessionOrganizationProjection: () => buildSessionOrganizationProjectionFromLegacyTestSettings({
-            serverId: 'server_a',
-            pinnedSessionKeysV1,
-            sessionListGroupOrderV1,
-            sessionFoldersV1,
-            sessionTagsV1,
-        }),
-        useSessionOrganizationProjections: (serverIds: readonly string[]) => React.useMemo(
-            () => Object.fromEntries(serverIds.map((serverId) => [
-                serverId,
-                buildSessionOrganizationProjectionFromLegacyTestSettings({
-                    serverId,
-                    pinnedSessionKeysV1,
-                    sessionListGroupOrderV1,
-                    sessionFoldersV1,
-                    sessionTagsV1,
-                }),
-            ])),
-            [serverIds.join('\u0000'), pinnedSessionKeysV1, sessionListGroupOrderV1, sessionFoldersV1, sessionTagsV1],
-        ),
         useSetting: (key: string) => {
             if (key === 'compactSessionView') return false;
             if (key === 'compactSessionViewMinimal') return false;
@@ -290,7 +216,6 @@ installSessionShellCommonModuleMocks({
             if (key === 'sessionFoldersV1') return [sessionFoldersV1, setSessionFoldersV1];
             return [null, vi.fn()];
         },
-        storage: createStorageStoreMock(sessionStoreFixture.state),
     }),
 });
 
@@ -331,51 +256,6 @@ vi.mock('@/sync/sync', async (importOriginal) => {
         },
     };
 });
-
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return await createTokenStorageModuleMock({
-        importOriginal,
-        tokenStorage: {
-            getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
-        },
-    });
-});
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
-    const serverProfile = { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' };
-    return {
-        ...actual,
-        getActiveServerSnapshot: () => ({
-            activeServerId: 'server_a',
-            profiles: [serverProfile],
-        }),
-        listServerProfiles: () => [serverProfile],
-        getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
-    };
-});
-
-vi.mock('@/sync/ops/sessionOrganization', () => ({
-    resolveSessionOrganizationMutationScope: resolveSessionOrganizationMutationScopeSpy,
-    requireSessionOrganizationMutationScope: async (serverId: string) => {
-        const result = await resolveSessionOrganizationMutationScopeSpy(serverId);
-        if (result.ok) return result.scope;
-        const { HappyError } = await import('@/utils/errors/errors');
-        throw new HappyError(`homeGovernance.unavailableTitle: ${serverId}`, true);
-    },
-    writeSessionOrganizationFolderAssignment: setSessionFolderAssignmentSpy,
-    writeSessionOrganizationFolders: vi.fn(async () => undefined),
-    writeSessionOrganizationGroupOrder: vi.fn(async () => undefined),
-    writeSessionOrganizationPin: vi.fn(async () => undefined),
-    writeSessionOrganizationTagLabels: vi.fn(async () => undefined),
-    writeSessionOrganizationWorkspaceLabels: vi.fn(async () => undefined),
-    writeSessionOrganizationWorkspaceOrder: vi.fn(async () => undefined),
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'sessions.folders',
-}));
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: () => {
@@ -430,14 +310,8 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 
 const groupKey = 'active:server_a';
 const inactiveGroupKey = 'inactive:server_a';
-const sessionA = sessionStoreFixture.sessionA;
-const sessionB = sessionStoreFixture.sessionB;
-
-function findSessionListRenderable(sessionId: string): SessionListRenderableSession | null {
-    if (sessionId === 'sess_a') return sessionA;
-    if (sessionId === 'sess_b') return sessionB;
-    return null;
-}
+const sessionA = createSessionListRenderableSessionFixture({ ...sessionStoreFixture.sessionA, owner: 'u1' });
+const sessionB = createSessionListRenderableSessionFixture({ ...sessionStoreFixture.sessionB, owner: 'u1' });
 
 const mockVisibleSessionListViewData: any[] = [
     { type: 'header', title: 'Active', headerKind: 'active', groupKey, serverId: 'server_a', serverName: 'Server A' },
@@ -450,19 +324,6 @@ if (mockVisibleSessionListIndex?.[1]?.type === 'session') {
     (mockVisibleSessionListIndex[1] as any).workspace = workspaceA;
 }
 
-vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
-    useVisibleSessionListPaneState: () => ({
-        summary: {
-            sessionsReady: true,
-            sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length,
-        },
-        visibleSessionListIndex: mockVisibleSessionListIndex,
-        folderFeatureEnabledServerIds: ['server_a'],
-        showLoading: false,
-        showEmptyState: false,
-    }),
-}));
-
 const requestReviewSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/system/requestReview', () => ({
     requestReview: requestReviewSpy,
@@ -472,10 +333,42 @@ vi.mock('./SessionItem', () => ({
     SessionItem: (props: any) => React.createElement('SessionItem', props),
 }));
 
-const { SessionsList } = await import('./SessionsList');
+const { SessionsListView } = await import('./SessionsList');
+const paneState = {
+    summary: { sessionsReady: true, sessionCount: 2 },
+    visibleSessionListIndex: mockVisibleSessionListIndex,
+    hasHiddenInactiveSessions: false,
+    folderFocus: null,
+    folderFeatureEnabledServerIds: ['server_a'],
+    showLoading: false,
+    showEmptyState: false,
+} satisfies import('@/hooks/session/useVisibleSessionListPaneState').VisibleSessionListPaneState;
+function SessionsList(props: React.ComponentProps<typeof SessionsListView>) {
+    return <SessionsListView {...props} paneState={paneState} />;
+}
+async function renderSessionsList() {
+    await applySessionOrganizationLegacyTestSettings({
+        serverId: 'server_a', pinnedSessionKeysV1, sessionListGroupOrderV1, sessionFoldersV1, sessionTagsV1,
+    });
+    return renderScreen(<SessionsList />);
+}
 
 describe('SessionsList (inline reorder)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        previousStorageState = storage.getState();
+        await home.reset();
+        homeA = await home.addHome({ name: 'Server A', serverUrl: 'https://server-a.example.test', serverIdentityId: 'server_a', accountId: 'u1' });
+        home.answer(homeA, folderAssignmentPath, { body: { sessionId: 'sess_a', folderId: 'folder-a' } });
+        storage.setState({
+            ordinarySessionListMembershipByServerId: { server_a: ['sess_a', 'sess_b'] },
+            sessionListRowsByServerId: { server_a: { sess_a: sessionA, sess_b: sessionB } },
+        });
+        const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+        primeServerFeaturesSnapshot({ serverId: 'server_a', snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
+            features: { sessions: { enabled: true, folders: { enabled: true } } },
+        }) } });
         sessionListOrderingModeV1 = 'custom';
         sessionListFolderSortModeV1 = 'foldersFirst';
         sessionListSectionModeV1 = 'activity';
@@ -500,21 +393,23 @@ describe('SessionsList (inline reorder)', () => {
         setSessionListFolderSortModeV1.mockClear();
         setSessionListSectionModeV1.mockClear();
         setSessionFoldersV1.mockClear();
-        getCredentialsForServerUrlSpy.mockClear();
-        resolveSessionOrganizationMutationScopeSpy.mockClear();
-        setSessionFolderAssignmentSpy.mockClear();
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         standardCleanup();
+        await home.reset();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.setState(previousStorageState, true);
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
     });
 
     it('does not trigger store-review prompts automatically when the list renders', async () => {
         requestReviewSpy.mockClear();
 
-        await renderScreen(<SessionsList />);
+        await renderSessionsList();
 
         expect(requestReviewSpy).not.toHaveBeenCalled();
     });
@@ -524,7 +419,7 @@ describe('SessionsList (inline reorder)', () => {
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
@@ -538,7 +433,7 @@ describe('SessionsList (inline reorder)', () => {
     it('keeps the carry source available when sibling ordering is date-based', async () => {
         sessionListOrderingModeV1 = 'created';
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items.length).toBe(2);
@@ -550,8 +445,7 @@ describe('SessionsList (inline reorder)', () => {
         sessionListActiveGroupingV1 = 'date';
         sessionListOrderingModeV1 = 'custom';
 
-        const { SessionsList } = await import('./SessionsList');
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         const rowBoundaries = screen.findAll((node) => (
             typeof node.props?.dragEnabled === 'boolean'
@@ -568,7 +462,7 @@ describe('SessionsList (inline reorder)', () => {
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         const firstRow = screen.findAll((node) => String(node.type) === 'SessionItem')[0];
         expect(firstRow.props.dragEnabled).toBe(true);
@@ -578,13 +472,13 @@ describe('SessionsList (inline reorder)', () => {
     it('preserves carry availability when ordering mode returns to custom', async () => {
         sessionListOrderingModeV1 = 'updated';
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
         const disabledItems = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(disabledItems[0].props.dragEnabled).toBe(true);
 
         setSessionListOrderingModeV1.mockClear();
         sessionListOrderingModeV1 = 'custom';
-        const updatedScreen = await renderScreen(<SessionsList />);
+        const updatedScreen = await renderSessionsList();
 
         const reorderedItems = updatedScreen.findAll((node) => String(node.type) === 'SessionItem');
         expect(reorderedItems.length).toBe(2);
@@ -592,9 +486,8 @@ describe('SessionsList (inline reorder)', () => {
     });
 
     it('exposes View options and writes canonical settings atomically on select', async () => {
-        const { SessionsList } = await import('./SessionsList');
 
-        await renderScreen(<SessionsList />);
+        await renderSessionsList();
 
         const menuProps = dropdownMenuCaptures.find((captured) => {
             const items = captured.items ?? [];
@@ -654,7 +547,7 @@ describe('SessionsList (inline reorder)', () => {
         sessionListOrderingModeV1 = 'updated';
         sessionListFolderSortModeV1 = 'mixed';
 
-        await renderScreen(<SessionsList />);
+        await renderSessionsList();
 
         const menuProps = dropdownMenuCaptures.find((captured) => {
             const items = captured.items ?? [];
@@ -693,7 +586,7 @@ describe('SessionsList (inline reorder)', () => {
             }],
         };
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
         const items = screen.findAll((node) => String(node.type) === 'SessionItem');
         expect(items[0].props.folderMoveTargets).toEqual(expect.arrayContaining([
             expect.objectContaining({ folderId: null, title: 'sessionsList.workspaceRoot' }),
@@ -705,23 +598,18 @@ describe('SessionsList (inline reorder)', () => {
             await items[0].props.onMoveToSessionFolder('folder-a');
         });
 
-        expect(resolveSessionOrganizationMutationScopeSpy).toHaveBeenCalledWith('server_a');
-        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
-            scope: {
-                credentials: { token: 'folder-token', secret: 'folder-secret' },
-                serverId: 'server_a',
-                serverIdAliases: [],
-                serverUrl: 'https://server-a.example.test',
-            },
-            sessionId: 'sess_a',
-            folderId: 'folder-a',
+        expect(home.requestsFor(folderAssignmentPath)).toEqual([expect.objectContaining({
+            serverId: homeA, serverUrl: 'https://server-a.example.test', input: { folderId: 'folder-a' }, token: home.findByServerUrl('https://server-a.example.test')?.token,
+        })]);
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        expect(storage.getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey('server_a', 'sess_a')]).toEqual({
+            sessionId: 'sess_a', folderId: 'folder-a',
         });
     });
 
     it('renders one View options trigger in search chrome and keeps stopPropagation bound', async () => {
-        const { SessionsList } = await import('./SessionsList');
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         const menuProps = dropdownMenuCaptures.find((captured) => {
             const items = captured.items ?? [];
@@ -754,7 +642,7 @@ describe('SessionsList (inline reorder)', () => {
         recoveryBannerMountSpy.mockClear();
         recoveryBannerUnmountSpy.mockClear();
 
-        const screen = await renderScreen(<SessionsList />);
+        const screen = await renderSessionsList();
 
         expect(recoveryBannerMountSpy).toHaveBeenCalledTimes(1);
         expect(recoveryBannerUnmountSpy).not.toHaveBeenCalled();

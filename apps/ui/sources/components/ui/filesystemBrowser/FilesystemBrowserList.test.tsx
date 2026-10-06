@@ -2,12 +2,13 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import type { FilesystemBrowserNode } from './filesystemBrowserTypes';
 
 // Loaded at the assertion, not at the top: an eager import would evaluate the spinner's module
 // graph before this file's mocks and per-test setup have run.
 const loadActivitySpinner = async () => (await import('@/components/ui/feedback/ActivitySpinner')).ActivitySpinner;
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const platformState = vi.hoisted(() => ({
     os: 'web',
@@ -57,7 +58,7 @@ vi.mock('react-native-unistyles', async () => {
                 textSecondary: '#888',
                 textLink: '#08f',
             },
-        } as any,
+        },
     });
 });
 
@@ -65,20 +66,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 describe('FilesystemBrowserList', () => {
     const nodes = [
-        { path: 'src/index.ts', name: 'index.ts', type: 'file', depth: 0 },
-    ] as any[];
+        { path: 'src/index.ts', name: 'index.ts', type: 'file', depth: 0, isExpanded: false, isLoadingChildren: false },
+    ] satisfies FilesystemBrowserNode[];
 
     beforeEach(() => {
         platformState.os = 'web';

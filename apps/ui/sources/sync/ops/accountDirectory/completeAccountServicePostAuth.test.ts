@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
@@ -10,16 +10,19 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { createDirectoryHttpFixture } from './accountDirectoryTestFixtures';
 import { cancelPendingDirectoryHomeEnrollment, resumePendingDirectoryHomeEnrollment } from './enrollDirectoryHome';
 import * as activeServerSwitch from '@/sync/domains/server/activeServerSwitch';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
+
+installDisconnectedServerSocketBoundary();
+beforeAll(loadSyncSingletonForTests);
 
 /** Non-secret binding to the Account credential that created the continuation. */
 const TEST_CREDENTIAL_TOKEN_DIGEST = 'sha256:test-account-credential';
 
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: () => request,
-    serverFetch: (...args: unknown[]) => request(...args),
-}));
 
 const service = {
     endpointUrl: 'https://directory.test',
@@ -40,9 +43,23 @@ describe('exact Account post-auth continuation', () => {
     beforeEach(async () => {
         request.mockReset();
         request.mockResolvedValue(new Response(JSON.stringify({ v: 1, homes: [], preferredHomeServerIdentityId: null })));
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            // Cold Socket.IO never connects; unrelated background readers have
+            // no published domain rows in this Account-continuation fixture.
+            if (['/v1/profile', '/v2/account/settings', '/v2/sessions', '/v1/machines'].includes(url.pathname)) {
+                return Response.json({}, { status: 404 });
+            }
+            return request(`${url.pathname}${url.search}`, init);
+        });
         await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'restricted-token' });
     });
-    afterEach(() => vi.restoreAllMocks());
+    afterEach(async () => {
+        await disconnectActiveServerConnection();
+        resetRuntimeFetch();
+        vi.restoreAllMocks();
+    });
 
     it('rejects mismatched service custody before any request', async () => {
         expect(await completeAccountServicePostAuth({ credentialTokenDigest: TEST_CREDENTIAL_TOKEN_DIGEST, service, session: session('srv_other'), intent: { kind: 'enter', target: { kind: 'automatic' } } }))

@@ -1,266 +1,82 @@
 import { type SessionMessageV1 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NormalizedMessage, RawRecord } from '@happier-dev/session-core/raw';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import { fetchAndApplyMessages } from './syncSessions';
 
-function buildApiMessage(id: string, seq: number): SessionMessageV1 {
-  return {
-    id,
-    seq,
-    localId: null,
-    sidechainId: null,
-    content: { t: 'encrypted', c: `encrypted-${id}` },
-    createdAt: 1_000 + seq,
-    updatedAt: 2_000 + seq,
-  };
+function buildApiMessage(id: string, seq: number, raw: RawRecord): SessionMessageV1 {
+  return { id, seq, localId: null, sidechainId: null, content: { t: 'plain', v: raw },
+    createdAt: 1_000 + seq, updatedAt: 2_000 + seq };
+}
+
+function agentMessage(text: string, sidechainId?: string): RawRecord {
+  return { role: 'agent', content: { type: 'acp', agentId: 'claude',
+    data: { type: 'message', message: text, ...(sidechainId ? { sidechainId } : {}) } } };
 }
 
 describe('fetchAndApplyMessages (sidechain parent backfill)', () => {
-  it('does not backfill older pages for sidechain-only pages (sidechains are loaded explicitly)', async () => {
-    const applyMessages = vi.fn();
-    const markMessagesLoaded = vi.fn();
-
-    const request = vi.fn(async (path: string) => {
-      if (path.includes('beforeSeq=')) {
-        return new Response(
-          JSON.stringify({
-            messages: [buildApiMessage('parent', 99)],
-            hasMore: false,
-            nextBeforeSeq: null,
-            nextAfterSeq: null,
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          messages: [buildApiMessage('side1', 101), buildApiMessage('side2', 100)],
-          hasMore: true,
-          nextBeforeSeq: 100,
-          nextAfterSeq: null,
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    });
-
-    const decryptMessages = vi.fn(async (apiMessages: SessionMessageV1[]) => {
-      return apiMessages.map((m) => {
-        if (m.id === 'parent') {
-          return {
-            id: m.id,
-            localId: null,
-            createdAt: m.createdAt,
-            content: {
-              role: 'agent',
-              content: {
-                type: 'acp',
-                agentId: 'claude',
-                data: {
-                  type: 'tool-call',
-                  callId: 'tool_task_1',
-                  input: '{}',
-                  name: 'Task',
-                  id: 'uuid_parent',
-                },
-              },
-            },
-          };
-        }
-
-        return {
-          id: m.id,
-          localId: null,
-          createdAt: m.createdAt,
-          content: {
-            role: 'agent',
-            content: {
-              type: 'acp',
-              agentId: 'claude',
-              data: {
-                type: 'message',
-                message: 'child',
-                sidechainId: 'tool_task_1',
-              },
-            },
-          },
-        };
-      });
-    });
-
-    await fetchAndApplyMessages({
-      sessionId: 's1',
-      getSessionEncryption: () => ({ decryptMessages } as any),
-      request,
-      sessionReceivedMessages: new Map<string, Map<string, number>>(),
-      applyMessages,
-      markMessagesLoaded,
-      log: { log: () => {} },
-    });
-
-    // Sidechain-heavy pages are handled by explicit `scope=sidechain` fetches. The main transcript
-    // fetch should not scan backwards to locate missing parents.
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(applyMessages).toHaveBeenCalledTimes(1);
-
-    expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
+  beforeEach(() => {
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applySessions([createSessionFixture({ id: 's1', encryptionMode: 'plain' })]);
   });
 
-  it('does not backfill older pages when sidechain messages reference a missing owning tool-call', async () => {
-    const applyMessages = vi.fn();
-    const markMessagesLoaded = vi.fn();
+  function observeAppliedMessages() {
+    return vi.fn((id: string, messages: NormalizedMessage[]) => storage.getState().applyMessages(id, messages));
+  }
 
-    const request = vi.fn(async (path: string) => {
-      if (path.includes('beforeSeq=')) {
-        return new Response(
-          JSON.stringify({
-            messages: [buildApiMessage('parent', 99)],
-            hasMore: false,
-            nextBeforeSeq: null,
-            nextAfterSeq: null,
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
+  for (const includeRoot of [false, true]) {
+    it(includeRoot
+      ? 'does not backfill older pages when sidechain messages reference a missing owning tool-call'
+      : 'does not backfill older pages for sidechain-only pages (sidechains are loaded explicitly)', async () => {
+      const applyMessages = observeAppliedMessages();
+      const markMessagesLoaded = vi.fn((id: string) => storage.getState().applyMessagesLoaded(id));
+      const request = vi.fn(async (path: string) => new Response(JSON.stringify(path.includes('beforeSeq=') ? {
+        messages: [buildApiMessage('parent', 99, { role: 'agent', content: { type: 'acp', agentId: 'claude',
+          data: { type: 'tool-call', callId: 'tool_task_1', input: '{}', name: 'Task', id: 'uuid_parent' } } })],
+        hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+      } : {
+        messages: [
+          ...(includeRoot ? [buildApiMessage('root', 102, agentMessage('root'))] : []),
+          buildApiMessage('side1', 101, agentMessage('child', 'tool_task_1')),
+          buildApiMessage('side2', 100, agentMessage('child', 'tool_task_1')),
+        ],
+        hasMore: true, nextBeforeSeq: 100, nextAfterSeq: null,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
-      return new Response(
-        JSON.stringify({
-          messages: [
-            // Mix: one normal/root message plus sidechain children.
-            buildApiMessage('root', 102),
-            buildApiMessage('side1', 101),
-            buildApiMessage('side2', 100),
-          ],
-          hasMore: true,
-          nextBeforeSeq: 100,
-          nextAfterSeq: null,
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      );
-    });
-
-    const decryptMessages = vi.fn(async (apiMessages: SessionMessageV1[]) => {
-      return apiMessages.map((m) => {
-        if (m.id === 'parent') {
-          return {
-            id: m.id,
-            localId: null,
-            createdAt: m.createdAt,
-            content: {
-              role: 'agent',
-              content: {
-                type: 'acp',
-                agentId: 'claude',
-                data: {
-                  type: 'tool-call',
-                  callId: 'tool_task_1',
-                  input: '{}',
-                  name: 'Task',
-                  id: 'uuid_parent',
-                },
-              },
-            },
-          };
-        }
-
-        if (m.id === 'root') {
-          return {
-            id: m.id,
-            localId: null,
-            createdAt: m.createdAt,
-            content: {
-              role: 'agent',
-              content: {
-                type: 'acp',
-                agentId: 'claude',
-                data: {
-                  type: 'message',
-                  message: 'root',
-                },
-              },
-            },
-          };
-        }
-
-        return {
-          id: m.id,
-          localId: null,
-          createdAt: m.createdAt,
-          content: {
-            role: 'agent',
-            content: {
-              type: 'acp',
-              agentId: 'claude',
-              data: {
-                type: 'message',
-                message: 'child',
-                sidechainId: 'tool_task_1',
-              },
-            },
-          },
-        };
+      await fetchAndApplyMessages({
+        sessionId: 's1', sessionEncryptionMode: 'plain', getSessionEncryption: () => null,
+        request, sessionReceivedMessages: new Map<string, Map<string, number>>(),
+        applyMessages, markMessagesLoaded, log: { log: () => {} },
       });
-    });
 
-    await fetchAndApplyMessages({
-      sessionId: 's1',
-      getSessionEncryption: () => ({ decryptMessages } as any),
-      request,
-      sessionReceivedMessages: new Map<string, Map<string, number>>(),
-      applyMessages,
-      markMessagesLoaded,
-      log: { log: () => {} },
+      // Main-transcript paging must not scan backwards for sidechain parents.
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(applyMessages).toHaveBeenCalledTimes(1);
+      expect(applyMessages.mock.calls[0]?.[1]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'side1', isSidechain: true, sidechainId: 'tool_task_1' }),
+        expect.objectContaining({ id: 'side2', isSidechain: true, sidechainId: 'tool_task_1' }),
+      ]));
+      expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
     });
-
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(applyMessages).toHaveBeenCalledTimes(1);
-    expect(markMessagesLoaded).toHaveBeenCalledTimes(1);
-  });
+  }
 
   it('marks scope=sidechain messages as sidechain messages even when the response omits sidechainId', async () => {
-    const applyMessages = vi.fn();
-    const markMessagesLoaded = vi.fn();
-
-    const request = vi.fn(async () => new Response(
-      JSON.stringify({
-        messages: [buildApiMessage('side1', 101)],
-        hasMore: false,
-        nextBeforeSeq: null,
-        nextAfterSeq: null,
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ));
-
-    const decryptMessages = vi.fn(async (apiMessages: SessionMessageV1[]) => apiMessages.map((m) => ({
-      id: m.id,
-      seq: m.seq,
-      localId: null,
-      createdAt: m.createdAt,
-      content: {
-        role: 'user',
-        content: {
-          type: 'text',
-          text: 'hello',
-        },
-      },
-    })));
+    const applyMessages = observeAppliedMessages();
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      messages: [buildApiMessage('side1', 101, { role: 'user', content: { type: 'text', text: 'hello' } })],
+      hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
     await fetchAndApplyMessages({
-      sessionId: 's1',
-      scope: 'sidechain',
-      sidechainId: 'tool_task_1',
-      getSessionEncryption: () => ({ decryptMessages } as any),
-      request,
-      sessionReceivedMessages: new Map<string, Map<string, number>>(),
-      applyMessages,
-      markMessagesLoaded,
-      log: { log: () => {} },
+      sessionId: 's1', sessionEncryptionMode: 'plain', scope: 'sidechain', sidechainId: 'tool_task_1',
+      getSessionEncryption: () => null, request, sessionReceivedMessages: new Map<string, Map<string, number>>(),
+      applyMessages, markMessagesLoaded: id => storage.getState().applyMessagesLoaded(id), log: { log: () => {} },
     });
 
     expect(applyMessages).toHaveBeenCalledWith('s1', [expect.objectContaining({
-      id: 'side1',
-      isSidechain: true,
-      sidechainId: 'tool_task_1',
+      id: 'side1', isSidechain: true, sidechainId: 'tool_task_1',
     })]);
   });
 });

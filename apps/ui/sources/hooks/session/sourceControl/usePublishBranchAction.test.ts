@@ -1,60 +1,51 @@
 import { act } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
     SCM_OPERATION_ERROR_CODES,
 } from '@happier-dev/protocol';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-
-const sessionScmRemotePublishSpy = vi.fn();
-const sessionScmRepositoryRemoveIndexLockSpy = vi.fn();
-const invalidateFromMutationAndAwaitSpy = vi.fn();
-
-vi.mock('@/sync/ops', () => ({
-    sessionScmRemotePublish: (...args: unknown[]) => sessionScmRemotePublishSpy(...args),
-    sessionScmRepositoryRemoveIndexLock: (...args: unknown[]) => sessionScmRepositoryRemoveIndexLockSpy(...args),
-}));
-
-vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: {
-        invalidateFromMutationAndAwait: (...args: unknown[]) => invalidateFromMutationAndAwaitSpy(...args),
-    },
-}));
+import { createScmNetworkTestHarness, scmNetworkSnapshot } from './scmNetworkTestHarness';
 
 const modalMock = createModalModuleMock({ confirmResult: true });
 vi.mock('@/modal', () => modalMock.module);
+const harness = await createScmNetworkTestHarness();
+const { renderHook, standardCleanup } = await import('@/dev/testkit');
+const publishResponses = vi.fn();
+const publishRequests = () => harness.network.requests.filter(request => request.method === RPC_METHODS.SCM_REMOTE_PUBLISH);
 
 describe('usePublishBranchAction', () => {
     beforeEach(() => {
-        sessionScmRemotePublishSpy.mockReset();
-        sessionScmRepositoryRemoveIndexLockSpy.mockReset();
-        sessionScmRepositoryRemoveIndexLockSpy.mockResolvedValue({
-            success: true,
-            removed: true,
-            lockPath: '/repo/.git/index.lock',
+        harness.reset();
+        publishResponses.mockReset();
+        harness.network.setRpcResponder(async request => {
+            if (request.method === RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK) return { success: true, removed: true, lockPath: '/repo/.git/index.lock' };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, error: 'status unavailable' };
+            return await publishResponses();
         });
-        invalidateFromMutationAndAwaitSpy.mockReset();
         modalMock.spies.confirm.mockClear();
     });
 
     afterEach(() => {
         standardCleanup();
     });
+    afterAll(() => harness.dispose());
 
     it('does not allow publishing an untracked branch when no remote is configured', async () => {
         const { usePublishBranchAction } = await import('./usePublishBranchAction');
         const hook = await renderHook(() =>
             usePublishBranchAction({
                 sessionId: 's1',
+                serverId: harness.serverId,
                 writeEnabled: true,
                 disabled: false,
             snapshot: {
-                    capabilities: { writeRemotePublish: true },
-                    repo: { isRepo: true, rootPath: '/repo', remotes: [] },
-                    branch: { detached: false, head: 'main', upstream: null },
-                } as any,
+                    ...scmNetworkSnapshot,
+                    repo: { ...scmNetworkSnapshot.repo, remotes: [] },
+                    branch: { ...scmNetworkSnapshot.branch, upstream: null },
+                },
             }),
         );
 
@@ -64,31 +55,30 @@ describe('usePublishBranchAction', () => {
             await expect(hook.getCurrent().publishBranch()).resolves.toBe(false);
         });
 
-        expect(sessionScmRemotePublishSpy).not.toHaveBeenCalled();
+        expect(publishRequests()).toHaveLength(0);
     });
 
     it('normalizes session ids and publishes to origin before invalidating branch state', async () => {
-        sessionScmRemotePublishSpy.mockResolvedValue({ success: true });
-        invalidateFromMutationAndAwaitSpy.mockResolvedValue(undefined);
+        publishResponses.mockResolvedValue({ success: true });
 
         const { usePublishBranchAction } = await import('./usePublishBranchAction');
         const hook = await renderHook(() =>
             usePublishBranchAction({
                 sessionId: '  s1  ',
+                serverId: harness.serverId,
                 writeEnabled: true,
                 disabled: false,
                 snapshot: {
-                    capabilities: { writeRemotePublish: true },
+                    ...scmNetworkSnapshot,
                     repo: {
-                        isRepo: true,
-                        rootPath: '/repo',
+                        ...scmNetworkSnapshot.repo,
                         remotes: [
                             { name: 'upstream', fetchUrl: 'git@example.com:upstream.git' },
                             { name: 'origin', fetchUrl: 'git@example.com:origin.git' },
                         ],
                     },
-                    branch: { detached: false, head: 'main', upstream: null },
-                } as any,
+                    branch: { ...scmNetworkSnapshot.branch, upstream: null },
+                },
             }),
         );
 
@@ -98,29 +88,28 @@ describe('usePublishBranchAction', () => {
             await expect(hook.getCurrent().publishBranch()).resolves.toBe(true);
         });
 
-        expect(sessionScmRemotePublishSpy).toHaveBeenCalledWith('s1', { remote: 'origin' });
-        expect(invalidateFromMutationAndAwaitSpy).toHaveBeenCalledWith('s1');
+        expect(publishRequests()).toEqual([expect.objectContaining({ targetId: 'machine-1', payload: expect.objectContaining({ remote: 'origin', cwd: '/repo' }) })]);
+        expect(harness.network.requests.some(request => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toBe(true);
     });
 
     it('publishes to the first configured remote when origin is unavailable', async () => {
-        sessionScmRemotePublishSpy.mockResolvedValue({ success: true });
-        invalidateFromMutationAndAwaitSpy.mockResolvedValue(undefined);
+        publishResponses.mockResolvedValue({ success: true });
 
         const { usePublishBranchAction } = await import('./usePublishBranchAction');
         const hook = await renderHook(() =>
             usePublishBranchAction({
                 sessionId: 's1',
+                serverId: harness.serverId,
                 writeEnabled: true,
                 disabled: false,
                 snapshot: {
-                    capabilities: { writeRemotePublish: true },
+                    ...scmNetworkSnapshot,
                     repo: {
-                        isRepo: true,
-                        rootPath: '/repo',
+                        ...scmNetworkSnapshot.repo,
                         remotes: [{ name: 'upstream', fetchUrl: 'git@example.com:upstream.git' }],
                     },
-                    branch: { detached: false, head: 'main', upstream: null },
-                } as any,
+                    branch: { ...scmNetworkSnapshot.branch, upstream: null },
+                },
             }),
         );
 
@@ -128,34 +117,33 @@ describe('usePublishBranchAction', () => {
             await expect(hook.getCurrent().publishBranch()).resolves.toBe(true);
         });
 
-        expect(sessionScmRemotePublishSpy).toHaveBeenCalledWith('s1', { remote: 'upstream' });
+        expect(publishRequests()).toEqual([expect.objectContaining({ payload: expect.objectContaining({ remote: 'upstream' }) })]);
     });
 
     it('offers stale Git index-lock recovery and retries branch publish once', async () => {
-        sessionScmRemotePublishSpy
+        publishResponses
             .mockResolvedValueOnce({
                 success: false,
                 errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
                 error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
             })
             .mockResolvedValueOnce({ success: true });
-        invalidateFromMutationAndAwaitSpy.mockResolvedValue(undefined);
 
         const { usePublishBranchAction } = await import('./usePublishBranchAction');
         const hook = await renderHook(() =>
             usePublishBranchAction({
                 sessionId: 's1',
+                serverId: harness.serverId,
                 writeEnabled: true,
                 disabled: false,
                 snapshot: {
-                    capabilities: { writeRemotePublish: true },
+                    ...scmNetworkSnapshot,
                     repo: {
-                        isRepo: true,
-                        rootPath: '/repo',
+                        ...scmNetworkSnapshot.repo,
                         remotes: [{ name: 'origin', fetchUrl: 'git@example.com:origin.git' }],
                     },
-                    branch: { detached: false, head: 'main', upstream: null },
-                } as any,
+                    branch: { ...scmNetworkSnapshot.branch, upstream: null },
+                },
             }),
         );
 
@@ -164,12 +152,12 @@ describe('usePublishBranchAction', () => {
         });
 
         expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
-        expect(sessionScmRepositoryRemoveIndexLockSpy).toHaveBeenCalledWith('s1', {
+        expect(harness.network.requests.find(request => request.method === RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK)).toMatchObject({ targetId: 'machine-1', payload: {
             cwd: '/repo',
             confirmed: true,
             confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
-        });
-        expect(sessionScmRemotePublishSpy).toHaveBeenCalledTimes(2);
-        expect(invalidateFromMutationAndAwaitSpy).toHaveBeenCalledWith('s1');
+        } });
+        expect(publishRequests()).toHaveLength(2);
+        expect(harness.network.requests.some(request => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toBe(true);
     });
 });

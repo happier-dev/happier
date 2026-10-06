@@ -6,41 +6,36 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { storage } from '@/sync/domains/state/storageStore';
-import { useBoardCards, useBoardMembership, useBoardWidgets, type BoardHomes } from './useBoardContent';
-import { resolveBoardPruneMembership } from './boardMembership';
-import { buildBoardCards } from './boardCards';
-import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import { waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { ARTIFACT_LIST_PATH, AUTOMATION_LIST_PATH, RUN_STORAGE_PATH, boardDefinitionArtifact, boardRunStoragePage, installBoardLibraryTestHarness } from '../boardLibraryTestHarness';
+import type { BoardHomes } from './useBoardContent';
 
-const execute = vi.hoisted(() => vi.fn());
-// The Action executor is the transport boundary. The list client, window, shared Run store,
-// normalization, predicate and Board projection all execute their real implementations.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
+const harness = installBoardLibraryTestHarness();
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { useBoardCards, useBoardMembership, useBoardWidgets } = await import('./useBoardContent');
+const { resolveBoardPruneMembership } = await import('./boardMembership');
+const { buildBoardCards } = await import('./boardCards');
+const { useWorkflowDefinitionLibrary, useWorkflowRunWindow } = await import('@/components/workflows/library/workflowLibraryReads');
+const runAnswer = vi.fn<(input: unknown) => HomeDomainAnswer>();
 // Markdown is a third-party rendering boundary; membership never renders it.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 
-let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 let previousState = storage.getState();
 let homes: BoardHomes;
 beforeEach(async () => {
     previousState = storage.getState();
-    const runtime = await import('@/sync/domains/server/serverRuntime');
-    appliedSnapshot = runtime.getActiveServerSnapshot;
-    const profile = await runtime.upsertAndActivateServer({ serverUrl: 'http://board-runs.test', name: 'Board Home' });
-    storage.setState({ profileScope: { serverId: profile.id, accountId: 'account-a' },
+    const serverId = await harness.connect('http://board-runs.test');
+    storage.setState({ profileScope: { serverId, accountId: 'account-a' },
         workflowRunsById: {}, workflowRunListWindows: {} });
-    homes = { activeServerId: profile.id, mountedServerIds: [profile.id], isHomeMounted: (id) => id === profile.id };
+    homes = { activeServerId: serverId, mountedServerIds: [serverId], isHomeMounted: (id) => id === serverId };
+    harness.home.answer(serverId, RUN_STORAGE_PATH, { select: runAnswer });
 });
 afterEach(async () => {
     standardCleanup();
     (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
     (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
-    execute.mockReset();
+    await harness.dispose();
+    runAnswer.mockReset();
     storage.setState(previousState);
 });
 
@@ -52,24 +47,30 @@ function runsBoard(startedBy: readonly ('you' | 'agents' | 'triggers')[] = []) {
 
 describe('Board shared Run filter membership', () => {
     it('consumes the definition list scheduler occurrence without deriving a date from its schedule', async () => {
-        const definitions = [123_456, null].map((nextRunAt, index) => ({
-            kind: 'workflow-definition.v1', definitionId: `scheduled-${index}`,
-            revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Schedule ${index}` },
-            contentStatus: 'available', stepCount: 1, nextRunAt,
-            triggers: [{ kind: 'schedule', schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } }],
-        }));
-        execute.mockImplementation(async (id) => id === 'workflow.definition.list'
-            ? { ok: true, result: { definitions } }
-            : id === 'workflow.run.summaries'
-                ? { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } }
-                : { ok: false, errorCode: 'unexpected_action' });
+        const definitions = [123_456, null].map((nextRunAt, index) => ({ definitionId: `scheduled-${index}`, nextRunAt }));
+        harness.home.answer(homes.activeServerId!, ARTIFACT_LIST_PATH, { body: definitions.map((definition, index) =>
+            boardDefinitionArtifact(definition.definitionId, `Schedule ${index}`)) });
+        harness.home.answer(homes.activeServerId!, AUTOMATION_LIST_PATH, { body: {
+            automations: definitions.map(({ definitionId, nextRunAt }, index) => ({
+                id: `automation-${index}`, name: 'Scheduled workflow', description: null, enabled: true,
+                workflowDefinitionId: definitionId, scopeSessionId: null, targetType: null, existingSessionId: null,
+                templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
+                triggers: [{ id: `trigger-${index}`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                    kind: 'schedule', schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null }, nextRunAt }],
+            })), nextCursor: null,
+        } });
+        runAnswer.mockReturnValue({ body: { summaries: [], remainingSourceArtifactIds: [] } });
         const members = definitions.map(definition => {
             const ref = { kind: 'workflow', qualifiedId: { serverId: homes.activeServerId!, id: definition.definitionId } } as const;
             return { key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true };
         });
-        const hook = await renderHook(() => useBoardCards({ members, complete: true }, homes));
-        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-        expect(hook.getCurrent().map(card => card.body)).toMatchObject([
+        const hook = await renderHook(() => ({
+            cards: useBoardCards({ members, complete: true }, homes),
+            library: useWorkflowDefinitionLibrary(),
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().library.status).toBe('loaded'));
+        expect(hook.getCurrent().library.definitions.map(definition => definition.nextRunAt)).toEqual([123_456, null]);
+        expect(hook.getCurrent().cards.map(card => card.body)).toMatchObject([
             { kind: 'workflow', nextRun: { kind: 'scheduled', at: 123_456 } },
             { kind: 'workflow', nextRun: { kind: 'unscheduled' } },
         ]);
@@ -92,10 +93,11 @@ describe('Board shared Run filter membership', () => {
         const secondKey = buildWorkBoardItemKeyV1({ kind: 'workflow_run', qualifiedId: { serverId: homes.activeServerId!, id: second.id } });
         const board = { ...createWorkBoardV1({ id: 'running', name: 'Running' }),
             source: { picked: [], sections: ['running'] as const }, positionsByItemRef: { [secondKey]: { x: 12, y: 34 } } };
-        const pending = createDeferred<unknown>();
-        execute.mockResolvedValueOnce({ ok: true, result: { runs: [first], metadataByRunId: {}, nextCursor: 'page-two' } });
-        execute.mockReturnValueOnce(pending.promise);
+        const pending = createDeferred<void>();
+        runAnswer.mockReturnValueOnce({ body: await boardRunStoragePage([first], 'page-two') });
+        runAnswer.mockReturnValueOnce({ body: await boardRunStoragePage([second]), respondAfter: pending.promise });
         const hook = await renderHook(() => useBoardMembership(board, homes));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members).toHaveLength(1));
         const partial = hook.getCurrent();
         // A drag on page one cannot discard the already saved page-two layout.
         const moved = applyWorkBoardIntentV1({ v: 1, boards: [board] }, { kind: 'set_positions', boardId: board.id,
@@ -105,9 +107,11 @@ describe('Board shared Run filter membership', () => {
         if (moved.status !== 'applied') throw new Error('position edit refused');
         expect(moved.boards.boards[0]!.positionsByItemRef[secondKey]).toEqual({ x: 12, y: 34 });
         expect(partial.complete).toBe(false);
-        expect(execute.mock.calls.find(([id, input]) => id === 'workflow.run.list' && input.cursor === 'page-two')).toBeDefined();
-        await act(async () => { pending.resolve({ ok: true, result: { runs: [second], metadataByRunId: {} } }); await pending.promise; });
-        expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['first', 'second']);
+        await waitForHomeGovernance(() => expect(harness.home.requestsFor(RUN_STORAGE_PATH).some(request =>
+            request.input !== null && typeof request.input === 'object' && 'request' in request.input
+            && (request.input.request as { cursor?: string }).cursor === 'page-two')).toBe(true));
+        await act(async () => { pending.resolve(); await pending.promise; });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['first', 'second']));
         expect(hook.getCurrent().complete).toBe(true);
     });
 
@@ -116,8 +120,9 @@ describe('Board shared Run filter membership', () => {
         const savedKey = buildWorkBoardItemKeyV1({ kind: 'workflow_run', qualifiedId: { serverId: homes.activeServerId!, id: row.id } });
         const board = { ...createWorkBoardV1({ id: 'running', name: 'Running' }),
             source: { picked: [], sections: ['running'] as const }, positionsByItemRef: { [savedKey]: { x: 12, y: 34 } } };
-        execute.mockRejectedValueOnce(new Error('offline'));
+        runAnswer.mockReturnValueOnce({ dispatchThenFail: true });
         const hook = await renderHook(() => ({ membership: useBoardMembership(board, homes), window: useWorkflowRunWindow('active') }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().window.status).toBe('failed'));
         const savedAfterEdit = () => {
             const result = applyWorkBoardIntentV1({ v: 1, boards: [board] }, { kind: 'set_positions', boardId: board.id,
                 positionsByItemRef: {}, membership: resolveBoardPruneMembership(board, hook.getCurrent().membership, homes.isHomeMounted) });
@@ -126,35 +131,35 @@ describe('Board shared Run filter membership', () => {
         };
         expect(savedAfterEdit().positionsByItemRef[savedKey]).toEqual({ x: 12, y: 34 });
         expect(hook.getCurrent().membership.complete).toBe(false);
-        execute.mockResolvedValueOnce({ ok: true, result: { runs: [row], metadataByRunId: {} } });
+        runAnswer.mockReturnValueOnce({ body: await boardRunStoragePage([row]) });
         await act(async () => { hook.getCurrent().window.retry(); });
-        expect(hook.getCurrent().membership.complete).toBe(true);
-        execute.mockRejectedValueOnce(new Error('offline refresh'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().membership.complete).toBe(true));
+        runAnswer.mockReturnValueOnce({ dispatchThenFail: true });
         await act(async () => { hook.getCurrent().window.retry(); });
-        expect(hook.getCurrent().window.status).toBe('failed');
+        await waitForHomeGovernance(() => expect(hook.getCurrent().window.status).toBe('failed'));
         expect(hook.getCurrent().membership.complete).toBe(false);
         expect(savedAfterEdit().positionsByItemRef[savedKey]).toEqual({ x: 12, y: 34 });
     });
 
     it('treats an answered empty Run window as complete', async () => {
-        execute.mockResolvedValue({ ok: true, result: { runs: [], metadataByRunId: {} } });
+        runAnswer.mockReturnValue({ body: await boardRunStoragePage([]) });
         const board = runsBoard(['you']);
         const hook = await renderHook(() => useBoardMembership(board, homes));
         expect(hook.getCurrent().members).toEqual([]);
-        expect(hook.getCurrent().complete).toBe(true);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().complete).toBe(true));
     });
 
     it('uses the shared starter and attention rule, deduplicates picks, and retains membership identity on unrelated writes', async () => {
         const waiting = createWorkflowRunSummaryFixture({ id: 'waiting', startedBy: 'trigger', attentionRequired: true });
         const user = createWorkflowRunSummaryFixture({ id: 'user', startedBy: 'user' });
         const agent = createWorkflowRunSummaryFixture({ id: 'agent', startedBy: 'agent' });
-        execute.mockResolvedValue({ ok: true, result: { runs: [waiting, user, agent], metadataByRunId: {} } });
+        runAnswer.mockReturnValue({ body: await boardRunStoragePage([waiting, user, agent]) });
         const initial = runsBoard(['you']);
         const board = { ...initial, source: { ...initial.source, picked: [
             { kind: 'workflow_run', qualifiedId: { serverId: homes.activeServerId!, id: 'waiting' } } as const,
         ] } };
         const hook = await renderHook(() => useBoardMembership(board, homes));
-        expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['waiting', 'user']);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['waiting', 'user']));
         expect(hook.getCurrent().members[0]?.picked).toBe(true);
         expect(hook.getCurrent().complete).toBe(true);
         const membership = hook.getCurrent();
@@ -166,12 +171,13 @@ describe('Board shared Run filter membership', () => {
 
     it('preserves partial Run membership and refuses to certify a paged window as complete', async () => {
         const first = createWorkflowRunSummaryFixture({ id: 'first', startedBy: 'user' });
-        execute.mockResolvedValue({ ok: true, result: { runs: [first], metadataByRunId: {}, nextCursor: 'page-two' } });
+        runAnswer.mockReturnValue({ body: await boardRunStoragePage([first], 'page-two') });
         const board = runsBoard(['you']);
         const hook = await renderHook(() => useBoardMembership(board, homes));
-        expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['first']);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['first']));
         expect(hook.getCurrent().complete).toBe(false);
-        expect(execute.mock.calls.filter(([id]) => id === 'workflow.run.list')).toHaveLength(1);
+        expect(harness.home.requestsFor(RUN_STORAGE_PATH).filter(request =>
+            request.input !== null && typeof request.input === 'object' && 'operation' in request.input && request.input.operation === 'list')).toHaveLength(1);
     });
 
     it('preserves placed Runs from a mounted Home not served by the active Home window', async () => {
@@ -183,10 +189,9 @@ describe('Board shared Run filter membership', () => {
             kind: 'workflow_run', qualifiedId: { serverId: other.id, id: 'inactive-run' },
         });
         const board = { ...runsBoard(['you']), positionsByItemRef: { [inactiveKey]: { x: 12, y: 34 } } };
-        execute.mockResolvedValue({ ok: true, result: {
-            runs: [createWorkflowRunSummaryFixture({ id: 'active-run', startedBy: 'user' })], metadataByRunId: {},
-        } });
+        runAnswer.mockReturnValue({ body: await boardRunStoragePage([createWorkflowRunSummaryFixture({ id: 'active-run', startedBy: 'user' })]) });
         const hook = await renderHook(() => useBoardMembership(board, homes));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['active-run', 'inactive-run']));
         const membership = hook.getCurrent();
         expect(membership.members.map((member) => member.ref.qualifiedId.id)).toEqual(['active-run', 'inactive-run']);
         expect(membership.members.find((member) => member.key === inactiveKey)?.available).toBe(false);
@@ -201,17 +206,16 @@ describe('Board shared Run filter membership', () => {
 
     it('retires Account-A membership while Account B loads through the same window owner', async () => {
         const old = createWorkflowRunSummaryFixture({ id: 'old', startedBy: 'user' });
-        execute.mockResolvedValueOnce({ ok: true, result: { runs: [old], metadataByRunId: {} } });
+        runAnswer.mockReturnValueOnce({ body: await boardRunStoragePage([old]) });
         const board = runsBoard(['you']);
         const hook = await renderHook(() => useBoardMembership(board, homes));
-        expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['old']);
-        const pending = createDeferred<unknown>();
-        execute.mockReturnValueOnce(pending.promise);
-        act(() => { storage.setState({ profileScope: { serverId: homes.activeServerId!, accountId: 'account-b' },
-            workflowRunListWindows: {}, workflowRunsById: {} }); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().members.map((member) => member.ref.qualifiedId.id)).toEqual(['old']));
+        const pending = createDeferred<void>();
+        runAnswer.mockReturnValueOnce({ body: await boardRunStoragePage([]), respondAfter: pending.promise });
+        await act(async () => { await harness.switchAccount(homes.activeServerId!, 'http://board-runs.test', 'account-b'); });
         expect(hook.getCurrent().members).toEqual([]);
         expect(hook.getCurrent().complete).toBe(false);
-        await act(async () => { pending.resolve({ ok: true, result: { runs: [], metadataByRunId: {} } }); await pending.promise; });
-        expect(hook.getCurrent().complete).toBe(true);
+        await act(async () => { pending.resolve(); await pending.promise; });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().complete).toBe(true));
     });
 });

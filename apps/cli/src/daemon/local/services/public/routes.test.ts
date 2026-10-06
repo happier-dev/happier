@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 
 import { createLocalServicePublicPreviewServerRoutes } from './routes';
 
@@ -70,7 +71,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             {
                 headers: {
                     Authorization: 'Bearer token_1',
-                    'x-happier-account-stored-content-protocol': '2',
+                    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 },
             },
         );
@@ -131,7 +132,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             {
                 headers: {
                     Authorization: 'Bearer token_1',
-                    'x-happier-account-stored-content-protocol': '2',
+                    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 },
             },
         );
@@ -164,7 +165,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             {
                 headers: {
                     Authorization: 'Bearer token_1',
-                    'x-happier-account-stored-content-protocol': '2',
+                    ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                 },
                 data: {
                     machineId: 'machine_1',

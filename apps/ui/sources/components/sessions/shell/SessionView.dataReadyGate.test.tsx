@@ -1,27 +1,22 @@
 import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
+import { pressTestInstanceAsync, renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
-import {
-    resetSessionDraftValueCachesForTests,
-    writeSessionDraftValue,
-} from '@/dev/testkit/sessionDraftRepositoryTestkit';
-import {
-    applyComposerPresentationTransaction,
-    createComposerPresentationHostHandlers,
-    readComposerPresentationSnapshot,
-} from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type {
     PluginContributedActionController,
     PluginContributedActionDescriptor,
@@ -46,8 +41,7 @@ const currentSessionPresentationPropsSpy = vi.hoisted(() => vi.fn());
 const pluginSurfaceHostPropsSpy = vi.hoisted(() => vi.fn());
 const agentInputPropsSpy = vi.hoisted(() => vi.fn());
 const machinePluginStructuredMessageActionExecuteMock = vi.hoisted(() => vi.fn());
-const sessionSendMessageMock = vi.hoisted(() => vi.fn());
-const sessionEnqueuePendingMessageMock = vi.hoisted(() => vi.fn());
+const outboundMessageAck = vi.hoisted(() => vi.fn<(payload: unknown) => Promise<unknown>>());
 const composerScopePluginPresentationSpy = vi.hoisted(() => vi.fn());
 const composerScopePluginPresentationState = vi.hoisted(() => ({ value: null as ComposerScopePluginPresentation | null }));
 
@@ -140,9 +134,6 @@ const gestureHandlerState = vi.hoisted(() => ({
             onEnd?: (event: { translationY: number; velocityY: number }) => void;
         };
     }>,
-}));
-const settingMutators = vi.hoisted(() => ({
-    setMobileWorkspaceExperience: vi.fn(),
 }));
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
 const deviceTypeState = vi.hoisted(() => ({
@@ -289,98 +280,7 @@ installSessionShellCommonModuleMocks({
                 setParams: vi.fn(),
             },
         }).module,
-    storage: async () =>
-        createStorageModuleStub({
-            useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
-            storage: Object.assign(
-                (
-                    selector?: (value: {
-                        sessions: Record<string, unknown>;
-                        sessionMessages: Record<string, unknown>;
-                        settings: Record<string, unknown>;
-                        sessionListIndexByServerId: Record<string, unknown>;
-                    }) => unknown,
-                ) => {
-                    const snapshot = {
-                        sessions: sessionState ? { s1: sessionState } : {},
-                        sessionMessages: {},
-                        sessionPending: {},
-                        settings: {},
-                        profile: profileState,
-                        sessionListIndexByServerId: {},
-                    };
-                    return typeof selector === 'function' ? selector(snapshot) : snapshot;
-                },
-                {
-                    getState: () => ({
-                        sessions: sessionState ? { s1: sessionState } : {},
-                        sessionMessages: {},
-                        sessionPending: {},
-                        settings: {},
-                        profile: profileState,
-                        sessionListIndexByServerId: {},
-                    }),
-                    getInitialState: () => ({
-                        sessions: sessionState ? { s1: sessionState } : {},
-                        sessionMessages: {},
-                        sessionPending: {},
-                        settings: {},
-                        profile: profileState,
-                        sessionListIndexByServerId: {},
-                    }),
-                    setState: () => undefined,
-                    subscribe: () => () => undefined,
-                    destroy: () => undefined,
-                },
-            ),
-            useSession: () => sessionState,
-            useSessionMachineId: () => sessionState?.metadata?.machineId ?? null,
-            useIsDataReady: () => isDataReadyState,
-            useRealtimeStatus: () => 'connected',
-            useEndpointStatus: () => endpointConnectivityStatus,
-            useEndpointConnectivity: () => ({
-                status: endpointConnectivityStatus,
-                reason: null,
-                attempt: 0,
-                nextRetryAt: null,
-                lastConnectedAt: null,
-                lastDisconnectedAt: null,
-                lastErrorMessage: null,
-            }),
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionMessagesVersion: () => 0,
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-            useSessionSubagentSourceMessages: () => [],
-            useSessionRpcAvailabilityState: () => ({
-                sessionExists: true,
-                sessionRpcAvailable: true,
-            }),
-            useSessionReviewCommentsDrafts: () => [],
-            useWorkspaceReviewCommentsDrafts: () => [],
-            useSessionUsage: () => null,
-            useSyncError: () => syncErrorState,
-            useArtifacts: () => [],
-            useLocalSetting: <K extends keyof LocalSettings>(key: K) => localSettingsDefaults[key],
-            useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
-                localSettingsDefaults[key],
-                vi.fn<(value: LocalSettings[K]) => void>(),
-            ],
-            useSetting: <K extends keyof Settings>(key: K) => settingsDefaults[key],
-            useSettingMutable: <K extends keyof Settings>(key: K) => [
-                settingsDefaults[key],
-                key === 'mobileWorkspaceExperienceV1'
-                    ? ((value: Settings[K]) => {
-                        settingMutators.setMobileWorkspaceExperience(value);
-                    })
-                    : vi.fn<(value: Settings[K]) => void>(),
-            ],
-            useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
-            useProfile: () => profileState,
-            useAutomations: () => [],
-            useAllMachines: () => [],
-            useMachine: () => null,
-        }),
+    storage: async importOriginal => importOriginal(),
 });
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -392,9 +292,6 @@ vi.mock('@react-navigation/native', () => ({
     ...createReactNavigationNativeMock(),
     useFocusEffect: () => {},
     useIsFocused: () => true,
-}));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
@@ -474,20 +371,6 @@ vi.mock(
 vi.mock('@/components/appShell/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'session:s1',
 }));
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-    useAppPaneScope: () => ({
-        openRight: vi.fn(),
-        setRightTab: vi.fn(),
-        closeRight: vi.fn(),
-        openDetailsTab: vi.fn(),
-        closeDetails: vi.fn(),
-        pinDetailsTab: vi.fn(),
-        closeDetailsTab: vi.fn(),
-        setActiveDetailsTab: vi.fn(),
-        setRightTabState: vi.fn(),
-        scopeState: null,
-    }),
-}));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
@@ -497,26 +380,70 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     markSessionVisible: () => {},
     markSessionHidden: () => {},
 }));
-vi.mock('@/sync/sync', async () => {
-    const { createAcceptedExternalSessionTailCursorSyncBoundary } = await import('@/dev/testkit/mocks/sync');
-    return {
-        sync: {
-            ...createAcceptedExternalSessionTailCursorSyncBoundary(),
-            markSessionViewed: async () => {},
-            fetchPendingMessages: async () => {},
-            publishSessionPermissionModeToMetadata: async () => {},
-            publishSessionAcpSessionModeOverrideToMetadata: async () => {},
-            publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
-            publishSessionModelOverrideToMetadata: async () => {},
-            refreshSessions: async () => {},
-            onSessionVisible: () => {},
-            onSessionViewportChange: () => {},
-            sendMessage: sessionSendMessageMock,
-            enqueuePendingMessage: sessionEnqueuePendingMessageMock,
-            wakeSessionAfterSend: async () => null,
-            submitMessage: async () => {},
-        },
-    };
+
+
+// Draft custody and Agent delivery policy remain real beneath the external transport.
+vi.doUnmock('@/sync/domains/state/storage');
+vi.doUnmock('@/hooks/session/useDraft');
+vi.doUnmock('@/agents/registry/registryUiBehavior');
+const { resetSessionDraftValueCachesForTests, writeSessionDraftValue } = await import('@/dev/testkit/sessionDraftRepositoryTestkit');
+const { applyComposerPresentationTransaction, createComposerPresentationHostHandlers, readComposerPresentationSnapshot } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+installDisconnectedServerSocketBoundary(socket => {
+    vi.mocked(socket.connect).mockImplementation(() => {
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        return socket;
+    });
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+        if (event === 'message') return outboundMessageAck(payload);
+        return { v: 1, ok: true, admittedSessionIds: [] };
+    });
+});
+const { storage: canonicalStorage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+let previousStorage: ReturnType<typeof canonicalStorage.getState>;
+
+async function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
+    // Route acceptance and every narrow reader observe the SAME canonical store.
+    if (sessionState) {
+        canonicalStorage.getState().applySessions([createSessionFixture({
+            ...sessionState,
+            serverId: sessionState.serverId ?? account.home.id,
+        })]);
+    } else {
+        canonicalStorage.setState({ sessions: {}, sessionListRowsByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {} });
+    }
+    canonicalStorage.setState({ isDataReady: isDataReadyState });
+    canonicalStorage.getState().applySettingsLocal({ sessionMessageSendMode: 'agent_queue' });
+    canonicalStorage.getState().setSyncError(syncErrorState);
+    canonicalStorage.getState().setEndpointConnectivity({
+        status: endpointConnectivityStatus, reason: null, attempt: 0, nextRetryAt: null,
+        lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null,
+    });
+    return renderCanonicalScreen(<InjectedAuthProvider credentials={account.credentials}>{args[0]}</InjectedAuthProvider>, args[1]);
+}
+
+beforeEach(async () => {
+    previousStorage = canonicalStorage.getState();
+    await loadSyncSingletonForTests();
+    account = await restoreServerAccountForTest({ serverUrl: 'https://server-a', accountId: 'account-1', request: async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+        if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (path === '/v2/sessions/s1/pending') return Response.json({ pending: [] });
+        if (path === '/v1/sessions/s1/messages') return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
+        return new Response('{}', { status: 404 });
+    } });
+});
+afterEach(async () => {
+    await standardCleanup();
+    const { scmStatusSync } = await import('@/scm/scmStatusSync');
+    scmStatusSync.stop('s1', account.home.id);
+    await account.dispose();
+    canonicalStorage.setState(previousStorage, true);
 });
 
 const sessionViewModulePromise = import('./SessionView');
@@ -603,7 +530,6 @@ describe('SessionView (data ready gating)', () => {
             metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
             agentState: {},
         };
-        settingMutators.setMobileWorkspaceExperience.mockReset();
         gestureHandlerState.gestures = [];
         deviceTypeState.value = 'tablet';
         safeAreaState.bottom = 0;
@@ -615,8 +541,7 @@ describe('SessionView (data ready gating)', () => {
         pluginSurfaceHostPropsSpy.mockReset();
         agentInputPropsSpy.mockReset();
         machinePluginStructuredMessageActionExecuteMock.mockReset();
-        sessionSendMessageMock.mockReset();
-        sessionEnqueuePendingMessageMock.mockReset();
+        outboundMessageAck.mockReset();
         composerScopePluginPresentationSpy.mockReset();
         composerScopePluginPresentationState.value = null;
     });
@@ -1083,7 +1008,7 @@ describe('SessionView (data ready gating)', () => {
             supported: true;
             result: { ok: true; result: { refreshed: boolean } };
         }>();
-        const secondSend = createDeferred<{ localId: string }>();
+        const secondSend = createDeferred<void>();
         const successfulActionDispatch = {
             supported: true as const,
             result: { ok: true as const, result: { refreshed: true } },
@@ -1092,14 +1017,13 @@ describe('SessionView (data ready gating)', () => {
             .mockImplementationOnce(() => firstActionDispatch.promise)
             .mockImplementationOnce(() => secondActionDispatch.promise);
         let outboundDispatchCount = 0;
-        const dispatchOutboundMessage = () => {
+        const dispatchOutboundMessage = async (payload: unknown) => {
             outboundDispatchCount += 1;
-            return outboundDispatchCount === 2
-                ? secondSend.promise
-                : Promise.resolve({ localId: `message-${outboundDispatchCount}` });
+            const message = payload as { localId: string };
+            if (outboundDispatchCount === 2) await secondSend.promise;
+            return { ok: true, id: `message-${outboundDispatchCount}`, seq: outboundDispatchCount + 1, localId: message.localId, didWrite: true };
         };
-        sessionSendMessageMock.mockImplementation(dispatchOutboundMessage);
-        sessionEnqueuePendingMessageMock.mockImplementation(dispatchOutboundMessage);
+        outboundMessageAck.mockImplementation(dispatchOutboundMessage);
 
         const { SessionView } = await sessionViewModulePromise;
         await renderScreen(
@@ -1164,7 +1088,7 @@ describe('SessionView (data ready gating)', () => {
             });
             expect(machinePluginStructuredMessageActionExecuteMock).toHaveBeenCalledOnce();
 
-            secondSend.resolve({ localId: 'message-2' });
+            secondSend.resolve();
             await act(async () => {
                 await Promise.resolve();
                 await Promise.resolve();
@@ -1179,7 +1103,7 @@ describe('SessionView (data ready gating)', () => {
             await expect(actionRetry).resolves.toMatchObject({ kind: 'direct', outcome: { ok: true } });
         } finally {
             firstActionDispatch.resolve(successfulActionDispatch);
-            secondSend.resolve({ localId: 'message-2' });
+            secondSend.resolve();
             secondActionDispatch.resolve(successfulActionDispatch);
             if (openingWhileSendIsReserved) {
                 await openingWhileSendIsReserved.catch(() => {});
@@ -1397,7 +1321,7 @@ describe('SessionView (data ready gating)', () => {
             value: { issueId: 42 },
             presentation: { label: 'Issue #42', typeLabel: 'Issue', icon: 'file' },
         };
-        writeSessionDraftValue(null, 's1', 'structuredInput.composerAttachments', [attachment]);
+        writeSessionDraftValue({ serverId: account.home.id, accountId: 'account-1' }, 's1', 'structuredInput.composerAttachments', [attachment]);
         const attachmentEntry = {
             id: 'acme.issues/issue',
             pluginId: attachment.attachment.pluginId,
@@ -1662,10 +1586,7 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findAllByTestId('session-cockpit-open-swipe-handle')).toHaveLength(0);
         const gesture = gestureHandlerState.gestures.find((candidate) => candidate.kind === 'pan');
         expect(gesture).toBeUndefined();
-
-        gesture?.handlers.onEnd?.({ translationY: -48, velocityY: -120 });
-
-        expect(settingMutators.setMobileWorkspaceExperience).not.toHaveBeenCalledWith('cockpit');
+        expect(storage.getState().localSettings.mobileWorkspaceExperienceV1).toBe('classic');
     });
 
     it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {

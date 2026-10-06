@@ -9,20 +9,23 @@ import type {
   PluginInvocableActionId,
 } from '@happier-dev/plugin-sdk/actions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLocalScmRepositoryFixture } from '@/scm/contracts/scmBackendContractFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 const {
   callMachineRpc,
   callSessionRpc,
   readMachineRpcRequestDisposition,
-  resolveSessionTransportContext,
+  fetchSessionById,
 } = vi.hoisted(() => ({
   callMachineRpc: vi.fn(),
   callSessionRpc: vi.fn(),
   readMachineRpcRequestDisposition: vi.fn(),
-  resolveSessionTransportContext: vi.fn(),
+  fetchSessionById: vi.fn(),
 }));
 
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
@@ -34,8 +37,11 @@ vi.mock('@/session/transport/rpc/machineRpc', () => ({
   readMachineRpcRequestDisposition,
 }));
 
-vi.mock('@/session/services/resolveSessionTransportContext', () => ({
-  resolveSessionTransportContext,
+// Session HTTP is the boundary; preserve the real selector, encryption, and worktree owners.
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
+  fetchSessionById,
+  lookupSessionsByTags: async () => ({ state: 'available', sessions: [await fetchSessionById()] }),
 }));
 
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
@@ -43,6 +49,25 @@ import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtim
 import { createCliActionDeps } from './createCliActionDeps';
 
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
+
+function serveSessionRecord(row: Readonly<{ id: string; active: boolean; machineId?: string; path?: string }>) {
+  fetchSessionById.mockImplementation(async () => createSessionRecordFixture({
+    id: row.id, active: row.active, encryptionMode: 'plain',
+    ...(row.machineId ? { machineId: row.machineId } : {}),
+    metadata: JSON.stringify(createTestMetadata({
+      ...(row.path ? { path: row.path } : {}),
+      ...(row.machineId ? { machineId: row.machineId } : {}),
+    })),
+  }));
+}
+
+beforeEach(() => {
+  vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+    if (!String(url).endsWith('/v1/account/encryption/currentness')) throw new Error(`Unexpected HTTP read: ${url}`);
+    return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+  });
+});
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('detached exact Run output observation transport', () => {
   it.each([{ waitForInputId: 'input-1' }, { waitForOutput: { kind: 'review_walkthrough' as const, comparisonId: 'comparison-1' } }])
@@ -97,14 +122,7 @@ function createExecutionRunActionsService() {
     token: 'token',
     encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
   };
-  resolveSessionTransportContext.mockResolvedValue({
-    ok: true,
-    sessionId: 'session-1',
-    rawSession: { id: 'session-1', active: true },
-    accountEncryptionCurrentness: { mode: 'plain' },
-    mode: 'plain',
-    ctx: null,
-  });
+  serveSessionRecord({ id: 'session-1', active: true });
   const deps = createCliActionDeps({
     token: credentials.token,
     credentials,
@@ -156,7 +174,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     const result = await deps.executionRunStart(null, { instructions: 'Inspect' }, {
       exactMachineId: 'machine-1', workspaceWrites: 'deny',
     });
-    expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable', details: { runCreation: 'noRunCreated' } });
+    expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable', details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
     expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -246,7 +264,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     callSessionRpc.mockReset();
     readMachineRpcRequestDisposition.mockReset();
     readMachineRpcRequestDisposition.mockReturnValue(null);
-    resolveSessionTransportContext.mockReset();
+    fetchSessionById.mockReset();
   });
 
   it('routes the five plugin-visible run lifecycle actions to the canonical session owner with typed results', async () => {
@@ -292,11 +310,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       streamId: 'stream-1',
     })).resolves.toEqual({ ok: true });
 
-    expect(resolveSessionTransportContext).toHaveBeenCalledTimes(1);
-    expect(resolveSessionTransportContext).toHaveBeenCalledWith({
-      credentials: expect.objectContaining({ token: 'token' }),
-      idOrPrefix: 'session-1',
-    });
+    expect(fetchSessionById).toHaveBeenCalledTimes(1);
     expect(callSessionRpc.mock.calls.map(([request]) => ({
       method: request.method,
       request: request.request,
@@ -339,14 +353,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath });
     const executeCanonicalAction = vi.fn(async (actionId: string, _input: unknown) => {
       if (actionId === 'execution.run.start') {
         return {
@@ -416,9 +423,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   it('captures selected-session inventory without model admission', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-capture-deps-' });
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
-    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
-      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath });
     const executeCanonicalAction = vi.fn(async () => { throw new Error('Capture must not admit an analysis run'); });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     try {
@@ -437,9 +442,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pinned-capture-deps-' });
     directories.push(fixture.rootPath);
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
-    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
-      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
     const executeCanonicalAction = vi.fn(async () => { throw new Error('Pinned reads must not admit another action'); });
     const execute = (input: unknown) => deps.scmActionExecute?.({ actionId: 'scm.diffSummary.capture', input,
@@ -461,9 +464,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-pr-source-deps-' });
     directories.push(fixture.rootPath);
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
-    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
-      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath });
     // The contributed plugin process is the system boundary; canonical Action
     // admission, source-input shaping, and evidence capture stay real.
     const invokeContributedAction = vi.fn(async (request: Readonly<{ input?: unknown }>) => {
@@ -508,9 +509,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   it('refuses selected-session evidence outside the machine filesystem policy before capture or admission', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-summary-permission-' });
     const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
-    resolveSessionTransportContext.mockResolvedValue({ ok: true, sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, path: fixture.rootPath },
-      accountEncryptionCurrentness: { mode: 'plain' }, mode: 'plain', ctx: null });
+    serveSessionRecord({ id: 'session-1', active: true, path: fixture.rootPath });
     const executeCanonicalAction = vi.fn(async () => ({ ok: true as const, result: { runId: 'denied-run', callId: 'call', sidechainId: 'sidechain' } }));
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
       scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [join(fixture.rootPath, 'other-workspace')] },
@@ -585,14 +584,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('routes detached execution.run.send through V2 preflight to the exact Session-origin machine', async () => {
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc
       .mockResolvedValueOnce({
         results: {
@@ -639,14 +631,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('keeps detached stream cancellation under execution-run lifecycle ownership', async () => {
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc
       .mockResolvedValueOnce({
         results: {
@@ -678,14 +663,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('keeps detached stop under execution-run lifecycle ownership', async () => {
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc
       .mockResolvedValueOnce({
         results: {
@@ -716,14 +694,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('projects a detached execution.run.send failure returned by the exact machine', async () => {
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc
       .mockResolvedValueOnce({
         results: {
@@ -764,14 +735,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   ] as const)('classifies a detached send transport failure with %s disposition', async (disposition, errorCode) => {
     const sendError = new Error(`send ${disposition}`);
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc
       .mockResolvedValueOnce({
         results: {
@@ -886,7 +850,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     await expect(service.execute('execution.run.ensure', {
       runId: 'run-1',
     })).rejects.toMatchObject({ code: 'not_authenticated' });
-    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    expect(fetchSessionById).not.toHaveBeenCalled();
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
@@ -895,14 +859,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockResolvedValueOnce({
       protocolVersion: 2,
       results: {
@@ -984,14 +941,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     const rawSession = { id: 'session-1', active: true, machineId: 'machine-capable' };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession,
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord(rawSession);
     callMachineRpc.mockImplementationOnce(async () => {
       rawSession.machineId = 'machine-replaced';
       return {
@@ -1074,14 +1024,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockResolvedValue({
       protocolVersion: 1,
       results: {
@@ -1136,14 +1079,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockRejectedValueOnce(createRpcCallError({
       error: 'Capability detection is unavailable',
       errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
@@ -1186,14 +1122,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockResolvedValueOnce({
       protocolVersion: 2,
       results: {
@@ -1244,14 +1173,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockRejectedValueOnce(new Error('machine offline'));
     const deps = createCliActionDeps({
       token: credentials.token,
@@ -1294,14 +1216,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     const caller = new AbortController();
     let capabilitySignal: AbortSignal | undefined;
     const { service } = createExecutionRunActionsService();
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'session-1',
-      rawSession: { id: 'session-1', active: true, machineId: 'machine-1' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
     callMachineRpc.mockImplementationOnce(({ signal }: Readonly<{ signal?: AbortSignal }>) =>
       new Promise((_resolve, reject) => {
         capabilitySignal = signal;
@@ -1412,14 +1327,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    resolveSessionTransportContext.mockResolvedValue({
-      ok: true,
-      sessionId: 'origin-session',
-      rawSession: { id: 'origin-session', active: true, machineId: 'machine-origin' },
-      accountEncryptionCurrentness: { mode: 'plain' },
-      mode: 'plain',
-      ctx: null,
-    });
+    serveSessionRecord({ id: 'origin-session', active: true, machineId: 'machine-origin' });
     callMachineRpc.mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
       if (method === RPC_METHODS.CAPABILITIES_DETECT) {
         return {
@@ -1474,7 +1382,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       { machineId: 'machine-admitted', method: RPC_METHODS.CAPABILITIES_DETECT },
       { machineId: 'machine-admitted', method: SESSION_RPC_METHODS.EXECUTION_RUN_START },
     ]);
-    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+    expect(fetchSessionById).not.toHaveBeenCalled();
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 

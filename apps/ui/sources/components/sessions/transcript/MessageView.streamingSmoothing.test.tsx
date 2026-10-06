@@ -2,7 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, flushHookEffects, renderWithSessionTranscriptSource as renderScreen, standardCleanup, wrapWithSessionTranscriptSource } from '@/dev/testkit';
 import type { AgentTextMessage } from "@happier-dev/session-core/messages";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
@@ -119,7 +119,6 @@ vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', ()
 vi.mock('@/components/sessions/transcript/transcriptRowActionVisibility', () => ({ shouldShowTranscriptRowActions: () => false, shouldShowTranscriptRowPinAction: () => false }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({ isCommittedMessageDiscarded: () => false }));
-vi.mock('@/utils/url/sessionFileDeepLink', () => ({ buildSessionFileDeepLink: () => '' }));
 vi.mock('@/utils/system/fireAndForget', () => ({ fireAndForget: (promise: Promise<unknown>) => promise }));
 vi.mock('@/components/sessions/linkedFiles/extractWorkspaceFileMentions', () => ({
     extractWorkspaceFileMentions: () => {
@@ -165,6 +164,9 @@ function flattenTestStyle(style: unknown): Record<string, unknown> {
     return style && typeof style === 'object' ? { ...(style as Record<string, unknown>) } : {};
 }
 
+// Initialize the real graph before each case's virtual clock begins.
+await import('./MessageView');
+
 describe('MessageView (streaming smoothing)', () => {
     beforeEach(() => {
         captured.markdownProps.length = 0;
@@ -181,7 +183,6 @@ describe('MessageView (streaming smoothing)', () => {
             animateToolExpandCollapseFreshOnly: true,
             animateThinkingEnabled: true,
         };
-        vi.resetModules();
         vi.useFakeTimers();
     });
 
@@ -212,7 +213,8 @@ describe('MessageView (streaming smoothing)', () => {
             if (props.shouldSuspend) throw neverSettles;
             return null;
         };
-        const renderMessage = (message: AgentTextMessage, shouldSuspend = false) => (
+        const source = createTestSessionTranscriptSource();
+        const renderMessage = (message: AgentTextMessage, shouldSuspend = false) => wrapWithSessionTranscriptSource(
             <React.Suspense fallback={null}>
                 <MessageView
                     message={message}
@@ -221,7 +223,7 @@ describe('MessageView (streaming smoothing)', () => {
                     interaction={interaction}
                 />
                 <SuspendAfterRow shouldSuspend={shouldSuspend} />
-            </React.Suspense>
+            </React.Suspense>, source,
         );
         let tree!: renderer.ReactTestRenderer;
 

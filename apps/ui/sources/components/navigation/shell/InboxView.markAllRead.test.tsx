@@ -6,6 +6,15 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installNavigationShellCommonModuleMocks } from './navigationShellTestHelpers';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createInboxItemRoute } from '@/components/inbox/inboxItemFocus';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerId, listServerProfiles, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { standardCleanup } from '@/dev/testkit';
+
+installDisconnectedServerSocketBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,6 +25,9 @@ const readAnswers = new Map<string, { status?: number; body: unknown; respondAft
 let homeA = '';
 let homeB = '';
 const readStatePath = '/v2/sessions/session-x/read-state';
+const initialStorageState = storage.getState();
+const initialServerId = getActiveServerId();
+const initialProfileIds = new Set(listServerProfiles().map(profile => profile.id));
 
 function readRequests() {
     return harness.requests.filter(({ path }) => path === readStatePath).map(({ home, body }) => ({
@@ -188,6 +200,8 @@ async function renderUpdates(InboxView: React.ComponentType) {
 
 describe('InboxView mark as read', () => {
     beforeEach(async () => {
+        await loadSyncSingletonForTests();
+        storage.setState(initialStorageState, true);
         readAnswers.clear();
         alerts.titles = [];
         routeParams.item = undefined;
@@ -197,6 +211,7 @@ describe('InboxView mark as read', () => {
                 { key: 'a', serverUrl: 'https://inbox-a.test', accountId: 'me' },
             ],
             route: ({ home, path }) => {
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (path !== readStatePath) return undefined;
                 const answer = readAnswers.get(harness.homes[home].id);
                 if (!answer) return undefined;
@@ -205,6 +220,10 @@ describe('InboxView mark as read', () => {
         });
         homeB = harness.homes.b.id;
         homeA = harness.homes.a.id;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(harness.homes.a.serverUrl);
+        if (!credentials) throw new Error('Expected the focused Home credential fixture');
+        await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer(credentials);
         answerReadState(homeA);
         answerReadState(homeB);
         const { storage } = await import('@/sync/domains/state/storageStore');
@@ -226,7 +245,14 @@ describe('InboxView mark as read', () => {
         });
     });
 
-    afterEach(() => harness?.dispose());
+    afterEach(async () => {
+        standardCleanup();
+        await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
+        harness?.dispose();
+        await setActiveServerId(initialServerId);
+        for (const id of [homeA, homeB]) if (id && !initialProfileIds.has(id)) await removeServerProfile(id);
+        storage.setState(initialStorageState, true);
+    });
 
     it('uses the route item as the only row focus and reopens Needs you when it changes', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
@@ -253,7 +279,7 @@ describe('InboxView mark as read', () => {
         await press(nodesByTestId(screen.tree, 'inbox.view:updates')[0]);
         expect(nodesByTestId(screen.tree, 'inbox.session.needs-focus')).toHaveLength(0);
 
-        routeParams.item = ['session:needs-focus'];
+        routeParams.item = [createInboxItemRoute({ kind: 'session', serverId: homeA, id: 'needs-focus' }).params.item];
         await screen.update(<InboxPage />);
         expect(nodesByTestId(screen.tree, 'inbox.session.needs-focus')[0]?.props.selected).toBe(true);
         await press(nodesByTestId(screen.tree, 'inbox.view:updates')[0]);
@@ -261,7 +287,7 @@ describe('InboxView mark as read', () => {
         // A render with the same item preserves the person's chosen Updates tab.
         expect(nodesByTestId(screen.tree, 'inbox.session.needs-focus')).toHaveLength(0);
 
-        routeParams.item = 'session:missing';
+        routeParams.item = createInboxItemRoute({ kind: 'session', serverId: homeA, id: 'missing' }).params.item;
         await screen.update(<InboxPage />);
         expect(nodesByTestId(screen.tree, 'inbox.session.needs-focus')[0]?.props.selected).toBe(false);
         routeParams.item = 'session: ';

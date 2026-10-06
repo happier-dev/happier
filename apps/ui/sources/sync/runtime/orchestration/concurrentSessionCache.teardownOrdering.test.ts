@@ -1,319 +1,170 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createServerProfilesModuleMock } from '@/dev/testkit/mocks/serverProfiles';
-import { createTokenStorageModuleMock } from '@/dev/testkit/mocks/tokenStorage';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 
-const reportServerUnreachableSpy = vi.fn<(...args: any[]) => void>();
-const releaseServerReachabilitySupervisorSpy = vi.fn(async () => {});
-const acquireServerReachabilitySupervisorSpy = vi.fn(async () => ({
-    release: releaseServerReachabilitySupervisorSpy,
-}));
+// Native UI and cryptography adapters do not exist in this Node host.
+vi.mock('react-native', async () => {
+    const { createReactNativeWebRuntime } = await import('@/dev/testkit/runtime/reactNativeRuntime');
+    return createReactNativeWebRuntime(undefined, () => vi.importActual<typeof import('@/dev/reactNativeStub')>('@/dev/reactNativeStub'));
+});
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-image', () => ({ Image: 'Image' }));
+vi.mock('expo-updates', async () => (await import('@/dev/testkit/mocks/expoUpdates')).createExpoUpdatesMock());
+vi.mock('react-native-typography', async () => (await import('@/dev/testkit/mocks/reactNativeTypography')).createReactNativeTypographyMock());
+vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
 
-function onlineState() {
-    return {
-        phase: 'online',
-        reason: 'initial_connect',
-        attempt: 0,
-        nextRetryAt: null,
-        lastConnectedAt: Date.now(),
-        lastDisconnectedAt: null,
-        lastErrorMessage: null,
-    };
-}
+let cleanup: (() => Promise<void>) | null = null;
 
-describe('concurrentSessionCache teardown ordering', () => {
-    beforeEach(() => {
-        vi.useFakeTimers();
-        reportServerUnreachableSpy.mockReset();
-        acquireServerReachabilitySupervisorSpy.mockClear();
-        releaseServerReachabilitySupervisorSpy.mockClear();
-    });
+beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    vi.stubGlobal('__DEV__', true);
+    vi.stubGlobal('self', globalThis);
+    process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+});
+afterEach(async () => {
+    await cleanup?.();
+    cleanup = null;
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.resetModules();
+    delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
+});
 
-    afterEach(async () => {
-        vi.useRealTimers();
-        vi.unstubAllGlobals();
-        vi.resetModules();
-        vi.clearAllMocks();
-        try {
-            const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-            await resetServerReachabilitySupervisors();
-        } catch {
-            // ignore
-        }
-        delete process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT;
-        delete process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS;
-    });
-
+describe('concurrent session cache teardown ordering', () => {
     it('transfers the former focused Home after singleton withdrawal and tears it down intentionally', async () => {
-        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
-        process.env.EXPO_PUBLIC_HAPPIER_CONCURRENT_CACHE_REFRESH_INTERVAL_MS = '600000';
-        let appliedActiveServerId = 'server-a';
-        let appliedActiveServerRuntimeAvailable = true;
-        let selectedActiveServerId = 'server-a';
-        let appliedActiveServerListener: ((serverId: string) => void) | null = null;
-        let applyingActiveServerListener: ((serverId: string) => void) | null = null;
-        let serverProfilesListener: ((generation: number) => void) | null = null;
+        const network = await installSessionOpsNetworkBoundary();
+        const homeA = await network.addHome('https://teardown-a.example.test', 'account-a');
+        const homeB = await network.addHome('https://teardown-b.example.test', 'account-b');
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        await profiles.setActiveServerId(homeA.id, { scope: 'device' });
+        await profiles.updateHomeViewState((state) => ({
+            ...state,
+            groups: [{ id: 'main', name: 'Main', serverIds: [homeA.id, homeB.id], presentation: 'grouped' }],
+            activeTargetKind: 'group', activeTargetId: 'main',
+        }));
 
-        vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
-            getAppliedActiveServerId: () => appliedActiveServerId,
-            isAppliedActiveServerRuntimeAvailable: () => appliedActiveServerRuntimeAvailable,
-            subscribeAppliedActiveServer: (listener: (serverId: string) => void) => {
-                appliedActiveServerListener = listener;
-                return () => {
-                    appliedActiveServerListener = null;
-                };
-            },
-            subscribeApplyingActiveServer: (listener: (serverId: string) => void) => {
-                applyingActiveServerListener = listener;
-                return () => {
-                    applyingActiveServerListener = null;
-                };
+        const sockets: Array<ReturnType<typeof createSocketIoBoundaryStub> & { endpoint: string; purpose: unknown }> = [];
+        vi.doMock('socket.io-client', async (importOriginal) => ({
+            ...await importOriginal<typeof import('socket.io-client')>(),
+            io: (endpoint: string, options: { auth?: { clientPurpose?: unknown } }) => {
+                const boundary = createSocketIoBoundaryStub();
+                // A network adapter can still deliver a disconnect while being
+                // closed. The real transport/cache must detach its observers.
+                boundary.socket.disconnect.mockImplementation(() => boundary.trigger('disconnect', 'transport close'));
+                sockets.push({ ...boundary, endpoint, purpose: options.auth?.clientPurpose });
+                return boundary.socket;
             },
         }));
 
-        vi.doMock('@/sync/runtime/connectivity/serverReachabilitySupervisorPool', () => ({
-            setServerReachabilityNetworkAllowed: (_next: boolean) => {},
-            subscribeServerReachabilityNetworkAllowed: (listener: (allowed: boolean) => void) => {
-                listener(true);
-                return () => {};
+        let holdIncomingSecrets = false;
+        const heldSecrets: { finish: (() => void) | null } = { finish: null };
+        const values = new Map<string, string>();
+        vi.stubGlobal('__TAURI_INTERNALS__', {
+            invoke: async (command: string, args?: Record<string, unknown>) => {
+                const key = String(args?.key);
+                if (command === 'desktop_secure_storage_read') {
+                    if (key.startsWith('device-local-settings-secret-key:v1')) {
+                        if (holdIncomingSecrets) await new Promise<void>((resolve) => { heldSecrets.finish = resolve; });
+                        return JSON.stringify({ v: 1, key: Buffer.from(new Uint8Array(32).fill(7)).toString('base64') });
+                    }
+                    return values.get(key) ?? null;
+                }
+                if (command === 'desktop_secure_storage_write') { values.set(key, String(args?.value)); return null; }
+                if (command === 'desktop_secure_storage_remove') { values.delete(key); return null; }
+                throw new Error(`Unexpected native command: ${command}`);
             },
-            subscribeServerReachabilityState: (_serverUrl: string, listener: (state: any) => void) => {
-                setTimeout(() => {
-                    listener(onlineState());
-                }, 0);
-                return () => {};
-            },
-            acquireServerReachabilitySupervisor: acquireServerReachabilitySupervisorSpy,
-            invalidateServerReachabilitySupervisor: vi.fn(async () => {}),
-            reportServerUnreachable: reportServerUnreachableSpy,
-            resetServerReachabilitySupervisors: async () => {},
-        }));
-
-        const getCredentialsForServerUrlSpy = vi.fn(async (serverUrl: string) => ({
-            token: serverUrl.includes('stack-a') ? 'token-a' : 'token-b',
-            secret: serverUrl.includes('stack-a') ? 'secret-a' : 'secret-b',
-        }));
-        vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => createTokenStorageModuleMock({
-            importOriginal,
-            tokenStorage: {
-                getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
-            },
-            subscribeHomeCredentialMutations: () => () => {},
-        }));
-
-        vi.doMock('@/sync/domains/server/serverProfiles', () => createServerProfilesModuleMock({
-            profiles: [
-                { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
-                { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
-            ],
-            overrides: {
-                loadHomeViewState: () => null,
-                subscribeHomeViewState: () => () => {},
-                subscribeServerProfiles: (listener: (generation: number) => void) => {
-                    serverProfilesListener = listener;
-                    return () => {
-                        serverProfilesListener = null;
-                    };
-                },
-            },
-        }));
-
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: selectedActiveServerId,
-                serverUrl: selectedActiveServerId === 'server-a'
-                    ? 'https://stack-a.example.test'
-                    : 'https://stack-b.example.test',
-                kind: 'stack',
-                generation: 1,
-            }),
-            subscribeActiveServer: () => () => {},
-        }));
-
-        vi.doMock('@/sync/encryption/encryption', () => ({
-            Encryption: {
-                create: async () => ({}) as unknown,
-            },
-        }));
-
-        vi.doMock('@/encryption/base64', () => ({
-            decodeBase64: () => new Uint8Array(32),
-        }));
-
-        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
-            fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
-                applySessions([]);
-            },
-        }));
-
-        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
-            fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
-                applyMachines([]);
-            },
-        }));
-
-        vi.doMock('./concurrentServerConnections/createConcurrentServerSocketTransport', () => {
-            const connectedListeners = new Set<() => void>();
-            const disconnectedListeners = new Set<(event: any) => void>();
-            const errorListeners = new Set<(error: unknown) => void>();
-            let connected = false;
-
-            const transport = {
-                async connect() {
-                    connected = true;
-                    connectedListeners.forEach((listener) => listener());
-                },
-                async disconnect(params?: { intentional?: boolean }) {
-                    connected = false;
-                    disconnectedListeners.forEach((listener) => listener({
-                        intentional: params?.intentional === true,
-                        reason: params?.intentional === true ? 'manual' : 'disconnect',
-                    }));
-                },
-                async destroy() {
-                    // Simulate a buggy transport that emits a non-intentional disconnect during teardown.
-                    disconnectedListeners.forEach((listener) => listener({ intentional: false, reason: 'destroy' }));
-                    connected = false;
-                    connectedListeners.clear();
-                    disconnectedListeners.clear();
-                    errorListeners.clear();
-                },
-                isConnected() {
-                    return connected;
-                },
-                onConnected(listener: () => void) {
-                    connectedListeners.add(listener);
-                    return () => connectedListeners.delete(listener);
-                },
-                onDisconnected(listener: (event: any) => void) {
-                    disconnectedListeners.add(listener);
-                    return () => disconnectedListeners.delete(listener);
-                },
-                onError(listener: (error: unknown) => void) {
-                    errorListeners.add(listener);
-                    return () => errorListeners.delete(listener);
-                },
-            };
-
-            return {
-                createConcurrentServerSocketTransport: () => ({
-                    socket: { on: vi.fn(), off: vi.fn(), onAny: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), removeAllListeners: vi.fn() },
-                    transport,
-                }),
-            };
         });
-
+        network.setHttpResponder(async (input) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v2/sessions') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+            if (path === '/v1/machines') return Response.json([]);
+            if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+            if (path === '/v2/changes') return Response.json({ changes: [], cursor: 0, hasMore: false });
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+            return null;
+        });
+        await loadSyncSingletonForTests();
+        const connection = await import('./connectionManager');
+        const cache = await import('./concurrentSessionCache');
+        const pool = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         const { storage } = await import('@/sync/domains/state/storageStore');
-        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-        storage.setState((state) => ({
-            ...state,
-            settings: {
-                ...state.settings,
-                ...settingsDefaults,
-                serverSelectionGroups: [
-                    {
-                        id: 'group-main',
-                        name: 'Main',
-                        serverIds: ['server-a', 'server-b'],
-                        presentation: 'grouped',
-                    },
-                ],
-                serverSelectionActiveTargetKind: 'group',
-                serverSelectionActiveTargetId: 'group-main',
-            },
-        }));
-        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
-        startConcurrentSessionCacheSync();
+        let observer: Awaited<ReturnType<typeof pool.acquireServerReachabilitySupervisor>> | null = null;
+        cleanup = async () => {
+            holdIncomingSecrets = false;
+            heldSecrets.finish?.();
+            cache.stopConcurrentSessionCacheSync();
+            await observer?.release();
+            await connection.disconnectActiveServerConnection();
+            await pool.resetServerReachabilitySupervisors();
+            network.dispose();
+            vi.doUnmock('socket.io-client');
+            for (const home of [homeB, homeA]) await profiles.removeServerProfile(home.id);
+        };
+        await connection.restoreConnectionToActiveServer({ token: homeA.token });
+        expect(connection.getAppliedActiveServerId()).toBe(homeA.id);
+        cache.startConcurrentSessionCacheSync();
+        await vi.advanceTimersByTimeAsync(1);
+        await vi.waitFor(() => expect(cache.isConcurrentSessionListQueryHomeOnline(homeB.id)).toBe(true));
+        const secondaryB = sockets.find((socket) => socket.endpoint === homeB.serverUrl && socket.purpose === 'concurrent-server-cache');
+        expect(secondaryB).toBeDefined();
+        observer = await pool.acquireServerReachabilitySupervisor({ serverUrl: homeB.serverUrl, token: homeB.token });
+        const row = createSessionListRenderableSessionFixture({ id: 'session-b' });
+        storage.getState().applyServerScopedSessionListRows(homeB.id, [row], { source: 'ordinary', mode: 'replace' });
+        const machine = createMachineFixture({ id: 'machine-b' });
+        storage.setState((state) => ({ machineListByServerId: { ...state.machineListByServerId, [homeB.id]: [machine] } }));
+
+        // Queue a genuine profile notification, then switch through the real
+        // focused owner. Hold only the incoming device-store read, after Sync
+        // has withdrawn its outgoing singleton and emitted "applying B".
+        await profiles.upsertServerProfile({ serverUrl: homeB.serverUrl, name: 'Renamed B' });
+        holdIncomingSecrets = true;
+        await profiles.setActiveServerId(homeB.id, { scope: 'device' });
+        const switching = connection.switchConnectionToActiveServer();
+        await vi.waitFor(() => expect(heldSecrets.finish).toBeTypeOf('function'));
         await vi.advanceTimersByTimeAsync(1);
 
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(
-            'https://stack-b.example.test',
-            { serverId: 'server-b' },
-        );
+        expect(connection.getAppliedActiveServerId()).toBe(homeA.id);
+        expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(false);
+        expect(cache.isConcurrentOrdinarySessionListHome(homeA.id)).toBe(true);
+        expect(cache.isConcurrentOrdinarySessionListHome(homeB.id)).toBe(false);
+        expect(storage.getState().ordinarySessionListMembershipByServerId[homeB.id]).toEqual(['session-b']);
+        expect(storage.getState().machineListByServerId[homeB.id]?.map((m) => m.id)).toEqual(['machine-b']);
+        expect(secondaryB!.socket.disconnect).toHaveBeenCalled();
+        // The retained observer keeps reachability online. A teardown callback
+        // mistakenly reported as a live failure would move this real pool offline.
+        expect(pool.peekServerReachabilityState(homeB.serverUrl, homeB.token)?.phase).toBe('online');
+        secondaryB!.trigger('disconnect', 'late transport close');
+        expect(pool.peekServerReachabilityState(homeB.serverUrl, homeB.token)?.phase).toBe('online');
 
-        storage.setState((state) => ({
-            ...state,
-            concurrentSessionListCacheByServerId: {
-                ...state.concurrentSessionListCacheByServerId,
-                'server-b': {
-                    serverName: 'Server B',
-                },
-            },
-            sessionListRowsByServerId: {
-                ...state.sessionListRowsByServerId,
-                'server-b': {
-                    'session-b': { id: 'session-b' } as never,
-                },
-            },
-            ordinarySessionListMembershipByServerId: {
-                ...state.ordinarySessionListMembershipByServerId,
-                'server-b': ['session-b'],
-            },
-            machineListByServerId: {
-                ...state.machineListByServerId,
-                'server-b': [{ id: 'machine-b' } as never],
-            },
-            machineListStatusByServerId: {
-                ...state.machineListStatusByServerId,
-                'server-b': 'idle',
-            },
-        }));
-        const serverBCredentialReadsBeforeSwitch = getCredentialsForServerUrlSpy.mock.calls.filter(([serverUrl]) => (
-            serverUrl === 'https://stack-b.example.test'
-        )).length;
-        const reachabilityReleaseCountBeforeSwitch = releaseServerReachabilitySupervisorSpy.mock.calls.length;
-
-        // A profile event queues reconciliation while A is still the applied
-        // Home. Applying B must invalidate that queued view before releasing
-        // B's secondary transport, otherwise the queued pass recreates B.
-        (serverProfilesListener as ((generation: number) => void) | null)?.(1);
-        selectedActiveServerId = 'server-b';
-        appliedActiveServerRuntimeAvailable = false;
-        (applyingActiveServerListener as ((serverId: string) => void) | null)?.('server-b');
-        expect(
-            storage.getState().concurrentSessionListCacheByServerId['server-a']?.listObservation?.phase,
-        ).toBe('loading');
+        holdIncomingSecrets = false;
+        heldSecrets.finish!();
+        await switching;
         await vi.advanceTimersByTimeAsync(1);
-        expect(getCredentialsForServerUrlSpy.mock.calls.filter(([serverUrl]) => (
-            serverUrl === 'https://stack-b.example.test'
-        ))).toHaveLength(serverBCredentialReadsBeforeSwitch);
-        expect(storage.getState().sessionListRowsByServerId['server-b']?.['session-b']).toBeDefined();
-        expect(storage.getState().machineListByServerId['server-b']?.map((machine) => machine.id)).toEqual(['machine-b']);
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(
-            'https://stack-a.example.test',
-            { serverId: 'server-a' },
-        );
-        expect(releaseServerReachabilitySupervisorSpy).toHaveBeenCalledTimes(
-            reachabilityReleaseCountBeforeSwitch + 1,
-        );
-        (appliedActiveServerListener as ((serverId: string) => void) | null)?.('server-a');
+        expect(connection.getAppliedActiveServerId()).toBe(homeB.id);
+        expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(true);
+        expect(cache.isConcurrentOrdinarySessionListHome(homeA.id)).toBe(true);
+        expect(cache.isConcurrentOrdinarySessionListHome(homeB.id)).toBe(false);
+        expect(sockets.filter((socket) => socket.endpoint === homeB.serverUrl && socket.purpose === 'concurrent-server-cache')).toHaveLength(1);
+
+        cache.stopConcurrentSessionCacheSync();
         await vi.advanceTimersByTimeAsync(1);
-        expect(getCredentialsForServerUrlSpy.mock.calls.filter(([serverUrl]) => (
-            serverUrl === 'https://stack-b.example.test'
-        ))).toHaveLength(serverBCredentialReadsBeforeSwitch);
-
-        const releaseCountBeforeDuplicateApplyingEvent = releaseServerReachabilitySupervisorSpy.mock.calls.length;
-        (applyingActiveServerListener as ((serverId: string) => void) | null)?.('server-b');
-        expect(releaseServerReachabilitySupervisorSpy).toHaveBeenCalledTimes(
-            releaseCountBeforeDuplicateApplyingEvent,
-        );
-        appliedActiveServerId = 'server-b';
-        appliedActiveServerRuntimeAvailable = true;
-        (appliedActiveServerListener as ((serverId: string) => void) | null)?.('server-b');
-        await vi.advanceTimersByTimeAsync(1);
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(
-            'https://stack-a.example.test',
-            { serverId: 'server-a' },
-        );
-
-        // This assertion is specifically about intentional teardown. Ignore
-        // any earlier reachability report from the secondary's connection
-        // attempt so the transport-destroy callback is the measured boundary.
-        reportServerUnreachableSpy.mockClear();
-        stopConcurrentSessionCacheSync();
-
-        expect(acquireServerReachabilitySupervisorSpy).toHaveBeenCalled();
-        expect(releaseServerReachabilitySupervisorSpy).toHaveBeenCalled();
-        expect(reportServerUnreachableSpy).not.toHaveBeenCalled();
+        expect(pool.peekServerReachabilityState(homeB.serverUrl, homeB.token)?.phase).toBe('online');
     });
 });

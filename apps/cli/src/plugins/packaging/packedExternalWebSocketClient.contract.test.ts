@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -9,18 +9,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 
-import { ingestPluginManifestV2, PluginHostAccessRequestV2Schema } from '@happier-dev/protocol';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 
 import {
     cleanupStagedNpmArtifactCandidate,
     stageDownloadedNpmArtifactCandidate,
 } from '../distribution/npm/stage';
 import { sriSha512 } from '../distribution/testkit/npmTarball';
-import { createGlobalFetchRuntime } from '../runtime/fetch/globalFetchRuntime';
-import { createStablePluginHttpHost } from '../runtime/fetch/service';
 import { webSocketTargetOrigin } from '../runtime/fetch/webSocket';
-import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '../runtime/invocation/services/factory';
+import { executeContributedAction } from '../runtime/invocation/actions/executeContributedAction';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '../testkit/admittedRuntime';
 import { packLocalPlugin } from './pack';
 
 const fixtureRoot = fileURLToPath(new URL(
@@ -28,13 +26,23 @@ const fixtureRoot = fileURLToPath(new URL(
     import.meta.url,
 ));
 
-type PackedWebSocketAction = (
-    input: Readonly<{ url: string; message: string }>,
-    context: Readonly<{
-        signal: AbortSignal;
-        services: Readonly<{ http: Pick<HttpService, 'openWebSocket'> }>;
-    }>,
-) => Promise<Readonly<{ url: string; protocol: string; text: string }>>;
+// The archive owns its executable entry; no ignored, pre-built dist is needed.
+const PUBLIC_WEBSOCKET_MODULE = `export function activate(api) {
+    api.actions.register('connect', async (input, context) => {
+        const socket = await context.services.http.openWebSocket({
+            url: input.url, protocols: ['fixture-v1'], allowInsecureWs: true,
+        }, { signal: context.signal });
+        try {
+            await socket.send({ kind: 'text', text: input.message }, { signal: context.signal });
+            const message = await socket.receive({ signal: context.signal });
+            if (message.kind !== 'text') throw new Error('Expected fixture greeting');
+            return { url: socket.url, protocol: socket.protocol, text: message.text };
+        } finally {
+            socket.close();
+            await socket.closed;
+        }
+    });
+}`;
 
 async function createFixtureGateway(): Promise<Readonly<{
     url: string;
@@ -105,8 +113,29 @@ describe('packed external WebSocket client contract', () => {
         const installRoot = join(parent, 'installed');
         const gateway = await createFixtureGateway();
         let staged: Awaited<ReturnType<typeof stageDownloadedNpmArtifactCandidate>> | null = null;
+        let runtime: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | null = null;
         try {
-            const packed = await packLocalPlugin({ locator: fixtureRoot, outPath: archivePath });
+            const sourceRoot = join(parent, 'source');
+            const origin = webSocketTargetOrigin(new URL(gateway.url));
+            const sourceManifest = {
+                ...manifest,
+                hostAccess: {
+                    ...manifest.hostAccess,
+                    required: [{
+                        ...manifest.hostAccess.required[0],
+                        scope: {
+                            targets: [{ kind: 'fixedOrigin', origin }],
+                            transports: ['websocket'], privateNetwork: true,
+                        },
+                    }],
+                },
+            };
+            await mkdir(join(sourceRoot, '.happier-plugin'), { recursive: true });
+            await mkdir(join(sourceRoot, 'dist'));
+            await writeFile(join(sourceRoot, 'package.json'), await readFile(join(fixtureRoot, 'package.json')));
+            await writeFile(join(sourceRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(sourceManifest));
+            await writeFile(join(sourceRoot, 'dist', 'daemon.js'), PUBLIC_WEBSOCKET_MODULE);
+            const packed = await packLocalPlugin({ locator: sourceRoot, outPath: archivePath });
             expect(
                 packed,
                 packed.ok ? '' : packed.diagnostics.map((entry) => entry.message).join('\n'),
@@ -136,67 +165,43 @@ describe('packed external WebSocket client contract', () => {
             expect(staged.ok).toBe(true);
             if (!staged.ok) return;
 
-            let action: PackedWebSocketAction | null = null;
-            const module = await import(pathToFileURL(join(
-                staged.candidate.rootPath,
-                'dist/daemon.js',
-            )).href) as Readonly<{
-                activate(api: Readonly<{ actions: Readonly<{
-                    register(id: string, handler: PackedWebSocketAction): void;
-                }> }>): void;
-            }>;
-            module.activate({
-                actions: {
-                    register(id, handler) {
-                        expect(id).toBe('connect');
-                        action = handler;
-                    },
+            runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+                manifest: JSON.parse(await readFile(join(staged.candidate.rootPath, '.happier-plugin', 'plugin.json'), 'utf8')),
+                files: {
+                    'package.json': await readFile(join(staged.candidate.rootPath, 'package.json'), 'utf8'),
+                    'dist/daemon.js': await readFile(join(staged.candidate.rootPath, 'dist/daemon.js'), 'utf8'),
                 },
-            });
-            expect(action).not.toBeNull();
-
-            const origin = webSocketTargetOrigin(new URL(gateway.url));
-            const host = createStablePluginHttpHost({ adapter: createGlobalFetchRuntime() });
-            const service = host.bind(Object.freeze({
-                plugin: Object.freeze({ id: 'acme.packed-websocket', version: '1.0.0' }),
-                contribution: Object.freeze({ id: 'connect', qualifiedId: 'acme.packed-websocket/actions/connect' }),
-                occurrenceId: 'packed-websocket-occurrence',
-                correlationId: 'packed-websocket-correlation',
-                surface: 'cli' as const,
-                signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
-            }), createLoggerAndEventsAvailablePluginInvocationServiceBinding(
-                'packed-websocket-generation',
-                'packed-websocket-binding',
-                [{
-                    required: true,
-                    request: PluginHostAccessRequestV2Schema.parse({
-                        id: 'gateway',
-                        capability: 'network.client',
-                        reason: 'Maintain the declared gateway connection',
-                        scope: {
-                            targets: [{ kind: 'fixedOrigin', origin }],
-                            transports: ['websocket'],
-                            privateNetwork: true,
-                        },
-                    }),
-                }],
-            ));
-            const result = await action!({ url: gateway.url, message: 'packed-client-ready' }, {
-                signal: new AbortController().signal,
-                services: Object.freeze({ http: service }),
+            }] });
+            const result = await executeContributedAction({
+                runtimeRegistry: runtime.registry,
+                actionId: 'acme.packed-websocket/connect',
+                input: { url: gateway.url, message: 'packed-client-ready' },
+                context: { surface: 'cli', signal: new AbortController().signal },
             });
 
             expect(result).toEqual({
+                matched: true,
+                result: { ok: true, result: {
                 url: gateway.url,
                 protocol: 'fixture-v1',
                 text: 'fixture-welcome',
+                } },
             });
             await expect(gateway.received).resolves.toBe('packed-client-ready');
         } finally {
-            await gateway.close();
-            if (staged?.ok) await cleanupStagedNpmArtifactCandidate(staged.candidate);
-            await rm(parent, { recursive: true, force: true });
+            try {
+                await runtime?.dispose();
+            } finally {
+                try {
+                    await gateway.close();
+                } finally {
+                    try {
+                        if (staged?.ok) await cleanupStagedNpmArtifactCandidate(staged.candidate);
+                    } finally {
+                        await rm(parent, { recursive: true, force: true });
+                    }
+                }
+            }
         }
     });
 });

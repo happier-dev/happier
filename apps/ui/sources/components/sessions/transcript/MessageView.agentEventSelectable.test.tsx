@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
@@ -80,6 +80,8 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
+
+await import('./MessageView');
 
 describe('MessageView (agent events)', () => {
     afterEach(() => {

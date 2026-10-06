@@ -1,15 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
 import { MessageSelectionCheckbox } from './MessageSelectionCheckbox';
 import { TranscriptMessageSelectionProvider, useTranscriptSelectionActions } from './TranscriptMessageSelectionContext';
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
 
 function CheckboxHarness() {
     const actions = useTranscriptSelectionActions();
@@ -31,11 +27,11 @@ function ProbeButton(props: { testID: string; onPress: () => void }) {
 }
 
 function findPressableByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.find((node) => node.props?.testID === testID && typeof node.props?.onPress === 'function');
+    return screen.find((node) => typeof node.type === 'string' && node.props?.testID === testID && typeof node.props?.onPress === 'function');
 }
 
 function findAllPressablesByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
-    return screen.findAll((node) => node.props?.testID === testID && typeof node.props?.onPress === 'function');
+    return screen.findAllHostsByTestId(testID).filter((node) => typeof node.props.onPress === 'function');
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -95,12 +91,12 @@ describe('MessageSelectionCheckbox', () => {
         expect(unchecked.props.accessibilityRole).toBe('checkbox');
         expect(unchecked.props.accessibilityState).toEqual({ checked: false });
         expect(resolvePressableStyle(unchecked).backgroundColor).toEqual(expect.any(String));
-        expect(screen.findByType('Icon').props.name).toBe('square-outline');
+        expect(screen.findByType('Icon').props.name).toBe('square');
 
         await pressByTestId(screen, 'checkbox-m1');
 
         expect(findPressableByTestId(screen, 'checkbox-m1').props.accessibilityState).toEqual({ checked: true });
-        expect(screen.findByType('Icon').props.name).toBe('checkbox-outline');
+        expect(screen.findByType('Icon').props.name).toBe('check-square');
     });
 
     it('uses a role and truncated preview in the accessibility label', async () => {

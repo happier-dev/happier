@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 
 import {
     renderSettingsView,
@@ -10,14 +11,17 @@ import {
     installSessionSettingsEntryModuleMocks,
     resetSessionSettingsEntryState,
 } from './sessionSettingsEntryTestHelpers';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const shared = vi.hoisted(() => ({
-    setThinkingDisplayMode: vi.fn(),
-    setThinkingInlinePresentation: vi.fn(),
-}));
+installDisconnectedServerSocketBoundary();
+const initialStorage = storage.getState();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
 installSessionSettingsEntryModuleMocks({
     reactNative: async () => {
@@ -26,32 +30,26 @@ installSessionSettingsEntryModuleMocks({
             TextInput: 'TextInput',
         });
     },
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader((key) => {
-                    if (key === 'sessionThinkingDisplayMode') return ['inline', shared.setThinkingDisplayMode];
-                    if (key === 'sessionThinkingInlinePresentation') return ['summary', shared.setThinkingInlinePresentation];
-                    return [null, vi.fn()];
-                }),
-            },
-        });
-    },
+    storageModule: (importOriginal) => importOriginal<typeof import('@/sync/domains/state/storage')>(),
 });
 
-afterEach(() => {
+afterEach(async () => {
     standardCleanup();
+    await account?.dispose();
+    account = undefined;
+    storage.setState(initialStorage, true);
     resetSessionSettingsEntryState();
-    shared.setThinkingDisplayMode.mockClear();
-    shared.setThinkingInlinePresentation.mockClear();
 });
 
 describe('Transcript settings (thinking display mode)', () => {
     it('renders the thinking display choices and updates session thinking mode + inline presentation', async () => {
+        account = await createSecretSettingsTestHarness({ sharedEnabled: false, settings: settingsParse({
+            sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'summary',
+        }) });
         const mod = await import('@/app/(app)/settings/session/transcript');
-        const screen = await renderSettingsView(React.createElement(mod.default));
+        const credentials = account.credentials;
+        const wrapper = ({ children }: React.PropsWithChildren) => <InjectedAuthProvider credentials={credentials}>{children}</InjectedAuthProvider>;
+        const screen = await renderSettingsView(React.createElement(mod.default), { wrapper });
 
         // A visual picker row: `Item` is a host element here, the tiles are its `rightElement`.
         const row = screen.findAll((node) => (node.type as unknown) === 'Item' && node.props?.testID === 'settings-session-thinking-display')[0];
@@ -64,7 +62,12 @@ describe('Transcript settings (thinking display mode)', () => {
             tiles.onChange('inline_full');
         });
 
-        expect(shared.setThinkingDisplayMode).toHaveBeenCalledWith('inline');
-        expect(shared.setThinkingInlinePresentation).toHaveBeenCalledWith('full');
+        await vi.waitFor(() => expect(account?.persistedSettings).toMatchObject({
+            sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'full',
+        }));
+        expect(storage.getState().settings).toMatchObject({
+            sessionThinkingDisplayMode: 'inline', sessionThinkingInlinePresentation: 'full',
+        });
+        expect(account.settingsWrites).toHaveLength(1);
     });
 });

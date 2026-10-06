@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
 import { SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board';
 
-import { renderHook } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture, renderHook } from '@/dev/testkit';
 import { createSessionBoardActionAdapter } from '@/sync/api/session/sessionBoardActions';
 import { createSessionBoardActionsPort, projectSessionBoard } from '@/sync/domains/session/board';
 import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
@@ -49,9 +50,14 @@ describe('missing-reference recovery through the real Board Actions', () => {
             contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true },
         });
         // Only the Home HTTP boundary is substituted; controller, executor, reducer and codec are real.
-        const executorDeps = { sessionBoardAction: adapter } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction'>;
-        // This Board-only fixture never dispatches the executor's unrelated required host ports.
-        const executor = createActionExecutor(executorDeps as ActionExecutorDeps);
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+            'session.board.layout.update': ['ui'],
+        } });
+        const executorDeps = {
+            sessionBoardAction: adapter,
+            isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+        } satisfies Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired'>;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture(executorDeps));
         const actions = createSessionBoardActionsPort({ ...session,
             execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, authority: 'present_user' }),
         });

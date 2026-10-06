@@ -2,33 +2,26 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SelectionList, type SelectionListOption } from '@/components/ui/selectionList';
+import type { SelectionListOption } from '@/components/ui/selectionList';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { storage } from '@/sync/domains/state/storageStore';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { ARTIFACT_LIST_PATH, RUN_STORAGE_PATH, boardDefinitionArtifact, boardRunStoragePage, installBoardLibraryTestHarness } from '../boardLibraryTestHarness';
 
-import { AddToBoardButton } from './AddToBoardPopover';
+const harness = installBoardLibraryTestHarness();
+const { SelectionList } = await import('@/components/ui/selectionList');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { AddToBoardButton } = await import('./AddToBoardPopover');
 
-const execute = vi.hoisted(() => vi.fn());
-
-// The Action transport is external; the parsers, shared library reads and picker stay real.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({ createFrontDoorActionExecute: () => execute }));
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
-}));
-
-let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
+// The native Markdown package is a rendering boundary this picker never renders.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 let serverId: string;
 let previousStorage = storage.getState();
 
-const definition = (id: string) => ({ kind: 'workflow-definition.v1', definitionId: id,
-    revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: `Workflow ${id}` }, stepCount: 1, triggers: [] });
 const run = createWorkflowRunSummaryFixture({ id: 'run-picker' });
-const runPage = { ok: true, result: { runs: [run], metadataByRunId: {} } };
+const runPage = await boardRunStoragePage([run]);
 
 function picker(open = true) {
     return <AddToBoardButton
@@ -57,63 +50,74 @@ function options(screen: Awaited<ReturnType<typeof renderScreen>>): readonly Sel
 
 beforeEach(async () => {
     previousStorage = storage.getState();
-    const runtime = await import('@/sync/domains/server/serverRuntime');
-    appliedSnapshot = runtime.getActiveServerSnapshot;
-    serverId = (await runtime.upsertAndActivateServer({ serverUrl: 'http://board-add.test', name: 'Board Home' })).id;
-    storage.setState({ profileScope: { serverId, accountId: 'account-picker' } });
+    serverId = await harness.connect('http://board-add.test');
+    storage.setState({ profileScope: { serverId, accountId: 'account-a' } });
 });
 
 afterEach(async () => {
     standardCleanup();
     (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
     (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
-    execute.mockReset();
+    await harness.dispose();
     storage.setState(previousStorage);
 });
 
 describe('AddToBoardButton library recovery', () => {
     it('does not read while closed and offers independent Retry actions after initial failures', async () => {
-        execute.mockRejectedValue(new Error('offline'));
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { dispatchThenFail: true });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { dispatchThenFail: true });
+        const before = harness.home.requests.length;
         const screen = await renderScreen(picker(false), layout);
-        expect(execute).not.toHaveBeenCalled();
+        expect(harness.home.requests.slice(before).filter(request => request.path === ARTIFACT_LIST_PATH || request.path === RUN_STORAGE_PATH)).toEqual([]);
         await screen.update(picker());
-        expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
-        expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
+            expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        });
 
-        execute.mockImplementation((actionId: string) => Promise.resolve(actionId === 'workflow.definition.list'
-            ? { ok: true, result: { definitions: [definition('recovered')] } } : runPage));
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [boardDefinitionArtifact('recovered', 'Workflow recovered')] });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { body: runPage });
         await screen.pressByTestIdAsync('board-add.workflows-failure.retry');
-        expect(options(screen).some((option) => option.label === 'Workflow recovered')).toBe(true);
+        await waitForHomeGovernance(() => expect(options(screen).some((option) => option.label === 'Workflow recovered')).toBe(true));
         expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
         await screen.pressByTestIdAsync('board-add.runs-failure.retry');
-        expect(options(screen).some((option) => option.id.includes('run-picker'))).toBe(true);
+        await waitForHomeGovernance(() => expect(options(screen).some((option) => option.id.includes('run-picker'))).toBe(true));
         expect(screen.findHostByTestId('board-add.workflows-failure')).toBeNull();
         expect(screen.findHostByTestId('board-add.runs-failure')).toBeNull();
         expect(options(screen).some((option) => option.id === 'widgets:gallery')).toBe(true);
     });
 
     it('keeps hydrated definition and run choices selectable when refresh and Retry are unavailable', async () => {
-        execute.mockImplementation((actionId: string) => Promise.resolve(actionId === 'workflow.definition.list'
-            ? { ok: true, result: { definitions: [definition('known')] } } : runPage));
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { body: [boardDefinitionArtifact('known', 'Workflow known')] });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { body: runPage });
         const initial = await renderScreen(picker(), layout);
+        await waitForHomeGovernance(() => expect(options(initial).filter(option => option.label === 'Workflow known' || option.id.includes('run-picker'))).toHaveLength(2));
         await initial.unmount();
 
-        execute.mockRejectedValue(new Error('offline'));
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { dispatchThenFail: true });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { dispatchThenFail: true });
         const screen = await renderScreen(picker(), layout);
-        expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
-        expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
+            expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        });
         const knownOptions = () => options(screen).filter((option) => option.label === 'Workflow known' || option.id.includes('run-picker'));
         expect(knownOptions()).toHaveLength(2);
         expect(knownOptions().every((option) => !option.disabled)).toBe(true);
 
-        const pending = createDeferred<unknown>();
-        execute.mockReturnValue(pending.promise);
+        const pending = createDeferred<void>();
+        harness.home.answer(serverId, ARTIFACT_LIST_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
+        harness.home.answer(serverId, RUN_STORAGE_PATH, { respondAfter: pending.promise, dispatchThenFail: true });
         await screen.pressByTestIdAsync('board-add.workflows-failure.retry');
         await screen.pressByTestIdAsync('board-add.runs-failure.retry');
         expect(knownOptions()).toHaveLength(2);
-        await act(async () => { pending.reject(new Error('still offline')); await pending.promise.catch(() => {}); });
+        expect(knownOptions().every(option => !option.disabled)).toBe(true);
+        await act(async () => { pending.resolve(); await pending.promise; });
         expect(knownOptions()).toHaveLength(2);
-        expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
-        expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        expect(knownOptions().every(option => !option.disabled)).toBe(true);
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('board-add.workflows-failure')).not.toBeNull();
+            expect(screen.findHostByTestId('board-add.runs-failure')).not.toBeNull();
+        });
     });
 });

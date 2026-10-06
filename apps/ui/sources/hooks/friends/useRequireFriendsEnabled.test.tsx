@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { flushHookEffects } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
@@ -18,19 +18,6 @@ import { getStorage } from '@/sync/domains/state/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-type Deferred<T> = Readonly<{
-    promise: Promise<T>;
-    resolve: (value: T) => void;
-}>;
-
-function createDeferred<T>(): Deferred<T> {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((nextResolve) => {
-        resolve = nextResolve;
-    });
-    return { promise, resolve };
-}
-
 const replaceSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-router', () => {
@@ -41,12 +28,18 @@ vi.mock('expo-router', () => {
             },
         },
     });
-    return mock.module as any;
+    return mock.module;
 });
 
 const initialStorageState = getStorage().getState();
 
 describe('useRequireFriendsEnabled', () => {
+    afterEach(async () => {
+        await standardCleanup();
+        resetServerFeaturesClientForTests();
+        await resetServerReachabilitySupervisors();
+        vi.unstubAllGlobals();
+    });
     beforeEach(async () => {
         replaceSpy.mockReset();
 
@@ -72,12 +65,8 @@ describe('useRequireFriendsEnabled', () => {
             'fetch',
             vi.fn(async () => {
                 await deferred.promise;
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => buildServerFeaturesResponse({ friendsEnabled: true }),
-                } as Response;
-            }) as any,
+                return Response.json(buildServerFeaturesResponse({ friendsEnabled: true }));
+            }),
         );
 
         const probe = getServerFeaturesSnapshot({ force: true });
@@ -107,11 +96,7 @@ describe('useRequireFriendsEnabled', () => {
     it('redirects home after the friends feature probe resolves disabled', async () => {
         vi.stubGlobal(
             'fetch',
-            vi.fn(async () => ({
-                ok: true,
-                status: 200,
-                json: async () => buildServerFeaturesResponse({ friendsEnabled: false }),
-            })) as any,
+            vi.fn(async () => Response.json(buildServerFeaturesResponse({ friendsEnabled: false }))),
         );
 
         await getServerFeaturesSnapshot({ force: true });

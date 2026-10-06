@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
@@ -62,6 +62,15 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
 describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () => {
     beforeEach(() => {
         scrollToSpy.mockClear();
+        // A caller enabling hints does not invent a keyboard on a touch device. Supply
+        // the browser capability boundary so the real detector admits the footer.
+        vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+    });
+
+    afterEach(() => {
+        standardCleanup();
+        vi.unstubAllGlobals();
     });
 
     it('wraps non-virtualized rows in a ScrollView so all rows remain reachable', async () => {

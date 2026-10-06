@@ -528,13 +528,13 @@ describe('buildLiveActivitySnapshots', () => {
                 sessionId: 'permission',
                 presentationTemplate: 'urgentAttention',
                 apnsPriority: 10,
-                relevanceScore: 89,
+                relevanceScore: 90,
             },
             {
                 sessionId: 'thinking',
                 presentationTemplate: 'quietFocus',
                 apnsPriority: 5,
-                relevanceScore: 67,
+                relevanceScore: 70,
             },
         ]);
     });

@@ -91,7 +91,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
       agentId: 'review-bot',
       input: {
         executionTarget: { serverId: 'server-1', machineId: 'machine-account-current' },
-        directory: '/repo/project',
+        directory: { kind: 'path', path: '/repo/project' },
         agentTarget: {
           kind: 'agent',
           identity: { pluginId: 'com.acme.review', localId: 'review-bot' },

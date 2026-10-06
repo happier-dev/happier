@@ -1,19 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
-  const { emptyBundledPluginUiAssetsModule } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-  return emptyBundledPluginUiAssetsModule;
-});
-
-vi.mock('@/sync/runtime/syncTuning', () => ({
-  loadSyncTuning: () => ({
-    sessionSocketApplyCoalescingEnabled: false,
-    sessionSocketApplyCoalescingWindowMs: 0,
-    sessionSocketApplyCoalescingMaxBatchSize: 64,
-    sessionRealtimeProjectionMode: 'enabled',
-  }),
-}));
-
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import { buildActivityOverviewFromSource } from '@/activity/source/buildActivityOverviewFromSource';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
@@ -28,10 +14,22 @@ import {
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
-import { handleUpdateContainer } from './socket';
+import { Encryption } from '@/sync/encryption/encryption';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+import { handleUpdateContainer as applySocketUpdate } from './socket';
+
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../pending/pendingQueueV2.testHelpers';
 
 const initialStorageState = storage.getInitialState();
-type HandleUpdateContainerParams = Parameters<typeof handleUpdateContainer>[0];
+type HandleUpdateContainerParams = Parameters<typeof applySocketUpdate>[0];
+let encryption: Encryption;
+
+async function handleUpdateContainer(params: HandleUpdateContainerParams): Promise<void> {
+  await applySocketUpdate(params);
+  // Exercise the real coalescer and advance its canonical clock window.
+  await vi.advanceTimersByTimeAsync(loadSyncTuning().sessionSocketApplyCoalescingWindowMs);
+}
 
 function buildSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
@@ -102,13 +100,7 @@ function buildPlainNewMessageUpdate(
 
 function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'updateData'>> = {}) {
   return {
-    encryption: {
-      getSessionEncryption: () => null,
-      getMachineEncryption: () => null,
-      removeSessionEncryption: () => {},
-      decryptEncryptionKey: vi.fn(async () => null as Uint8Array | null),
-      initializeMachines: vi.fn(async () => {}),
-    } as unknown as HandleUpdateContainerParams['encryption'],
+    encryption,
     artifactDataKeys: new Map(),
     applySessions: vi.fn((sessions: Parameters<HandleUpdateContainerParams['applySessions']>[0]) => {
       const normalizedSessions: Session[] = sessions.map((session) => ({
@@ -145,15 +137,20 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
 describe('socket realtime explicit transcript consumers', () => {
   let unregisterConsumer: (() => void) | null = null;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await loadSyncSingletonForTests();
+    storage.setState(initialStorageState, true);
+    await activatePendingQueueScope({ serverId: 'socket-home', accountId: 'account-a' });
+    encryption = await Encryption.create(new Uint8Array(32).fill(7));
+    vi.useFakeTimers();
     unregisterConsumer?.();
     unregisterConsumer = null;
-    storage.setState(initialStorageState, true);
     projectManager.clear();
     resetSessionSurfaceVisibilityForTests();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     unregisterConsumer?.();
     unregisterConsumer = null;
     storage.setState(initialStorageState, true);

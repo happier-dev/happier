@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+beforeEach(async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', name: 'Connectivity Home' });
+});
 
 function createDeferred<T>() {
     let resolve!: (value: T) => void;
@@ -12,41 +20,21 @@ function createDeferred<T>() {
 
 afterEach(async () => {
     vi.useRealTimers();
-    try {
-        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
-        await resetServerReachabilitySupervisors();
-    } catch {
-        // ignore
-    }
+    const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    await resetServerReachabilitySupervisors();
+    const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+    await stopAllEndpointSupervisorsForTests();
+    resetRuntimeFetch();
     vi.unstubAllGlobals();
-    vi.resetModules();
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
     delete process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS;
 });
 
-function installDefaultActiveServerMocks() {
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({
-            serverId: 'server-a',
-            serverUrl: 'https://api.example.test',
-            kind: 'custom',
-            generation: 1,
-        }),
-    }));
-}
-
-function installTokenStorageMock(params: { failGetCredentials?: boolean } = {}) {
-    vi.doMock('@/auth/storage/tokenStorage', () => ({
-        TokenStorage: {
-            getCredentials: vi.fn(async () => {
-                if (params.failGetCredentials) {
-                    throw new Error('Unexpected TokenStorage.getCredentials() call');
-                }
-                return { token: 'token-a', secret: 'secret-a' };
-            }),
-            invalidateCredentialsTokenForServerUrl: vi.fn(async () => false),
-        },
-    }));
+function installTokenStorageBoundary(params: { failGetCredentials?: boolean } = {}) {
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async () => {
+        if (params.failGetCredentials) throw new Error('Unexpected credential read');
+        return { token: createAccountTokenForTests('connectivity-account') };
+    });
 }
 
 function installRuntimeFetchMock() {
@@ -63,11 +51,7 @@ function installRuntimeFetchMock() {
         return new Response(null, { status: 200, headers: new Headers() });
     });
 
-    vi.doMock('@/utils/system/runtimeFetch', () => ({
-        runtimeFetch: runtimeFetchMock,
-        resetRuntimeFetch: () => {},
-        setRuntimeFetch: () => {},
-    }));
+    setRuntimeFetch(runtimeFetchMock);
 
     return runtimeFetchMock;
 }
@@ -79,8 +63,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -101,8 +84,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
         installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -121,8 +103,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock({ failGetCredentials: true });
+        installTokenStorageBoundary({ failGetCredentials: true });
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -147,8 +128,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock({ failGetCredentials: true });
+        installTokenStorageBoundary({ failGetCredentials: true });
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -164,8 +144,7 @@ describe('serverFetch connectivity supervision', () => {
     });
 
     it('does not clobber reachability auth_failed state when includeAuth=false (token is known from other transports)', async () => {
-        installDefaultActiveServerMocks();
-        installTokenStorageMock({ failGetCredentials: true });
+        installTokenStorageBoundary({ failGetCredentials: true });
 
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : String(input);
@@ -181,11 +160,7 @@ describe('serverFetch connectivity supervision', () => {
             return new Response(null, { status: 200, headers: new Headers() });
         });
 
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch: runtimeFetchMock,
-            resetRuntimeFetch: () => {},
-            setRuntimeFetch: () => {},
-        }));
+        setRuntimeFetch(runtimeFetchMock);
 
         const { waitForServerReachable, subscribeServerReachabilityState } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
@@ -217,8 +192,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '25';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -247,8 +221,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { serverFetch } = await import('./client');
@@ -271,8 +244,7 @@ describe('serverFetch connectivity supervision', () => {
         vi.spyOn(Math, 'random').mockReturnValue(0);
         process.env.EXPO_PUBLIC_HAPPIER_SERVER_REACHABILITY_WAIT_TIMEOUT_MS = '5';
 
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
         const runtimeFetchMock = installRuntimeFetchMock();
 
         const { createBackoff } = await import('@/utils/timing/time');
@@ -298,8 +270,7 @@ describe('serverFetch connectivity supervision', () => {
     });
 
     it('does not mark the server unreachable when a request is aborted by the caller', async () => {
-        installDefaultActiveServerMocks();
-        installTokenStorageMock();
+        installTokenStorageBoundary();
 
         const profileGate = createDeferred<void>();
         const profileStarted = createDeferred<void>();
@@ -316,7 +287,7 @@ describe('serverFetch connectivity supervision', () => {
                 await profileGate.promise;
                 if (init?.signal?.aborted) {
                     const error = new Error('Aborted');
-                    (error as any).name = 'AbortError';
+                    error.name = 'AbortError';
                     throw error;
                 }
                 return new Response(null, { status: 200, headers: new Headers() });
@@ -324,11 +295,7 @@ describe('serverFetch connectivity supervision', () => {
             return new Response(null, { status: 200, headers: new Headers() });
         });
 
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch: runtimeFetchMock,
-            resetRuntimeFetch: () => {},
-            setRuntimeFetch: () => {},
-        }));
+        setRuntimeFetch(runtimeFetchMock);
 
         const { subscribeServerReachabilityState, waitForServerReachable } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         await waitForServerReachable({
@@ -362,15 +329,8 @@ describe('serverFetch connectivity supervision', () => {
         const previousDebug = process.env.EXPO_PUBLIC_DEBUG;
         process.env.EXPO_PUBLIC_DEBUG = '1';
 
-        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-            getActiveServerSnapshot: () => ({
-                serverId: 'server-a',
-                serverUrl: 'https://admin:secret@api.example.test',
-                kind: 'custom',
-                generation: 1,
-            }),
-        }));
-        installTokenStorageMock();
+        await upsertAndActivateServer({ serverUrl: 'https://admin:secret@api.example.test', name: 'Private endpoint Home' });
+        installTokenStorageBoundary();
 
         const runtimeFetchMock = vi.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === 'string' ? input : String(input);
@@ -385,11 +345,7 @@ describe('serverFetch connectivity supervision', () => {
             }
             return new Response(null, { status: 200, headers: new Headers() });
         });
-        vi.doMock('@/utils/system/runtimeFetch', () => ({
-            runtimeFetch: runtimeFetchMock,
-            resetRuntimeFetch: () => {},
-            setRuntimeFetch: () => {},
-        }));
+        setRuntimeFetch(runtimeFetchMock);
 
         const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
         try {

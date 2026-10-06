@@ -13,6 +13,7 @@ import {
   standardCleanup,
 } from '@/dev/testkit';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
   installDisconnectedServerSocketBoundary,
   restoreServerAccountForTest,
@@ -158,6 +159,8 @@ async function flushAsyncWork(): Promise<void> {
     await Promise.resolve();
   });
 }
+
+await loadSyncSingletonForTests();
 
 describe('Voice History route account scope', () => {
   beforeEach(async () => {

@@ -249,10 +249,13 @@ describe('transferRelayV2DownloadSessionTransport', () => {
                 (payload) => payload.envelope.transferId === session.downloadId && payload.envelope.kind === 'abort',
             );
             expect(abortEnvelope).toMatchObject({
+                scopeUserId: 'user-1',
+                sender: { kind: 'machine', machineId: 'machine-1' },
+                recipient: { kind: 'user' },
                 envelope: {
                     transferId: session.downloadId,
                     kind: 'abort',
-                    reason: 'Download source ended before expected size',
+                    reason: 'transfer_failed',
                 },
             });
             expect(

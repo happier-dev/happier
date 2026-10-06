@@ -16,6 +16,10 @@ import {
 } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { clearActiveUnsavedChangesGuard, setActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { storage } from '@/sync/domains/state/storageStore';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+
+const initialStorage = storage.getState();
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -93,16 +97,7 @@ installSettingsViewCommonModuleMocks({
         }, { Screen: router.module.Stack.Screen });
         return { ...router.module, Stack };
     },
-    storage: async () => ({
-        // The page header reads the viewer's content-width preference.
-        useLocalSetting: () => undefined,
-        useAllMachines: () => [{
-            id: 'machine-a', active: true, revokedAt: null,
-            metadata: { displayName: 'Mac' }, metadataVersion: 1, daemonState: null, daemonStateVersion: 1,
-            seq: 1, createdAt: 1, updatedAt: 1, activeAt: 1,
-        }],
-        useMachineListByServerId: () => ({ 'server-a': [{ id: 'machine-a', active: true, revokedAt: null }] }),
-    }),
+    storage: () => vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage'),
 });
 
 vi.mock('@react-navigation/native', async () => {
@@ -169,9 +164,13 @@ describe('ProviderConnectionsSettingsScreen', () => {
     afterEach(() => {
         clearActiveUnsavedChangesGuard();
         standardCleanup();
+        storage.setState(initialStorage, true);
         vi.unstubAllGlobals();
     });
     beforeEach(() => {
+        const machine = createMachineFixture({ id: 'machine-a', revokedAt: null,
+            metadata: { host: 'tester.local', platform: 'darwin', displayName: 'Mac' } });
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { 'server-a': [machine] } });
         providerHarness.reset();
         administrationTarget.controller.reset();
         state.enabled = true;

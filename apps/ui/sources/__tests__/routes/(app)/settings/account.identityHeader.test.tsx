@@ -1,74 +1,40 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';
-import {
-    installSessionSettingsEntryModuleMocks,
-    resetSessionSettingsEntryState,
-} from './sessionSettingsEntryTestHelpers';
+import { installAccountSettingsRouteModuleMocks } from './accountSettingsRouteTestHelpers';
+import 'fake-indexeddb/auto';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const boundary = vi.hoisted(() => ({
-    // A signed credential whose subject is the Account ID on this Home.
-    token: `header.${btoa(JSON.stringify({ sub: 'acct_7f3c9e21' }))}.signature`,
     clipboard: [] as string[],
     profile: null as unknown as Profile,
     encryptionMode: 'plain' as 'plain' | 'e2ee',
     holdSecurityRead: false,
-    executedActionIds: [] as string[],
+    securityRequests: [] as string[],
 }));
 
-installSessionSettingsEntryModuleMocks({
-    storageModule: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useSettingMutable: createUseSettingMutableMockFromReader(() => [false, vi.fn()]),
-                useProfile: () => boundary.profile,
-            },
-        });
-    },
-});
-
-// The Account Security projection crosses the remote Action transport; the real
-// Account Security client and the Account page run above it.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorActionExecute: () => async (actionId: string) => {
-        boundary.executedActionIds.push(actionId);
-        // The Home has not answered yet.
-        if (boundary.holdSecurityRead) return await new Promise<never>(() => {});
-        return {
-            ok: true,
-            result: {
-                v: 1,
-                encryptionMode: boundary.encryptionMode,
-                nativeEmail: 'lee@example.test',
-                password: { status: 'enrolled', revision: 1 },
-            },
-        };
-    },
-}));
-
-// Legacy credentials that hold a local secret: key presence must not decide
-// whether the page claims end-to-end encryption.
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: boundary.token, secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
-        logout: vi.fn(),
-    }),
-}));
-
-vi.mock('@/hooks/auth/useConnectAccount', () => ({
-    useConnectAccount: () => ({ connectAccount: vi.fn(), isLoading: false }),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { anonID: 'anon', serverID: 'server' },
-}));
+installAccountSettingsRouteModuleMocks({ storageModule: (importOriginal) => importOriginal() });
+installDisconnectedServerSocketBoundary();
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+vi.mock('expo-camera', () => ({ useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })],
+    CameraView: { isModernBarcodeScannerAvailable: false, onModernBarcodeScanned: () => ({ remove() {} }), launchScanner() {}, dismissScanner: async () => {} } }));
+vi.mock('@more-tech/react-native-libsodium', () => import('libsodium-wrappers'));
+vi.mock('@/platform/cryptoRandom', () => import('@/platform/cryptoRandom.node'));
+vi.mock('@/platform/digest', () => import('@/platform/digest.node'));
+vi.mock('@/platform/hmacSha512', () => import('@/platform/hmacSha512.node'));
+vi.mock('@/platform/randomUUID', () => import('@/platform/randomUUID.node'));
+await loadSyncSingletonForTests();
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+let restoreExecutor: (() => void) | undefined;
 
 vi.mock('expo-image', () => ({ Image: 'Image' }));
 
@@ -76,21 +42,33 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: async (value: string) => { boundary.clipboard.push(value); },
 }));
 
-vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: (props: Record<string, unknown>) => React.createElement('Avatar', props),
-}));
-
-// Sibling sections that start their own network work on mount are outside the
-// identity-header contract; keep the rendered tree bounded to the rows under test.
-vi.mock('@/components/account/ProviderIdentityItems', () => ({ ProviderIdentityItems: () => null }));
-vi.mock('@/components/settings/account/AccountServiceSettingsSection', () => ({ AccountServiceSettingsSection: () => null }));
-vi.mock('@/components/settings/account/SettingsHistorySection', () => ({ SettingsHistorySection: () => null }));
-
 async function renderAccount() {
-    vi.resetModules();
+    await account?.dispose();
+    restoreExecutor?.();
+    account = await createSecretSettingsTestHarness({ mode: boundary.encryptionMode });
+    restoreExecutor = await installRealActionExecutorModuleLoader();
+    const originalRequest = account.request.getMockImplementation()!;
+    account.request.mockImplementation(async (input, init) => {
+        if (new URL(String(input)).pathname === '/v1/account/security') {
+            boundary.securityRequests.push('/v1/account/security');
+            if (boundary.holdSecurityRead) return await new Promise<Response>(() => {});
+            return Response.json({ v: 1, encryptionMode: boundary.encryptionMode, terminalPresentUserPolicy: 'allowed',
+                nativeEmail: 'lee@example.test', password: { status: 'enrolled', revision: 1 } });
+        }
+        return originalRequest(input, init);
+    });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().applyProfile(boundary.profile);
+    storage.setState({ isDataReady: true, profileScope: account.scope });
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { default: AccountScreen } = await import('@/app/(app)/settings/account');
-    const screen = await renderScreen(<AccountScreen />);
-    await vi.waitFor(() => expect(boundary.executedActionIds).toContain('account.security.get'));
+    // Retained device key presence is deliberately independent of the Home's
+    // authoritative mode. No Account material is fabricated for the plain Sync.
+    const credentials = boundary.encryptionMode === 'plain'
+        ? { ...account.credentials, secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }
+        : account.credentials;
+    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><AccountScreen /></InjectedAuthProvider>);
+    await vi.waitFor(() => expect(boundary.securityRequests).toContain('/v1/account/security'));
     return screen;
 }
 
@@ -116,11 +94,15 @@ function identityHeader(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('Settings → Account identity header', () => {
-    afterEach(() => {
-        boundary.executedActionIds = [];
+    afterEach(async () => {
+        boundary.securityRequests = [];
         boundary.holdSecurityRead = false;
-        resetSessionSettingsEntryState();
+        boundary.encryptionMode = 'plain';
         standardCleanup();
+        await account?.dispose();
+        account = undefined;
+        restoreExecutor?.();
+        restoreExecutor = undefined;
     });
 
     it('names the person through the canonical display name when there is no first name', async () => {
@@ -144,7 +126,7 @@ describe('Settings → Account identity header', () => {
         expect(plain.findByTestId('settings-account-signin-recovery-key')).toBeNull();
         standardCleanup();
 
-        boundary.executedActionIds = [];
+        boundary.securityRequests = [];
         boundary.encryptionMode = 'e2ee';
         const encrypted = await renderAccount();
         await vi.waitFor(() => expect(identityHeader(encrypted).facts).toContain('settingsAccount.endToEndEncrypted'));
@@ -159,9 +141,9 @@ describe('Settings → Account identity header', () => {
 
         const accountId = screen.findByTestId('settings-account-id');
         expect(accountId).not.toBeNull();
-        expect(screen.getTextContent()).toContain('acct_7f3c9e21');
+        expect(screen.getTextContent()).toContain('account-a');
         await screen.pressByTestIdAsync('settings-account-id-copy');
-        expect(boundary.clipboard).toEqual(['acct_7f3c9e21']);
+        expect(boundary.clipboard).toEqual(['account-a']);
     });
 
     it('reserves the encryption fact and the recovery-key row while the Account facts are loading', async () => {
@@ -191,8 +173,8 @@ describe('Settings → Account identity header', () => {
 
         await vi.waitFor(() => expect(identityHeader(screen).facts).toContain('settingsAccount.endToEndEncrypted'));
         const { text } = identityHeader(screen);
-        expect(text.indexOf('acct_7f3c9e21')).toBeGreaterThan(-1);
-        expect(text.indexOf('acct_7f3c9e21')).toBeLessThan(text.indexOf('settingsAccount.endToEndEncrypted'));
+        expect(text.indexOf('account-a')).toBeGreaterThan(-1);
+        expect(text.indexOf('account-a')).toBeLessThan(text.indexOf('settingsAccount.endToEndEncrypted'));
         const fact = screen.findByTestId('settings-account-encryption-fact');
         expect(fact?.findAll((node) => node.props.name === 'lock').length).toBeGreaterThan(0);
     });

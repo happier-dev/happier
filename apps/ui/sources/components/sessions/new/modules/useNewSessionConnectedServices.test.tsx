@@ -1,4 +1,9 @@
-import { renderHook } from '@/dev/testkit';
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
+import { AccountProfileSchema } from '@happier-dev/protocol';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
@@ -27,7 +32,6 @@ const NOVEL_SERVICE_KEY = 'acme.review/reviewer-service';
 
 const modalShowMock = vi.hoisted(() => vi.fn((..._args: unknown[]) => 'modal-1'));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => false));
-const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const newSessionConnectedAccountProjection = {
     scopeKey: 'new-session-test',
     status: 'ready',
@@ -121,6 +125,7 @@ function v4Account(params: Readonly<{
 }>): Record<string, unknown> {
     return {
         revisionSemantics: 'legacy_unfenced',
+        credentialRevision: null,
         ref: {
             service: { pluginId: params.pluginId, localId: params.localId },
             accountId: params.accountId,
@@ -137,13 +142,32 @@ function v4Account(params: Readonly<{
     };
 }
 
-const profileState = vi.hoisted(() => ({
-    current: {
-        connectedAccountsV4: [],
-        connectedAccountGroupsV4: [],
-        connectedServiceCredentialRevisionsV1: [],
-    } as TestAccountProfile,
-}));
+const profileState = {
+    set current(profile: TestAccountProfile) {
+        storage.setState({ profile: AccountProfileSchema.parse({ ...profileDefaults, ...profile }) });
+    },
+};
+const initialStorageState = storage.getState();
+let activeHomeId = '';
+let targetHomeId = '';
+let activeGroupsEnabled = true;
+
+async function arrangeAccountGroupFeatures(preload = true) {
+    const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    resetServerFeaturesClientForTests();
+    const request: typeof fetch = async (input) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname !== '/v1/features') return new Response('{}', { status: 404 });
+        const response = buildServerFeaturesResponse();
+        response.features.connectedServices.accountGroups.enabled = url.hostname === 'target-connected-services.test' || activeGroupsEnabled;
+        return new Response(JSON.stringify(response), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    setRuntimeFetch(request);
+    vi.stubGlobal('fetch', request);
+    if (preload) {
+        await Promise.all([activeHomeId, targetHomeId].map((serverId) => getServerFeaturesSnapshot({ serverId, force: true })));
+    }
+}
 
 function seedClaudeProfile(): void {
     profileState.current = {
@@ -202,14 +226,6 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
     AgentInputChipLabel: 'AgentInputChipLabel',
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (...args: any[]) => useFeatureEnabledMock(...args),
-}));
-
-vi.mock('@/sync/store/hooks', () => ({
-    useProfile: () => profileState.current,
-}));
-
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
     const popover = chip?.collapsedContentPopover;
     if (!popover) {
@@ -231,17 +247,30 @@ const NOVEL_CONNECTED_ACCOUNTS: ConnectedAccountsParam = [
 ];
 
 describe('useNewSessionConnectedServices', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        storage.setState(initialStorageState, true);
+        activeGroupsEnabled = true;
+        // Home activation can probe immediately; arrange HTTP before choosing it.
+        await arrangeAccountGroupFeatures(false);
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const active = await upsertServerProfile({ serverUrl: 'https://active-connected-services.test', name: 'Active' });
+        const target = await upsertServerProfile({ serverUrl: 'https://target-connected-services.test', name: 'Target' });
+        activeHomeId = active.id;
+        targetHomeId = target.id;
+        await setActiveServerId(activeHomeId, { scope: 'device' });
+        await arrangeAccountGroupFeatures();
         installConnectedAccountDescriptorProjection(newSessionConnectedAccountProjection);
         modalShowMock.mockReset();
         modalConfirmMock.mockReset();
         modalConfirmMock.mockResolvedValue(false);
-        useFeatureEnabledMock.mockReset();
-        useFeatureEnabledMock.mockReturnValue(true);
         seedClaudeProfile();
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        await standardCleanup();
+        resetRuntimeFetch();
+        vi.unstubAllGlobals();
+        storage.setState(initialStorageState, true);
         installConnectedAccountDescriptorProjection(
             createConnectedAccountDescriptorProjectionLoadingState('new-session-test-cleanup'),
         );
@@ -377,11 +406,8 @@ describe('useNewSessionConnectedServices', () => {
     it('keeps the core chip available while scoping the account-groups decision to the target server', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
-        useFeatureEnabledMock.mockImplementation((featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
-            return featureId === 'connectedServices.accountGroups'
-                && scope?.scopeKind === 'spawn'
-                && scope?.serverId === 'server-123';
-        });
+        activeGroupsEnabled = false;
+        await arrangeAccountGroupFeatures();
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
@@ -393,7 +419,7 @@ describe('useNewSessionConnectedServices', () => {
                     connectedServicesDefaultProfileByServiceId: {},
                     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
-                targetServerId: 'server-123',
+                targetServerId: targetHomeId,
                 router: { push: vi.fn() },
                 setAgentOptionStateForCurrentAgent: vi.fn(),
             }),
@@ -405,19 +431,18 @@ describe('useNewSessionConnectedServices', () => {
                 controlId: 'connectedServices',
             }),
         );
-        expect(useFeatureEnabledMock).toHaveBeenCalledWith('connectedServices.accountGroups', {
-            scopeKind: 'spawn',
-            serverId: 'server-123',
-        });
+        const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected account-groups picker content');
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<{ accountGroupsEnabled: boolean }>;
+        expect(content.props.accountGroupsEnabled).toBe(true);
         await hook.unmount();
     });
 
     it('keeps the core chip available while using the default scope for account groups', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
 
-        useFeatureEnabledMock.mockImplementation((featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
-            return featureId === 'connectedServices.accountGroups' && scope === undefined;
-        });
+        activeGroupsEnabled = false;
+        await arrangeAccountGroupFeatures();
 
         const hook = await renderHook(() =>
             useNewSessionConnectedServices({
@@ -441,8 +466,10 @@ describe('useNewSessionConnectedServices', () => {
                 controlId: 'connectedServices',
             }),
         );
-        expect(useFeatureEnabledMock).toHaveBeenCalledWith('connectedServices.accountGroups', undefined);
-        expect(useFeatureEnabledMock).toHaveBeenCalledTimes(1);
+        const renderContent = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected account-groups picker content');
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 420 }) as React.ReactElement<{ accountGroupsEnabled: boolean }>;
+        expect(content.props.accountGroupsEnabled).toBe(false);
         await hook.unmount();
     });
 

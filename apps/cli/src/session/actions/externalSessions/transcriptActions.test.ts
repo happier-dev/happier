@@ -122,6 +122,7 @@ describe('external session transcript actions', () => {
         ],
         nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
         boundary: 'item-2',
+        hasMore: false,
       }),
     });
 
@@ -158,6 +159,7 @@ describe('external session transcript actions', () => {
         ],
         nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
         boundary: 'item-2',
+        hasMore: false,
       },
     });
     expect(resolveTranscriptRefreshBindingMock).toHaveBeenNthCalledWith(1, {

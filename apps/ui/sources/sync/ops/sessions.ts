@@ -69,6 +69,7 @@ import {
 } from './providerDaemonSessionCompatibility';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -629,6 +630,7 @@ export async function rollbackSessionConversation(options: Readonly<{
     sessionId: string;
     serverId?: string | null;
     target?: SessionRollbackTarget;
+    currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>): Promise<SessionRollbackRpcResult> {
     const target = options.target ?? { type: 'latest_turn' };
     const session = storage.getState().sessions[options.sessionId];
@@ -655,11 +657,14 @@ export async function rollbackSessionConversation(options: Readonly<{
         const resumeOptions = getPendingQueueWakeResumeOptions({
             sessionId: options.sessionId,
             session,
-            resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
-                settings: state.settings,
-                pluginSettings,
-                results: undefined,
-            }),
+            resumeCapabilityOptions: {
+                ...buildResumeCapabilityOptionsFromUiState({
+                    settings: state.settings,
+                    pluginSettings,
+                    results: undefined,
+                }),
+                currentAgentCapabilities: options.currentAgentCapabilities,
+            },
         });
         if (!resumeOptions) {
             return {

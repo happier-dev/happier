@@ -10,6 +10,15 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
     return { ...actual, io: (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
         vi.spyOn(socket, 'connect').mockReturnValue(socket);
+        // This cold SDK fixture never opens an Engine.IO connection or creates
+        // namespace/ACK teardown state. Deliver the external disconnect event
+        // through the real listeners; Sync and Account lifetime teardown stay real.
+        vi.spyOn(socket, 'disconnect').mockImplementation(() => {
+            if (!socket.connected) return socket;
+            socket.connected = false;
+            for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
+            return socket;
+        });
         socketBoundary.configure?.(socket);
         return socket;
     } };

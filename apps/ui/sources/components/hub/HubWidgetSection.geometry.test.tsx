@@ -9,8 +9,6 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/' }).module);
-vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({}));
-vi.mock('@/sync/store/hooks', async () => await import('@/sync/domains/state/storage'));
 // The daemon projection is outside this native geometry corridor; no installed renderer is needed.
 vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useAppShellPluginUiProjection: () => ({ pluginUiProjection: null }), useProjectedPluginLocalizedTextResolver: () => undefined,
@@ -28,7 +26,7 @@ describe('nested Home widget native geometry', () => {
         const tracker = createNearViewportTracker(geometry);
         const instance = { v: 1 as const, id: 'nested-copy', definition: { kind: 'builtin' as const, id: 'count' }, bindings: {} };
         const screen = await renderScreen(<HubWidgetSection instance={instance} frameStyle="plain" menu={null} tracker={tracker} testID="nested-card" />, {
-            createNodeMock: node => React.isValidElement<{ testID?: string }>(node) && node.props.testID === 'nested-card' ? measure(() => 3056 - scrollOffset) : null,
+            createNodeMock: node => node.props.testID === 'nested-card' ? measure(() => 3056 - scrollOffset) : null,
         });
         await act(async () => { screen.findByTestId('nested-card')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 100 } } }); });
         expect(screen.findByTestId('nested-card.body') !== null).toBe(false);
@@ -47,7 +45,7 @@ describe('nested Home widget native geometry', () => {
         const tracker = createNearViewportTracker(geometry);
         const instance = { v: 1 as const, id: 'moving-copy', definition: { kind: 'builtin' as const, id: 'count' }, bindings: {} };
         const screen = await renderScreen(<HubWidgetSection instance={instance} frameStyle="plain" menu={null} tracker={tracker} testID="moving-card" />, {
-            createNodeMock: node => React.isValidElement<{ testID?: string }>(node) && node.props.testID === 'moving-card' ? measure(() => contentTop + 56) : null,
+            createNodeMock: node => node.props.testID === 'moving-card' ? measure(() => contentTop + 56) : null,
         });
         await act(async () => { screen.findByTestId('moving-card')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 100 } } }); });
         expect(screen.findByTestId('moving-card.body') !== null).toBe(true);
@@ -68,7 +66,7 @@ describe('nested Home widget native geometry', () => {
             readContentNode: () => contentAvailable ? contentNode : null });
         const instance = (id: string) => ({ v: 1 as const, id, definition: { kind: 'builtin' as const, id: 'count' }, bindings: {} });
         const render = (id: string) => <HubWidgetSection instance={instance(id)} frameStyle="plain" menu={null} tracker={tracker} testID="pending-card" />;
-        const screen = await renderScreen(render('old'), { createNodeMock: node => React.isValidElement<{ testID?: string }>(node) && node.props.testID === 'pending-card'
+        const screen = await renderScreen(render('old'), { createNodeMock: node => node.props.testID === 'pending-card'
             ? { measureInWindow: (done: MeasureDone) => { pending.push(done); } } : null });
         expect(screen.findByTestId('pending-card.body') !== null).toBe(false);
         await act(async () => { contentAvailable = true; tracker.onContentSizeChange(400, 4000); });

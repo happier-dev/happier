@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Text, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionListRenderableSessionFixture, renderScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeContainingText, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { sessionHumanPresenceStore } from '@/sync/domains/session/humanPresence/sessionHumanPresenceStore';
 import { storage } from '@/sync/domains/state/storageStore';
 import {
@@ -67,6 +68,18 @@ function HeaderEntryFromCanonicalState(props: Readonly<{ onPress: () => void }>)
 function HeaderPlacementFromCanonicalState(props: Readonly<{ compact: boolean }>) {
     const state = useSessionCollaborationHeaderState(target, props.compact);
     return <View testID="session-collaboration-placement" accessibilityLabel={state.direct ? 'direct' : state.overflow ? 'overflow' : 'none'} />;
+}
+
+function expectPresenceText(screen: RenderScreenResult, testID: string, text: string): void {
+    const line = screen.findByTestId(testID);
+    expect(line).not.toBeNull();
+    // The shared Item text presentation can wrap the line in another Text;
+    // inspect its rendered descendants through the canonical text query.
+    const rendered = findTestInstanceByTypeContainingText(line!, Text, text);
+    expect(rendered).toBeDefined();
+    expect(rendered?.findAll((node) => typeof node.type === 'string')
+        .flatMap((node) => node.children.filter((child) => typeof child === 'string'))
+        .join('')).toBe(text);
 }
 
 describe('Session presence surfaces', () => {
@@ -146,12 +159,11 @@ describe('Session presence surfaces', () => {
         // Unfocused, the row states presence but publishes no live region: an
         // unattended polite region speaks every viewer change of every Session.
         expect(screen.findByTestId('session-presence-status')?.props.accessibilityLiveRegion).toBeUndefined();
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Alice is here');
+        expectPresenceText(screen, 'session-presence-title', 'Alice is here');
         expect(screen.findByTestId('session-presence-announcement')).toBeNull();
 
         await act(async () => { screen.findByTestId('session-presence-summary-anchor')?.props.onFocus?.(); });
-        const announcement = () => screen.findByTestId('session-presence-announcement')?.props.children?.props.children;
-        expect(announcement()).toBe('Viewing now: Alice');
+        expectPresenceText(screen, 'session-presence-announcement', 'Viewing now: Alice');
 
         // A typing renewal is not a membership change; the announcement is
         // coalesced away while the visible row still shows it.
@@ -159,14 +171,14 @@ describe('Session presence surfaces', () => {
             v: 1, sessionId: target.sessionId, observedAt: 4,
             viewers: [{ account: account('Alice'), typing: true }],
         }));
-        expect(screen.findByTestId('session-presence-status')?.props.children).toBe('Alice is typing…');
-        expect(announcement()).toBe('Viewing now: Alice');
+        expectPresenceText(screen, 'session-presence-status', 'Alice is typing…');
+        expectPresenceText(screen, 'session-presence-announcement', 'Viewing now: Alice');
 
         await act(async () => home!.receiveSnapshot({
             v: 1, sessionId: target.sessionId, observedAt: 5,
             viewers: [{ account: account('Alice'), typing: true }, { account: account('Bob'), typing: false }],
         }));
-        expect(announcement()).toBe('Viewing now: Alice, Bob');
+        expectPresenceText(screen, 'session-presence-announcement', 'Viewing now: Alice, Bob');
 
         await act(async () => { screen.findByTestId('session-presence-summary-anchor')?.props.onBlur?.(); });
         expect(screen.findByTestId('session-presence-announcement')).toBeNull();
@@ -244,13 +256,13 @@ describe('Session presence surfaces', () => {
         home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
         home.beginDeclaration([target.sessionId]);
         const screen = await renderScreen(<SessionPresenceSection {...target} />);
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Checking who’s here…');
+        expectPresenceText(screen, 'session-presence-title', 'Checking who’s here…');
         await act(async () => home!.receiveSnapshot({ v: 1, sessionId: target.sessionId, observedAt: 2, viewers: [] }));
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Just you here');
+        expectPresenceText(screen, 'session-presence-title', 'Just you here');
         await act(async () => home!.setStatus('unsupported'));
         // A Home without live presence still says so in the same line.
         expect(screen.findByTestId('session-presence-section')).not.toBeNull();
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Live presence isn’t available on this Home');
+        expectPresenceText(screen, 'session-presence-title', 'Live presence isn’t available on this Home');
     });
 
     it('says who is here and who is typing in one line', async () => {
@@ -261,8 +273,8 @@ describe('Session presence surfaces', () => {
             v: 1, sessionId: target.sessionId, observedAt: 2,
             viewers: [{ account: account('Ana'), typing: false }, { account: account('Ben'), typing: true }],
         }));
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Ana and Ben are here');
-        expect(screen.findByTestId('session-presence-status')?.props.children).toBe('Ben is typing…');
+        expectPresenceText(screen, 'session-presence-title', 'Ana and Ben are here');
+        expectPresenceText(screen, 'session-presence-status', 'Ben is typing…');
         expect(screen.findByTestId('session-presence-summary')?.props.accessibilityLabel).toContain('Ben · Typing…');
     });
 
@@ -289,8 +301,8 @@ describe('Session presence surfaces', () => {
         expect(screen.findByTestId('session-presence-summary-anchor')?.props.style).toBeFalsy();
 
         await act(async () => home!.setStatus('unavailable'));
-        expect(screen.findByTestId('session-presence-title')?.props.children).toBe('Alice is here');
-        expect(screen.findByTestId('session-presence-status')?.props.children).toBe('May be out of date');
+        expectPresenceText(screen, 'session-presence-title', 'Alice is here');
+        expectPresenceText(screen, 'session-presence-status', 'May be out of date');
         expect(screen.findByTestId('session-presence-summary-anchor')?.props.style)
             .toMatchObject({ opacity: STALE_PRESENCE_OPACITY });
 
@@ -450,4 +462,3 @@ describe('Collaboration rail mention dot', () => {
         expect(screen.findByTestId('mentioned-probe')?.props.accessibilityLabel).toBe('mentioned');
     });
 });
-

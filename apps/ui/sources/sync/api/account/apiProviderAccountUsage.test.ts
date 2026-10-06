@@ -8,16 +8,6 @@ import {
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-    const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-    return {
-        ...actual,
-        backoff: immediate,
-        backoffForever: immediate,
-    };
-});
-
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
@@ -25,15 +15,9 @@ afterEach(() => {
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
-function mockServerConfig() {
-    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
-        getActiveServerSnapshot: () => ({
-            serverId: 'test',
-            serverUrl: 'https://api.example.test',
-            kind: 'custom',
-            generation: 1,
-        }),
-    }));
+async function activateTestHome() {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
 }
 
 function makeSnapshot(): ProviderAccountUsageSnapshotV1 {
@@ -74,7 +58,7 @@ async function loadApi() {
 
 describe('apiProviderAccountUsage', () => {
     it('gets a plaintext provider account usage snapshot by record id', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
             if (isServerFetchConnectivityProbeRequest(input)) {
@@ -103,7 +87,7 @@ describe('apiProviderAccountUsage', () => {
     });
 
     it('gets a sealed provider account usage snapshot by record id', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
             if (isServerFetchConnectivityProbeRequest(input)) {
@@ -132,7 +116,7 @@ describe('apiProviderAccountUsage', () => {
     });
 
     it('normalizes canonical storage-mode conflicts for plain and sealed reads', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
             if (isServerFetchConnectivityProbeRequest(input)) {
@@ -170,7 +154,7 @@ describe('apiProviderAccountUsage', () => {
     });
 
     it('requests a provider account usage refresh through the V4 record owner', async () => {
-        mockServerConfig();
+        await activateTestHome();
         const snapshot = makeSnapshot();
         const fetchMock = vi.fn(async (input: unknown) => {
             if (isServerFetchConnectivityProbeRequest(input)) {

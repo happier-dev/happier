@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const kvStore = vi.hoisted(() => new Map<string, string>());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
-const createEncryptionFromAuthCredentialsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -37,11 +36,8 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     };
 });
 
-vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
-    createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
-}));
-
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import {
     adoptHomeProfile,
     resolveServerProfileScopeIdForIdentifier,
@@ -78,7 +74,6 @@ describe('responsibility exact Account authority', () => {
         kvStore.clear();
         runtimeFetchMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
-        createEncryptionFromAuthCredentialsMock.mockResolvedValue({});
         setRuntimeFetch(runtimeFetchMock);
     });
 
@@ -87,7 +82,7 @@ describe('responsibility exact Account authority', () => {
     it('rejects switched Account credentials before reading candidates or mutating a same-ID Session', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('other-account'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('other-account') });
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'other-account' }, settingsDefaults, 1);
         runtimeFetchMock.mockImplementation(async () => new Response(
             JSON.stringify({ mode: 'plain', updatedAt: 1 }),
@@ -105,7 +100,7 @@ describe('responsibility exact Account authority', () => {
     it('gives the Lane 05 editor one exact-Home mention candidate seam with mention purpose', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'account-1' }, settingsDefaults, 1);
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             if (String(input).includes('/v1/account/encryption')) {
@@ -153,7 +148,7 @@ describe('responsibility exact Account authority', () => {
         await setActiveServerId(home.id, { scope: 'device' });
         const scope = { serverId: resolveServerProfileScopeIdForIdentifier(home.id), accountId: 'account-1' };
         expect(scope.serverId).not.toBe(home.id);
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         storage.getState().applySettingsForScope(scope, settingsDefaults, 1);
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             if (String(input).includes('/v1/account/encryption')) {
@@ -190,7 +185,7 @@ describe('responsibility exact Account authority', () => {
     it('distinguishes the canonical feature-gate 404 from a typed missing Session', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'account-1' }, settingsDefaults, 1);
         const scope = { serverId: home.id, accountId: 'account-1' };
         let error = 'not_found';
@@ -223,7 +218,7 @@ describe('responsibility exact Account authority', () => {
     it('maps only the typed responsibility conflict to assignee-unavailable', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'account-1' }, ASSIGNMENT_CONFIRMATION_WAIVED_SETTINGS, 1);
         const scope = { serverId: home.id, accountId: 'account-1' };
         let error: string | undefined = 'session_responsibility_assignee_unavailable';
@@ -261,7 +256,7 @@ describe('responsibility exact Account authority', () => {
     it('preserves canonical Team authentication failures for mutation and candidate requests', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'account-1' }, ASSIGNMENT_CONFIRMATION_WAIVED_SETTINGS, 1);
         const scope = { serverId: home.id, accountId: 'account-1' };
         let status = 403;
@@ -298,11 +293,12 @@ describe('responsibility exact Account authority', () => {
     it('routes an assignment to approval by default, as a typed pending outcome, never a committed assignment', async () => {
         const home = await upsertServerProfile({ serverUrl: 'https://responsibility.example', name: 'Home' });
         await setActiveServerId(home.id, { scope: 'device' });
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1'), secret: 'secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: tokenForSub('account-1') });
         // No explicit require: the canonical Actions default alone creates the approval.
         storage.getState().applySettingsForScope({ serverId: home.id, accountId: 'account-1' }, settingsDefaults, 1);
         const scope = { serverId: home.id, accountId: 'account-1' };
-        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+        runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.endsWith('/v1/auth/ping')) {
                 return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -325,11 +321,8 @@ describe('responsibility exact Account authority', () => {
                     },
                 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
             }
-            if (url.includes('/v1/artifacts')) {
-                return new Response(JSON.stringify({
-                    id: 'artifact-1', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
-                }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-            }
+            const artifactResponse = artifacts.handle(new URL(url).pathname, init);
+            if (artifactResponse) return await artifactResponse;
             return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
         });
 
