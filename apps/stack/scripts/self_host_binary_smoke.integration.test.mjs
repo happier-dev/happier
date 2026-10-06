@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { readBundledAgentNativeHomeEnvironmentKeys } from './utils/env/scrub_env.mjs';
 
 function formatSpawnSyncResult(result) {
   const stdout = String(result.stdout || '').trim();
@@ -91,4 +93,45 @@ test('compiled hstack binary runs self-host help outside repo checkout', async (
   assert.equal(help.status, 0, help.stderr || help.stdout);
   assert.match(help.stdout, /hstack self-host install/);
   assert.match(help.stdout, /works without a repository checkout/);
+});
+
+test('compiled hstack scrubs its canonical Agent native-home projection without a checkout or Node', async (t) => {
+  if (!commandExists('bun')) {
+    t.skip('bun is required for compiled binary smoke tests');
+    return;
+  }
+  const target = currentTarget();
+  if (!target) {
+    t.skip(`unsupported platform for smoke test: ${process.platform}-${process.arch}`);
+    return;
+  }
+  const fixture = await createTempFixture(t, { prefix: 'hstack-agent-home-binary-' });
+  const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
+  const entrypoint = fixture.path('agent-home-probe.mjs');
+  const keys = readBundledAgentNativeHomeEnvironmentKeys();
+  const inherited = Object.fromEntries(keys.map((key) => [key, '/foreign-agent-home']));
+  await writeFile(entrypoint, `
+    import { scrubHappierStackEnv, STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS } from ${JSON.stringify(resolve(repoRoot, 'apps/stack/scripts/utils/env/scrub_env.mjs').replaceAll('\\', '/'))};
+    console.log(JSON.stringify(scrubHappierStackEnv(${JSON.stringify({ ...inherited, KEEP_OTHER_HOME: '/unrelated-home' })}, {
+      clearUnprefixedKeys: STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+    })));
+  `);
+  const version = `0.0.0-agent-home-smoke.${Date.now()}`;
+  const build = spawnSync(process.execPath, [
+    'scripts/pipeline/release/build-hstack-binaries.mjs', '--channel=preview',
+    `--version=${version}`, `--targets=${target}`, `--entrypoint=${entrypoint}`,
+  ], { cwd: repoRoot, encoding: 'utf8', timeout: 15 * 60 * 1000, maxBuffer: 50 * 1024 * 1024 });
+  assert.equal(build.status, 0, formatSpawnSyncResult(build));
+  const extracted = fixture.path('extracted');
+  await mkdir(extracted);
+  const artifact = join(repoRoot, 'dist/release-assets/stack', `hstack-v${version}-${target}.tar.gz`);
+  const untar = spawnSync('tar', ['-xzf', artifact, '-C', extracted], { encoding: 'utf8' });
+  assert.equal(untar.status, 0, formatSpawnSyncResult(untar));
+  const entries = await readdir(extracted);
+  const binaryPath = join(extracted, entries[0], 'hstack');
+  const result = spawnSync(binaryPath, [], { cwd: fixture.root, encoding: 'utf8', env: { PATH: '' } });
+  assert.equal(result.status, 0, formatSpawnSyncResult(result));
+  const scrubbed = JSON.parse(result.stdout);
+  for (const key of keys) assert.equal(scrubbed[key], undefined, `inherited ${key} must not survive`);
+  assert.equal(scrubbed.KEEP_OTHER_HOME, '/unrelated-home');
 });
