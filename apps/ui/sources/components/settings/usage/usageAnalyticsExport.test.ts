@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createExpoFileSystemFileMock } from '@/dev/testkit/mocks/expoFileSystem';
+
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
@@ -229,35 +231,16 @@ describe('usageAnalyticsExport', () => {
     });
 
     it('shares native summaries using a cache File instead of deprecated top-level writes', async () => {
-        const write = vi.fn();
-        const deleteFile = vi.fn();
-        const shareAsync = vi.fn(async () => undefined);
+        const fs = createExpoFileSystemFileMock();
+        const shareAsync = vi.fn(async (uri: string) => {
+            expect(new TextDecoder().decode(new Uint8Array(fs.files.get(uri)!))).toContain('session-a');
+        });
 
-        class File {
-            readonly uri: string;
-
-            constructor(parent: { uri: string } | string, name: string) {
-                const parentUri = typeof parent === 'string' ? parent : parent.uri;
-                this.uri = `${parentUri.replace(/\/+$/, '')}/${name}`;
-            }
-
-            write = write;
-            delete = deleteFile;
-        }
-
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'ios' },
-        }));
-        vi.doMock('expo-file-system', () => ({
-            Paths: { cache: { uri: 'file:///cache/' } },
-            File,
-            writeAsStringAsync: vi.fn(() => {
-                throw new Error('deprecated writeAsStringAsync must not be used');
-            }),
-            deleteAsync: vi.fn(() => {
-                throw new Error('deprecated deleteAsync must not be used');
-            }),
-        }));
+        vi.doMock('react-native', async () => {
+            const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeNativeMock({ platformOS: 'ios' });
+        });
+        vi.doMock('expo-file-system', () => fs.module);
         vi.doMock('expo-sharing', () => ({
             isAvailableAsync: vi.fn(async () => true),
             shareAsync,
@@ -278,41 +261,21 @@ describe('usageAnalyticsExport', () => {
         });
 
         expect(shared).toBe(true);
-        expect(write).toHaveBeenCalledWith(expect.stringContaining('session-a'));
-        expect(shareAsync).toHaveBeenCalledWith(expect.stringMatching(/^file:\/\/\/cache\/usage-summary-.*\.txt$/));
-        expect(deleteFile).toHaveBeenCalledTimes(1);
+        expect(shareAsync).toHaveBeenCalledWith(expect.stringContaining('/happier-downloads/'), undefined);
+        expect(fs.files.size).toBe(0);
     });
 
     it('exports native JSON using a cache File instead of deprecated top-level writes', async () => {
-        const write = vi.fn();
-        const deleteFile = vi.fn();
-        const shareAsync = vi.fn(async () => undefined);
+        const fs = createExpoFileSystemFileMock();
+        const shareAsync = vi.fn(async (uri: string) => {
+            expect(new TextDecoder().decode(new Uint8Array(fs.files.get(uri)!))).toContain('"sessionId": "session-a"');
+        });
 
-        class File {
-            readonly uri: string;
-
-            constructor(parent: { uri: string } | string, name: string) {
-                const parentUri = typeof parent === 'string' ? parent : parent.uri;
-                this.uri = `${parentUri.replace(/\/+$/, '')}/${name}`;
-            }
-
-            write = write;
-            delete = deleteFile;
-        }
-
-        vi.doMock('react-native', () => ({
-            Platform: { OS: 'ios' },
-        }));
-        vi.doMock('expo-file-system', () => ({
-            Paths: { cache: { uri: 'file:///cache/' } },
-            File,
-            writeAsStringAsync: vi.fn(() => {
-                throw new Error('deprecated writeAsStringAsync must not be used');
-            }),
-            deleteAsync: vi.fn(() => {
-                throw new Error('deprecated deleteAsync must not be used');
-            }),
-        }));
+        vi.doMock('react-native', async () => {
+            const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeNativeMock({ platformOS: 'ios' });
+        });
+        vi.doMock('expo-file-system', () => fs.module);
         vi.doMock('expo-sharing', () => ({
             isAvailableAsync: vi.fn(async () => true),
             shareAsync,
@@ -333,8 +296,27 @@ describe('usageAnalyticsExport', () => {
         });
 
         expect(exported).toBe(true);
-        expect(write).toHaveBeenCalledWith(expect.stringContaining('"sessionId": "session-a"'));
-        expect(shareAsync).toHaveBeenCalledWith(expect.stringMatching(/^file:\/\/\/cache\/usage-.*\.json$/));
-        expect(deleteFile).toHaveBeenCalledTimes(1);
+        expect(shareAsync).toHaveBeenCalledWith(expect.stringContaining('/happier-downloads/'), { mimeType: 'application/json' });
+        expect(fs.files.size).toBe(0);
     });
+    it('reports a native document write fault while preserving the false export result and cleanup', async () => {
+        const fs = createExpoFileSystemFileMock();
+        fs.writeBytes.mockImplementationOnce(() => { throw new Error('synthetic_usage_write_fault'); });
+        const shareAsync = vi.fn();
+        vi.doMock('react-native', async () => {
+            const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeNativeMock({ platformOS: 'ios' });
+        });
+        vi.doMock('expo-file-system', () => fs.module);
+        vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => true, shareAsync }));
+        const { exportUsageTextDocument } = await import('./usageExportFile');
+        // afterEach resets modules; observe the same real logger instance as this owner.
+        const { log } = await import('@/log');
+        const priorLogs = log.getLogs().length;
+        expect(await exportUsageTextDocument({ content: 'synthetic usage', fileName: 'usage.txt', mimeType: 'text/plain' })).toBe(false);
+        expect(shareAsync).not.toHaveBeenCalled();
+        expect(fs.files.size).toBe(0);
+        expect(log.getLogs().slice(priorLogs).join(' ')).toContain('synthetic_usage_write_fault');
+    });
+
 });

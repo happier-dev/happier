@@ -1,7 +1,5 @@
 import * as React from 'react';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -19,6 +17,7 @@ import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExp
 import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { resolveThemePresetSourcePreferredMode } from './themeProfilePresetOptions';
+import { exportThemeProfileFile } from './themeProfileFileExport';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 
 const getProfileIdParam = (value: string | string[] | undefined): string | null => {
@@ -36,30 +35,6 @@ const resolveExportMode = (profile: ThemeProfileV1): ThemeProfileMode => {
     return resolveThemePresetSourcePreferredMode(profile);
 };
 
-async function downloadThemeJson(fileName: string, json: string): Promise<void> {
-    if (
-        Platform.OS === 'web'
-        && typeof document !== 'undefined'
-        && typeof Blob !== 'undefined'
-        && typeof URL !== 'undefined'
-        && typeof URL.createObjectURL === 'function'
-    ) {
-        const href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-        const anchor = document.createElement('a');
-        anchor.href = href;
-        anchor.download = fileName;
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(href), 1000);
-        return;
-    }
-
-    const file = new File(Paths.cache, fileName);
-    file.write(json);
-    await Sharing.shareAsync(file.uri, {
-        mimeType: 'application/json',
-        dialogTitle: t('settingsAppearance.themeProfiles.exportProfile'),
-    });
-}
 
 export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportScreen() {
     const styles = stylesheet;
@@ -85,7 +60,7 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
 
     const download = React.useCallback(async () => {
         if (!json) return;
-        await downloadThemeJson(fileName, json);
+        await exportThemeProfileFile(fileName, json);
     }, [fileName, json]);
 
     return (

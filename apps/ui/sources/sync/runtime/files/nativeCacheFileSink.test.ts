@@ -18,9 +18,12 @@ describe('createNativeCacheFileSink', () => {
             const input = { fileUri: 'file:///cache/document.pdf', name: 'document.pdf', mimeType: 'application/pdf' };
             await expect(shareNativeCacheFile(input)).resolves.toEqual({ status: 'shared', retainCacheFile: false });
             expect(shareAsync).toHaveBeenCalledWith(input.fileUri, { mimeType: 'application/pdf' });
+            const zip = { fileUri: 'file:///cache/package.zip', name: 'package.zip', mimeType: 'application/zip', UTI: 'public.zip-archive', dialogTitle: 'Export package' };
+            await expect(shareNativeCacheFile(zip)).resolves.toEqual({ status: 'shared', retainCacheFile: false });
+            expect(shareAsync).toHaveBeenLastCalledWith(zip.fileUri, { mimeType: 'application/zip', UTI: 'public.zip-archive', dialogTitle: 'Export package' });
             available = false;
             await expect(shareNativeCacheFile(input)).resolves.toEqual({ status: 'unavailable' });
-            expect(shareAsync).toHaveBeenCalledTimes(1);
+            expect(shareAsync).toHaveBeenCalledTimes(2);
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
         }
@@ -75,6 +78,7 @@ describe('native cache sink resource ownership', () => {
             constructor(parent: { uri: string } | string, name?: string) {
                 this.uri = name ? `${(typeof parent === 'string' ? parent : parent.uri).replace(/\/+$/, '')}/${name}` : String(parent);
             }
+            get exists() { return files.has(this.uri); }
             create() {
                 if (new TextEncoder().encode(this.uri.split('/').at(-1)!).byteLength > 255) throw new Error('Filename exceeds filesystem component limit');
                 if (files.has(this.uri)) throw new Error('File already exists');
@@ -147,4 +151,15 @@ describe('native cache sink resource ownership', () => {
         expect(files.has(result.fileUri)).toBe(true);
         expect(diagnostic.mock.calls.flat().join(' ')).toContain(deleteError.message);
     });
+    it('accepts confirmed absence after the native copy boundary removed its closed destination', async () => {
+        const { createNativeCacheFileSink } = await import('./nativeCacheFileSink');
+        const result = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: 'recap.png' });
+        if (!result.ok) throw new Error(result.error);
+        await result.close();
+        // SDK55 iOS copyFrom removes an existing destination before attempting the copy.
+        files.delete(result.fileUri);
+        await expect(result.cleanup()).resolves.toBeUndefined();
+        await expect(result.cleanup()).resolves.toBeUndefined();
+    });
+
 });

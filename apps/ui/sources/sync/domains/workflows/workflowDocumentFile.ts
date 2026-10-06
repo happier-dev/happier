@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { t } from '@/text';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 
@@ -49,18 +51,17 @@ async function downloadWorkflowDocumentWeb(artifact: WorkflowDocumentArtifact): 
 }
 
 async function shareWorkflowDocumentNative(artifact: WorkflowDocumentArtifact): Promise<void> {
-  const FileSystem = await import('expo-file-system');
-  const Sharing = await import('expo-sharing');
-  const directory = FileSystem.Paths.cache ?? FileSystem.Paths.document;
-  if (directory === null || directory === undefined || !await Sharing.isAvailableAsync()) {
-    throw new Error('Workflow export is unavailable on this platform');
-  }
-  const file = new FileSystem.File(directory, artifact.fileName);
+  const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: artifact.fileName });
+  if (!sink.ok) throw new Error(sink.error);
+  let retainCacheFile = false;
   try {
-    file.write(artifact.json);
-    await Sharing.shareAsync(file.uri, { mimeType: 'application/json' });
+    await sink.writeBytes(new TextEncoder().encode(artifact.json));
+    await sink.close();
+    const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: artifact.fileName, mimeType: 'application/json' });
+    if (result.status !== 'shared') throw new Error(t('files.fileSharingUnavailable'));
+    retainCacheFile = result.retainCacheFile;
   } finally {
-    try { file.delete(); } catch { /* The share target may already own cleanup. */ }
+    if (!retainCacheFile) await sink.cleanup();
   }
 }
 

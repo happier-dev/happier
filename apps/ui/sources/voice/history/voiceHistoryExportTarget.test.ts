@@ -6,29 +6,28 @@ import {
   shareVoiceHistoryExportArtifactNative,
 } from './voiceHistoryExportTarget';
 
-const nativeBoundary = vi.hoisted(() => {
-  const file = {
-    uri: 'file:///cache/happier-voice-history.json',
-    write: vi.fn(),
-    delete: vi.fn(),
-  };
-  return {
-    file,
-    File: vi.fn(function File() {
-      return file;
-    }),
-    isAvailableAsync: vi.fn(async () => true),
-    shareAsync: vi.fn(async () => undefined),
-  };
+const platform = vi.hoisted(() => ({ OS: 'ios' }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return { ...await createReactNativeWebMock(), Platform: platform };
 });
-
-vi.mock('expo-file-system', () => ({
-  File: nativeBoundary.File,
-  Paths: { cache: 'file:///cache' },
+const fs = await vi.hoisted(async () => {
+  const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+  return createExpoFileSystemFileMock();
+});
+const nativeBoundary = vi.hoisted(() => ({
+  isAvailableAsync: vi.fn(async () => true),
+  shareAsync: vi.fn(async (..._args: unknown[]) => undefined),
+  androidShare: vi.fn(async (..._args: unknown[]) => undefined),
 }));
+vi.mock('expo-file-system', () => fs.module);
 vi.mock('expo-sharing', () => ({
   isAvailableAsync: nativeBoundary.isAvailableAsync,
   shareAsync: nativeBoundary.shareAsync,
+}));
+vi.mock('expo-modules-core', async (importOriginal) => ({
+  ...await importOriginal<typeof import('expo-modules-core')>(),
+  requireOptionalNativeModule: (name: string) => name === 'HappierFileActions' ? { shareFile: nativeBoundary.androidShare } : null,
 }));
 
 const ARTIFACT_CHUNKS = Object.freeze([
@@ -47,12 +46,12 @@ const ARTIFACT: VoiceHistoryExportArtifact = {
 
 describe('Voice History export targets', () => {
   beforeEach(() => {
-    nativeBoundary.file.write.mockClear();
-    nativeBoundary.file.delete.mockClear();
-    nativeBoundary.File.mockClear();
-    nativeBoundary.isAvailableAsync.mockClear();
+    platform.OS = 'ios';
+    fs.files.clear();
+    vi.clearAllMocks();
     nativeBoundary.isAvailableAsync.mockResolvedValue(true);
-    nativeBoundary.shareAsync.mockClear();
+    nativeBoundary.shareAsync.mockReset();
+    nativeBoundary.androidShare.mockReset();
   });
 
   afterEach(() => {
@@ -159,19 +158,17 @@ describe('Voice History export targets', () => {
     await shareVoiceHistoryExportArtifactNative(artifact);
 
     expect(nativeBoundary.isAvailableAsync).toHaveBeenCalledOnce();
-    expect(nativeBoundary.File).toHaveBeenCalledWith('file:///cache', ARTIFACT.fileName);
     // The existing target remains the ordered streaming sink, but coalesces
     // small producer chunks so the native file boundary is not invoked once per
     // row. The final partial buffer must still be appended in order.
-    expect(nativeBoundary.file.write.mock.calls).toEqual([
-      [`${chunks[0]}${chunks[1]}`, undefined],
-      [chunks[2], { append: true }],
+    expect(fs.writes.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes))).toEqual([
+      `${chunks[0]}${chunks[1]}`, chunks[2],
     ]);
     expect(nativeBoundary.shareAsync).toHaveBeenCalledWith(
-      nativeBoundary.file.uri,
+      expect.stringContaining('/happier-downloads/'),
       expect.objectContaining({ mimeType: ARTIFACT.mimeType }),
     );
-    expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
+    expect(fs.files.size).toBe(0);
   });
 
   it('keeps every native write UTF-8 bounded across awkward code-point boundaries', async () => {
@@ -187,7 +184,7 @@ describe('Voice History export targets', () => {
 
     await shareVoiceHistoryExportArtifactNative(artifact);
 
-    const writes = nativeBoundary.file.write.mock.calls.map(([contents]) => contents as string);
+    const writes = fs.writes.mock.calls.map(([, bytes]) => new TextDecoder().decode(bytes));
     expect(writes.length).toBeGreaterThan(1);
     // 65,535 ASCII bytes cannot absorb the following four-byte emoji. The
     // first write must flush before the emoji, rather than emitting 65,539 B.
@@ -200,14 +197,14 @@ describe('Voice History export targets', () => {
   });
 
   it('removes the native cache file when a buffered write fails before sharing', async () => {
-    nativeBoundary.file.write.mockImplementationOnce(() => {
+    fs.writes.mockImplementationOnce(() => {
       throw new Error('write_failed');
     });
 
     await expect(shareVoiceHistoryExportArtifactNative(ARTIFACT)).rejects.toThrow('write_failed');
 
     expect(nativeBoundary.shareAsync).not.toHaveBeenCalled();
-    expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
+    expect(fs.files.size).toBe(0);
   });
 
   it('removes the native cache file when the export producer throws before sharing', async () => {
@@ -222,6 +219,21 @@ describe('Voice History export targets', () => {
     await expect(shareVoiceHistoryExportArtifactNative(artifact)).rejects.toThrow('producer_failed');
 
     expect(nativeBoundary.shareAsync).not.toHaveBeenCalled();
-    expect(nativeBoundary.file.delete).toHaveBeenCalledOnce();
+    expect(fs.files.size).toBe(0);
   });
+  it('hands Android the completed history bytes without deleting recipient custody', async () => {
+    platform.OS = 'android';
+    nativeBoundary.androidShare.mockImplementation(async (...args) => {
+      const uri = String(args[0]);
+      expect(new TextDecoder().decode(new Uint8Array(fs.files.get(uri)!))).toBe(ARTIFACT_CHUNKS.join(''));
+      expect(fs.close).toHaveBeenCalledWith(uri);
+    });
+    await shareVoiceHistoryExportArtifactNative(ARTIFACT);
+    const uri = String(nativeBoundary.androidShare.mock.calls[0]?.[0]);
+    expect(uri).toContain('/happier-downloads/');
+    expect(fs.files.has(uri)).toBe(true);
+    expect(nativeBoundary.androidShare.mock.calls[0].slice(1, 3)).toEqual([ARTIFACT.fileName, ARTIFACT.mimeType]);
+    expect(nativeBoundary.androidShare.mock.calls[0][3]).toBeTruthy();
+  });
+
 });

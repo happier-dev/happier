@@ -1074,6 +1074,24 @@ restore remain available when the device has no usable retained secret; the
 UI's existing recovery result links to restore even when Account encryption
 opt-out is disabled.
 
+### Native file sharing and recovery-key backups (v0.3 development)
+
+Native file exports share through one cache owner. Downloads, artifact and diagnostics
+exports, workflow and theme documents, usage exports, voice history, runner packages,
+and recovery-key backups write unique files under the app's private `happier-downloads`
+cache. Captured usage images are copied there before sharing, then the original capture
+is released. The owner grants the chosen recipient read access and reports whether the
+shared file must remain readable: Android retains it after chooser handoff because
+chooser completion does not establish that the recipient finished reading; iOS removes
+it after the share sheet finishes. Failed, canceled, or unavailable handoffs attempt
+cleanup; sharing and cleanup failures remain visible in the app logs.
+
+An explicit recovery-key **Share** writes a plaintext backup. Clearing an in-memory
+recovery key does not erase a backup already handed to a recipient or retained in
+Android's private cache. Android recipient completion and subsequent cache reclamation
+remain unresolved; these sharing paths have no time-based expiry or automatic
+reclamation policy.
+
 ### Encrypted socket RPC routing (v0.3 development)
 
 The shared `packages/sync-client/src/rpc/socketRpcCodec.ts` binds every E2EE

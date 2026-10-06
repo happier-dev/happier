@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { createNativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 import type { BulkTransferFileDestination } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/bulkTransferFileDestination';
 
 const MAX_BUFFERED_WEB_EXPORT_BYTES = 128 * 1024 * 1024;
@@ -57,20 +57,21 @@ export async function createVoiceDiagnosticArtifactExportTarget(input: Readonly<
   }
 
   const sink = await createNativeCacheFileSink({
-    directoryName: 'happier-voice-diagnostics-export',
+    directoryName: 'happier-downloads',
     fileName: input.name,
   });
   if (!sink.ok) return sink;
+  let retainCacheFile = false;
   return {
     ok: true,
     target: {
       destination: sink,
-      complete: async () => {
-        const Sharing = await import('expo-sharing');
-        if (!await Sharing.isAvailableAsync()) throw new Error('voice_diagnostics_share_unavailable');
-        await Sharing.shareAsync(sink.fileUri);
+      complete: async (name) => {
+        const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: name || input.name });
+        if (result.status !== 'shared') throw new Error('voice_diagnostics_share_unavailable');
+        retainCacheFile = result.retainCacheFile;
       },
-      cleanup: sink.cleanup,
+      cleanup: async () => { if (!retainCacheFile) await sink.cleanup(); },
     },
   };
 }

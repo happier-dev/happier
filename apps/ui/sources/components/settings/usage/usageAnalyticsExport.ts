@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { log } from '@/log';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { t } from '@/text';
@@ -56,13 +58,6 @@ export type UsageAnalyticsExportPayload = Readonly<{
     recapCards: readonly UsageRecapCardExportPayload[];
     /** The active pivot dimension's ranked table (E-5); omitted when no dimension is active. */
     pivotTable: UsagePivotTableExport | null;
-}>;
-
-/** Only the image share reaches expo-sharing directly: it shares a captured
- * frame rather than a text document the shared exporter can write. */
-type ExpoSharingModule = Readonly<{
-    isAvailableAsync?: () => Promise<boolean>;
-    shareAsync?: (uri: string) => Promise<void>;
 }>;
 
 const DEFAULT_PIVOT_DIMENSION: UsagePivotDimension = 'model';
@@ -275,7 +270,7 @@ function downloadDataUriOnWeb(dataUri: string, fileName: string): boolean {
 /**
  * Share a rendered recap story card as a PNG image. Captures the given view
  * via react-native-view-shot (already a dependency; same pattern as the tour's
- * `captureStageFrame`), then shares through expo-sharing on native or downloads
+ * `captureStageFrame`), then shares through the native cache owner or downloads
  * on web. Falls back to the text summary share when capture/share fails.
  */
 export async function shareUsageRecapCardImage(
@@ -295,7 +290,7 @@ export async function shareUsageRecapCardImage(
             return await shareUsageRecapCardSummary(input);
         }
 
-        const { captureRef } = await import('react-native-view-shot');
+        const { captureRef, releaseCapture } = await import('react-native-view-shot');
         // Boundary cast: callers pass a mounted native view ref (same contract
         // as the tour's captureStageFrame).
         const captureSource = input.node as Parameters<typeof captureRef>[0];
@@ -304,16 +299,31 @@ export async function shareUsageRecapCardImage(
             quality: 1,
             result: 'tmpfile',
         });
-        const Sharing = await import('expo-sharing') as ExpoSharingModule;
-        if (typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
-            const available = await Sharing.isAvailableAsync();
-            if (available) {
-                await Sharing.shareAsync(uri);
-                return true;
+        try {
+            const name = `usage-recap-${input.cardId}-${formatUsageExportFileTimestamp(new Date())}.png`;
+            const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: name });
+            if (!sink.ok) throw new Error(sink.error);
+            let retainCacheFile = false;
+            try {
+                // Legacy's standard copyAsync overwrites the closed sink file;
+                // modern File.copy rejects an already-created destination.
+                await sink.close();
+                const { copyAsync } = await import('expo-file-system/legacy');
+                await copyAsync({ from: uri, to: sink.fileUri });
+                const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name, mimeType: 'image/png' });
+                if (result.status === 'shared') {
+                    retainCacheFile = result.retainCacheFile;
+                    return true;
+                }
+            } finally {
+                if (!retainCacheFile) await sink.cleanup();
             }
+        } finally {
+            releaseCapture(uri);
         }
         return await shareUsageRecapCardSummary(input);
-    } catch {
+    } catch (error) {
+        log.log(`Failed to export usage recap image: ${error instanceof Error ? error.message : String(error)}`);
         return await shareUsageRecapCardSummary(input);
     }
 }

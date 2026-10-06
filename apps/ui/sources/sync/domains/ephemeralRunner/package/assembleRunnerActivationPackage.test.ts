@@ -17,6 +17,31 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return { ...await createReactNativeWebMock(), Platform: platform };
 });
+
+const fs = await vi.hoisted(async () => {
+    const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
+    return createExpoFileSystemFileMock();
+});
+const sharing = vi.hoisted(() => ({ available: true, failed: false, onAvailability: undefined as (() => void) | undefined, observed: vi.fn() }));
+vi.mock('expo-file-system', () => fs.module);
+vi.mock('expo-sharing', () => ({
+    isAvailableAsync: async () => { sharing.onAvailability?.(); return sharing.available; },
+    shareAsync: async (uri: string, options?: { mimeType?: string; UTI?: string }) => {
+        await sharing.observed(uri, undefined, options?.mimeType, options?.UTI);
+        if (sharing.failed) throw new Error('native_share_failed');
+    },
+}));
+// The native bridge is the recipient/OS boundary; the sharing and cache owners stay real.
+vi.mock('expo-modules-core', async (importOriginal) => ({
+    ...await importOriginal<typeof import('expo-modules-core')>(),
+    requireOptionalNativeModule: (name: string) => name === 'HappierFileActions' ? {
+        shareFile: async (uri: string, name: string, mimeType?: string) => {
+            await sharing.observed(uri, name, mimeType);
+            if (sharing.failed) throw new Error('native_share_failed');
+        },
+    } : null,
+}));
+
 const secureValues = vi.hoisted(() => new Map<string, string>());
 const AUTHORING_COMMITMENT = 'A'.repeat(43);
 // Native OS key storage is the boundary; the real custody repository remains active.
@@ -189,39 +214,76 @@ describe('creator-local Runner package assembly', () => {
             vi.unstubAllGlobals();
         }
     });
-    it('shares a completed private native file and deletes it after the share finishes', async () => {
+    it.each(['ios', 'android'])('exports the real ZIP with %s recipient custody', async (os) => {
         const f = await fixture();
-        const chunks: Uint8Array[] = [];
-        let closed = false;
-        let exists = false;
-        let shared = false;
-        class Directory {
-            uri = 'file:///cache/fixture';
-            create() {}
-        }
-        class File {
-            uri = 'file:///cache/fixture/temporary-computer-linux-x64.zip';
-            create() { exists = true; }
-            delete() { exists = false; }
-            open() { return { offset: 0, writeBytes: (bytes: Uint8Array) => chunks.push(bytes.slice()), close: () => { closed = true; } }; }
-        }
-        vi.doMock('expo-file-system', () => ({ Directory, File, Paths: { cache: 'file:///cache' } }));
-        vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => true, shareAsync: async () => {
-            expect(closed && exists).toBe(true);
-            const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(Buffer.concat(chunks))), { useWebWorkers: false });
+        platform.OS = os;
+        sharing.observed.mockImplementation(async (uri: string, name?: string, mimeType?: string, UTI?: string) => {
+            expect(fs.close).toHaveBeenCalledWith(uri);
+            expect(mimeType).toBe('application/zip');
+            if (os === 'ios') expect(UTI).toBe('public.zip-archive');
+            const reader = new ZipReader(new Uint8ArrayReader(new Uint8Array(fs.files.get(uri)!)), { useWebWorkers: false });
             expect((await reader.getEntries()).map(entry => entry.filename)).toContain('happier-runner.activation.json');
             await reader.close();
-            shared = true;
-        } }));
-        platform.OS = 'ios';
+        });
         try {
             await exportRunnerActivationPackage(await exportFixture(f));
-            expect(shared).toBe(true);
-            expect(exists).toBe(false);
+            expect(sharing.observed).toHaveBeenCalledOnce();
+            if (os === 'android') expect(sharing.observed.mock.calls[0][1]).toBe('temporary-computer-linux-x64.zip');
+            expect(fs.files.size).toBe(os === 'android' ? 1 : 0);
+            expect(sharing.observed.mock.calls[0][0]).toContain('/happier-downloads/');
         } finally {
             platform.OS = 'web';
-            vi.doUnmock('expo-file-system');
-            vi.doUnmock('expo-sharing');
+            fs.files.clear();
+            vi.clearAllMocks();
+            sharing.observed.mockReset();
+            vi.unstubAllGlobals();
+            secureValues.clear();
+        }
+    });
+    it.each(['ios', 'android'])('removes a rejected %s export handoff', async (os) => {
+        platform.OS = os;
+        sharing.failed = true;
+        try {
+            await expect(exportRunnerActivationPackage(await exportFixture(await fixture()))).rejects.toThrow('native_share_failed');
+            expect(fs.files.size).toBe(0);
+        } finally {
+            platform.OS = 'web';
+            sharing.failed = false;
+            vi.clearAllMocks();
+            sharing.observed.mockReset();
+            vi.unstubAllGlobals();
+            secureValues.clear();
+        }
+    });
+    it('preserves unavailable export errors without leaving a native file', async () => {
+        platform.OS = 'ios';
+        sharing.available = false;
+        try {
+            await expect(exportRunnerActivationPackage(await exportFixture(await fixture()))).rejects.toThrow('runner_package_export_unavailable');
+            expect(fs.files.size).toBe(0);
+            expect(sharing.observed).not.toHaveBeenCalled();
+        } finally {
+            platform.OS = 'web';
+            sharing.available = true;
+            vi.clearAllMocks();
+            sharing.observed.mockReset();
+            vi.unstubAllGlobals();
+            secureValues.clear();
+        }
+    });
+    it('cleans a ZIP canceled while iOS sharing availability is resolving', async () => {
+        platform.OS = 'ios';
+        const controller = new AbortController();
+        sharing.onAvailability = () => controller.abort();
+        try {
+            await expect(exportRunnerActivationPackage({ ...await exportFixture(await fixture()), signal: controller.signal })).rejects.toThrow('runner_package_canceled');
+            expect(fs.files.size).toBe(0);
+            expect(sharing.observed).not.toHaveBeenCalled();
+        } finally {
+            platform.OS = 'web';
+            sharing.onAvailability = undefined;
+            vi.clearAllMocks();
+            sharing.observed.mockReset();
             vi.unstubAllGlobals();
             secureValues.clear();
         }

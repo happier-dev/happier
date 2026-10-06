@@ -47,27 +47,39 @@ export async function shareNativeCacheFile(input: Readonly<{
     fileUri: string;
     name: string;
     mimeType?: string;
+    UTI?: string;
+    dialogTitle?: string;
     isCurrent?: () => boolean;
     onHandoff?: () => void;
 }>): Promise<NativeCacheFileShareResult> {
-    const isCurrent = input.isCurrent ?? (() => true);
-    if (Platform.OS === 'android') {
-        const { performAndroidFileAction } = await import('./nativeFileActions');
+    try {
+        const isCurrent = input.isCurrent ?? (() => true);
+        if (Platform.OS === 'android') {
+            const { performAndroidFileAction } = await import('./nativeFileActions');
+            if (!isCurrent()) return { status: 'canceled' };
+            input.onHandoff?.();
+            await performAndroidFileAction({ fileUri: input.fileUri, name: input.name, action: 'share', mimeType: input.mimeType, dialogTitle: input.dialogTitle });
+            // Android chooser completion does not prove the recipient finished reading.
+            return { status: 'shared', retainCacheFile: true };
+        }
+        const sharing = await import('expo-sharing');
         if (!isCurrent()) return { status: 'canceled' };
+        const available = await sharing.isAvailableAsync();
+        if (!isCurrent()) return { status: 'canceled' };
+        if (!available) return { status: 'unavailable' };
         input.onHandoff?.();
-        await performAndroidFileAction({ fileUri: input.fileUri, name: input.name, action: 'share', mimeType: input.mimeType });
-        // Android chooser completion does not prove the recipient finished reading.
-        return { status: 'shared', retainCacheFile: true };
+        const options = input.mimeType || input.UTI || input.dialogTitle ? {
+            ...(input.mimeType ? { mimeType: input.mimeType } : {}),
+            ...(input.UTI ? { UTI: input.UTI } : {}),
+            ...(input.dialogTitle ? { dialogTitle: input.dialogTitle } : {}),
+        } : undefined;
+        await sharing.shareAsync(input.fileUri, options);
+        // Expo iOS settles from UIActivityViewController's completion handler.
+        return { status: 'shared', retainCacheFile: false };
+    } catch (error) {
+        log.log(`Failed to share cache file: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
     }
-    const sharing = await import('expo-sharing');
-    if (!isCurrent()) return { status: 'canceled' };
-    const available = await sharing.isAvailableAsync();
-    if (!isCurrent()) return { status: 'canceled' };
-    if (!available) return { status: 'unavailable' };
-    input.onHandoff?.();
-    await sharing.shareAsync(input.fileUri, input.mimeType ? { mimeType: input.mimeType } : undefined);
-    // Expo iOS settles from UIActivityViewController's completion handler.
-    return { status: 'shared', retainCacheFile: false };
 }
 
 /** Removes one exact cache file after its creating component/process-local closure is gone. */
@@ -148,7 +160,9 @@ export async function createNativeCacheFileSink(input: Readonly<{
                     removed = true;
                 }
             } catch (error) {
-                errors.push(error);
+                // A native copy can remove its destination before failing.
+                if (file.exists === false) removed = true;
+                else errors.push(error);
             }
             if (errors.length > 0) {
                 log.log(`Failed to clean up cache file: ${errors.map(error => error instanceof Error ? error.message : String(error)).join('; ')}`);

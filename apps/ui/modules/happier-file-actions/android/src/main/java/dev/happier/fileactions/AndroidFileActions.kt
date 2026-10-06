@@ -82,6 +82,11 @@ internal object AndroidFileActions {
     }
   }
 
+  fun chooserIntent(intent: Intent, dialogTitle: String? = null): Intent = Intent.createChooser(intent, dialogTitle).apply {
+    clipData = intent.clipData
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+  }
+
   fun fileIntent(uri: Uri, name: String, share: Boolean, explicitMimeType: String? = null): Intent = Intent(
     if (share) Intent.ACTION_SEND else Intent.ACTION_VIEW
   ).apply {

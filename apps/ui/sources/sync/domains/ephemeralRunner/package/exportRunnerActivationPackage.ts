@@ -1,7 +1,6 @@
 import { Platform } from 'react-native';
-import { randomUUID } from '@/platform/randomUUID';
 import { createWebDownloadFileSink } from '@/hooks/workspaces/transfers/webDownloadFileSink';
-import { createNativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 import { downloadWebFile } from '@/sync/runtime/files/downloadWebFile';
 import { assembleRunnerActivationPackage, type RunnerPackageAssemblyInput } from './assembleRunnerActivationPackage';
 import { readRunnerActivationExportFile } from '../runnerActivationCustody';
@@ -66,15 +65,20 @@ export async function exportRunnerActivationPackage(input: RunnerPackageExportIn
         }
         return;
     }
-    const sharing = await import('expo-sharing');
-    if (!await sharing.isAvailableAsync()) throw new Error('runner_package_export_unavailable');
-    const sink = await createNativeCacheFileSink({ directoryName: `happier-runner-${randomUUID()}`, fileName });
+    const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName });
     if (!sink.ok) throw new Error('runner_package_export_unavailable');
+    let retainCacheFile = false;
     try {
         await assembleRunnerActivationPackage({ ...input, activationFile: activation, destination: boundedDestination(sink, outputMaxBytes) });
         if (input.signal?.aborted) throw new Error('runner_package_canceled');
-        await sharing.shareAsync(sink.fileUri, { mimeType: 'application/zip', UTI: 'public.zip-archive' });
+        const result = await shareNativeCacheFile({
+            fileUri: sink.fileUri, name: fileName, mimeType: 'application/zip', UTI: 'public.zip-archive',
+            isCurrent: () => !input.signal?.aborted,
+        });
+        if (result.status === 'canceled') throw new Error('runner_package_canceled');
+        if (result.status === 'unavailable') throw new Error('runner_package_export_unavailable');
+        retainCacheFile = result.retainCacheFile;
     } finally {
-        await sink.cleanup();
+        if (!retainCacheFile) await sink.cleanup();
     }
 }

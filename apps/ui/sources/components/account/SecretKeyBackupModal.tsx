@@ -1,5 +1,4 @@
 import React from 'react';
-import * as Sharing from 'expo-sharing';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -15,7 +14,7 @@ import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyF
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { downloadWebFile } from '@/sync/runtime/files/downloadWebFile';
-import { createNativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -107,17 +106,21 @@ export function SecretKeyBackupModal(props: Props) {
                 return;
             }
             const sink = await createNativeCacheFileSink({
-                directoryName: 'happier-recovery-key',
+                directoryName: 'happier-downloads',
                 fileName: 'happier-recovery-key.txt',
             });
             if (!sink.ok) throw new Error(sink.error);
+            let retainCacheFile = false;
             try {
                 await sink.writeBytes(new TextEncoder().encode(contents));
                 await sink.close();
-                if (!await Sharing.isAvailableAsync()) throw new Error('sharing_unavailable');
-                await Sharing.shareAsync(sink.fileUri, { mimeType: 'text/plain' });
+                const result = await shareNativeCacheFile({
+                    fileUri: sink.fileUri, name: 'happier-recovery-key.txt', mimeType: 'text/plain',
+                });
+                if (result.status !== 'shared') throw new Error('sharing_unavailable');
+                retainCacheFile = result.retainCacheFile;
             } finally {
-                await sink.cleanup();
+                if (!retainCacheFile) await sink.cleanup();
             }
         } catch {
             Modal.alert(t('common.error'), t('settingsAccount.secretKeyCopyFailed'));
