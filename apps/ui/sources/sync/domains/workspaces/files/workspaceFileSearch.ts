@@ -1,5 +1,5 @@
 import Fuse from 'fuse.js';
-import { WORKSPACE_FILE_LIST_MAX_RESULTS } from '@happier-dev/protocol';
+import { WORKSPACE_FILE_LIST_MAX_RESULTS, type DaemonWorkspaceFileListErrorCode } from '@happier-dev/protocol';
 
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
 import {
@@ -35,7 +35,7 @@ export type WorkspaceFileSearchAccountLifetime = Readonly<{
 export class WorkspaceFileSearchUnavailableError extends Error {
     readonly code = 'WORKSPACE_FILE_SEARCH_UNAVAILABLE';
 
-    constructor() {
+    constructor(readonly errorCode?: DaemonWorkspaceFileListErrorCode) {
         super('Workspace file search is unavailable');
         this.name = 'WorkspaceFileSearchUnavailableError';
     }
@@ -283,7 +283,7 @@ async function buildFileItemsFromRipgrepGlob(
         },
     );
     throwIfWorkspaceFileSearchAborted(signal);
-    if (!res.ok) return null;
+    if (!res.ok) throw new WorkspaceFileSearchUnavailableError(res.errorCode);
     return { files: buildFileItemsFromPaths(res.paths), truncated: res.truncated };
 }
 
@@ -522,7 +522,7 @@ export async function searchWorkspaceFiles(
         });
         throwIfWorkspaceFileSearchAborted(input.signal);
         throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
-        if (!response.ok) throw new WorkspaceFileSearchUnavailableError();
+        if (!response.ok) throw new WorkspaceFileSearchUnavailableError(response.errorCode);
         const items = buildFileItemsFromPaths(response.paths);
         return project(input.resultType ? items.filter((item) => item.fileType === input.resultType) : items, response.truncated);
     }

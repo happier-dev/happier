@@ -489,7 +489,11 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         reloadToken: deepSearchReloadNonce,
     });
     const deepSearchLoading = deepSearch.isSearching;
-    const deepSearchError = deepSearch.error ? t('errors.unknownError') : null;
+    const deepSearchError = deepSearch.error
+        ? deepSearch.error.errorCode === 'path_not_allowed' ? t('errors.permissionDenied')
+            : deepSearch.error.errorCode === 'method_unavailable' ? t('errors.daemonUnavailableBody')
+                : t('errors.searchFailed')
+        : null;
     const deepSearchNodes = React.useMemo((): FilesystemBrowserNode[] => deepSearch.items.map((item) => {
         const relative = item.fullPath.replace(/\/+$/, '');
         return {

@@ -18,7 +18,7 @@ describe('machineWorkspaceFileList', () => {
             rootPath: '/repo',
             query: 'a',
             limit: 50,
-        }, { serverId: 'server-a', signal: controller.signal })).resolves.toEqual({
+        }, { serverId: 'server-a', accountId: 'selected-account', signal: controller.signal })).resolves.toEqual({
             ok: true,
             paths: ['src/a.ts'],
             truncated: false,
@@ -28,6 +28,7 @@ describe('machineWorkspaceFileList', () => {
             method: 'daemon.workspaceFiles.list.v1',
             payload: { rootPath: '/repo', query: 'a', limit: 50 },
             serverId: 'server-a',
+            accountId: 'selected-account',
             timeoutMs: undefined,
             signal: controller.signal,
         });
