@@ -53,9 +53,20 @@ test('installers accept both service-list JSON shapes used by dev and remote-dev
   );
   assert.match(
     powershellSource,
-    /Entries = if \(\$entries\.Count -gt 0\) \{ \$entries \} elseif \(\$services\.Count -gt 0\) \{ \$services \} else \{ @\(\) \}/,
+    /Entries = @\(if \(\$entries\.Count -gt 0\) \{ \$entries \} else \{ \$services \}\)/,
     'expected PowerShell installer to normalize services-only inventories into canonical Entries for downstream decisions',
   );
+});
+
+test('PowerShell inventory boundaries preserve empty arrays and accept fresh installs', async () => {
+  const source = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+  const inventory = source.match(/function Get-InstalledBackgroundServiceInventory\s*\{[\s\S]*?\n\}(?=\n\nfunction )/)[0];
+  assert.doesNotMatch(inventory, /(?:\$entries|\$services|Entries|Relays)\s*=\s*if\b/);
+  for (const name of ['Test-BackgroundServiceInventoryHasDefaultFollowing', 'Get-BackgroundServiceDefaultFollowingChannel', 'Test-BackgroundServiceInventoryHasMatchingDefaultFollowing', 'Resolve-ExistingBackgroundServiceInstallStrategy']) {
+    const body = source.match(new RegExp(`function ${name}\\s*\\{[\\s\\S]*?\\n\\}(?=\\n\\nfunction )`))[0];
+    assert.match(body, /\[AllowEmptyCollection\(\)\]\s*\[object\[\]\]\s*\$Entries/,
+      `${name} must admit a supported empty inventory`);
+  }
 });
 
 test('installers silently skip automatic background-service setup when the installed CLI lacks service-list support', async () => {

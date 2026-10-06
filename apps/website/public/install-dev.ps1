@@ -35,6 +35,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Resolve 8.3 TEMP names once before any process files reach the FileSystem provider.
+$InstallerTempDir = (Get-Item -LiteralPath ([System.IO.Path]::GetTempPath())).FullName
+
 if ($WithDaemon.IsPresent -and $WithoutDaemon.IsPresent) {
   throw "Specify either -WithDaemon or -WithoutDaemon, not both."
 }
@@ -991,6 +994,22 @@ function Stop-InstallerProcessTree {
   }
 }
 
+function Remove-InstallerTemporaryFiles {
+  param (
+    [Parameter(Mandatory = $true)] [string[]] $Paths
+  )
+
+  foreach ($path in $Paths) {
+    try {
+      # Direct .NET deletion avoids short-name provider enumeration failures.
+      [System.IO.File]::Delete($path)
+    }
+    catch {
+      # Best-effort cleanup must not replace the command's result (e.g. a locked file).
+    }
+  }
+}
+
 function Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout {
   param (
     [Parameter(Mandatory = $true)] [string] $CliPath,
@@ -1005,8 +1024,8 @@ function Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeo
   $previousDaemonServiceChannel = $env:HAPPIER_DAEMON_SERVICE_CHANNEL
   $previousInstallerDaemonServiceStrategy = $env:HAPPIER_INSTALLER_DAEMON_SERVICE_STRATEGY
   $runToken = [System.Guid]::NewGuid().ToString("N")
-  $stdoutPath = Join-Path $env:TEMP "happier-pre-install-$runToken.stdout.log"
-  $stderrPath = Join-Path $env:TEMP "happier-pre-install-$runToken.stderr.log"
+  $stdoutPath = Join-Path $InstallerTempDir "happier-pre-install-$runToken.stdout.log"
+  $stderrPath = Join-Path $InstallerTempDir "happier-pre-install-$runToken.stderr.log"
 
   try {
     $channelLabel = if ($Channel -eq "publicdev") { "dev" } else { $Channel }
@@ -1049,8 +1068,7 @@ function Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeo
     }
   }
   finally {
-    Remove-Item -Path $stdoutPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $stderrPath -Force -ErrorAction SilentlyContinue
+    Remove-InstallerTemporaryFiles -Paths @($stdoutPath, $stderrPath)
 
     if ($null -eq $previousHomeDir) {
       Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
@@ -1154,18 +1172,18 @@ function Get-InstalledBackgroundServiceInventory {
     if ($doctorPreflightResult.ExitCode -eq 0 -and $preflightJsonIsSupported -and -not $preflightLooksLikePlainReport) {
       $payload = $preflightOutput | ConvertFrom-Json
       $propertyNames = @($payload.PSObject.Properties.Name)
-      $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
-      $services = if ($propertyNames -contains 'services') { @($payload.services) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
+      $entries = @(if ($propertyNames -contains 'entries') { $payload.entries } elseif ($propertyNames -contains 'existingServices') { $payload.existingServices })
+      $services = @(if ($propertyNames -contains 'services') { $payload.services } elseif ($propertyNames -contains 'existingServices') { $payload.existingServices })
       if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'existingServices' -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
         return @{
           Supported = $true
           RepairSupported = $true
-          Entries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
+          Entries = @(if ($entries.Count -gt 0) { $entries } else { $services })
           Services = $services
           DaemonStatus = if ($propertyNames -contains 'daemonStatus') { $payload.daemonStatus } else { $null }
           DaemonRunning = if ($propertyNames -contains 'daemonRunning') { $payload.daemonRunning } else { $null }
           DefaultFollowingMatchesSelectedReleaseChannel = if ($propertyNames -contains 'defaultFollowingMatchesSelectedReleaseChannel') { $payload.defaultFollowingMatchesSelectedReleaseChannel } else { $null }
-          Relays = if ($propertyNames -contains 'relays') { @($payload.relays) } else { @() }
+          Relays = @(if ($propertyNames -contains 'relays') { $payload.relays })
           Payload = $payload
         }
       }
@@ -1198,13 +1216,13 @@ function Get-InstalledBackgroundServiceInventory {
     }
     $payload = $serviceListResult.Output | ConvertFrom-Json
     $propertyNames = @($payload.PSObject.Properties.Name)
-    $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } else { @() }
-    $services = if ($propertyNames -contains 'services') { @($payload.services) } else { @() }
+    $entries = @(if ($propertyNames -contains 'entries') { $payload.entries })
+    $services = @(if ($propertyNames -contains 'services') { $payload.services })
     if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
       return @{
         Supported = $true
         RepairSupported = $false
-        Entries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
+        Entries = @(if ($entries.Count -gt 0) { $entries } else { $services })
         Services = $services
         DaemonStatus = $null
         DaemonRunning = $null
@@ -1243,7 +1261,7 @@ function Get-InstalledBackgroundServiceInventory {
 
 function Test-BackgroundServiceInventoryHasDefaultFollowing {
   param (
-    [Parameter(Mandatory = $true)] [object[]] $Entries
+    [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [object[]] $Entries
   )
 
   return @($Entries | Where-Object { $_.targetMode -eq 'default-following' }).Count -gt 0
@@ -1251,7 +1269,7 @@ function Test-BackgroundServiceInventoryHasDefaultFollowing {
 
 function Get-BackgroundServiceDefaultFollowingChannel {
   param (
-    [Parameter(Mandatory = $true)] [object[]] $Entries
+    [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [object[]] $Entries
   )
 
   $entry = @($Entries | Where-Object { $_.targetMode -eq 'default-following' } | Select-Object -First 1)
@@ -1264,7 +1282,7 @@ function Get-BackgroundServiceDefaultFollowingChannel {
 
 function Test-BackgroundServiceInventoryHasMatchingDefaultFollowing {
   param (
-    [Parameter(Mandatory = $true)] [object[]] $Entries,
+    [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [object[]] $Entries,
     [Parameter()] $DefaultFollowingMatchesSelectedReleaseChannel = $null
   )
 
@@ -1369,7 +1387,7 @@ function Invoke-DoctorRepairIfSupported {
 
 function Resolve-ExistingBackgroundServiceInstallStrategy {
   param (
-    [Parameter(Mandatory = $true)] [object[]] $Entries,
+    [Parameter(Mandatory = $true)] [AllowEmptyCollection()] [object[]] $Entries,
     [Parameter()] $DefaultFollowingMatchesSelectedReleaseChannel = $null
   )
 
@@ -2539,10 +2557,10 @@ function Invoke-InstallerPayloadPromotionWithTimeout {
 
   $timeoutMs = Resolve-InstallerPayloadPromotionTimeoutMs
   $runToken = [System.Guid]::NewGuid().ToString("N")
-  $runnerBinaryPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.exe"
-  $runnerScriptPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.ps1"
-  $stdoutPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.stdout.log"
-  $stderrPath = Join-Path $env:TEMP "happier-payload-promotion-$runToken.stderr.log"
+  $runnerBinaryPath = Join-Path $InstallerTempDir "happier-payload-promotion-$runToken.exe"
+  $runnerScriptPath = Join-Path $InstallerTempDir "happier-payload-promotion-$runToken.ps1"
+  $stdoutPath = Join-Path $InstallerTempDir "happier-payload-promotion-$runToken.stdout.log"
+  $stderrPath = Join-Path $InstallerTempDir "happier-payload-promotion-$runToken.stderr.log"
 
   $escapeSingleQuotedLiteral = {
     param([string] $Value)
@@ -2616,10 +2634,7 @@ finally {
     }
   }
   finally {
-    Remove-Item -Path $runnerBinaryPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $runnerScriptPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $stdoutPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $stderrPath -Force -ErrorAction SilentlyContinue
+    Remove-InstallerTemporaryFiles -Paths @($runnerBinaryPath, $runnerScriptPath, $stdoutPath, $stderrPath)
   }
 }
 
