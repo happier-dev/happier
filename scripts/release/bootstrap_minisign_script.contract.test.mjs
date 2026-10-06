@@ -161,7 +161,12 @@ chmod +x "$destination/minisign-win/minisign.exe"
   await rm(root, { recursive: true, force: true });
 });
 
-test('bootstrap-minisign script selects the Windows minisign binary that matches the runner architecture', async () => {
+for (const { os, arch } of [
+  { os: 'MINGW64_NT-10.0', arch: 'x86_64' },
+  { os: 'Darwin', arch: 'x86_64' },
+  { os: 'Darwin', arch: 'arm64' },
+]) {
+test(`bootstrap-minisign selects a compatible binary on ${os} ${arch}`, async () => {
   const root = await mkdtemp(join(tmpdir(), 'bootstrap-minisign-win-arch-'));
   const binDir = join(root, 'bin');
   const runnerTemp = join(root, 'runner-temp');
@@ -181,14 +186,14 @@ test('bootstrap-minisign script selects the Windows minisign binary that matches
     `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" = "-s" ]]; then
-  echo MINGW64_NT-10.0
+  echo ${os}
   exit 0
 fi
 if [[ "$1" = "-m" ]]; then
-  echo x86_64
+  echo ${arch}
   exit 0
 fi
-echo MINGW64_NT-10.0
+echo ${os}
 `,
     'utf8',
   );
@@ -207,6 +212,13 @@ for ((i=1; i<=$#; i++)); do
   fi
 done
 cp ${JSON.stringify(fixtureArchivePath)} "$out"
+for arg in "$@"; do
+  if [[ "$arg" == https://github.com/jedisct1/minisign/releases/download/* ]]; then
+    version="\${arg%/*}"
+    version="\${version##*/}"
+    [[ "\${arg##*/}" == "minisign-$version-"* ]] || exit 96
+  fi
+done
 `,
     'utf8',
   );
@@ -217,7 +229,11 @@ cp ${JSON.stringify(fixtureArchivePath)} "$out"
     sha256sumStubPath,
     `#!/usr/bin/env bash
 set -euo pipefail
-echo "${expectedSha}  $1"
+case "$1" in
+  *minisign-0.11-macos.zip) echo "e7c410ae8b8960d7087392472b040bda9b2f307c76df0384ac37f9ad103fc893  $1" ;;
+  *minisign-0.12-macos.zip) echo "89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63  $1" ;;
+  *) echo "${expectedSha}  $1" ;;
+esac
 `,
     'utf8',
   );
@@ -229,6 +245,7 @@ echo "${expectedSha}  $1"
     `#!/usr/bin/env bash
 set -euo pipefail
 destination=""
+archive=""
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     -d)
@@ -239,13 +256,23 @@ while [[ "$#" -gt 0 ]]; do
       shift
       ;;
     *)
+      archive="$1"
       shift
       ;;
   esac
 done
+if [[ "${os}" == Darwin ]]; then
+  # Native extraction/execution boundary: upstream 0.12 is arm64-only,
+  # whereas the inspected 0.11 binary is universal.
+  exit_code=0
+  if [[ "$archive" == *minisign-0.12-macos.zip && "${arch}" == x86_64 ]]; then exit_code=97; fi
+  printf '#!/usr/bin/env bash\\nexit %s\\n' "$exit_code" > "$destination/minisign"
+  chmod +x "$destination/minisign"
+  exit 0
+fi
 mkdir -p "$destination/minisign-win64/aarch64"
 printf '#!/usr/bin/env bash\\nexit 0\\n' > "$destination/minisign-win64/aarch64/minisign.exe"
-mkdir -p "$destination/minisign-win64/x86_64"
+  mkdir -p "$destination/minisign-win64/x86_64"
 printf '#!/usr/bin/env bash\\nexit 0\\n' > "$destination/minisign-win64/x86_64/minisign.exe"
 chmod +x "$destination/minisign-win64/aarch64/minisign.exe" "$destination/minisign-win64/x86_64/minisign.exe"
 `,
@@ -270,11 +297,15 @@ chmod +x "$destination/minisign-win64/aarch64/minisign.exe" "$destination/minisi
     0,
     `bootstrap script should select the Windows minisign binary matching the runner architecture:\nstdout=${String(result.stdout ?? '')}\nstderr=${String(result.stderr ?? '')}`,
   );
-  assert.match(
-    String(result.stdout ?? '').trim(),
-    /minisign-win64\/x86_64$/,
-    'expected stdout to contain the x86_64 minisign directory on x64 Windows runners',
-  );
+  const selectedDirectory = String(result.stdout ?? '').trim();
+  if (os === 'Darwin') {
+    assert.equal(spawnSync(join(selectedDirectory, 'minisign'), ['-v']).status, 0,
+      'bootstrapped macOS minisign must execute on the runner architecture');
+  } else {
+    assert.match(selectedDirectory, /minisign-win64\/x86_64$/,
+      'expected the x86_64 minisign directory on x64 Windows runners');
+  }
 
   await rm(root, { recursive: true, force: true });
 });
+}

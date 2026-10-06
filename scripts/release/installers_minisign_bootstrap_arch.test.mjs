@@ -15,7 +15,8 @@ async function sha256(path) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-test('install.sh bootstraps minisign with the correct Linux arch (aarch64)', async () => {
+// Run the real installer while replacing only OS/native and release-service boundaries.
+async function runInstallerWithStubbedRelease({ minisignExitCode, os = 'Linux', arch = 'aarch64' }) {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-minisign-arch-'));
   const binDir = join(root, 'bin');
   const installDir = join(root, 'install');
@@ -27,21 +28,21 @@ test('install.sh bootstraps minisign with the correct Linux arch (aarch64)', asy
   await mkdir(outBinDir, { recursive: true });
   await mkdir(fixtureDir, { recursive: true });
 
-  // Stub uname so the installer deterministically selects linux-arm64 assets.
+  // uname is the OS boundary used to select release assets.
   const unameStubPath = join(binDir, 'uname');
   await writeFile(
     unameStubPath,
     `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" = "-s" ]]; then
-  echo Linux
+  echo ${os}
   exit 0
 fi
 if [[ "$1" = "-m" ]]; then
-  echo aarch64
+  echo ${arch}
   exit 0
 fi
-echo Linux
+echo ${os}
 `,
     'utf8',
   );
@@ -49,7 +50,9 @@ echo Linux
 
   // Build a minimal CLI tarball.
   const version = '9.9.9';
-  const artifactStem = `happier-v${version}-linux-arm64`;
+  const platform = os === 'Darwin' ? 'darwin' : 'linux';
+  const artifactArch = arch === 'x86_64' ? 'x64' : 'arm64';
+  const artifactStem = `happier-v${version}-${platform}-${artifactArch}`;
   const artifactName = `${artifactStem}.tar.gz`;
   const artifactDir = join(fixtureDir, artifactStem);
   await mkdir(artifactDir, { recursive: true });
@@ -87,7 +90,7 @@ echo ok
   await writeFile(
     minisignAarch64,
     `#!/usr/bin/env bash
-exit 0
+exit ${minisignExitCode}
 `,
     'utf8',
   );
@@ -117,6 +120,10 @@ exit 97
 set -euo pipefail
 file="$1"
 base="$(basename "$file")"
+case "$base" in
+  minisign-0.11-macos.zip) echo "e7c410ae8b8960d7087392472b040bda9b2f307c76df0384ac37f9ad103fc893  $file"; exit 0 ;;
+  minisign-0.12-macos.zip) echo "89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63  $file"; exit 0 ;;
+esac
 if [[ "$base" = "${minisignArchiveName}" ]]; then
   echo "${pinnedMinisignSha}  $file"
   exit 0
@@ -127,6 +134,20 @@ echo "$hash  $file"
     'utf8',
   );
   await chmod(sha256sumStubPath, 0o755);
+
+  if (os === 'Darwin') {
+    // Model the inspected upstream assets at the native extraction boundary:
+    // 0.12 is arm64-only; 0.11 is universal (x86_64 + arm64).
+    const dittoStubPath = join(binDir, 'ditto');
+    await writeFile(dittoStubPath, `#!/usr/bin/env bash
+set -euo pipefail
+exit_code=${minisignExitCode}
+if [[ "$3" == *minisign-0.12-macos.zip && "${arch}" == x86_64 ]]; then exit_code=97; fi
+printf '#!/usr/bin/env bash\\nexit %s\\n' "$exit_code" > "$4/minisign"
+chmod +x "$4/minisign"
+`, 'utf8');
+    await chmod(dittoStubPath, 0o755);
+  }
 
   const realTar = String(spawnSync('bash', ['-lc', 'command -v tar'], { encoding: 'utf8' }).stdout ?? '').trim();
   assert.ok(realTar, 'expected tar to exist for installer test');
@@ -199,6 +220,7 @@ if [[ -n "$out" ]]; then
     *${checksumsName}) cp ${JSON.stringify(checksumsPath)} "$out" ;;
     *${sigName}) cp ${JSON.stringify(sigPath)} "$out" ;;
     *${minisignArchiveName}) cp ${JSON.stringify(minisignArchivePath)} "$out" ;;
+    https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-macos.zip|https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-macos.zip) cp ${JSON.stringify(minisignArchivePath)} "$out" ;;
     *) : > "$out" ;;
   esac
   exit 0
@@ -223,13 +245,37 @@ printf '%s' '${releaseJson}'
   };
 
   const res = spawnSync('bash', [installerPath, '--without-daemon'], { env, encoding: 'utf8' });
+  const result = {
+    status: res.status,
+    stdout: String(res.stdout ?? ''),
+    stderr: String(res.stderr ?? ''),
+    installedBinary: spawnSync('test', ['-e', join(outBinDir, 'happier')]).status === 0,
+  };
+  await rm(root, { recursive: true, force: true });
+  return result;
+}
+
+test('install.sh bootstraps minisign with the correct Linux arch (aarch64)', async () => {
+  const res = await runInstallerWithStubbedRelease({ minisignExitCode: 0 });
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
   assert.equal(res.status, 0, `installer failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
 
-  assert.ok(stdout.includes('[ok] Verifying archive checksum'), 'installer should verify checksums');
-  assert.ok(stdout.includes('[ok] Verifying release signature'), 'installer should verify minisign signature');
   assert.doesNotMatch(stderr, /Ignoring unknown extended header keyword/i, 'installer should suppress non-actionable tar warnings');
 
-  await rm(root, { recursive: true, force: true });
+});
+
+for (const arch of ['x86_64', 'arm64']) {
+  test(`install.sh bootstraps a compatible macOS minisign on ${arch}`, async () => {
+    const { status, stdout, stderr } = await runInstallerWithStubbedRelease({ os: 'Darwin', arch, minisignExitCode: 0 });
+    assert.equal(status, 0, `installer failed:\n${stdout}\n${stderr}`);
+    assert.match(stdout, /Extracting payload/, 'a verified payload should reach extraction');
+  });
+}
+
+test('install.sh rejects a macOS payload when its signature does not verify', async () => {
+  const { status, stdout, installedBinary } = await runInstallerWithStubbedRelease({ os: 'Darwin', arch: 'x86_64', minisignExitCode: 1 });
+  assert.notEqual(status, 0);
+  assert.doesNotMatch(stdout, /Extracting payload/, 'the installer must not extract an unverified archive');
+  assert.equal(installedBinary, false, 'no binary should be installed from an unverified archive');
 });

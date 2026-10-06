@@ -541,6 +541,8 @@ function main() {
   const baseTauriEnv = {
     CI: 'true',
     APP_ENV: environment,
+    // Preparation runs outside Tauri's hook, so forward the same target to hsetup.
+    ...(tauriTarget ? { TAURI_ENV_TARGET_TRIPLE: tauriTarget } : {}),
     EXPO_UNSTABLE_WEB_MODAL: '1',
     ...(process.platform === 'linux' ? resolveLinuxTauriBundlerEnvOverrides(process.env) : {}),
     ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),

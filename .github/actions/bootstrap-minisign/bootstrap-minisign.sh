@@ -16,10 +16,6 @@ if [[ -z "${tmp_root}" ]]; then
   tmp_root="$(mktemp -d 2>/dev/null || mktemp -d -t happier-minisign)"
 fi
 
-work_dir="${tmp_root}/happier-minisign-${minisign_version}"
-mkdir -p "${work_dir}"
-
-url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
 asset=""
 expected_sha=""
 
@@ -29,8 +25,10 @@ case "${os}" in
     expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
     ;;
   darwin)
+    # 0.12's macOS binary is arm64-only; 0.11 is universal (x86_64 + arm64).
+    minisign_version="0.11"
     asset="minisign-${minisign_version}-macos.zip"
-    expected_sha="89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63"
+    expected_sha="e7c410ae8b8960d7087392472b040bda9b2f307c76df0384ac37f9ad103fc893"
     ;;
   msys*|mingw*|cygwin*)
     # Only used if someone runs this composite action on Windows.
@@ -43,6 +41,9 @@ case "${os}" in
     ;;
 esac
 
+work_dir="${tmp_root}/happier-minisign-${minisign_version}"
+mkdir -p "${work_dir}"
+url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
 archive_path="${work_dir}/${asset}"
 curl -fsSL \
   --retry 4 \
