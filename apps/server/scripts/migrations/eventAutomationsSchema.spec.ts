@@ -205,7 +205,7 @@ describe("Automation trigger-set persistence contract", () => {
         const catalogStatus = model(schema, "AutomationEventSourceCatalogStatus");
 
         expect(schema).toMatch(
-            /enum AutomationTriggerKind \{\s+schedule\s+pluginEvent\s+sessionLifecycle\s+\}/m,
+            /enum AutomationTriggerKind \{\s+schedule\s+pluginEvent\s+sessionLifecycle\s+runLifecycle\s+prComment\s+ciFailed\s+\}/m,
         );
         expect(schema).toMatch(
             /enum AutomationRunCauseKind \{\s+trigger\s+manual\s+conversation\s+\}/m,
@@ -259,12 +259,12 @@ describe("Automation trigger-set persistence contract", () => {
         // through this indexed pair; every dialect schema declares it.
         expect(run).toContain("@@index([replyHandoffState, replyHandoffDueAt])");
         // Workflow Runs extend this shared custody row with one exact origin
-        // discriminator and optional Session provenance. Keep rejecting the
-        // retired Automation-origin fields without forbidding that approved
-        // owner-level extension.
+        // discriminator, optional Session provenance, and delivery acknowledgement
+        // revision. Keep rejecting the retired Automation-origin fields without
+        // forbidding that approved owner-level extension.
         expect(
             [...run.matchAll(/^\s*(origin\w+)\s+/gm)].map((match) => match[1]),
-        ).toEqual(["originKind", "originSessionId", "originSession"]);
+        ).toEqual(["originKind", "originSessionId", "originSession", "originDeliveryAckRevision"]);
         expect(run).not.toMatch(/^\s*origin(?:OccurredAt|SourceSelectorId)\s+/m);
         expect(run).not.toMatch(/^\s*claimRequestNonceDigest\s+/m);
         // AUTO-09: exactly one ordinary nullable composite unique owns Run

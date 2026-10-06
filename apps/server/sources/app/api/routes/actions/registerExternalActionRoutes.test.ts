@@ -4,6 +4,7 @@ import type { RouteOptions } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 
 import { createAuthenticatedTestApp } from "../../testkit/sqliteFastify";
+import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol";
 import {
     EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
     EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES_V2,
@@ -193,6 +194,7 @@ describe("registerExternalActionRoutes", () => {
                     accountId: "account-1",
                     principalId: "principal-1",
                     credentialId: "credential-1",
+                    grant: API_TOKEN_FULL_GRANT_V1,
                     authority: "account_automation",
                 },
             }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
@@ -596,7 +598,7 @@ describe("registerExternalActionRoutes", () => {
 
             expect(response.statusCode).toBe(400);
             expect(response.headers["cache-control"]).toBe("no-store");
-            expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+            expect(response.headers["access-control-allow-origin"]).toBe("*");
             expect(response.json()).toEqual({ error: "invalid_request", code: "invalid_envelope" });
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
@@ -604,7 +606,7 @@ describe("registerExternalActionRoutes", () => {
         }
     });
 
-    it("enforces the shared byte ceiling with a typed non-CORS no-store response", async () => {
+    it("enforces the shared byte ceiling with a typed no-store response under the global CORS owner", async () => {
         const dispatch = vi.fn(async (request) => dispatchedResponse({
             v: 1 as const,
             actionId: request.actionId,
@@ -626,7 +628,7 @@ describe("registerExternalActionRoutes", () => {
             });
             expect(exactLimitResponse.statusCode).toBe(200);
             expect(exactLimitResponse.headers["cache-control"]).toBe("no-store");
-            expect(exactLimitResponse.headers["access-control-allow-origin"]).toBeUndefined();
+            expect(exactLimitResponse.headers["access-control-allow-origin"]).toBe("*");
             expect(dispatch).toHaveBeenCalledOnce();
 
             dispatch.mockClear();
@@ -644,7 +646,7 @@ describe("registerExternalActionRoutes", () => {
             });
             expect(oneByteOverLimitResponse.statusCode).toBe(413);
             expect(oneByteOverLimitResponse.headers["cache-control"]).toBe("no-store");
-            expect(oneByteOverLimitResponse.headers["access-control-allow-origin"]).toBeUndefined();
+            expect(oneByteOverLimitResponse.headers["access-control-allow-origin"]).toBe("*");
             expect(oneByteOverLimitResponse.json()).toEqual({
                 error: "invalid_request",
                 code: "request_too_large",

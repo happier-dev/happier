@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE } from "@happier-dev/protocol";
 
-import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock, installPrismaModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
@@ -10,6 +10,8 @@ const logSpy = vi.hoisted(() => vi.fn());
 vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
 
 const dbMocks = createDbMocks({
+    homeSettings: ["findUnique"],
+    homeGovernancePolicy: ["findUnique"],
     voiceSessionLease: ["findFirst", "updateMany"],
     voiceConversation: ["findUnique", "findFirst", "create"],
 } as const);
@@ -24,15 +26,22 @@ const dbTransactionMock = createDbTransactionMock(() => dbMocks.db);
 installDbModuleMock(() => ({
     db: dbTransactionMock.wrapDb(dbMocks.db),
 }));
+// The database boundary is an in-memory SQLite stand-in, not a generated Prisma client.
+// Its failure fixture throws a plain Error, not a Prisma-coded database error.
+installPrismaModuleMock({ getDbProviderFromEnv: () => "sqlite", isPrismaErrorCode: () => false });
+
+// Keep the real route graph for this file; request configuration remains live.
+const { voiceRoutes } = await import("./voiceRoutes");
 
 describe("voiceRoutes (session complete)", () => {
     const resetVoiceEnv = createEnvReset();
     const originalFetch = globalThis.fetch;
 
     beforeEach(() => {
-        vi.resetModules();
         vi.clearAllMocks();
         dbMocks.reset();
+        dbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
+        dbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
         resetVoiceEnv({
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
@@ -99,7 +108,6 @@ describe("voiceRoutes (session complete)", () => {
             providerJsonResponse(providerConversationDetails({ durationSeconds: 42 })),
         );
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",
@@ -127,7 +135,6 @@ describe("voiceRoutes (session complete)", () => {
     it("returns 404 when Happier Voice is disabled", async () => {
         resetVoiceEnv({ HAPPIER_FEATURE_VOICE__ENABLED: "0" });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",
@@ -151,7 +158,6 @@ describe("voiceRoutes (session complete)", () => {
         );
         conversationCreate.mockRejectedValueOnce(new Error("db-down"));
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",
@@ -182,7 +188,6 @@ describe("voiceRoutes (session complete)", () => {
             })),
         );
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",
@@ -208,7 +213,6 @@ describe("voiceRoutes (session complete)", () => {
             })),
         );
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",
@@ -236,7 +240,6 @@ describe("voiceRoutes (session complete)", () => {
             }),
         );
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/voice/session/complete",

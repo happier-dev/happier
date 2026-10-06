@@ -1,29 +1,33 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, installDbModuleMock, installPrismaModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
 import { createFakeRouteApp, getRouteEntry } from "../../testkit/routeHarness";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/auth/auth", () => ({
-    auth: {
-        verifyToken: vi.fn(async (token: string) => (token === "token_1" ? { userId: "user-1" } : null)),
-    },
-}));
 const dbMocks = createDbMocks({
+    account: ["findUnique"],
     voiceSessionLease: ["deleteMany", "create", "findMany", "delete"],
 } as const);
 installDbModuleMock(() => ({
     db: dbMocks.db,
 }));
+// Registration uses the database fixture, so loading generated Prisma metadata is unnecessary.
+installPrismaModuleMock({ getDbProviderFromEnv: () => "sqlite", isPrismaErrorCode: () => false });
+
+// Rate-limit options read current env when each app registers the shared routes.
+const { voiceRoutes } = await import("./voiceRoutes");
+const { auth } = await import("@/app/auth/auth");
 
 describe("voiceRoutes (rate limit)", () => {
     const resetVoiceEnv = createEnvReset();
+    let accountToken: string;
 
-    beforeEach(() => {
-        vi.resetModules();
+    beforeEach(async () => {
         dbMocks.reset();
+        dbMocks.db.account.findUnique.mockResolvedValue({ tokenEpoch: 0, status: "active" });
         resetVoiceEnv({
+            HANDY_MASTER_SECRET: "voice-rate-limit-spec-secret",
             NODE_ENV: "production",
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
@@ -34,6 +38,8 @@ describe("voiceRoutes (rate limit)", () => {
         dbMocks.db.voiceSessionLease.create.mockResolvedValue({ id: "lease_1" });
         dbMocks.db.voiceSessionLease.findMany.mockResolvedValue([{ id: "lease_1" }]);
         dbMocks.db.voiceSessionLease.delete.mockResolvedValue({});
+        await auth.init();
+        accountToken = await auth.createToken("user-1", undefined, { kind: "account", authority: "present_user" });
     });
 
     afterEach(() => {
@@ -41,7 +47,6 @@ describe("voiceRoutes (rate limit)", () => {
     });
 
     it("composes one Fastify request limiter for both mint aliases and disables their automatic route limiters", async () => {
-        const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
@@ -64,13 +69,12 @@ describe("voiceRoutes (rate limit)", () => {
 
         const rateLimitOptions = app.rateLimit.mock.calls[0]?.[0];
         expect(rateLimitOptions?.keyGenerator).toEqual(expect.any(Function));
-        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
+        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: `Bearer ${accountToken}` }, ip: "203.0.113.9" })).toBe(
             "uid:user-1",
         );
     });
 
     it("registers /v1/voice/session/complete with a per-user rate limit by default", async () => {
-        const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
@@ -90,7 +94,7 @@ describe("voiceRoutes (rate limit)", () => {
             }),
         );
         expect(opts?.config?.rateLimit?.keyGenerator).toEqual(expect.any(Function));
-        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
+        expect(await opts?.config?.rateLimit?.keyGenerator?.({ headers: { authorization: `Bearer ${accountToken}` }, ip: "203.0.113.9" })).toBe(
             "uid:user-1",
         );
     });
@@ -105,12 +109,11 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_API_RATE_LIMITS_ROUTE_KEY_STRATEGY: "ip-only",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
         const rateLimitOptions = app.rateLimit.mock.calls[0]?.[0];
-        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: "Bearer token_1" }, ip: "203.0.113.9" })).toBe(
+        expect(await rateLimitOptions?.keyGenerator?.({ headers: { authorization: `Bearer ${accountToken}` }, ip: "203.0.113.9" })).toBe(
             "ip:203.0.113.9",
         );
     });
@@ -126,7 +129,6 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_VOICE_TOKEN_RATE_LIMIT_WINDOW: "30 seconds",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
@@ -148,7 +150,6 @@ describe("voiceRoutes (rate limit)", () => {
             HAPPIER_API_RATE_LIMITS_ENABLED: "false",
         });
 
-        const { voiceRoutes } = await import("./voiceRoutes");
         const app = createFakeRouteApp();
         voiceRoutes(app as any);
 
