@@ -19,6 +19,7 @@ import {
   WorkflowDefinitionArtifactHeaderV1Schema,
   WorkflowDefinitionMetadataV1Schema,
   WorkflowDefinitionSavedByV1Schema,
+  WorkflowDefinitionContentUnavailableReasonV1Schema,
   WorkflowArtifactRevisionV1Schema,
   WorkflowRunExecutionTargetV1Schema,
   WorkflowRoleOverridesV1Schema,
@@ -26,6 +27,7 @@ import {
   WorkflowFrozenChildrenV1Schema,
   WorkflowRunStartedByV1Schema,
   WorkflowReplayAgentOverrideV1Schema,
+  WorkflowAcceptedInlineSourceV1Schema,
 } from './workflowDefinitionV1.js';
 import { WorkflowAcceptedWorkspaceTargetV1Schema } from './workflowWorkspaceV1.js';
 import {
@@ -103,11 +105,19 @@ export const WorkflowValidateResultV1Schema = z.object({
 }).strict();
 
 export const WorkflowRunSourceV1Schema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('inline'), definition: WorkflowIngressCarrierV1Schema,
+  WorkflowAcceptedInlineSourceV1Schema.extend({ definition: WorkflowIngressCarrierV1Schema,
+    visibleTeamId: preservedBoundedNfcString(191, 'Team ids').optional(),
     /** Replay reopens this Run at the owner; the reviewed carrier cannot replace its frozen graph. */
     replay: z.object({ runId: WorkflowRunIdV1Schema,
       agentOverride: WorkflowReplayAgentOverrideV1Schema.optional() }).strict().optional(),
-  }).strict(),
+  }).strict().superRefine((source, context) => {
+    if (source.visibleTeamId !== undefined && source.sourceArtifactId === undefined) {
+      context.addIssue({ code: 'custom', path: ['visibleTeamId'], message: 'Team visibility requires an Artifact source binding' });
+    }
+    if (source.replay && (source.sourceArtifactId !== undefined || source.visibleTeamId !== undefined)) {
+      context.addIssue({ code: 'custom', path: ['replay'], message: 'Replay retains the accepted source and Team visibility' });
+    }
+  }),
   z.object({ kind: z.literal('saved'), definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
     visibleTeamId: preservedBoundedNfcString(191, 'Team ids').optional() }).strict(),
   z.object({ kind: z.literal('catalog'), workflow: WorkflowDefinitionRefV1StringSchema.refine(
@@ -234,7 +244,7 @@ export const WorkflowRunAcceptedContextV1Schema = z.union([
     startedBy: WorkflowRunStartedByV1Schema,
     source: z.discriminatedUnion('kind', [
       WorkflowRunAcceptedAutomationSourceV1Schema,
-      z.object({ kind: z.literal('inline') }).strict(),
+      WorkflowAcceptedInlineSourceV1Schema,
       z.object({ kind: z.literal('saved'), definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
         savedBy: WorkflowDefinitionSavedByV1Schema.nullable() }).strict(),
       z.object({ kind: z.literal('catalog'), ref: WorkflowDefinitionRefV1StringSchema,
@@ -353,13 +363,17 @@ export const WorkflowRunDeleteResultV1Schema = z.object({ deleted: z.literal(tru
 export const WorkflowDefinitionListRequestV1Schema = z.object({ cursor: CursorSchema.optional(), limit: PositivePagePreferenceSchema.optional() }).strict();
 const WorkflowDefinitionLibraryHeaderV1Schema = WorkflowDefinitionArtifactHeaderV1Schema.extend({
   ownerAccountId: z.string().min(1).optional(), access: ArtifactCallerAccessV1Schema.optional(),
+  /** Opened owner-private provenance, never attribution from the stored shared header. */
+  savedBy: WorkflowDefinitionSavedByV1Schema.optional(),
   triggers: z.array(WorkflowTriggerSummaryInputV1Schema),
   /** Earliest enabled occurrence supplied by the Automation scheduler, never calculated by a reader. */
   nextRunAt: z.number().int().nonnegative().safe().nullable(),
 }).strict();
 export const WorkflowDefinitionListResultV1Schema = z.object({ definitions: z.array(z.discriminatedUnion('contentStatus', [
   WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('available'), stepCount: z.number().int().nonnegative().safe() }).strict(),
-  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('unavailable'), stepCount: z.null() }).strict(),
+  WorkflowDefinitionLibraryHeaderV1Schema.extend({ contentStatus: z.literal('unavailable'), stepCount: z.null(),
+    revision: WorkflowArtifactRevisionV1Schema.nullable(), metadata: WorkflowDefinitionMetadataV1Schema.nullable(),
+    contentUnavailableReason: WorkflowDefinitionContentUnavailableReasonV1Schema }).strict(),
 ])), pluginWorkflows: z.array(WorkflowPluginSourceV1Schema).optional(), nextCursor: CursorSchema.optional() }).strict();
 export const WorkflowDefinitionGetRequestV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict();
 export const WorkflowDefinitionGetResultV1Schema = z.object({ definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema, definition: WorkflowDefinitionV1Schema, metadata: WorkflowDefinitionMetadataV1Schema, access: ArtifactCallerAccessV1Schema, savedBy: WorkflowDefinitionSavedByV1Schema.optional() }).strict();

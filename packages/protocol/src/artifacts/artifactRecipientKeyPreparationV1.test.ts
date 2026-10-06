@@ -40,6 +40,17 @@ describe('Artifact key-holder preparation', () => {
     expect(replacement.map(row => row.recipientAccountId)).toEqual(['current']);
     expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(replacement[0]!.encryptedDataKey),
       recipientSecretKeyOrSeed: contentSecret })).toEqual(new Uint8Array(replacementKey));
+
+    // Existing content grants still need the independent private revision key.
+    const provenanceDataKey = randomBytes(32);
+    const privatePreparation = prepareArtifactRecipientKeyEnvelopesV1({ dataKey, provenanceDataKey, randomBytes,
+      recipients: [{ ...base, recipientAccountId: 'current', encryptedDataKey: existingEnvelope,
+        recipientContentPublicKeyFingerprint: fingerprint }] });
+    expect(privatePreparation.map(row => row.recipientAccountId)).toEqual(['current']);
+    expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(privatePreparation[0]!.encryptedProvenanceDataKey!),
+      recipientSecretKeyOrSeed: contentSecret })).toEqual(new Uint8Array(provenanceDataKey));
+    expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(privatePreparation[0]!.encryptedDataKey),
+      recipientSecretKeyOrSeed: contentSecret })).toEqual(new Uint8Array(dataKey));
   });
 
   it('never commits a key opened from an earlier caller envelope after the resource key changed', async () => {
@@ -96,6 +107,19 @@ describe('Artifact key-holder preparation', () => {
         dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] }),
       commit: async () => { committed = true; return { appliedRecipientAccountIds: [], skippedRecipientAccountIds: [] }; },
     })).resolves.toEqual({ appliedRecipientAccountIds: [], skippedRecipientAccountIds: [] });
+    expect(committed).toBe(false);
+  });
+
+  it('keeps content preparation usable while the private grant key is not delivered, but rejects stale private preparation', async () => {
+    let committed = false;
+    const params = { artifactId: 'artifact', dataKey: randomBytes(32), openedDataEncryptionKey: 'caller-envelope', randomBytes,
+      readCensus: async (): Promise<ArtifactAccessRecipientCensusResponseV1> => ({ artifactId: 'artifact', ownerAccountId: 'owner', access: 'edit', encryptionMode: 'e2ee',
+        dataEncryptionKey: 'owner-envelope', callerDataEncryptionKey: 'caller-envelope', provenanceDataEncryptionKey: 'private-owner-envelope',
+        callerProvenanceDataEncryptionKey: null, recipients: [] }),
+      commit: async () => { committed = true; return { appliedRecipientAccountIds: [], skippedRecipientAccountIds: [] }; } };
+    await expect(runArtifactRecipientKeyPreparationV1(params)).resolves.toEqual({ appliedRecipientAccountIds: [], skippedRecipientAccountIds: [] });
+    await expect(runArtifactRecipientKeyPreparationV1({ ...params, provenanceDataKey: randomBytes(32),
+      openedProvenanceDataEncryptionKey: 'stale-private-envelope' })).rejects.toMatchObject({ code: 'artifact_data_key_changed' });
     expect(committed).toBe(false);
   });
 });

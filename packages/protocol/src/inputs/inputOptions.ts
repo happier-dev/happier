@@ -243,7 +243,7 @@ export async function resolveInputOptions(params: Readonly<{
     const [{ WorkflowDefinitionListResultV1Schema }, { getBuiltinWorkflowCatalogV1 }, { resolveWorkflowDefinitionRefV1 }] = await Promise.all([
       import('../workflows/actionsV1.js'), import('../workflows/builtins/catalog.js'), import('../workflows/workflowDefinitionResolverV1.js'),
     ]);
-    const options: Array<{ value: string; label: string }> = [];
+    const options: Array<{ value: string; label?: string }> = [];
     let cursor: string | undefined;
     do {
       ctx.signal?.throwIfAborted();
@@ -260,7 +260,8 @@ export async function resolveInputOptions(params: Readonly<{
         // Artifact revision through source.definitionId instead.
         const ref = parseWorkflowDefinitionRefV1(definition.definitionId);
         if (actionId !== 'workflow.run.start' && ref?.kind === 'artifact') {
-          options.push({ value: formatWorkflowDefinitionRefV1(ref), label: definition.metadata.title });
+          options.push({ value: formatWorkflowDefinitionRefV1(ref),
+            ...(definition.metadata ? { label: definition.metadata.title } : {}) });
         }
       }
       cursor = page.nextCursor;
@@ -271,7 +272,7 @@ export async function resolveInputOptions(params: Readonly<{
         options.push({ value: resolved.ref, label: entry.id });
       }
     }
-    return { ok: true, result: options };
+    return { ok: true, result: normalizeResolvedOptions(options) };
   }
 
   if (optionsSourceId === 'notifications.channels.available') {

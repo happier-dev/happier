@@ -1,56 +1,19 @@
 import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
 
-import {
-  WorkflowAcceptedSnapshotV1Schema,
-  WorkflowAuthoredInputV1Schema,
-  WorkflowActionOutputSchemasV1,
-  WorkflowCheckpointEnvelopeV1Schema,
-  WorkflowProgressEnvelopeV1Schema,
-  WorkflowRunInvocationIndexV1Schema,
-  WorkflowRunSummaryV1Schema,
-  WorkflowRunWaitSnapshotV1Schema,
-  WorkflowRunListResultV1Schema,
-  WorkflowRunAcceptedContextV1Schema,
-  materializeWorkflowAcceptedSnapshotV1,
-  readWorkflowAcceptedAgentStartLeavesV1,
-  openWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  openWorkflowCheckpointStoredEnvelopeV1,
-  openWorkflowFinalResultStoredEnvelopeV1,
-  openWorkflowProgressStoredEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1,
-  sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
-  sealWorkflowCheckpointStoredEnvelopeV1,
-  sealWorkflowProgressStoredEnvelopeV1,
-  serializeWorkflowStoredContentEnvelopeV1,
-  validateWorkflowDefinition,
-  matchesWorkflowAcceptedDefinitionV1,
-  type WorkflowActionIdV1,
-  type WorkflowAuthoredInputV1,
-  type WorkflowDefinitionV1,
-  type WorkflowDefinitionSavedByV1,
-  type WorkflowRunPrivateMetadataV1,
-  type WorkflowProgressEnvelopeV1,
-  type WorkflowWorkspaceProgressV1,
-  type WorkflowUsageV1,
-  type WorkflowIngressContextV1,
-  type WorkflowInvocationRecoveryAvailabilityV1,
-  type WorkflowRunInvocationIndexV1,
-  type WorkflowRunSummaryV1,
-  type WorkflowRunAcceptedContextV1,
-  formatWorkflowDefinitionRefV1,
-  resolveWorkflowDefinitionRefV1,
-  WorkflowRunRecipientCensusResponseV1Schema,
-  WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema,
-  prepareWorkflowRunDataKeyV1,
-  resolveWorkflowRunDataKeyV1,
-  runWorkflowRecipientKeyPreparationV1,
-  type WorkflowRunEncryptionV1,
-  type WorkflowRunRecipientCensusResponseV1,
-  resolveWorkflowInvocationStructureV1,
-  resolveWorkflowRetainedConversationAttemptV1,
-  classifyWorkflowHoldV1,
-  isWorkflowDraftPublicationLifecycleV1,
-} from '../../workflows/index.js';
+import { WorkflowAcceptedSnapshotV1Schema, type WorkflowDefinitionSavedByV1 } from '../../workflows/workflowDefinitionV1.js';
+import { WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1 } from '../../workflows/workflowProgressV1.js';
+import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
+import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
+import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
+import { type WorkflowActionIdV1 } from '../actionIds.js';
+import { type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
+import { type WorkflowWorkspaceProgressV1 } from '../../workflows/workflowWorkspaceV1.js';
+import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
+import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
+import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema, type WorkflowRunRecipientCensusResponseV1 } from '../../workflows/workflowRunKeyV1.js';
+import { prepareWorkflowRunDataKeyV1, resolveWorkflowRunDataKeyV1, runWorkflowRecipientKeyPreparationV1, type WorkflowRunEncryptionV1 } from '../../workflows/workflowRunDataKeyV1.js';
+import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '../../workflows/workflowInvocationStructureV1.js';
 import { decodeExecutionRunResultObservation, type ExecutionRunProfileResultContract } from '../../execution/runs/resultContract.js';
 import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { ActionCompletionContractV1Schema } from '../actionCompletion.js';
@@ -687,6 +650,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           && sameStrictJsonValue(existing.accepted.workspaceTarget, replayAccepted.workspaceTarget)
         : inputSource.kind === 'inline'
         ? existing.accepted.source.kind === 'inline'
+          && existing.accepted.source.sourceArtifactId === inputSource.sourceArtifactId
           && normalizedInline !== undefined
           && matchesWorkflowAcceptedDefinitionV1(existing.accepted.authoredDefinition, normalizedInline)
         : inputSource.kind === 'catalog'
@@ -707,7 +671,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           : {}),
       };
       if (!sameSource
-        || (inputSource.kind === 'saved' && inputSource.visibleTeamId !== undefined
+        || ((inputSource.kind === 'saved' || inputSource.kind === 'inline') && inputSource.visibleTeamId !== undefined
           && inputSource.visibleTeamId !== existing.snapshot.keyCensus.visibleTeamId)
         || !sameStrictJsonValue(existing.accepted.roleOverrides ?? [], replaySource?.accepted.roleOverrides ?? input.roleOverrides ?? [])
         || (expectedMetadata !== undefined && !sameStrictJsonValue(existing.accepted.metadata, expectedMetadata))
@@ -744,7 +708,19 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       source = replaySource.accepted.source;
     } else if (inputSource.kind === 'inline') {
       definition = normalizedInline!;
-      source = { kind: 'inline' };
+      if (inputSource.sourceArtifactId !== undefined) {
+        try {
+          // The authorized Artifact read binds grants; the reviewed content remains authoritative for this Run.
+          await deps.definitions.get({ definitionId: inputSource.sourceArtifactId,
+            ...(args.context.signal ? { signal: args.context.signal } : {}) });
+        } catch (sourceError) {
+          args.context.signal?.throwIfAborted();
+          try { return await projectExisting(); }
+          catch (rejoinError) { if (!isNotFound(rejoinError)) throw rejoinError; throw sourceError; }
+        }
+      }
+      source = { kind: 'inline', ...(inputSource.sourceArtifactId !== undefined
+        ? { sourceArtifactId: inputSource.sourceArtifactId } : {}) };
     } else if (inputSource.kind === 'saved') {
       let saved: Awaited<ReturnType<DefinitionReader['get']>>;
       try {
@@ -873,9 +849,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const enc = await encryption(args.context.signal);
     const accountId = await deps.resolveAccountId(args.context.signal);
     const sourceArtifactId = accepted.source.kind === 'saved' || accepted.source.kind === 'automation'
-      ? accepted.source.definitionId ?? null : null;
+      ? accepted.source.definitionId ?? null
+      : accepted.source.kind === 'inline' ? accepted.source.sourceArtifactId ?? replaySource?.snapshot.run.sourceArtifactId ?? null : null;
     const visibleTeamId = replaySource ? replaySource.snapshot.keyCensus.visibleTeamId ?? undefined
-      : input.source.kind === 'saved' ? input.source.visibleTeamId : undefined;
+      : input.source.kind === 'saved' || input.source.kind === 'inline' ? input.source.visibleTeamId : undefined;
     const census = enc.witness.mode === 'e2ee'
       ? WorkflowRunRecipientCensusResponseV1Schema.parse(await deps.storage.execute({ operation: 'run-key.census', runId: input.runId, sourceArtifactId, ...(visibleTeamId ? { visibleTeamId } : {}) }, args.context.signal ? { signal: args.context.signal } : {}))
       : undefined;

@@ -22,6 +22,7 @@ import { RoleOverrideV1Schema, ResolvedRoleV1Schema } from '../prompts/roles/rol
 import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.js';
 import { ARTIFACT_EXCERPT_MAX_CHARS_V1 } from '../artifacts/artifactExcerptV1.js';
 import { ArtifactSavedByV1Schema } from '../artifacts/artifactBinaryV1.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 /** One deliberate engine edit; replay retains every other accepted leaf fact. */
 export const WorkflowReplayAgentOverrideV1Schema = z.object({
@@ -62,12 +63,17 @@ export const WorkflowDefinitionArtifactHeaderV1Schema = z.object({
   definitionId: WorkflowDefinitionIdV1Schema,
   revision: WorkflowArtifactRevisionV1Schema,
   metadata: WorkflowDefinitionMetadataV1Schema,
-  savedBy: WorkflowDefinitionSavedByV1Schema.optional(),
   /** Static authored step labels, written atomically with the definition for header-only cards. */
   previewSteps: z.array(z.string()).optional(),
   excerpt: z.string().max(ARTIFACT_EXCERPT_MAX_CHARS_V1).optional(),
 }).strict();
 export type WorkflowDefinitionArtifactHeaderV1 = z.infer<typeof WorkflowDefinitionArtifactHeaderV1Schema>;
+export const WorkflowDefinitionArtifactHeaderV1ReadSchema = createStoredReadSchema(WorkflowDefinitionArtifactHeaderV1Schema);
+
+export const WorkflowDefinitionContentUnavailableReasonV1Schema = z.enum([
+  'invalid_header', 'revision_mismatch', 'missing_body', 'invalid_body', 'not_found',
+]);
+export type WorkflowDefinitionContentUnavailableReasonV1 = z.infer<typeof WorkflowDefinitionContentUnavailableReasonV1Schema>;
 
 /** A restored body is a new physical revision, not a rewrite of its historical row. */
 export function retargetWorkflowDefinitionArtifactHeaderV1(input: Readonly<{
@@ -76,14 +82,13 @@ export function retargetWorkflowDefinitionArtifactHeaderV1(input: Readonly<{
   expectedRevision: WorkflowArtifactRevisionV1;
   nextRevision: WorkflowArtifactRevisionV1;
 }>): WorkflowDefinitionArtifactHeaderV1 {
-  const parsed = WorkflowDefinitionArtifactHeaderV1Schema.safeParse(input.header);
+  const parsed = WorkflowDefinitionArtifactHeaderV1ReadSchema.safeParse(input.header);
   if (!parsed.success || parsed.data.definitionId !== input.artifactId
     || parsed.data.revision.headerVersion !== input.expectedRevision.headerVersion
     || parsed.data.revision.bodyVersion !== input.expectedRevision.bodyVersion) {
     throw Object.assign(new Error('artifact_content_unavailable'), { code: 'content_unavailable' });
   }
-  // Validation may normalize display text; advancing a revision must not rewrite stored metadata.
-  return { ...parsed.data, ...input.header, revision: WorkflowArtifactRevisionV1Schema.parse(input.nextRevision) };
+  return { ...parsed.data, revision: WorkflowArtifactRevisionV1Schema.parse(input.nextRevision) };
 }
 
 export const WorkflowDefinitionArtifactBodyV1Schema = z.object({
@@ -91,6 +96,7 @@ export const WorkflowDefinitionArtifactBodyV1Schema = z.object({
   definition: WorkflowDefinitionV1Schema,
 }).strict();
 export type WorkflowDefinitionArtifactBodyV1 = z.infer<typeof WorkflowDefinitionArtifactBodyV1Schema>;
+export const WorkflowDefinitionArtifactBodyV1ReadSchema = createStoredReadSchema(WorkflowDefinitionArtifactBodyV1Schema);
 
 export const WorkflowResolvedInputsV1Schema = z.record(z.string(), StrictJsonValueSchema).superRefine(
   (inputs, context) => {
@@ -259,8 +265,14 @@ export function deriveWorkflowAcceptedPermissionCeilingV1(
   return WORKFLOW_PERMISSION_CEILING_BY_ORDINAL[maximumOrdinal];
 }
 
+/** Reviewed content stays inline; an authorized Artifact binding supplies grant lineage only. */
+export const WorkflowAcceptedInlineSourceV1Schema = z.object({
+  kind: z.literal('inline'),
+  sourceArtifactId: WorkflowDefinitionIdV1Schema.optional(),
+}).strict();
+
 const WorkflowAcceptedDirectSourceV1Schema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('inline') }).strict(),
+  WorkflowAcceptedInlineSourceV1Schema,
   z.object({
     kind: z.literal('saved'),
     definitionId: WorkflowDefinitionIdV1Schema,

@@ -14,7 +14,10 @@ export const ArtifactAccountEncryptionMigrationRowV1Schema = z.object({
   id: z.string().min(1), ownership: ArtifactAccountEncryptionMigrationOwnershipV1Schema,
   header: z.string().min(1), headerVersion: z.number().int().nonnegative(),
   body: z.string().min(1), bodyVersion: z.number().int().nonnegative(), dataEncryptionKey: z.string().min(1),
-  revisions: z.array(z.object({ bodyVersion: z.number().int().nonnegative(), body: z.string().min(1) }).strict()),
+  provenance: z.string().min(1).nullable().optional(),
+  provenanceDataEncryptionKey: z.string().min(1).nullable().optional(),
+  revisions: z.array(z.object({ bodyVersion: z.number().int().nonnegative(), body: z.string().min(1),
+    provenance: z.string().min(1).nullable().optional() }).strict()),
 }).strict();
 export const ArtifactAccountEncryptionMigrationInventoryV1Schema = z.object({
   ownerAccountId: z.string().min(1), encryptionMode: z.enum(['plain', 'e2ee']),

@@ -1,10 +1,33 @@
+import { z } from 'zod';
 import {
     applyWorkBoardIntentV1, DEFAULT_WORK_BOARDS_V1, WorkBoardV1Schema,
+    buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1, WORK_BOARD_MODES_V1, WORK_BOARD_SECTIONS_V1, WorkBoardPositionV1Schema,
     type WorkBoardIntentV1, type WorkBoardV1, type WorkBoardsV1,
 } from './workBoardV1.js';
-import type { ArtifactBodyV1 } from '../artifacts/artifactBinaryV1.js';
+import { artifactSavedByFromActionContextV1, type ArtifactBodyV1, type ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';
+import type { ActionExecutorContext } from '../actions/executor/types.js';
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 export const WORK_BOARD_ARTIFACT_KIND_V1 = 'work-board.v1';
+/** Saved structure only: no resolved memberships, widget inputs or runtime counts. */
+export const WorkBoardPreviewLayoutV1Schema = createStoredReadSchema(z.object({
+    mode: z.enum(WORK_BOARD_MODES_V1),
+    source: z.object({ sections: z.array(z.enum(WORK_BOARD_SECTIONS_V1)), hasFilter: z.boolean(), pickedCount: z.number().int().nonnegative() }).strict(),
+    widgets: z.array(z.object({ title: z.string().nullable(), width: z.union([z.literal(1), z.literal(2)]), position: WorkBoardPositionV1Schema.optional() }).strict()),
+}).strict());
+export type WorkBoardPreviewLayoutV1 = z.infer<typeof WorkBoardPreviewLayoutV1Schema>;
+
+export function buildWorkBoardPreviewLayoutV1(board: WorkBoardV1): WorkBoardPreviewLayoutV1 {
+    const widgets = new Map((board.widgets ?? []).map(placement => [buildWorkBoardWidgetKeyV1(placement.ref), placement]));
+    return { mode: board.mode, source: { sections: [...board.source.sections ?? []], hasFilter: board.source.filter !== undefined,
+        pickedCount: board.source.picked.length }, widgets: resolveWorkBoardItemOrderV1(board).flatMap(key => {
+            const placement = widgets.get(key);
+            if (!placement) return [];
+            const title = placement.instance.displayName ?? (placement.instance.definition.kind === 'inline' ? placement.instance.definition.definition.name : null);
+            const position = board.positionsByItemRef[key];
+            return [{ title, width: placement.width, ...(position ? { position } : {}) }];
+        }) };
+}
 export type WorkBoardArtifactRevisionV1 = Readonly<{ headerVersion: number; bodyVersion: number }>;
 export type WorkBoardArtifactV1 = Readonly<{
     artifactId: string; header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null;
@@ -21,9 +44,9 @@ export type WorkBoardArtifactTransportV1 = Readonly<{
         items: readonly Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number }>[];
         nextCursor?: string;
     }>>;
-    create(input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>): Promise<unknown>;
+    create(input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>): Promise<unknown>;
     update(input: Readonly<{ artifactId: string; expectedRevision: WorkBoardArtifactRevisionV1;
-        header: Readonly<Record<string, unknown>>; body: string; signal?: AbortSignal }>): Promise<
+        header: Readonly<Record<string, unknown>>; body: string; savedBy?: ArtifactSavedByV1; signal?: AbortSignal }>): Promise<
         Readonly<{ ok: true; revision: WorkBoardArtifactRevisionV1 }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
     delete(artifactId: string, options?: Readonly<{ signal?: AbortSignal; expectedRevision?: WorkBoardArtifactRevisionV1 }>): Promise<
         Readonly<{ ok: true; revision?: never }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
@@ -38,7 +61,8 @@ export class WorkBoardMutationErrorV1 extends Error {
 /** Header metadata is a projection written atomically with the authoritative Board body. */
 export function buildWorkBoardArtifactHeaderV1(board: WorkBoardV1): Readonly<Record<string, unknown>> {
     return { kind: WORK_BOARD_ARTIFACT_KIND_V1, v: 1, title: board.name,
-        pinnedInSessions: board.pinnedInSessions, readsNeedsYou: board.source.sections?.includes('needs_you') === true };
+        pinnedInSessions: board.pinnedInSessions, readsNeedsYou: board.source.sections?.includes('needs_you') === true,
+        previewLayout: buildWorkBoardPreviewLayoutV1(board) };
 }
 
 export function readWorkBoardArtifactSummaryV1(artifactId: string, header: Readonly<Record<string, unknown>>): WorkBoardArtifactSummaryV1 | null {
@@ -67,7 +91,7 @@ export type WorkBoardArtifactPortV1 = Readonly<{
     read(signal?: AbortSignal): Promise<WorkBoardsV1>;
     list(signal?: AbortSignal): Promise<readonly WorkBoardArtifactSummaryV1[]>;
     readBoard(boardId: string, signal?: AbortSignal): Promise<WorkBoardV1 | null>;
-    apply(intent: WorkBoardIntentV1, signal?: AbortSignal): Promise<WorkBoardsV1>;
+    apply(intent: WorkBoardIntentV1, signal?: AbortSignal, context?: ActionExecutorContext): Promise<WorkBoardsV1>;
 }>;
 
 /** The only persisted Board edit path: one Artifact, pure semantic replay on its current CAS winner. */
@@ -80,7 +104,18 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
         if (options.shouldContinue && !options.shouldContinue()) throw new WorkBoardMutationErrorV1('board_scope_retired');
     };
     const fetch = async (id: string, signal?: AbortSignal) => {
-        check(signal); const artifact = await transport.read(id, { signal }); check(signal); return artifact;
+        check(signal);
+        try {
+            const artifact = await transport.read(id, { signal });
+            check(signal);
+            return artifact;
+        } catch (error) {
+            check(signal);
+            // Undefined is unreadable content; null remains an actually missing Artifact.
+            // Transport, auth and Account mode/material failures stay request-wide.
+            if (error instanceof Error && 'code' in error && error.code === 'content_unavailable') return undefined;
+            throw error;
+        }
     };
     const list = async (signal?: AbortSignal) => {
         const summaries: WorkBoardArtifactSummaryV1[] = [];
@@ -112,6 +147,11 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
             const unreadable: unknown[] = [];
             for (const summary of await list(signal)) {
                 const artifact = await fetch(summary.id, signal);
+                if (artifact === undefined) {
+                    unreadable.push({ id: summary.id });
+                    options.onBoard?.(summary.id, null);
+                    continue;
+                }
                 if (!artifact) continue;
                 const board = readWorkBoardArtifactV1(artifact);
                 if (board) { boards.push(board); options.onBoard?.(board.id, board, artifact.revision); }
@@ -122,10 +162,12 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
             }
             return { v: 1, boards, ...(unreadable.length ? { unreadable } : {}) };
         },
-        async apply(intent, signal) {
+        async apply(intent, signal, context) {
+            const savedBy = artifactSavedByFromActionContextV1(context);
             const id = intent.kind === 'create' ? intent.board.id.trim() : intent.boardId;
             for (;;) {
                 const artifact = await fetch(id, signal);
+                if (artifact === undefined) throw new WorkBoardMutationErrorV1('invalid_board_record');
                 const board = artifact ? readWorkBoardArtifactV1(artifact) : null;
                 if (artifact && !board) throw new WorkBoardMutationErrorV1('invalid_board_record');
                 const applied = applyWorkBoardIntentV1(board ? { v: 1, boards: [board] } : DEFAULT_WORK_BOARDS_V1, intent);
@@ -134,7 +176,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
                 check(signal);
                 if (!artifact) {
                     if (!next) throw new WorkBoardMutationErrorV1('board_not_found');
-                    await transport.create({ artifactId: id, header: buildWorkBoardArtifactHeaderV1(next), body: JSON.stringify(next), signal });
+                    await transport.create({ artifactId: id, header: buildWorkBoardArtifactHeaderV1(next), body: JSON.stringify(next), savedBy, signal });
                     check(signal);
                     // Read back through the existing Artifact owner, including idempotent create acknowledgement.
                     const acknowledged = await readBoard(id, signal);
@@ -143,7 +185,7 @@ export function createWorkBoardArtifactPortV1(transport: WorkBoardArtifactTransp
                 }
                 const result = next
                     ? await transport.update({ artifactId: id, expectedRevision: artifact.revision,
-                        header: { ...artifact.header, ...buildWorkBoardArtifactHeaderV1(next) }, body: JSON.stringify(next), signal })
+                        header: { ...artifact.header, ...buildWorkBoardArtifactHeaderV1(next) }, body: JSON.stringify(next), savedBy, signal })
                     : await transport.delete(id, { expectedRevision: artifact.revision, signal });
                 check(signal);
                 if (result.ok) {

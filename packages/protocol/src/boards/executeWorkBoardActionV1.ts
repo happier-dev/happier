@@ -1,4 +1,5 @@
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
+import type { ActionExecutorContext } from '../actions/executor/types.js';
 import { WorkBoardActionInputSchemasV1 } from './actionsV1.js';
 import type { WorkBoardActionIdV1 } from './actionIdsV1.js';
 import { WorkBoardMutationErrorV1, type WorkBoardArtifactPortV1 } from './workBoardArtifactV1.js';
@@ -9,6 +10,7 @@ export async function executeWorkBoardActionV1(
     actionId: WorkBoardActionIdV1,
     input: unknown,
     signal?: AbortSignal,
+    context?: ActionExecutorContext,
 ): Promise<ActionExecuteResult> {
     try {
         signal?.throwIfAborted();
@@ -26,7 +28,7 @@ export async function executeWorkBoardActionV1(
                 ? { kind: parsedIntent.kind, boardId: parsedIntent.boardId, ref: parsedIntent.ref }
                 : parsedIntent;
         const boardId = intent.kind === 'create' ? intent.board.id : intent.boardId;
-        const committed = await port.apply(intent, signal);
+        const committed = await port.apply(intent, signal, context);
         signal?.throwIfAborted();
         return { ok: true, result: { boardId, board: committed.boards.find((candidate) => candidate.id === boardId) ?? null } };
     } catch (error) {

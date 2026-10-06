@@ -30,7 +30,7 @@ describe('workflow Action contracts', () => {
     expect(schema.safeParse({ runs: [] }).success).toBe(false);
     expect(schema.safeParse({ runs: [], metadataByRunId: {} }).success).toBe(true);
   });
-  it('admits explicit Team selection only as a saved Artifact source grant choice', () => {
+  it('admits explicit Team selection only with an Artifact source grant binding', () => {
     const start = WorkflowActionInputSchemasV1['workflow.run.start'];
     const runId = '0f2cf13d-4ad7-4f4b-b5e0-cc3b7dce7f11';
     const saved = { kind: 'saved', definitionId: 'definition-1', revision: { headerVersion: 1, bodyVersion: 1 } };
@@ -39,6 +39,14 @@ describe('workflow Action contracts', () => {
     expect(start.safeParse({ runId, source: { ...saved, visibleTeamId: null } }).success).toBe(false);
     expect(start.safeParse({ runId, source: saved, visibleTeamId: 'team-1' }).success).toBe(false);
     expect(start.safeParse({ runId, source: { kind: 'inline', definition: { blocks: ['Work'] }, visibleTeamId: 'team-1' } }).success).toBe(false);
+    const reviewed = { kind: 'inline', definition: { blocks: ['Reviewed draft'] }, sourceArtifactId: 'definition-1' };
+    expect(start.parse({ runId, source: { ...reviewed, visibleTeamId: 'team-1' } }).source)
+      .toEqual({ ...reviewed, visibleTeamId: 'team-1' });
+    expect(start.safeParse({ runId, source: reviewed }).success).toBe(true);
+    expect(start.safeParse({ runId, source: { ...reviewed, visibleTeamId: null } }).success).toBe(false);
+    expect(start.safeParse({ runId, source: { ...reviewed, replay: { runId: 'source-run' } } }).success).toBe(false);
+    expect(start.safeParse({ runId, source: { kind: 'inline', definition: { blocks: ['Work'] },
+      visibleTeamId: 'team-1', replay: { runId: 'source-run' } } }).success).toBe(false);
     expect(start.safeParse({ runId, source: { kind: 'catalog', workflow: 'builtin:review-and-converge', visibleTeamId: 'team-1' } }).success).toBe(false);
   });
   it('requires the displayed row token and keeps plan follow-up exclusive to Use', () => {

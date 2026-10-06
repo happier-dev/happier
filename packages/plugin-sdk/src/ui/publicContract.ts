@@ -3,6 +3,7 @@ import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { ProjectKeyV1, SessionServerStartSpawnDraftV1 } from '../services/sessions.js';
 import type { JsonValue } from '../identity.js';
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
+import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol';
 import type {
     StoredImageRefV1 as ProtocolStoredImageRefV1,
     PluginUiReadStoredImageResultV1 as ProtocolPluginUiReadStoredImageResultV1,
@@ -87,6 +88,8 @@ export type ComposerControlStateV1 = ProtocolComposerControlStateV1;
 /** Declaration-only image projections; Protocol owns the request and disclosure grammar. */
 export type StoredImageRefV1 = ProtocolStoredImageRefV1;
 export type PluginUiReadStoredImageResultV1 = ProtocolPluginUiReadStoredImageResultV1;
+/** Saved Board structure only; Protocol retains the sole strict parser and producer. */
+export type WorkBoardPreviewLayoutV1 = ProtocolWorkBoardPreviewLayoutV1;
 
 /**
  * Declaration-only projections for public UI author contracts.

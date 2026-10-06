@@ -70,6 +70,7 @@ export const ArtifactAccessActionOutputSchemasV1 = {
 export const ArtifactRecipientKeyEnvelopeInputV1Schema = z.object({
   recipientAccountId: z.string().min(1),
   encryptedDataKey: SessionDataKeyEnvelopeBytesV1Schema,
+  encryptedProvenanceDataKey: SessionDataKeyEnvelopeBytesV1Schema.optional(),
   recipientContentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema,
 }).strict();
 export type ArtifactRecipientKeyEnvelopeInputV1 = z.infer<typeof ArtifactRecipientKeyEnvelopeInputV1Schema>;
@@ -91,11 +92,14 @@ export const ArtifactAccessRecipientCensusResponseV1Schema = z.object({
   dataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema.nullable(),
   /** Exact caller envelope used to open the key; prevents preparing a stale key under a new owner token. */
   callerDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema.nullable(),
+  provenanceDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema.nullable().optional(),
+  callerProvenanceDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema.nullable().optional(),
   recipients: z.array(z.object({
     recipientAccountId: z.string().min(1),
     contentKey: SessionDataKeyRecipientContentKeyV1Schema,
     contentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.nullable(),
     encryptedDataKey: SessionDataKeyEnvelopeBytesV1Schema.nullable(),
+    encryptedProvenanceDataKey: SessionDataKeyEnvelopeBytesV1Schema.nullable().optional(),
     recipientContentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.nullable(),
   }).strict()),
 }).strict();
@@ -103,6 +107,7 @@ export type ArtifactAccessRecipientCensusResponseV1 = z.infer<typeof ArtifactAcc
 
 export const ArtifactRecipientKeyEnvelopeCommitInputV1Schema = ArtifactAccessGrantsListInputV1Schema.extend({
   expectedDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema,
+  expectedProvenanceDataEncryptionKey: SessionDataKeyEnvelopeBytesV1Schema.nullable().optional(),
   recipientKeyEnvelopes: ArtifactRecipientKeyEnvelopesV1Schema,
 }).strict();
 export type ArtifactRecipientKeyEnvelopeCommitInputV1 = z.infer<typeof ArtifactRecipientKeyEnvelopeCommitInputV1Schema>;

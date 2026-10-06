@@ -1,7 +1,9 @@
 import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.js';
+import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBinaryV1.js';
 import { RolesV1Schema, type RolesV1 } from '../../account/settings/rolesV1.js';
 import { readLegacyRolesV1, saveRolesV1WithLegacyMigration } from '../../account/settings/rolesV1Migration.js';
 import type { ActionExecutorDeps } from '../../actions/actionExecutor.js';
+import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import type { WorkflowDefinitionArtifactOperations } from '../../actions/executor/workflowDefinitions.js';
 import { BUILT_IN_ROLES_V1 } from './builtInRolesV1.js';
 import { buildRoleArtifactHeaderV1, RoleArtifactV1Schema } from './roleArtifactV1.js';
@@ -80,7 +82,9 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
   mutateAccountSettings?: (mutate: (raw: Readonly<Record<string, unknown>>) => Promise<Record<string, unknown> & { rolesV1: RolesV1 }>, signal?: AbortSignal) => Promise<void>;
 }>): NonNullable<ActionExecutorDeps['roleActionExecute']> {
   const listEntries = params.readRoleSources ?? createRoleSourceReaderV1(params);
-  const retainLegacy = async (raw: Readonly<Record<string, unknown>>, rolesV1: ReturnType<typeof RolesV1Schema.parse>, signal?: AbortSignal) => {
+  const retainLegacy = async (raw: Readonly<Record<string, unknown>>, rolesV1: ReturnType<typeof RolesV1Schema.parse>, context: ActionExecutorContext) => {
+    const { signal } = context;
+    const savedBy = artifactSavedByFromActionContextV1(context);
     if (!params.artifactStore || !params.accountId) refuse('not_authenticated');
     let retainedRoles = rolesV1;
     await saveRolesV1WithLegacyMigration({ rawSettings: raw, accountId: params.accountId, rolesV1,
@@ -92,7 +96,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
         }
         try {
           await params.artifactStore!.create({ artifactId: entry.artifactId,
-            header: { ...buildRoleArtifactHeaderV1(entry.role), migratedFromV0_2: true }, body: JSON.stringify(entry.role), ...(signal ? { signal } : {}) });
+            header: { ...buildRoleArtifactHeaderV1(entry.role), migratedFromV0_2: true }, body: JSON.stringify(entry.role), ...(savedBy ? { savedBy } : {}), ...(signal ? { signal } : {}) });
         } catch (error) {
           if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'conflict') throw error;
           const retained = await params.artifactStore!.read(entry.artifactId, signal ? { signal } : undefined);
@@ -122,20 +126,20 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
         const rolesV1 = RolesV1Schema.parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} });
         if (actionId === 'roles.override.reset') delete rolesV1.overrides[request.roleId];
         else rolesV1.overrides[request.roleId] = RoleActionInputSchemasV1['roles.override.set'].parse(input);
-        return await retainLegacy(raw, rolesV1, context.signal);
+        return await retainLegacy(raw, rolesV1, context);
       }, context.signal);
       return { updated: true };
     }
     const request = RoleActionInputSchemasV1[actionId].parse(input);
     if ('roleId' in request && request.roleId && (Object.hasOwn(BUILT_IN_ROLES_V1, request.roleId) || request.roleId.startsWith('plugin:'))) refuse('role_read_only');
     await params.mutateAccountSettings(async (raw) => await retainLegacy(raw,
-      RolesV1Schema.parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} }), context.signal), context.signal);
+      RolesV1Schema.parse(Object.hasOwn(raw, 'rolesV1') ? raw.rolesV1 : { overrides: {} }), context), context.signal);
     if (actionId === 'roles.create') {
       const request = RoleActionInputSchemasV1[actionId].parse(input);
       const roleId = request.roleId ?? params.generateId();
       if (Object.hasOwn(BUILT_IN_ROLES_V1, roleId) || roleId.startsWith('plugin:')) refuse('role_read_only');
       const created = await params.artifactStore.create({ artifactId: roleId,
-        header: buildRoleArtifactHeaderV1(request.role), body: JSON.stringify(request.role), ...(context.signal ? { signal: context.signal } : {}) });
+        header: buildRoleArtifactHeaderV1(request.role), body: JSON.stringify(request.role), savedBy: artifactSavedByFromActionContextV1(context), ...(context.signal ? { signal: context.signal } : {}) });
       return { roleId: created.artifactId, revision: created.revision };
     }
     if (actionId === 'roles.delete') {
@@ -152,7 +156,7 @@ export function createAccountRoleActionExecutorV1(params: RoleSourceReaderParams
       const existing = await params.artifactStore.read(request.roleId, context.signal ? { signal: context.signal } : undefined);
       if (!existing || existing.header.kind !== 'role.v1') refuse('role_target_unavailable');
       const updated = await params.artifactStore.update({ artifactId: request.roleId, expectedRevision: request.expectedRevision,
-        header: { ...existing.header, ...buildRoleArtifactHeaderV1(request.role) }, body: JSON.stringify(request.role), ...(context.signal ? { signal: context.signal } : {}) });
+        header: { ...existing.header, ...buildRoleArtifactHeaderV1(request.role) }, body: JSON.stringify(request.role), savedBy: artifactSavedByFromActionContextV1(context), ...(context.signal ? { signal: context.signal } : {}) });
       if (!updated.ok) refuse(updated.errorCode === 'version_mismatch' ? 'currentness_conflict' : updated.errorCode);
       return { roleId: request.roleId, revision: updated.revision };
     }

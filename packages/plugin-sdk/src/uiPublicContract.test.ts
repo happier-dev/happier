@@ -27,6 +27,8 @@ import type {
     PluginUiViewV2Input,
 } from './ui/publicContract.js';
 import type { SessionServerStartSpawnDraftV1 } from './services/sessions.js';
+import type { WorkBoardPreviewLayoutV1 } from './ui/index.public.js';
+import type { WorkBoardPreviewLayoutV1 as CanonicalWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol';
 import type { ContributionSurfaceIcon } from './targetedContributionAuthoring.js';
 import type {
     PluginUiIconTokenV1 as CanonicalPluginUiIconTokenV1,
@@ -428,3 +430,10 @@ describe('UI/testing public type contract', () => {
     });
 });
 import { describe, expect, expectTypeOf, it } from 'vitest';
+
+// The declaration projection preserves the complete canonical layout, including
+// its closed mode, source-section and widget-width vocabularies.
+expectTypeOf<WorkBoardPreviewLayoutV1>().toEqualTypeOf<CanonicalWorkBoardPreviewLayoutV1>();
+expectTypeOf<'unknown'>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['mode']>();
+expectTypeOf<'finished'>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['source']['sections'][number]>();
+expectTypeOf<3>().not.toMatchTypeOf<WorkBoardPreviewLayoutV1['widgets'][number]['width']>();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
+import { WorkflowDefinitionArtifactBodyV1Schema, WorkflowDefinitionArtifactHeaderV1Schema, WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '../automations/automationWorkflowRecipeV2.js';
 import { createDeepWorkflowDefinition } from './workflowDefinition.testkit.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
@@ -16,6 +16,13 @@ const AGENT_TARGET = {
 };
 
 describe('workflow definition acceptance contract', () => {
+  it('rejects revision actors in the public Workflow header', () => {
+    const header = { kind: 'workflow-definition.v1', definitionId: 'workflow-1',
+      revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Review' } };
+    expect(WorkflowDefinitionArtifactHeaderV1Schema.safeParse(header).success).toBe(true);
+    expect(WorkflowDefinitionArtifactHeaderV1Schema.safeParse({ ...header,
+      savedBy: { kind: 'person', accountId: 'owner' } }).success).toBe(false);
+  });
   it('accepts deep canonical definitions at Artifact, Automation and accepted-snapshot boundaries', () => {
     const definition = createDeepWorkflowDefinition();
     const artifact = WorkflowDefinitionArtifactBodyV1Schema.parse({ kind: 'workflow-definition.v1', definition });

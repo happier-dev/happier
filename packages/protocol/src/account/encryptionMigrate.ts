@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { ArtifactBlobAccountEncryptionStageV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { classifyAccountJsonKvKey } from './accountJsonKv.js';
@@ -40,15 +41,9 @@ import {
   SESSION_METADATA_LAYOUT_VERSION_V1,
   SessionOwnerMetadataEnvelopeV1Schema,
 } from '../sessions/metadata/sessionMetadataSchemasV1.js';
-import {
-  SESSION_ORGANIZATION_MAX_FOLDERS,
-  SESSION_ORGANIZATION_MAX_ID_LENGTH,
-  SESSION_ORGANIZATION_MAX_KEY_LENGTH,
-  SESSION_ORGANIZATION_MAX_LABELS,
-  SESSION_ORGANIZATION_MAX_TAGS,
-  SessionOrganizationContentEnvelopeSchema,
-  SessionOrganizationLabelKindSchema,
-} from '../sessions/organization/index.js';
+import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_ID_LENGTH, SESSION_ORGANIZATION_MAX_KEY_LENGTH, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '../sessions/organization/constants.js';
+import { SessionOrganizationContentEnvelopeSchema } from '../sessions/organization/content.js';
+import { SessionOrganizationLabelKindSchema } from '../sessions/organization/ordering.js';
 import {
   BoundReviewCommentEventSensitiveEnvelopeV1Schema,
   ReviewCommentSensitiveMigrationSourceV1Schema,
@@ -100,7 +95,7 @@ export {
 } from './encryptionKeyFingerprintV1.js';
 
 const NonNegativeSafeIntegerSchema =
-  z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+  lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
 
 export const AccountEncryptionMigrateToModeSchema = AccountEncryptionModeSchema;
 export type AccountEncryptionMigrateToMode = z.infer<
@@ -132,33 +127,33 @@ function refineAccountEncryptionMigrateContentKeyBinding(
     }
 }
 
-export const AccountEncryptionMigrateUnsignedKeyProofSchema = z
+export const AccountEncryptionMigrateUnsignedKeyProofSchema = lazyZodSchema(() => z
   .object(AccountEncryptionMigrateUnsignedKeyProofShape)
   .strict()
-  .superRefine(refineAccountEncryptionMigrateContentKeyBinding);
+  .superRefine(refineAccountEncryptionMigrateContentKeyBinding));
 export type AccountEncryptionMigrateUnsignedKeyProof = z.infer<
   typeof AccountEncryptionMigrateUnsignedKeyProofSchema
 >;
 
-export const AccountEncryptionMigrateKeyProofSchema = z
+export const AccountEncryptionMigrateKeyProofSchema = lazyZodSchema(() => z
   .object({
     ...AccountEncryptionMigrateUnsignedKeyProofShape,
     signature: z.string().min(1).max(4096),
   })
   .strict()
-  .superRefine(refineAccountEncryptionMigrateContentKeyBinding);
+  .superRefine(refineAccountEncryptionMigrateContentKeyBinding));
 export type AccountEncryptionMigrateKeyProof = z.infer<
   typeof AccountEncryptionMigrateKeyProofSchema
 >;
 
-const ConnectedServiceCredentialMetadataSchema = z
+const ConnectedServiceCredentialMetadataSchema = lazyZodSchema(() => z
   .object({
     kind: z.enum(['oauth', 'token']),
     providerEmail: z.string().min(1).nullable().optional(),
     providerAccountId: z.string().min(1).nullable().optional(),
     expiresAt: z.number().int().nonnegative().nullable().optional(),
   })
-  .strict();
+  .strict());
 
 const ConnectedServiceCredentialMigrationItemShape = {
   serviceId: ConnectedServiceIdSchema,
@@ -204,16 +199,16 @@ function refineConnectedServiceCredentialMigrationItem(
     }
 }
 
-const ConnectedServiceCredentialMigrationItemSchema = z
+const ConnectedServiceCredentialMigrationItemSchema = lazyZodSchema(() => z
   .object({
     ...ConnectedServiceCredentialMigrationItemShape,
     expectedCredentialRevision:
       ConnectedServiceCredentialRevisionV1Schema,
   })
   .strict()
-  .superRefine(refineConnectedServiceCredentialMigrationItem);
+  .superRefine(refineConnectedServiceCredentialMigrationItem));
 
-const QualifiedConnectedAccountCredentialMigrationItemSchema = z.object({
+const QualifiedConnectedAccountCredentialMigrationItemSchema = lazyZodSchema(() => z.object({
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
   expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
   expectedConfigurationRevision:
@@ -235,10 +230,10 @@ const QualifiedConnectedAccountCredentialMigrationItemSchema = z.object({
         'Qualified configuration replacement must exactly match the existing sidecar',
     });
   }
-});
+}));
 
 export const AccountEncryptionMigrateConnectedServicesDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z.object({ action: z.literal('clear') }).strict(),
     z
@@ -252,7 +247,7 @@ export const AccountEncryptionMigrateConnectedServicesDirectiveSchema =
             .default([]),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateConnectedServicesDirective = z.infer<
   typeof AccountEncryptionMigrateConnectedServicesDirectiveSchema
 >;
@@ -289,12 +284,12 @@ const AutomationsMigrationItemShape = {
   templateCiphertext: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
 } as const;
 
-const AutomationTriggerDefinitionEnvelopeMigrationItemSchema = z.object({
+const AutomationTriggerDefinitionEnvelopeMigrationItemSchema = lazyZodSchema(() => z.object({
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
   envelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerDefinitionEnvelope,
-}).strict();
-const AutomationTriggerDefinitionEnvelopesMigrationSchema = z.array(
+}).strict());
+const AutomationTriggerDefinitionEnvelopesMigrationSchema = lazyZodSchema(() => z.array(
   AutomationTriggerDefinitionEnvelopeMigrationItemSchema,
 ).superRefine((items, context) => {
   const seen = new Set<string>();
@@ -308,15 +303,15 @@ const AutomationTriggerDefinitionEnvelopesMigrationSchema = z.array(
     }
     seen.add(item.triggerId);
   });
-});
+}));
 
-const AutomationsMigrationItemSchema = z
+const AutomationsMigrationItemSchema = lazyZodSchema(() => z
   .object({
     ...AutomationsMigrationItemShape,
     expectedTemplateVersion: NonNegativeSafeIntegerSchema,
     triggerDefinitionEnvelopes: AutomationTriggerDefinitionEnvelopesMigrationSchema,
   })
-  .strict();
+  .strict());
 
 /**
  * One immutable retained-Run private-content transition. Run
@@ -324,7 +319,7 @@ const AutomationsMigrationItemSchema = z
  * Automation owns the coupled envelope/tag validation and CAS while the
  * Account coordinator owns mode activation.
  */
-export const AccountEncryptionMigrateWorkflowRunDirectiveSchema = z.object({
+export const AccountEncryptionMigrateWorkflowRunDirectiveSchema = lazyZodSchema(() => z.object({
   sourceAcceptedSnapshotEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope,
   acceptedSnapshotEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope,
   sourceCheckpointEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope.nullable(),
@@ -337,10 +332,10 @@ export const AccountEncryptionMigrateWorkflowRunDirectiveSchema = z.object({
     sourceContentEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope,
     contentEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope,
   }).strict()),
-}).strict();
+}).strict());
 export type AccountEncryptionMigrateWorkflowRunDirective = z.infer<typeof AccountEncryptionMigrateWorkflowRunDirectiveSchema>;
 
-const AutomationRunMigrationItemSchema = z
+const AutomationRunMigrationItemSchema = lazyZodSchema(() => z
   .object({
     runId: z.string().min(1).max(256),
     expectedRunRevision: NonNegativeSafeIntegerSchema,
@@ -358,12 +353,12 @@ const AutomationRunMigrationItemSchema = z
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.failureDetailEnvelope.nullable(),
     workflow: AccountEncryptionMigrateWorkflowRunDirectiveSchema.optional(),
   })
-  .strict();
+  .strict());
 
 export const ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS = 500;
 
 export const AccountEncryptionMigrateAutomationsDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z.object({ action: z.literal('clear') }).strict(),
     z
@@ -377,7 +372,7 @@ export const AccountEncryptionMigrateAutomationsDirectiveSchema =
           .max(ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateAutomationsDirective = z.infer<
   typeof AccountEncryptionMigrateAutomationsDirectiveSchema
 >;
@@ -387,7 +382,7 @@ export type AccountEncryptionMigrateAutomationsDirectiveInput = z.input<
 >;
 
 /** Complete current owner inventory for the active V4 transition, not V5 staging. */
-export const AccountEncryptionMigrateAutomationsInventoryResponseSchema = z.object({
+export const AccountEncryptionMigrateAutomationsInventoryResponseSchema = lazyZodSchema(() => z.object({
   templates: z.array(AutomationsMigrationItemSchema).max(ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS),
   runs: z.array(AutomationRunMigrationItemSchema.omit({ workflow: true }).extend({
     automationId: z.string().min(1).nullable(),
@@ -404,10 +399,10 @@ export const AccountEncryptionMigrateAutomationsInventoryResponseSchema = z.obje
       }).strict()),
     }).strict().optional(),
   }).strict()).max(ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS),
-}).strict();
+}).strict());
 export type AccountEncryptionMigrateAutomationsInventoryResponse = z.infer<typeof AccountEncryptionMigrateAutomationsInventoryResponseSchema>;
 
-const AccountEncryptionMigrateMachineItemSchema = z
+const AccountEncryptionMigrateMachineItemSchema = lazyZodSchema(() => z
   .object({
     machineId: z.string().min(1).max(256),
     expectedMetadataVersion: NonNegativeSafeIntegerSchema,
@@ -417,10 +412,10 @@ const AccountEncryptionMigrateMachineItemSchema = z
     dataEncryptionKey: z.string().min(1).max(16_384).nullable(),
     contentPublicKeyFingerprint: z.string().min(1).max(256).nullable(),
   })
-  .strict();
+  .strict());
 
 export const AccountEncryptionMigrateMachinesDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -428,12 +423,12 @@ export const AccountEncryptionMigrateMachinesDirectiveSchema =
         items: z.array(AccountEncryptionMigrateMachineItemSchema).max(500),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateMachinesDirective = z.infer<
   typeof AccountEncryptionMigrateMachinesDirectiveSchema
 >;
 
-const AccountEncryptionMigrateTodoItemSchema = z
+const AccountEncryptionMigrateTodoItemSchema = lazyZodSchema(() => z
   .object({
     key: z
       .string()
@@ -446,10 +441,10 @@ const AccountEncryptionMigrateTodoItemSchema = z
     expectedVersion: NonNegativeSafeIntegerSchema,
     value: z.string().min(1).max(2_000_000),
   })
-  .strict();
+  .strict());
 
 export const AccountEncryptionMigrateTodosDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -457,13 +452,13 @@ export const AccountEncryptionMigrateTodosDirectiveSchema =
         items: z.array(AccountEncryptionMigrateTodoItemSchema).max(1_000),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateTodosDirective = z.infer<
   typeof AccountEncryptionMigrateTodosDirectiveSchema
 >;
 
 /** Workspace replacements share the KV CAS and whole-request transport bound. */
-export const AccountEncryptionMigrateWorkspaceDirectiveSchema = z.discriminatedUnion('action', [
+export const AccountEncryptionMigrateWorkspaceDirectiveSchema = lazyZodSchema(() => z.discriminatedUnion('action', [
   z.object({ action: z.literal('assert_empty') }).strict(),
   z.object({
     action: z.literal('migrate'),
@@ -472,10 +467,10 @@ export const AccountEncryptionMigrateWorkspaceDirectiveSchema = z.discriminatedU
         { message: 'Workspace migration keys must use the Workspace namespace' }),
     }).strict()),
   }).strict(),
-]);
+]));
 export type AccountEncryptionMigrateWorkspaceDirective = z.infer<typeof AccountEncryptionMigrateWorkspaceDirectiveSchema>;
 
-const AccountEncryptionMigrateArtifactItemSchema = z
+const AccountEncryptionMigrateArtifactItemSchema = lazyZodSchema(() => z
   .object({
     artifactId: z.string().uuid(),
     expectedHeaderVersion: NonNegativeSafeIntegerSchema,
@@ -484,6 +479,11 @@ const AccountEncryptionMigrateArtifactItemSchema = z
     body: z.string().min(1).max(4_000_000),
     dataEncryptionKey: z.string().min(1).max(16_384),
     expectedDataEncryptionKey: z.string().min(1).max(16_384),
+    // Absent private metadata is unknown attribution for legacy documents.
+    expectedProvenance: z.string().min(1).nullable().optional(),
+    expectedProvenanceDataEncryptionKey: z.string().min(1).max(16_384).nullable().optional(),
+    provenance: z.string().min(1).nullable().optional(),
+    provenanceDataEncryptionKey: z.string().min(1).max(16_384).nullable().optional(),
     recipientKeyEnvelopes: ArtifactRecipientKeyEnvelopesV1Schema,
     blobs: z.array(z.object({
       blobId: z.string().uuid(), expectedContentSha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -497,16 +497,18 @@ const AccountEncryptionMigrateArtifactItemSchema = z
       bodyVersion: NonNegativeSafeIntegerSchema.min(1),
       expectedBody: z.string().min(1),
       body: z.string().min(1),
+      expectedProvenance: z.string().min(1).nullable().optional(),
+      provenance: z.string().min(1).nullable().optional(),
     }).strict()).superRefine((revisions, ctx) => {
       if (new Set(revisions.map(revision => revision.bodyVersion)).size !== revisions.length) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Artifact revision body versions must be unique' });
       }
     }),
   })
-  .strict();
+  .strict());
 
 export const AccountEncryptionMigrateArtifactsDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -515,12 +517,12 @@ export const AccountEncryptionMigrateArtifactsDirectiveSchema =
         items: z.array(AccountEncryptionMigrateArtifactItemSchema),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateArtifactsDirective = z.infer<
   typeof AccountEncryptionMigrateArtifactsDirectiveSchema
 >;
 
-export const AccountEncryptionMigrateSessionItemSchema = z
+export const AccountEncryptionMigrateSessionItemSchema = lazyZodSchema(() => z
   .object({
     sessionId: z.string().min(1).max(256),
     expectedMetadataLayoutVersion:
@@ -530,13 +532,13 @@ export const AccountEncryptionMigrateSessionItemSchema = z
     expectedOwnerMetadata: SessionOwnerMetadataEnvelopeV1Schema,
     ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateSessionItem = z.infer<
   typeof AccountEncryptionMigrateSessionItemSchema
 >;
 
 export const AccountEncryptionMigrateSessionsDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -547,7 +549,7 @@ export const AccountEncryptionMigrateSessionsDirectiveSchema =
         items: z.array(AccountEncryptionMigrateSessionItemSchema),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateSessionsDirective = z.infer<
   typeof AccountEncryptionMigrateSessionsDirectiveSchema
 >;
@@ -555,7 +557,7 @@ export type AccountEncryptionMigrateSessionsDirective = z.infer<
 export const ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENTS_MAX_ITEMS = 200;
 export const ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS = 2_000;
 
-const AccountEncryptionMigrateReviewCommentEventItemSchema = z
+const AccountEncryptionMigrateReviewCommentEventItemSchema = lazyZodSchema(() => z
   .object({
     eventId: z.string().min(1).max(256),
     expectedSensitiveEnvelope:
@@ -563,9 +565,9 @@ const AccountEncryptionMigrateReviewCommentEventItemSchema = z
     targetSensitiveEnvelope:
       BoundReviewCommentEventSensitiveEnvelopeV1Schema,
   })
-  .strict();
+  .strict());
 
-const AccountEncryptionMigrateReviewCommentItemSchema = z
+const AccountEncryptionMigrateReviewCommentItemSchema = lazyZodSchema(() => z
   .object({
     commentId: z.string().min(1).max(256),
     expectedServerRevision: NonNegativeSafeIntegerSchema,
@@ -577,10 +579,10 @@ const AccountEncryptionMigrateReviewCommentItemSchema = z
       .array(AccountEncryptionMigrateReviewCommentEventItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_REVIEW_COMMENT_EVENTS_MAX_ITEMS),
   })
-  .strict();
+  .strict());
 
 export const AccountEncryptionMigrateReviewCommentsDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -611,7 +613,7 @@ export const AccountEncryptionMigrateReviewCommentsDirectiveSchema =
           });
         }
       }),
-  ]);
+  ]));
 export type AccountEncryptionMigrateReviewCommentsDirective = z.infer<
   typeof AccountEncryptionMigrateReviewCommentsDirectiveSchema
 >;
@@ -622,7 +624,7 @@ const AccountEncryptionMigrateSessionOrganizationDisplayItemShape = {
 } as const;
 
 export const AccountEncryptionMigrateSessionOrganizationDirectiveSchema =
-  z.discriminatedUnion('action', [
+  lazyZodSchema(() => z.discriminatedUnion('action', [
     z.object({ action: z.literal('assert_empty') }).strict(),
     z
       .object({
@@ -646,13 +648,13 @@ export const AccountEncryptionMigrateSessionOrganizationDirectiveSchema =
         }).strict()).max(SESSION_ORGANIZATION_MAX_LABELS),
       })
       .strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateSessionOrganizationDirective = z.infer<
   typeof AccountEncryptionMigrateSessionOrganizationDirectiveSchema
 >;
 
 export const AccountEncryptionMigratePetsDirectiveSchema =
-  z.object({ action: z.literal('assert_empty') }).strict();
+  lazyZodSchema(() => z.object({ action: z.literal('assert_empty') }).strict());
 export type AccountEncryptionMigratePetsDirective = z.infer<
   typeof AccountEncryptionMigratePetsDirectiveSchema
 >;
@@ -660,14 +662,14 @@ export type AccountEncryptionMigratePetsDirective = z.infer<
 export const ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES = 8_000_000;
 
 /** One Account-owned new-session draft replacement in the atomic V4 migration. */
-export const AccountEncryptionMigrateSessionDraftItemSchema = z.object({
+export const AccountEncryptionMigrateSessionDraftItemSchema = lazyZodSchema(() => z.object({
   address: z.object({
     kind: z.literal('newSession'),
     draftId: z.string().uuid(),
   }).strict(),
   expectedRevision: NonNegativeSafeIntegerSchema,
   content: SessionDraftStoredContentEnvelopeV1Schema,
-}).strict();
+}).strict());
 export type AccountEncryptionMigrateSessionDraftItem = z.infer<
   typeof AccountEncryptionMigrateSessionDraftItemSchema
 >;
@@ -964,7 +966,7 @@ export type AccountEncryptionMigrateExternalAuthProof = z.infer<
  * V5 is an Account-owned migration transition. Collection rows only provide
  * exact source/target evidence; they never own transition authority or state.
  */
-export const AccountEncryptionMigrateTransitionIdSchema = z.string().uuid();
+export const AccountEncryptionMigrateTransitionIdSchema = lazyZodSchema(() => z.string().uuid());
 export type AccountEncryptionMigrateTransitionId = z.infer<
   typeof AccountEncryptionMigrateTransitionIdSchema
 >;
@@ -991,15 +993,15 @@ const AccountEncryptionMigrateCollectionSourceShape = {
 } as const;
 
 /** The exact Collection row state from which a transition client derives a target. */
-export const AccountEncryptionMigrateCollectionInventoryItemSchema = z
+export const AccountEncryptionMigrateCollectionInventoryItemSchema = lazyZodSchema(() => z
   .object(AccountEncryptionMigrateCollectionSourceShape)
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionInventoryItem = z.infer<
   typeof AccountEncryptionMigrateCollectionInventoryItemSchema
 >;
 
 /** One staged Collection replacement, guarded by identity, revision, and contract. */
-export const AccountEncryptionMigrateCollectionStageItemSchema = z
+export const AccountEncryptionMigrateCollectionStageItemSchema = lazyZodSchema(() => z
   .object({
     ...AccountEncryptionMigrateCollectionIdentityShape,
     expectedRevision: PluginCollectionRevisionV1Schema,
@@ -1008,25 +1010,25 @@ export const AccountEncryptionMigrateCollectionStageItemSchema = z
     schemaVersion: PluginCollectionSchemaVersionV1Schema,
     contractDigest: PluginCollectionContractDigestV1Schema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionStageItem = z.infer<
   typeof AccountEncryptionMigrateCollectionStageItemSchema
 >;
 
-export const AccountEncryptionMigrateTransitionPrepareRequestSchema = z
+export const AccountEncryptionMigrateTransitionPrepareRequestSchema = lazyZodSchema(() => z
   .object({
     toMode: AccountEncryptionMigrateToModeSchema,
     expectedAccountVersion: NonNegativeSafeIntegerSchema,
     expectedSigningKeyFingerprint: z.string().min(1).max(256).nullable(),
     expectedContentKeyFingerprint: z.string().min(1).max(256).nullable(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionPrepareRequest = z.infer<
   typeof AccountEncryptionMigrateTransitionPrepareRequestSchema
 >;
 
 /** Server-created transition facts that authorization and every stage bind to. */
-export const AccountEncryptionMigrateTransitionPrepareResponseSchema = z
+export const AccountEncryptionMigrateTransitionPrepareResponseSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     fromMode: AccountEncryptionMigrateToModeSchema,
@@ -1044,12 +1046,12 @@ export const AccountEncryptionMigrateTransitionPrepareResponseSchema = z
         message: 'Transition source and target Account encryption modes must differ',
       });
     }
-  });
+  }));
 export type AccountEncryptionMigrateTransitionPrepareResponse = z.infer<
   typeof AccountEncryptionMigrateTransitionPrepareResponseSchema
 >;
 
-const AccountEncryptionMigrateTransitionAuthorizationSchema = z.discriminatedUnion(
+const AccountEncryptionMigrateTransitionAuthorizationSchema = lazyZodSchema(() => z.discriminatedUnion(
   'kind',
   [
     z.object({ kind: z.literal('present_user_confirmation') }).strict(),
@@ -1059,7 +1061,7 @@ const AccountEncryptionMigrateTransitionAuthorizationSchema = z.discriminatedUni
       externalAuthProof: AccountEncryptionMigrateExternalAuthProofSchema,
     }).strict(),
   ],
-);
+));
 
 /**
  * A prepared replacement password credential for an Account that has one
@@ -1076,13 +1078,13 @@ const AccountEncryptionMigrateTransitionAuthorizationSchema = z.discriminatedUni
  * instead proves the current password through the first-key external-auth
  * proof, which already binds this whole request.
  */
-export const AccountEncryptionMigrateTransitionPasswordCredentialSchema = z
+export const AccountEncryptionMigrateTransitionPasswordCredentialSchema = lazyZodSchema(() => z
   .object({
     expectedRevision: z.number().int().min(1).max(2_147_483_647),
     credential: AccountPasswordCredentialV1Schema,
     proof: PasswordMutationChallengeProofV1Schema.optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionPasswordCredential = z.infer<
   typeof AccountEncryptionMigrateTransitionPasswordCredentialSchema
 >;
@@ -1091,37 +1093,37 @@ export type AccountEncryptionMigrateTransitionPasswordCredential = z.infer<
  * This phase is mandatory before Collection inventory or staging. The Account
  * coordinator persists the accepted confirmation or first-key authorization.
  */
-export const AccountEncryptionMigrateTransitionAuthorizeRequestSchema = z
+export const AccountEncryptionMigrateTransitionAuthorizeRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     authorization: AccountEncryptionMigrateTransitionAuthorizationSchema,
     passwordCredential:
       AccountEncryptionMigrateTransitionPasswordCredentialSchema.optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionAuthorizeRequest = z.infer<
   typeof AccountEncryptionMigrateTransitionAuthorizeRequestSchema
 >;
 
 /** One fixed-size inventory page from the Account-owned transition census. */
-export const AccountEncryptionMigrateCollectionInventoryPageRequestSchema = z
+export const AccountEncryptionMigrateCollectionInventoryPageRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionInventoryPageRequest = z.infer<
   typeof AccountEncryptionMigrateCollectionInventoryPageRequestSchema
 >;
 
-export const AccountEncryptionMigrateCollectionInventoryPageSchema = z
+export const AccountEncryptionMigrateCollectionInventoryPageSchema = lazyZodSchema(() => z
   .object({
     items: z
       .array(AccountEncryptionMigrateCollectionInventoryItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
     nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionInventoryPage = z.infer<
   typeof AccountEncryptionMigrateCollectionInventoryPageSchema
 >;
@@ -1144,7 +1146,7 @@ function utf8JsonByteLength(value: unknown): number {
  * A bounded batch for the Account coordinator. It is intentionally free of
  * aggregate/lifetime limits, which the Account lifecycle owner must measure.
  */
-export const AccountEncryptionMigrateCollectionStageBatchRequestSchema = z
+export const AccountEncryptionMigrateCollectionStageBatchRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     items: z
@@ -1176,25 +1178,25 @@ export const AccountEncryptionMigrateCollectionStageBatchRequestSchema = z
         message: 'Collection transition stage batch exceeds the encoded 8 MiB limit',
       });
     }
-  });
+  }));
 export type AccountEncryptionMigrateCollectionStageBatchRequest = z.infer<
   typeof AccountEncryptionMigrateCollectionStageBatchRequestSchema
 >;
 
-export const AccountEncryptionMigrateTransitionCancelRequestSchema = z
+export const AccountEncryptionMigrateTransitionCancelRequestSchema = lazyZodSchema(() => z
   .object({ transitionId: AccountEncryptionMigrateTransitionIdSchema })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionCancelRequest = z.infer<
   typeof AccountEncryptionMigrateTransitionCancelRequestSchema
 >;
 
 /** The only V5 Collection finalization directive; no direct payload bypass exists. */
-export const AccountEncryptionMigrateCollectionDirectiveSchema = z
+export const AccountEncryptionMigrateCollectionDirectiveSchema = lazyZodSchema(() => z
   .object({
     action: z.literal('staged'),
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionDirective = z.infer<
   typeof AccountEncryptionMigrateCollectionDirectiveSchema
 >;
@@ -1204,15 +1206,15 @@ export type AccountEncryptionMigrateCollectionDirective = z.infer<
  * source facts are explicit, a target is only accepted against those facts,
  * and the Account transition remains the only lifecycle/activation owner.
  */
-const AccountEncryptionMigrateAutomationDefinitionContentSchema = z
+const AccountEncryptionMigrateAutomationDefinitionContentSchema = lazyZodSchema(() => z
   .object({
     templateCiphertext:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
     triggerDefinitionEnvelopes: AutomationTriggerDefinitionEnvelopesMigrationSchema,
   })
-  .strict();
+  .strict());
 
-const AccountEncryptionMigrateAutomationRunSourceContentSchema = z
+const AccountEncryptionMigrateAutomationRunSourceContentSchema = lazyZodSchema(() => z
   .object({
     triggerEvidenceEnvelope:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
@@ -1233,9 +1235,9 @@ const AccountEncryptionMigrateAutomationRunSourceContentSchema = z
     summaryCiphertext:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.summaryCiphertext.nullable(),
   })
-  .strict();
+  .strict());
 
-const AccountEncryptionMigrateAutomationRunTargetContentSchema = z
+const AccountEncryptionMigrateAutomationRunTargetContentSchema = lazyZodSchema(() => z
   .object({
     triggerEvidenceEnvelope:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.triggerEvidenceEnvelope.nullable(),
@@ -1256,11 +1258,11 @@ const AccountEncryptionMigrateAutomationRunTargetContentSchema = z
     summaryCiphertext:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.summaryCiphertext.nullable(),
   })
-  .strict();
+  .strict());
 
-const AccountEncryptionMigrateWorkflowInvocationContentSchema = z.object({
+const AccountEncryptionMigrateWorkflowInvocationContentSchema = lazyZodSchema(() => z.object({
   contentEnvelope: ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.resultEnvelope,
-}).strict();
+}).strict());
 
 const AccountEncryptionMigrateRunShape = {
   kind: z.literal('run'),
@@ -1278,7 +1280,7 @@ const AccountEncryptionMigrateDirectOriginShape = {
 } as const;
 
 export const AccountEncryptionMigrateAutomationInventoryItemSchema =
-  z.union([
+  lazyZodSchema(() => z.union([
     z.object({
       kind: z.literal('definition'),
       automationId: asProtocolZod(AutomationIdV1Schema),
@@ -1301,13 +1303,13 @@ export const AccountEncryptionMigrateAutomationInventoryItemSchema =
       invocationRecordId: WorkflowInvocationRecordIdSchema,
       source: AccountEncryptionMigrateWorkflowInvocationContentSchema,
     }).strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateAutomationInventoryItem = z.infer<
   typeof AccountEncryptionMigrateAutomationInventoryItemSchema
 >;
 
 export const AccountEncryptionMigrateAutomationStageItemSchema =
-  z.union([
+  lazyZodSchema(() => z.union([
     z.object({
       kind: z.literal('definition'),
       automationId: asProtocolZod(AutomationIdV1Schema),
@@ -1334,29 +1336,29 @@ export const AccountEncryptionMigrateAutomationStageItemSchema =
       source: AccountEncryptionMigrateWorkflowInvocationContentSchema,
       target: AccountEncryptionMigrateWorkflowInvocationContentSchema,
     }).strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateAutomationStageItem = z.infer<
   typeof AccountEncryptionMigrateAutomationStageItemSchema
 >;
 
-export const AccountEncryptionMigrateAutomationInventoryPageRequestSchema = z
+export const AccountEncryptionMigrateAutomationInventoryPageRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     cursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateAutomationInventoryPageRequest = z.infer<
   typeof AccountEncryptionMigrateAutomationInventoryPageRequestSchema
 >;
 
-export const AccountEncryptionMigrateAutomationInventoryPageSchema = z
+export const AccountEncryptionMigrateAutomationInventoryPageSchema = lazyZodSchema(() => z
   .object({
     items: z
       .array(AccountEncryptionMigrateAutomationInventoryItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
     nextCursor: asProtocolZod(PluginCollectionOpaqueCursorV1Schema).optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateAutomationInventoryPage = z.infer<
   typeof AccountEncryptionMigrateAutomationInventoryPageSchema
 >;
@@ -1371,7 +1373,7 @@ function automationStageItemIdentity(
       : `workflow_invocation\u0000${item.runId}\u0000${item.invocationRecordId}`;
 }
 
-export const AccountEncryptionMigrateAutomationStageBatchRequestSchema = z
+export const AccountEncryptionMigrateAutomationStageBatchRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     items: z
@@ -1403,24 +1405,24 @@ export const AccountEncryptionMigrateAutomationStageBatchRequestSchema = z
         message: 'Automation transition stage batch exceeds the encoded 8 MiB limit',
       });
     }
-  });
+  }));
 export type AccountEncryptionMigrateAutomationStageBatchRequest = z.infer<
   typeof AccountEncryptionMigrateAutomationStageBatchRequestSchema
 >;
 
 /** The only V5 Automation finalization directive; no direct payload bypass exists. */
-export const AccountEncryptionMigrateAutomationDirectiveSchema = z
+export const AccountEncryptionMigrateAutomationDirectiveSchema = lazyZodSchema(() => z
   .object({
     action: z.literal('staged'),
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateAutomationDirective = z.infer<
   typeof AccountEncryptionMigrateAutomationDirectiveSchema
 >;
 
 /** Current V5 activation is a transition reference, not a second authorization. */
-export const AccountEncryptionMigrateTransitionActivateRequestSchema = z
+export const AccountEncryptionMigrateTransitionActivateRequestSchema = lazyZodSchema(() => z
   .object({
     transitionId: AccountEncryptionMigrateTransitionIdSchema,
     collections: AccountEncryptionMigrateCollectionDirectiveSchema,
@@ -1442,22 +1444,22 @@ export const AccountEncryptionMigrateTransitionActivateRequestSchema = z
         message: 'Automation staged directive must reference the activated transition',
       });
     }
-  });
+  }));
 export type AccountEncryptionMigrateTransitionActivateRequest = z.infer<
   typeof AccountEncryptionMigrateTransitionActivateRequestSchema
 >;
 
 /** Authorization and cancellation acknowledge only the Account-owned transition. */
-export const AccountEncryptionMigrateTransitionAuthorizeResponseSchema = z
+export const AccountEncryptionMigrateTransitionAuthorizeResponseSchema = lazyZodSchema(() => z
   .object({ success: z.literal(true) })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionAuthorizeResponse = z.infer<
   typeof AccountEncryptionMigrateTransitionAuthorizeResponseSchema
 >;
 
-export const AccountEncryptionMigrateTransitionCancelResponseSchema = z
+export const AccountEncryptionMigrateTransitionCancelResponseSchema = lazyZodSchema(() => z
   .object({ success: z.literal(true) })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionCancelResponse = z.infer<
   typeof AccountEncryptionMigrateTransitionCancelResponseSchema
 >;
@@ -1466,44 +1468,44 @@ export type AccountEncryptionMigrateTransitionCancelResponse = z.infer<
  * Aggregate stage counters describe Account-owned accepted state; the V5
  * 500-row and 8 MiB limits bound one transport batch, never the aggregate.
  */
-export const AccountEncryptionMigrateCollectionStageBatchResponseSchema = z
+export const AccountEncryptionMigrateCollectionStageBatchResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(true),
     stagedParticipantCount: NonNegativeSafeIntegerSchema,
     stagedSourceBytes: NonNegativeSafeIntegerSchema,
     stagedTargetBytes: NonNegativeSafeIntegerSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateCollectionStageBatchResponse = z.infer<
   typeof AccountEncryptionMigrateCollectionStageBatchResponseSchema
 >;
 
-export const AccountEncryptionMigrateAutomationStageBatchResponseSchema = z
+export const AccountEncryptionMigrateAutomationStageBatchResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(true),
     stagedParticipantCount: NonNegativeSafeIntegerSchema,
     stagedSourceBytes: NonNegativeSafeIntegerSchema,
     stagedTargetBytes: NonNegativeSafeIntegerSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateAutomationStageBatchResponse = z.infer<
   typeof AccountEncryptionMigrateAutomationStageBatchResponseSchema
 >;
 
 /** Activation exposes only the canonical post-commit Account facts. */
-export const AccountEncryptionMigrateTransitionActivateResponseSchema = z
+export const AccountEncryptionMigrateTransitionActivateResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(true),
     mode: AccountEncryptionMigrateToModeSchema,
     accountVersion: NonNegativeSafeIntegerSchema,
     updatedAt: NonNegativeSafeIntegerSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateTransitionActivateResponse = z.infer<
   typeof AccountEncryptionMigrateTransitionActivateResponseSchema
 >;
 
-export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = z.union([
+export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = lazyZodSchema(() => z.union([
   z.object({
     items: z.array(AccountEncryptionMigrateSessionDraftItemSchema)
       .max(ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS),
@@ -1527,13 +1529,13 @@ export const AccountEncryptionMigrateSessionDraftsDirectiveSchema = z.union([
     }
     seen.add(item.address.draftId);
   });
-});
+}));
 export type AccountEncryptionMigrateSessionDraftsDirective = z.infer<
   typeof AccountEncryptionMigrateSessionDraftsDirectiveSchema
 >;
 
 /** Account-owned remembered rows travel through the existing atomic switch. */
-export const AccountEncryptionMigrateAuthoringMemoryDirectiveSchema = z.object({
+export const AccountEncryptionMigrateAuthoringMemoryDirectiveSchema = lazyZodSchema(() => z.object({
   items: z.array(z.object({
     key: AuthoringMemoryKeyV1Schema,
     expectedRevision: NonNegativeSafeIntegerSchema,
@@ -1548,7 +1550,7 @@ export const AccountEncryptionMigrateAuthoringMemoryDirectiveSchema = z.object({
     });
     seen.add(item.key);
   });
-});
+}));
 export type AccountEncryptionMigrateAuthoringMemoryDirective = z.infer<typeof AccountEncryptionMigrateAuthoringMemoryDirectiveSchema>;
 
 const AccountEncryptionMigrateCurrentRequestShape = {
@@ -1581,7 +1583,7 @@ const AccountEncryptionMigrateCurrentRequestShape = {
     AccountEncryptionMigrateTransitionPasswordCredentialSchema.optional(),
 } as const;
 
-export const AccountEncryptionMigrateUnsignedRequestSchema = z
+export const AccountEncryptionMigrateUnsignedRequestSchema = lazyZodSchema(() => z
   .object({
     ...AccountEncryptionMigrateCurrentRequestShape,
     keyProof: AccountEncryptionMigrateUnsignedKeyProofSchema.optional(),
@@ -1591,12 +1593,12 @@ export const AccountEncryptionMigrateUnsignedRequestSchema = z
     refineAccountEncryptionMigrateRequest(request, context, {
       requireE2eeKeyProof: true,
     });
-  });
+  }));
 export type AccountEncryptionMigrateUnsignedRequest = z.infer<
   typeof AccountEncryptionMigrateUnsignedRequestSchema
 >;
 
-export const AccountEncryptionMigrateRequestSchema = z
+export const AccountEncryptionMigrateRequestSchema = lazyZodSchema(() => z
   .object({
     ...AccountEncryptionMigrateCurrentRequestShape,
     keyProof: AccountEncryptionMigrateKeyProofSchema.optional(),
@@ -1606,7 +1608,7 @@ export const AccountEncryptionMigrateRequestSchema = z
     refineAccountEncryptionMigrateRequest(request, context, {
       requireE2eeKeyProof: false,
     });
-  });
+  }));
 export type AccountEncryptionMigrateRequest = z.infer<
   typeof AccountEncryptionMigrateRequestSchema
 >;
@@ -1616,9 +1618,9 @@ const ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_BINDING_DIGEST_V1_PREFIX =
 const ACCOUNT_ENCRYPTION_MIGRATE_PROOF_SIGNING_DOMAIN_V1 =
   'happier.account-encryption-migrate-proof.v1';
 
-export const AccountEncryptionMigrateRequestBindingDigestV1Schema = z
+export const AccountEncryptionMigrateRequestBindingDigestV1Schema = lazyZodSchema(() => z
   .string()
-  .regex(/^aemrb1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+  .regex(/^aemrb1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/));
 export type AccountEncryptionMigrateRequestBindingDigestV1 = z.infer<
   typeof AccountEncryptionMigrateRequestBindingDigestV1Schema
 >;
@@ -1810,9 +1812,9 @@ const ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_AUTHORIZATION_BINDING_DIGEST_V1_PREF
 const ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_AUTHORIZATION_PROOF_SIGNING_DOMAIN_V1 =
   'happier.account-encryption-migrate-transition-authorization-proof.v1';
 
-export const AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1Schema = z
+export const AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1Schema = lazyZodSchema(() => z
   .string()
-  .regex(/^aemtb1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/);
+  .regex(/^aemtb1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/));
 export type AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1 = z.infer<
   typeof AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1Schema
 >;
@@ -1823,10 +1825,10 @@ export type AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1 = z.i
  * one-request digest; accepting any other prefix would detach a proof from
  * its Account transition facts.
  */
-export const AccountEncryptionMigrateExternalAuthBindingDigestV1Schema = z.union([
+export const AccountEncryptionMigrateExternalAuthBindingDigestV1Schema = lazyZodSchema(() => z.union([
   AccountEncryptionMigrateRequestBindingDigestV1Schema,
   AccountEncryptionMigrateTransitionAuthorizationBindingDigestV1Schema,
-]);
+]));
 export type AccountEncryptionMigrateExternalAuthBindingDigestV1 = z.infer<
   typeof AccountEncryptionMigrateExternalAuthBindingDigestV1Schema
 >;
@@ -1946,7 +1948,7 @@ export function createAccountEncryptionMigrateTransitionAuthorizationProofSignin
   );
 }
 
-export const AccountEncryptionMigrateSuccessResponseSchema = z
+export const AccountEncryptionMigrateSuccessResponseSchema = lazyZodSchema(() => z
   .object({
     success: z.literal(true),
     mode: AccountEncryptionMigrateToModeSchema,
@@ -1965,22 +1967,22 @@ export const AccountEncryptionMigrateSuccessResponseSchema = z
       }).strict(),
     ]).optional(),
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateSuccessResponse = z.infer<
   typeof AccountEncryptionMigrateSuccessResponseSchema
 >;
 
-export const AccountEncryptionMigrateInvalidParamsReasonSchema = z.enum([
+export const AccountEncryptionMigrateInvalidParamsReasonSchema = lazyZodSchema(() => z.enum([
   'restore_required',
   'key_proof_required',
   'migration_inventory_changed',
-]);
+]));
 export type AccountEncryptionMigrateInvalidParamsReason = z.infer<
   typeof AccountEncryptionMigrateInvalidParamsReasonSchema
 >;
 
 export const AccountEncryptionMigrateBadRequestResponseSchema =
-  z.discriminatedUnion('error', [
+  lazyZodSchema(() => z.discriminatedUnion('error', [
     z
       .object({
         error: z.literal('invalid-params'),
@@ -2000,50 +2002,50 @@ export const AccountEncryptionMigrateBadRequestResponseSchema =
     z.object({
       error: z.literal('metadata_privacy_upgrade_required'),
     }).strict(),
-  ]);
+  ]));
 export type AccountEncryptionMigrateBadRequestResponse = z.infer<
   typeof AccountEncryptionMigrateBadRequestResponseSchema
 >;
 
-export const AccountEncryptionMigrateForbiddenResponseSchema = z
+export const AccountEncryptionMigrateForbiddenResponseSchema = lazyZodSchema(() => z
   .object({ error: z.enum(['e2ee-required', 'plaintext-only']) })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateForbiddenResponse = z.infer<
   typeof AccountEncryptionMigrateForbiddenResponseSchema
 >;
 
-export const AccountEncryptionMigrateNotFoundResponseSchema = z
+export const AccountEncryptionMigrateNotFoundResponseSchema = lazyZodSchema(() => z
   .object({ error: z.literal('not_found') })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateNotFoundResponse = z.infer<
   typeof AccountEncryptionMigrateNotFoundResponseSchema
 >;
 
-export const AccountEncryptionMigrateConflictResponseSchema = z
+export const AccountEncryptionMigrateConflictResponseSchema = lazyZodSchema(() => z
   .object({
     error: z.literal('version-mismatch'),
     currentVersion: NonNegativeSafeIntegerSchema,
   })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateConflictResponse = z.infer<
   typeof AccountEncryptionMigrateConflictResponseSchema
 >;
 
-export const AccountEncryptionMigrateInternalResponseSchema = z
+export const AccountEncryptionMigrateInternalResponseSchema = lazyZodSchema(() => z
   .object({ error: z.literal('internal') })
-  .strict();
+  .strict());
 export type AccountEncryptionMigrateInternalResponse = z.infer<
   typeof AccountEncryptionMigrateInternalResponseSchema
 >;
 
-export const AccountEncryptionMigrateAnyErrorResponseSchema = z.union([
+export const AccountEncryptionMigrateAnyErrorResponseSchema = lazyZodSchema(() => z.union([
   ArtifactQuotaExceededV1Schema,
   AccountEncryptionMigrateBadRequestResponseSchema,
   AccountEncryptionMigrateForbiddenResponseSchema,
   AccountEncryptionMigrateNotFoundResponseSchema,
   AccountEncryptionMigrateConflictResponseSchema,
   AccountEncryptionMigrateInternalResponseSchema,
-]);
+]));
 export type AccountEncryptionMigrateAnyErrorResponse = z.infer<
   typeof AccountEncryptionMigrateAnyErrorResponseSchema
 >;
