@@ -15,7 +15,7 @@ import {
 } from "@happier-dev/protocol";
 import type { Tx } from "@/storage/inTx";
 import { artifactVisibleWhere } from "./artifactClassification";
-import { openArtifactStoredContentBytes } from "./artifactStoredContent";
+import { openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from "./artifactStoredContent";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { projectRecipientContentKey, RECIPIENT_READINESS_SELECT } from "@/app/session/encryption/sessionDataKeyRecipientProjection";
@@ -125,6 +125,8 @@ export interface ArtifactForCaller {
     headerVersion: number;
     bodyVersion: number;
     dataEncryptionKey: Uint8Array<ArrayBuffer>;
+    provenance: Uint8Array<ArrayBuffer> | null;
+    provenanceDataEncryptionKey: Uint8Array<ArrayBuffer> | null;
     seq: number;
     createdAt: Date;
     updatedAt: Date;
@@ -132,8 +134,8 @@ export interface ArtifactForCaller {
 
 type ArtifactReadFailure = Readonly<{ ok: false; error: "artifact_not_found" | "artifact_content_unavailable"; ownerAccountId?: string }>;
 export type ArtifactReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller }> | ArtifactReadFailure;
-export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion">;
-export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Partial<Pick<ArtifactForCaller, "body" | "bodyVersion">>;
+export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion" | "provenance">;
+export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Pick<ArtifactForCaller, "bodyVersion" | "provenance"> & Partial<Pick<ArtifactForCaller, "body">>;
 export type ArtifactHeaderReadResult = Readonly<{ ok: true; artifact: ArtifactHeaderForCaller }> | ArtifactReadFailure;
 
 type StoredRecipientEnvelope = Readonly<{ encryptedDataKey: Uint8Array; recipientContentPublicKeyFingerprint: string }>;
@@ -147,38 +149,64 @@ function projectRecipientEnvelope(account: Parameters<typeof deriveAccountRecipi
 
 const headerContentSelect = {
     id: true, header: true, headerVersion: true, dataEncryptionKey: true, seq: true, createdAt: true, updatedAt: true,
+    provenanceDataEncryptionKey: true,
 } as const;
 type StoredArtifactHeader = Readonly<{
     id: string; header: Uint8Array; headerVersion: number; dataEncryptionKey: Uint8Array;
+    provenanceDataEncryptionKey: Uint8Array | null;
     seq: number; createdAt: Date; updatedAt: Date;
 }>;
 
-function projectArtifactHeader(row: StoredArtifactHeader, access: ArtifactAccess, key: Uint8Array<ArrayBuffer> | null): ArtifactHeaderReadResult {
+function projectArtifactHeader(row: StoredArtifactHeader, access: ArtifactAccess, key: Uint8Array<ArrayBuffer> | null,
+    provenanceKey: Uint8Array<ArrayBuffer> | null): ArtifactHeaderReadResult {
     if (!access.encryptionMode || !key) return { ok: false, error: "artifact_content_unavailable", ownerAccountId: access.ownerAccountId };
+    if (!artifactProvenanceMatchesAccountMode({ mode: access.encryptionMode, artifactId: row.id, bodyVersion: 0,
+        provenance: null, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: access.ownerAccountId };
     const header = openArtifactStoredContentBytes({ accountId: access.ownerAccountId, artifactId: row.id,
         mode: access.encryptionMode, dataEncryptionKey: row.dataEncryptionKey, content: row.header, field: "header" });
     if (!header) return { ok: false, error: "artifact_content_unavailable", ownerAccountId: access.ownerAccountId };
     return { ok: true, artifact: { id: row.id, ownerAccountId: access.ownerAccountId,
         access: access.level, encryptionMode: access.encryptionMode, header,
         headerVersion: row.headerVersion, dataEncryptionKey: key,
+        provenanceDataEncryptionKey: provenanceKey,
         seq: row.seq, createdAt: row.createdAt, updatedAt: row.updatedAt } };
 }
 
+/** Revision-bound private metadata is available in header inventories without loading document bodies. */
+function projectArtifactRevisionMetadata(header: ArtifactHeaderForCaller,
+    row: Readonly<{ bodyVersion: number; dataEncryptionKey: Uint8Array; provenance: Uint8Array | null }>):
+    Readonly<{ ok: true; artifact: ArtifactListItemForCaller }> | ArtifactReadFailure {
+    const provenance = row.provenance && (header.encryptionMode === 'plain' || header.provenanceDataEncryptionKey)
+        ? openArtifactProvenanceBytes({ accountId: header.ownerAccountId, artifactId: header.id, mode: header.encryptionMode,
+            dataEncryptionKey: row.dataEncryptionKey, content: row.provenance, bodyVersion: row.bodyVersion,
+            provenanceDataEncryptionKey: header.provenanceDataEncryptionKey }) : null;
+    if (row.provenance && (header.encryptionMode === 'plain' || header.provenanceDataEncryptionKey) && !provenance) {
+        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: header.ownerAccountId };
+    }
+    if (row.provenance && header.encryptionMode === 'e2ee' && header.access === 'owner' && !header.provenanceDataEncryptionKey) {
+        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: header.ownerAccountId };
+    }
+    return { ok: true, artifact: { ...header, bodyVersion: row.bodyVersion, provenance } };
+}
+
 function projectArtifactBody(header: ArtifactHeaderForCaller,
-    row: Readonly<{ body: Uint8Array; bodyVersion: number; dataEncryptionKey: Uint8Array }>): ArtifactReadResult {
+    row: Readonly<{ body: Uint8Array; bodyVersion: number; dataEncryptionKey: Uint8Array; provenance: Uint8Array | null }>): ArtifactReadResult {
+    const metadata = projectArtifactRevisionMetadata(header, row);
+    if (!metadata.ok) return metadata;
     const body = openArtifactStoredContentBytes({ accountId: header.ownerAccountId, artifactId: header.id,
         mode: header.encryptionMode, dataEncryptionKey: row.dataEncryptionKey, content: row.body, field: "body" });
-    return body ? { ok: true, artifact: { ...header, body, bodyVersion: row.bodyVersion } }
+    return body ? { ok: true, artifact: { ...metadata.artifact, body } }
         : { ok: false, error: "artifact_content_unavailable", ownerAccountId: header.ownerAccountId };
 }
 
-async function recipientEnvelopeInTx(tx: Tx, artifactId: string, actorAccountId: string): Promise<Uint8Array<ArrayBuffer> | null> {
+async function recipientEnvelopesInTx(tx: Tx, artifactId: string, actorAccountId: string) {
     const [account, envelope] = await Promise.all([
         tx.account.findUnique({ where: { id: actorAccountId }, select: RECIPIENT_READINESS_SELECT }),
         tx.artifactKeyEnvelope.findUnique({ where: { artifactId_recipientAccountId: { artifactId, recipientAccountId: actorAccountId } } }),
     ]);
-    if (!account || !envelope) return null;
-    return projectRecipientEnvelope(account, envelope);
+    if (!account || !envelope) return { content: null, provenance: null };
+    return { content: projectRecipientEnvelope(account, envelope), provenance: envelope.encryptedProvenanceDataKey
+        ? projectRecipientEnvelope(account, { ...envelope, encryptedDataKey: envelope.encryptedProvenanceDataKey }) : null };
 }
 
 /** Header lists and exact reads share access, mode and the caller's envelope projection. */
@@ -189,10 +217,14 @@ export async function readArtifactHeaderForCallerInTx(tx: Tx, input: Readonly<{
     if (!access) return { ok: false, error: "artifact_not_found" };
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: headerContentSelect });
     if (!row) return { ok: false, error: "artifact_not_found" };
+    const recipient = access.level !== 'owner' && access.encryptionMode === 'e2ee'
+        ? await recipientEnvelopesInTx(tx, row.id, input.actorAccountId) : null;
     const key = access.level === "owner" || access.encryptionMode === "plain"
         ? new Uint8Array(row.dataEncryptionKey)
-        : await recipientEnvelopeInTx(tx, row.id, input.actorAccountId);
-    return projectArtifactHeader(row, access, key);
+        : recipient?.content ?? null;
+    const provenanceKey = access.encryptionMode === 'plain' ? null : access.level === 'owner'
+        ? row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null : recipient?.provenance ?? null;
+    return projectArtifactHeader(row, access, key, provenanceKey);
 }
 
 /** Open only server at-rest Plain content; E2EE stays opaque with the caller's envelope. */
@@ -201,7 +233,7 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
 }>): Promise<ArtifactReadResult> {
     const header = await readArtifactHeaderForCallerInTx(tx, input);
     if (!header.ok) return header;
-    const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: { body: true, bodyVersion: true, dataEncryptionKey: true } });
+    const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId), select: { body: true, bodyVersion: true, dataEncryptionKey: true, provenance: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
     return projectArtifactBody(header.artifact, row);
 }
@@ -223,9 +255,10 @@ export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
             ] } : {}),
         }, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], take: input.limit, select: {
             ...artifactAccessFactsSelect(input.actorAccountId), ...headerContentSelect,
-            body: input.includeBody === true, bodyVersion: input.includeBody === true,
+            body: input.includeBody === true, bodyVersion: true, provenance: true,
             keyEnvelopes: { where: { recipientAccountId: input.actorAccountId }, select: {
                 encryptedDataKey: true, recipientContentPublicKeyFingerprint: true, recipient: { select: RECIPIENT_READINESS_SELECT },
+                encryptedProvenanceDataKey: true,
             } },
         } });
         for (const row of rows) {
@@ -234,12 +267,15 @@ export async function listArtifactHeadersForCallerInTx(tx: Tx, input: Readonly<{
             const envelope = row.keyEnvelopes[0];
             const key = access.level === "owner" || access.encryptionMode === "plain" ? new Uint8Array(row.dataEncryptionKey)
                 : envelope ? projectRecipientEnvelope(envelope.recipient, envelope) : null;
-            const read = projectArtifactHeader(row, access, key);
+            const privateKey = access.encryptionMode === 'plain' ? null : access.level === 'owner'
+                ? row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null
+                : envelope?.encryptedProvenanceDataKey ? projectRecipientEnvelope(envelope.recipient, { ...envelope, encryptedDataKey: envelope.encryptedProvenanceDataKey }) : null;
+            const read = projectArtifactHeader(row, access, key, privateKey);
             if (!read.ok) {
                 if (access.level === "owner") throw new Error("Artifact content is unavailable");
                 continue;
             }
-            const content = input.includeBody ? projectArtifactBody(read.artifact, row) : read;
+            const content = input.includeBody ? projectArtifactBody(read.artifact, row) : projectArtifactRevisionMetadata(read.artifact, row);
             if (!content.ok) {
                 if (access.level === "owner") throw new Error("Artifact content is unavailable");
                 continue;
@@ -357,7 +393,9 @@ export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ 
     const access = await resolveArtifactAccessInTx(tx, input);
     if (!access) return { ok: false, error: "artifact_not_found" };
     if (!access.encryptionMode) return { ok: false, error: "artifact_content_unavailable" };
-    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true } });
+    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true, provenanceDataEncryptionKey: true } });
+    if (!artifactProvenanceMatchesAccountMode({ mode: access.encryptionMode, artifactId: input.artifactId, bodyVersion: 0,
+        provenance: null, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { ok: false, error: 'artifact_content_unavailable' };
     const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
     const [accounts, envelopes] = await Promise.all([
         tx.account.findMany({ where: { id: { in: audience } }, select: RECIPIENT_READINESS_SELECT, orderBy: { id: "asc" } }),
@@ -365,13 +403,17 @@ export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ 
     ]);
     const byAccount = new Map(envelopes.map(envelope => [envelope.recipientAccountId, envelope]));
     const plain = access.encryptionMode === "plain";
-    const callerKey = plain ? null : access.level === "owner" ? new Uint8Array(row.dataEncryptionKey)
-        : await recipientEnvelopeInTx(tx, input.artifactId, input.actorAccountId);
+    const callerEnvelopes = !plain && access.level !== 'owner' ? await recipientEnvelopesInTx(tx, input.artifactId, input.actorAccountId) : null;
+    const callerKey = plain ? null : access.level === "owner" ? new Uint8Array(row.dataEncryptionKey) : callerEnvelopes?.content ?? null;
+    const callerPrivateKey = plain ? null : access.level === 'owner'
+        ? row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null : callerEnvelopes?.provenance ?? null;
     if (!plain && !callerKey) return { ok: false, error: "artifact_content_unavailable" };
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId,
         access: access.level, encryptionMode: access.encryptionMode,
         dataEncryptionKey: plain ? null : privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
         callerDataEncryptionKey: callerKey ? privacyKit.encodeBase64(callerKey) : null,
+        provenanceDataEncryptionKey: !plain && row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey)) : null,
+        callerProvenanceDataEncryptionKey: callerPrivateKey ? privacyKit.encodeBase64(callerPrivateKey) : null,
         recipients: accounts.map(account => {
             const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
             const envelope = byAccount.get(account.id);
@@ -384,6 +426,9 @@ export async function readArtifactRecipientCensusInTx(tx: Tx, input: Readonly<{ 
                 contentPublicKeyFingerprint: fingerprint,
                 encryptedDataKey: ownerEnvelope ? privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey))
                     : current ? privacyKit.encodeBase64(new Uint8Array(envelope.encryptedDataKey)) : null,
+                encryptedProvenanceDataKey: ownerEnvelope && row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey))
+                    : current && envelope.encryptedProvenanceDataKey && parseEncryptedDataKeyEnvelopeV1(envelope.encryptedProvenanceDataKey)
+                        ? privacyKit.encodeBase64(new Uint8Array(envelope.encryptedProvenanceDataKey)) : null,
                 recipientContentPublicKeyFingerprint: ownerEnvelope ? fingerprint : envelope?.recipientContentPublicKeyFingerprint ?? null };
         }) } };
 }
@@ -396,13 +441,22 @@ export async function commitArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Art
     if (access.encryptionMode !== "e2ee") return { ok: false, error: "artifact_content_unavailable" };
     const caller = await readArtifactForCallerInTx(tx, input);
     if (!caller.ok) return caller;
-    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true } });
+    const row = await tx.artifact.findUniqueOrThrow({ where: { id: input.artifactId }, select: { dataEncryptionKey: true, provenanceDataEncryptionKey: true } });
     if (!isDeepStrictEqual(new Uint8Array(row.dataEncryptionKey), privacyKit.decodeBase64(input.expectedDataEncryptionKey))) {
         return { ok: false, error: "artifact_data_key_changed" };
+    }
+    const expectedPrivate = input.expectedProvenanceDataEncryptionKey == null ? null : privacyKit.decodeBase64(input.expectedProvenanceDataEncryptionKey);
+    if ((input.expectedProvenanceDataEncryptionKey !== undefined || input.recipientKeyEnvelopes.some(envelope => envelope.encryptedProvenanceDataKey !== undefined))
+        && !isDeepStrictEqual(row.provenanceDataEncryptionKey ? new Uint8Array(row.provenanceDataEncryptionKey) : null, expectedPrivate)) {
+        return { ok: false, error: 'artifact_data_key_changed' };
     }
     for (const envelope of input.recipientKeyEnvelopes) {
         if (!parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedDataKey))) {
             return { ok: false, error: "artifact_invalid_recipient_envelope" };
+        }
+        if (envelope.encryptedProvenanceDataKey !== undefined && (!row.provenanceDataEncryptionKey
+            || !parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedProvenanceDataKey)))) {
+            return { ok: false, error: 'artifact_invalid_recipient_envelope' };
         }
     }
     return { ok: true, value: await applyArtifactRecipientKeyEnvelopesInTx(tx, input) };
@@ -425,7 +479,14 @@ export async function applyArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Read
             continue;
         }
         const bytes = privacyKit.decodeBase64(envelope.encryptedDataKey);
-        const data = { encryptedDataKey: bytes, recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint };
+        const previous = await tx.artifactKeyEnvelope.findUnique({ where: { artifactId_recipientAccountId: {
+            artifactId: input.artifactId, recipientAccountId: envelope.recipientAccountId } },
+            select: { recipientContentPublicKeyFingerprint: true } });
+        const data = { encryptedDataKey: bytes, recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
+            ...(envelope.encryptedProvenanceDataKey === undefined
+                ? previous && previous.recipientContentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint
+                    ? { encryptedProvenanceDataKey: null } : {}
+                : { encryptedProvenanceDataKey: privacyKit.decodeBase64(envelope.encryptedProvenanceDataKey) }) };
         await tx.artifactKeyEnvelope.upsert({ where: { artifactId_recipientAccountId: {
             artifactId: input.artifactId, recipientAccountId: envelope.recipientAccountId } },
             create: { artifactId: input.artifactId, recipientAccountId: envelope.recipientAccountId, ...data }, update: data });

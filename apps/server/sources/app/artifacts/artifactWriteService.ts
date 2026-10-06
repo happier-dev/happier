@@ -1,4 +1,5 @@
 import { inTx, type Tx } from "@/storage/inTx";
+import * as privacyKit from 'privacy-kit';
 import { artifactConversionBlobKey, artifactConversionBlobCustody, type PreparedArtifactAccountEncryptionConversionBlob, type PreparedArtifactAccountEncryptionConversionBlobs } from './artifactEncryptionConversionBlobService';
 import { db } from '@/storage/db';
 import { deletePrivateFile } from '@/storage/blob/files';
@@ -16,10 +17,12 @@ import { buildPluginDomainAccountChangeEntityId } from "@happier-dev/protocol/ch
 import { checkArtifactStorageBudgetInTx, retainArtifactBodyRevisionInTx, type ArtifactQuotaExceeded } from "./artifactStorageService";
 import {
     artifactDataKeyMatchesAccountMode,
+    artifactProvenanceMatchesAccountMode,
     artifactStoredContentMatchesAccountMode,
     artifactUpdateMatchesStoredMode,
     isPlainArtifactDataKeyBytes,
     openArtifactStoredContentBytes,
+    openArtifactProvenanceBytes,
     openArtifactStoredContentPair,
     storePlainArtifactDbBytes,
 } from "./artifactStoredContent";
@@ -71,7 +74,9 @@ export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     dataEncryptionKey: Uint8Array;
     seq: number;
     currentBlobId: string | null;
-    revisions: readonly Readonly<{ bodyVersion: number; body: Uint8Array; blobId: string | null }>[];
+    provenance: Uint8Array | null;
+    provenanceDataEncryptionKey: Uint8Array | null;
+    revisions: readonly Readonly<{ bodyVersion: number; body: Uint8Array; blobId: string | null; provenance: Uint8Array | null }>[];
     blobs: readonly Readonly<{ id: string; storageKey: string; encryptionMode: string; storedSizeBytes: bigint }>[];
     pluginUiArtifact: Readonly<{
         release: Readonly<{
@@ -104,7 +109,9 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
             dataEncryptionKey: true,
             seq: true,
             currentBlobId: true,
-            revisions: { select: { bodyVersion: true, body: true, blobId: true } },
+            provenance: true,
+            provenanceDataEncryptionKey: true,
+            revisions: { select: { bodyVersion: true, body: true, blobId: true, provenance: true } },
             blobs: { select: { id: true, storageKey: true, encryptionMode: true, storedSizeBytes: true } },
             pluginUiArtifact: {
                 select: {
@@ -134,6 +141,14 @@ function artifactBytesEqual(
 ): boolean {
     return left.byteLength === right.byteLength
         && left.every((value, index) => value === right[index]);
+}
+
+function nullableArtifactBytesEqual(left: Uint8Array | null | undefined, right: Uint8Array | null | undefined): boolean {
+    return left == null || right == null ? left == null && right == null : artifactBytesEqual(left, right);
+}
+
+function privateDirectiveBytes(value: string | null | undefined): Uint8Array<ArrayBuffer> | null {
+    return value == null ? null : new Uint8Array(privacyKit.decodeBase64(value));
 }
 
 /**
@@ -204,6 +219,10 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
             if (!expected || !openedBody || !artifactBytesEqual(openedBody, Buffer.from(expected.body, "base64"))) {
                 return { status: "mismatch" };
             }
+            const openedProvenance = revision.provenance ? openArtifactProvenanceBytes({ accountId: params.accountId,
+                artifactId: row.id, bodyVersion: revision.bodyVersion, mode: params.toMode, dataEncryptionKey: row.dataEncryptionKey,
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: revision.provenance }) : null;
+            if ((revision.provenance && !openedProvenance) || !nullableArtifactBytesEqual(openedProvenance, privateDirectiveBytes(expected.provenance))) return { status: 'mismatch' };
         }
         const expectedHeader =
             new Uint8Array(Buffer.from(item.header, "base64"));
@@ -213,6 +232,14 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
             new Uint8Array(
                 Buffer.from(item.dataEncryptionKey, "base64"),
             );
+        const openedProvenance = row.provenance ? openArtifactProvenanceBytes({ accountId: params.accountId,
+            artifactId: row.id, bodyVersion: row.bodyVersion, mode: params.toMode, dataEncryptionKey: row.dataEncryptionKey,
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: row.provenance }) : null;
+        if ((row.provenance && !openedProvenance)
+            || !nullableArtifactBytesEqual(openedProvenance, privateDirectiveBytes(item.provenance))
+            || !nullableArtifactBytesEqual(row.provenanceDataEncryptionKey, privateDirectiveBytes(item.provenanceDataEncryptionKey))) return { status: 'mismatch' };
+        if (!artifactProvenanceMatchesAccountMode({ mode: params.toMode, artifactId: row.id, bodyVersion: row.bodyVersion,
+            provenance: openedProvenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { status: 'mismatch' };
         const opened = openArtifactStoredContentPair({
             accountId: params.accountId,
             artifactId: row.id,
@@ -293,12 +320,16 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         body: Uint8Array;
         dataEncryptionKey: Uint8Array;
         seq: number;
+        provenance: Uint8Array | null;
+        provenanceDataEncryptionKey: Uint8Array | null;
+        currentProvenanceBytes: number;
         currentHeaderBytes: number;
         currentBodyBytes: number;
         currentBlobId: string | null;
         blobs: readonly PreparedArtifactAccountEncryptionConversionBlob[];
         ordinary: boolean;
-        revisions: readonly Readonly<{ bodyVersion: number; expectedStoredBody: Uint8Array; body: Uint8Array }>[];
+        revisions: readonly Readonly<{ bodyVersion: number; expectedStoredBody: Uint8Array; body: Uint8Array;
+            expectedStoredProvenance: Uint8Array | null; provenance: Uint8Array | null }>[];
     }>>();
     for (const row of rows) {
         const item = itemsById.get(row.id);
@@ -312,6 +343,22 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         ) {
             return { status: "migration_incomplete" };
         }
+        const sourceProvenance = row.provenance ? openArtifactProvenanceBytes({ accountId: params.accountId, artifactId: row.id,
+            mode: params.fromMode, bodyVersion: row.bodyVersion, dataEncryptionKey: row.dataEncryptionKey,
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: row.provenance }) : null;
+        if ((row.provenance && !sourceProvenance)
+            || !nullableArtifactBytesEqual(sourceProvenance, privateDirectiveBytes(item.expectedProvenance))
+            || !nullableArtifactBytesEqual(row.provenanceDataEncryptionKey, privateDirectiveBytes(item.expectedProvenanceDataEncryptionKey))) return { status: 'migration_incomplete' };
+        if (!artifactProvenanceMatchesAccountMode({ mode: params.fromMode, artifactId: row.id, bodyVersion: row.bodyVersion,
+            provenance: sourceProvenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return { status: 'invalid_content' };
+        const provenance = privateDirectiveBytes(item.provenance);
+        const provenanceDataEncryptionKey = privateDirectiveBytes(item.provenanceDataEncryptionKey);
+        if (Boolean(sourceProvenance) !== Boolean(provenance)
+            || !artifactProvenanceMatchesAccountMode({ mode: params.toMode, artifactId: row.id,
+                bodyVersion: row.bodyVersion + 1, provenance, provenanceDataEncryptionKey })) return { status: 'invalid_content' };
+        const storedProvenance = provenance == null ? null : params.toMode === 'plain'
+            ? storePlainArtifactDbBytes({ accountId: params.accountId, artifactId: row.id, field: 'provenance', content: provenance }) : provenance;
+        if (provenance && !storedProvenance) return { status: 'invalid_content' };
         const retainedIds = new Set([row.currentBlobId, ...row.revisions.map(revision => revision.blobId)].filter((id): id is string => Boolean(id)));
         if (retainedIds.size !== item.blobs.length || new Set(item.blobs.map(blob => blob.blobId)).size !== item.blobs.length) {
             return { status: 'migration_incomplete' };
@@ -337,6 +384,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         }
         if (!ArtifactRecipientKeyEnvelopesV1Schema.safeParse(item.recipientKeyEnvelopes).success
             || item.recipientKeyEnvelopes.some(envelope => !parseEncryptedDataKeyEnvelopeV1(new Uint8Array(Buffer.from(envelope.encryptedDataKey, "base64"))))
+            || item.recipientKeyEnvelopes.some(envelope => envelope.encryptedProvenanceDataKey !== undefined
+                && (!provenanceDataEncryptionKey || !parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(envelope.encryptedProvenanceDataKey))))
             || (item.recipientKeyEnvelopes.length > 0 && params.toMode === "plain")) {
             return { status: "invalid_content" };
         }
@@ -399,19 +448,34 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 return { status: "migration_incomplete" };
             }
             const body = Buffer.from(target.body, "base64");
+            const sourceProvenance = revision.provenance ? openArtifactProvenanceBytes({ accountId: params.accountId,
+                artifactId: row.id, bodyVersion: revision.bodyVersion, mode: params.fromMode, dataEncryptionKey: row.dataEncryptionKey,
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: revision.provenance }) : null;
+            if ((revision.provenance && !sourceProvenance)
+                || !nullableArtifactBytesEqual(sourceProvenance, privateDirectiveBytes(target.expectedProvenance))) return { status: 'migration_incomplete' };
+            const provenance = privateDirectiveBytes(target.provenance);
+            if (Boolean(sourceProvenance) !== Boolean(provenance)
+                || !artifactProvenanceMatchesAccountMode({ mode: params.toMode, artifactId: row.id,
+                    bodyVersion: revision.bodyVersion, provenance, provenanceDataEncryptionKey })) return { status: 'invalid_content' };
+            const storedProvenance = provenance == null ? null : params.toMode === 'plain'
+                ? storePlainArtifactDbBytes({ accountId: params.accountId, artifactId: row.id, field: 'provenance', content: provenance }) : provenance;
+            if (provenance && !storedProvenance) return { status: 'invalid_content' };
             if (!plainBodyMatchesBlob(body, revision.blobId)) return { status: 'invalid_content' };
             if (!artifactUpdateMatchesStoredMode({ dataEncryptionKey, body })) return { status: "invalid_content" };
             const stored = params.toMode === "plain" ? storePlainArtifactDbBytes({
                 accountId: params.accountId, artifactId: row.id, field: "body", content: body,
             }) : body;
             if (!stored) return { status: "invalid_content" };
-            revisions.push({ bodyVersion: revision.bodyVersion, expectedStoredBody: revision.body, body: stored });
+            revisions.push({ bodyVersion: revision.bodyVersion, expectedStoredBody: revision.body, body: stored,
+                expectedStoredProvenance: revision.provenance, provenance: storedProvenance });
         }
         prepared.set(row.id, {
             header: storedHeader,
             body: storedBody,
             dataEncryptionKey,
             seq: row.seq,
+            provenance: storedProvenance, provenanceDataEncryptionKey,
+            currentProvenanceBytes: row.provenance?.byteLength ?? 0,
             currentHeaderBytes: row.header.byteLength,
             currentBodyBytes: row.body.byteLength,
             currentBlobId: row.currentBlobId,
@@ -462,7 +526,9 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 accountId: params.accountId, artifactId: item.artifactId,
                 nextHeaderBytes: replacement.header.byteLength, nextBodyBytes: replacement.body.byteLength,
                 currentHeaderBytes: replacement.currentHeaderBytes, currentBodyBytes: replacement.currentBodyBytes,
-                revisionBytesDelta: replacement.revisions.reduce((sum, revision) => sum + revision.body.byteLength - revision.expectedStoredBody.byteLength, 0),
+                currentProvenanceBytes: replacement.currentProvenanceBytes, nextProvenanceBytes: replacement.provenance?.byteLength ?? 0,
+                revisionBytesDelta: replacement.revisions.reduce((sum, revision) => sum + revision.body.byteLength - revision.expectedStoredBody.byteLength
+                    + (revision.provenance?.byteLength ?? 0) - (revision.expectedStoredProvenance?.byteLength ?? 0), 0),
                 currentBlobId: replacement.currentBlobId,
                 blobBytesDelta: replacement.blobs.reduce((sum, blob) => sum + Number(blob.target.row.storedSizeBytes - blob.source.storedSizeBytes), 0),
             });
@@ -475,12 +541,15 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
                 headerVersion: item.expectedHeaderVersion,
                 bodyVersion: item.expectedBodyVersion,
                 dataEncryptionKey: Buffer.from(item.expectedDataEncryptionKey, "base64"),
+                provenanceDataEncryptionKey: privateDirectiveBytes(item.expectedProvenanceDataEncryptionKey),
             },
             data: {
                 header: Buffer.from(replacement.header),
                 headerVersion: item.expectedHeaderVersion + 1,
                 body: Buffer.from(replacement.body),
                 bodyVersion: item.expectedBodyVersion + 1,
+                provenance: replacement.provenance ? Buffer.from(replacement.provenance) : null,
+                provenanceDataEncryptionKey: replacement.provenanceDataEncryptionKey ? Buffer.from(replacement.provenanceDataEncryptionKey) : null,
                 dataEncryptionKey: Buffer.from(
                     replacement.dataEncryptionKey,
                 ),
@@ -498,8 +567,9 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         }
         for (const revision of replacement.revisions) {
             const migrated = await params.tx.artifactRevision.updateMany({
-                where: { artifactId: item.artifactId, bodyVersion: revision.bodyVersion, body: Buffer.from(revision.expectedStoredBody) },
-                data: { body: Buffer.from(revision.body) },
+                where: { artifactId: item.artifactId, bodyVersion: revision.bodyVersion, body: Buffer.from(revision.expectedStoredBody),
+                    provenance: revision.expectedStoredProvenance ? Buffer.from(revision.expectedStoredProvenance) : null },
+                data: { body: Buffer.from(revision.body), provenance: revision.provenance ? Buffer.from(revision.provenance) : null },
             });
             if (migrated.count !== 1) throw new ArtifactAccountEncryptionMigrationConflictError();
         }
@@ -556,6 +626,8 @@ type ArtifactRow = {
     body: Uint8Array;
     bodyVersion: number;
     dataEncryptionKey: Uint8Array;
+    provenance: Uint8Array | null;
+    provenanceDataEncryptionKey: Uint8Array | null;
     createdAt: Date;
     updatedAt: Date;
 };
@@ -566,6 +638,8 @@ export async function createArtifact(params: {
     header: Uint8Array;
     body: Uint8Array;
     dataEncryptionKey: Uint8Array;
+    provenance?: Uint8Array;
+    provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1;
 }): Promise<CreateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -592,6 +666,8 @@ export async function createArtifact(params: {
             header,
             body,
             dataEncryptionKey,
+            provenance: params.provenance,
+            provenanceDataEncryptionKey: params.provenanceDataEncryptionKey,
             blob: params.blob, preparedBlob,
         }));
         admitted = result.ok && result.didWrite;
@@ -611,6 +687,8 @@ export async function createArtifactTx(
         header: Uint8Array;
         body: Uint8Array;
         dataEncryptionKey: Uint8Array;
+        provenance?: Uint8Array;
+        provenanceDataEncryptionKey?: Uint8Array;
         blob?: ArtifactBlobWriteV1;
         preparedBlob?: PreparedArtifactBlobWrite;
         /**
@@ -649,6 +727,8 @@ export async function createArtifactTx(
             createdAt: true,
             updatedAt: true,
             deletedAt: true,
+            provenance: true,
+            provenanceDataEncryptionKey: true,
             pluginUiArtifact: {
                 select: {
                     release: {
@@ -691,6 +771,11 @@ export async function createArtifactTx(
         if (!opened) {
             return { ok: false, error: "internal" };
         }
+        const openedProvenance = existing.provenance ? openArtifactProvenanceBytes({ accountId: existing.accountId,
+            artifactId: existing.id, bodyVersion: existing.bodyVersion, mode: currentness.currentness.encryptionMode,
+            dataEncryptionKey: existing.dataEncryptionKey, provenanceDataEncryptionKey: existing.provenanceDataEncryptionKey,
+            content: existing.provenance }) : null;
+        if (existing.provenance && !openedProvenance) return { ok: false, error: 'internal' };
         const {
             accountId: _accountId,
             pluginUiArtifact: _pluginUiArtifact,
@@ -705,6 +790,7 @@ export async function createArtifactTx(
                 ...artifact,
                 header: opened.header,
                 body: opened.body,
+                provenance: openedProvenance,
             },
         };
     }
@@ -721,6 +807,14 @@ export async function createArtifactTx(
     }
 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
+    if (params.provenanceDataEncryptionKey && !params.provenance) return { ok: false, error: 'invalid-params' };
+    if (!artifactProvenanceMatchesAccountMode({ mode: currentness.currentness.encryptionMode,
+        artifactId: params.artifactId, bodyVersion: 1, provenance: params.provenance,
+        provenanceDataEncryptionKey: params.provenanceDataEncryptionKey })) return { ok: false, error: "invalid-params" };
+    const storedProvenance = params.provenance == null ? null : plain
+        ? storePlainArtifactDbBytes({ accountId: params.actorUserId, artifactId: params.artifactId, field: "provenance", content: params.provenance })
+        : params.provenance;
+    if (params.provenance && !storedProvenance) return { ok: false, error: "invalid-params" };
     const storedHeader = plain
         ? storePlainArtifactDbBytes({
             accountId: params.actorUserId,
@@ -751,6 +845,7 @@ export async function createArtifactTx(
     if (!params.markChanged) {
         const quota = await checkArtifactStorageBudgetInTx(tx, { accountId: params.actorUserId,
             artifactId: params.artifactId, nextHeaderBytes: storedHeader.byteLength, nextBodyBytes: storedBody.byteLength,
+            nextProvenanceBytes: storedProvenance?.byteLength ?? 0,
             nextBlobId: params.blob?.blobId ?? null, candidateBlobBytes: Number(params.preparedBlob?.row.storedSizeBytes ?? 0) });
         if (quota) return { ok: false, ...quota };
     }
@@ -764,6 +859,8 @@ export async function createArtifactTx(
             body: Buffer.from(storedBody),
             bodyVersion: 1,
             currentBlobId: params.blob?.blobId ?? null,
+            provenance: storedProvenance ? Buffer.from(storedProvenance) : null,
+            provenanceDataEncryptionKey: params.provenanceDataEncryptionKey ? Buffer.from(params.provenanceDataEncryptionKey) : null,
             dataEncryptionKey: Buffer.from(params.dataEncryptionKey),
             seq: 0,
         },
@@ -777,6 +874,8 @@ export async function createArtifactTx(
             seq: true,
             createdAt: true,
             updatedAt: true,
+            provenance: true,
+            provenanceDataEncryptionKey: true,
         },
     });
 
@@ -802,6 +901,7 @@ export async function createArtifactTx(
             ...created,
             header: params.header,
             body: params.body,
+            provenance: params.provenance ? Buffer.from(params.provenance) : null,
         },
     };
 }
@@ -811,7 +911,12 @@ export type UpdateArtifactResult =
     | {
         ok: true;
         cursor: Cursor;
-        ownerUpdate?: Readonly<{ accountId: string; cursor: Cursor }>;
+        recipientUpdates: readonly Readonly<{
+            accountId: string;
+            cursor: Cursor;
+            provenance: Uint8Array | null;
+            provenanceDataEncryptionKey: Uint8Array | null;
+        }>[];
         header?: { bytes: Uint8Array; version: number };
         body?: { bytes: Uint8Array; version: number };
       }
@@ -836,6 +941,8 @@ export async function updateArtifact(params: {
     artifactId: string;
     header?: { bytes: Uint8Array; expectedVersion: number };
     body?: { bytes: Uint8Array; expectedVersion: number };
+    provenance?: Uint8Array;
+    provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1 | null;
 }): Promise<UpdateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -850,6 +957,7 @@ export async function updateArtifact(params: {
         return { ok: false, error: "invalid-params" };
     }
     if (params.blob !== undefined && !body) return { ok: false, error: "invalid-params" };
+    if ((params.provenance !== undefined || params.provenanceDataEncryptionKey !== undefined) && !body) return { ok: false, error: "invalid-params" };
     if (header && (!(header.bytes instanceof Uint8Array) || typeof header.expectedVersion !== "number")) {
         return { ok: false, error: "invalid-params" };
     }
@@ -875,6 +983,8 @@ export async function updateArtifact(params: {
             artifactId,
             header,
             body,
+            provenance: params.provenance,
+            provenanceDataEncryptionKey: params.provenanceDataEncryptionKey,
             blob: params.blob, preparedBlob,
         }));
         admitted = result.ok;
@@ -894,6 +1004,8 @@ export async function updateArtifactTx(
         artifactId: string;
         header?: { bytes: Uint8Array; expectedVersion: number };
         body?: { bytes: Uint8Array; expectedVersion: number };
+        provenance?: Uint8Array;
+        provenanceDataEncryptionKey?: Uint8Array;
         expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
         blob?: ArtifactBlobWriteV1 | null;
         preparedBlob?: PreparedArtifactBlobWrite;
@@ -943,12 +1055,15 @@ export async function updateArtifactTx(
             bodyVersion: true,
             dataEncryptionKey: true,
             currentBlobId: true,
+            provenance: true,
+            provenanceDataEncryptionKey: true,
         },
     });
 
     if (!current) {
         return { ok: false, error: "not-found" };
     }
+    if ((params.provenance !== undefined || params.provenanceDataEncryptionKey !== undefined) && !params.body) return { ok: false, error: "invalid-params" };
 
     if (!artifactUpdateMatchesStoredMode({
         dataEncryptionKey: current.dataEncryptionKey,
@@ -991,6 +1106,13 @@ export async function updateArtifactTx(
     if (params.body && current.currentBlobId && params.blob === undefined && params.restoredBlobId === undefined) {
         return { ok: false, error: "artifact_binary_content_requires_explicit_update" };
     }
+    const provenanceDataEncryptionKey = params.provenanceDataEncryptionKey ?? current.provenanceDataEncryptionKey;
+    if (params.provenanceDataEncryptionKey && !params.provenance) return { ok: false, error: 'invalid-params' };
+    if (params.provenanceDataEncryptionKey && current.provenanceDataEncryptionKey
+        && !artifactBytesEqual(params.provenanceDataEncryptionKey, current.provenanceDataEncryptionKey)) return { ok: false, error: "invalid-params" };
+    if (!artifactProvenanceMatchesAccountMode({ mode: currentness.currentness.encryptionMode,
+        artifactId: current.id, bodyVersion: params.body ? params.body.expectedVersion + 1 : current.bodyVersion,
+        provenance: params.body ? params.provenance : null, provenanceDataEncryptionKey })) return { ok: false, error: "invalid-params" };
 
     const updateData: {
         updatedAt: Date;
@@ -1000,6 +1122,8 @@ export async function updateArtifactTx(
         body?: Uint8Array<ArrayBuffer>;
         bodyVersion?: number;
         currentBlobId?: string | null;
+        provenance?: Uint8Array<ArrayBuffer> | null;
+        provenanceDataEncryptionKey?: Uint8Array<ArrayBuffer>;
     } = {
         updatedAt: new Date(),
         seq: current.seq + 1,
@@ -1023,6 +1147,12 @@ export async function updateArtifactTx(
         headerUpdate = { bytes: params.header.bytes, version: params.header.expectedVersion + 1 };
     }
     if (params.body) {
+        const storedProvenance = params.provenance == null ? null : currentness.currentness.encryptionMode === "plain"
+            ? storePlainArtifactDbBytes({ accountId: ownerAccountId, artifactId: current.id, field: "provenance", content: params.provenance })
+            : params.provenance;
+        if (params.provenance && !storedProvenance) return { ok: false, error: "invalid-params" };
+        updateData.provenance = storedProvenance ? Buffer.from(storedProvenance) : null;
+        if (params.provenanceDataEncryptionKey) updateData.provenanceDataEncryptionKey = Buffer.from(params.provenanceDataEncryptionKey);
         if (params.restoredBlobId === undefined && !await admitArtifactBlobWriteInTx(tx, {
             artifactId: current.id, mode: currentness.currentness.encryptionMode, body: params.body.bytes,
             blob: params.blob ?? undefined, prepared: params.preparedBlob, currentBlobId: current.currentBlobId,
@@ -1048,6 +1178,8 @@ export async function updateArtifactTx(
         nextHeaderBytes: (updateData.header ?? current.header).byteLength,
         nextBodyBytes: (updateData.body ?? current.body).byteLength,
         currentHeaderBytes: current.header.byteLength, currentBodyBytes: current.body.byteLength, retainCurrentBody: Boolean(params.body),
+        currentProvenanceBytes: current.provenance?.byteLength ?? 0,
+        nextProvenanceBytes: (params.body ? updateData.provenance : current.provenance)?.byteLength ?? 0,
         currentBlobId: current.currentBlobId, nextBlobId: params.body ? updateData.currentBlobId : current.currentBlobId,
         candidateBlobBytes: params.preparedBlob?.candidate ? Number(params.preparedBlob.row.storedSizeBytes) : 0 });
     if (quota) return { ok: false, ...quota };
@@ -1059,6 +1191,7 @@ export async function updateArtifactTx(
             ...(params.header && { headerVersion: params.header.expectedVersion }),
             ...(params.body && { bodyVersion: params.body.expectedVersion }),
             ...(params.expectedRevision && { headerVersion: params.expectedRevision.headerVersion, bodyVersion: params.expectedRevision.bodyVersion }),
+            ...(params.provenanceDataEncryptionKey && { provenanceDataEncryptionKey: current.provenanceDataEncryptionKey }),
             ...artifactVisibleWhere,
         },
         data: updateData,
@@ -1113,20 +1246,29 @@ export async function updateArtifactTx(
     }
     if (params.body) await retainArtifactBodyRevisionInTx(tx, {
         artifactId: current.id, bodyVersion: current.bodyVersion, body: current.body, blobId: current.currentBlobId,
+        provenance: current.provenance,
     });
 
     const recipients = await resolveArtifactAudienceInTx(tx, params.artifactId);
     const recipientCursors = [];
+    const recipientUpdates = [];
     for (const accountId of recipients) {
         const cursor = await markAccountChanged(tx, { accountId, kind: "artifact", entityId: params.artifactId });
         recipientCursors.push({ accountId, cursor });
+        // The access owner projects current recipient custody, never the writer's wrap.
+        const read = await readArtifactForCallerInTx(tx, { actorAccountId: accountId, artifactId: params.artifactId });
+        if (read.ok) {
+            recipientUpdates.push({ accountId, cursor, provenance: read.artifact.provenance,
+                provenanceDataEncryptionKey: read.artifact.provenanceDataEncryptionKey });
+        } else if (accountId === ownerAccountId) {
+            throw new Error("Artifact owner cannot read its committed update");
+        }
     }
     const cursor = recipientCursors.find((recipient) => recipient.accountId === params.actorUserId)?.cursor;
     if (cursor === undefined) throw new Error("Artifact writer is missing from its authorized audience");
     const ownerCursor = recipientCursors.find((recipient) => recipient.accountId === ownerAccountId)?.cursor;
     if (ownerCursor === undefined) throw new Error("Artifact owner is missing from its authorized audience");
-    return { ok: true, cursor,
-        ...(ownerAccountId !== params.actorUserId ? { ownerUpdate: { accountId: ownerAccountId, cursor: ownerCursor } } : {}),
+    return { ok: true, cursor, recipientUpdates,
         ...(headerUpdate ? { header: headerUpdate } : {}), ...(bodyUpdate ? { body: bodyUpdate } : {}) };
 }
 

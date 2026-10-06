@@ -686,49 +686,7 @@ export function buildMachineStatusEphemeral(machineId: string, online: boolean):
     };
 }
 
-export function buildNewArtifactUpdate(artifact: {
-    id: string;
-    seq: number;
-    header: Uint8Array;
-    headerVersion: number;
-    body: Uint8Array;
-    bodyVersion: number;
-    dataEncryptionKey: Uint8Array;
-    createdAt: Date;
-    updatedAt: Date;
-}, updateSeq: number, updateId: string): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: 'new-artifact',
-            artifactId: artifact.id,
-            seq: artifact.seq,
-            header: Buffer.from(artifact.header).toString('base64'),
-            headerVersion: artifact.headerVersion,
-            body: Buffer.from(artifact.body).toString('base64'),
-            bodyVersion: artifact.bodyVersion,
-            dataEncryptionKey: Buffer.from(artifact.dataEncryptionKey).toString('base64'),
-            createdAt: artifact.createdAt.getTime(),
-            updatedAt: artifact.updatedAt.getTime()
-        },
-        createdAt: Date.now()
-    };
-}
-
-export function buildUpdateArtifactUpdate(artifactId: string, updateSeq: number, updateId: string, header?: { value: string; version: number }, body?: { value: string; version: number }): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: 'update-artifact',
-            artifactId,
-            header,
-            body
-        },
-        createdAt: Date.now()
-    };
-}
+export { buildNewArtifactUpdate, buildUpdateArtifactUpdate } from './artifactEventPayloadBuilders';
 
 export function buildDeleteArtifactUpdate(artifactId: string, updateSeq: number, updateId: string): UpdatePayload {
     return {

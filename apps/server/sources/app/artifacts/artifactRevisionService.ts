@@ -1,10 +1,10 @@
 import { inTx, type Tx } from "@/storage/inTx";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import { readArtifactForCallerInTx } from "./artifactAccessService";
-import { openArtifactStoredContentBytes } from "./artifactStoredContent";
+import { openArtifactStoredContentBytes, openArtifactProvenanceBytes } from "./artifactStoredContent";
 import { updateArtifactTx, type UpdateArtifactResult } from "./artifactWriteService";
 import { cleanupArtifactOrphanBlobs } from './artifactBlobService';
-import { ArtifactBodyEnvelopeV1Schema, decodePlainArtifactStoredContent, sameStrictJsonValue } from '@happier-dev/protocol';
+import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema, decodePlainArtifactStoredContent, sameStrictJsonValue } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
 
 /** Reads history under the same current access, mode and recipient envelope admission as the head. */
@@ -20,7 +20,13 @@ export async function listArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
         const body = openArtifactStoredContentBytes({ accountId: read.artifact.ownerAccountId, artifactId: input.artifactId,
             mode: read.artifact.encryptionMode, field: "body", dataEncryptionKey: read.artifact.dataEncryptionKey, content: revision.body });
         if (!body) return { ok: false as const, error: "artifact_content_unavailable" as const };
-        projected.push({ bodyVersion: revision.bodyVersion, body, createdAt: revision.createdAt, sizeBytes: revision.body.byteLength });
+        const provenance = revision.provenance && (read.artifact.encryptionMode === 'plain' || read.artifact.provenanceDataEncryptionKey)
+            ? openArtifactProvenanceBytes({ accountId: read.artifact.ownerAccountId, artifactId: input.artifactId,
+                mode: read.artifact.encryptionMode, bodyVersion: revision.bodyVersion, dataEncryptionKey: read.artifact.dataEncryptionKey,
+                provenanceDataEncryptionKey: read.artifact.provenanceDataEncryptionKey, content: revision.provenance }) : null;
+        if (revision.provenance && (read.artifact.encryptionMode === 'plain' || read.artifact.provenanceDataEncryptionKey) && !provenance) return { ok: false as const, error: 'artifact_content_unavailable' as const };
+        projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt,
+            sizeBytes: revision.body.byteLength + (revision.provenance?.byteLength ?? 0) });
     }
     return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
 }
@@ -32,6 +38,8 @@ export async function restoreArtifactBodyRevision(input: Readonly<{
     bodyVersion: number;
     header: Uint8Array;
     body?: Uint8Array;
+    provenance?: Uint8Array;
+    provenanceDataEncryptionKey?: Uint8Array;
     expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }>;
 }>): Promise<UpdateArtifactResult> {
     try {
@@ -46,7 +54,7 @@ export async function restoreArtifactBodyRevision(input: Readonly<{
                 mode: read.artifact.encryptionMode, field: "body", dataEncryptionKey: read.artifact.dataEncryptionKey, content: revision.body });
             if (!bytes) return { ok: false, error: "internal" };
             if (input.body !== undefined && read.artifact.encryptionMode === 'plain') {
-                const selected = ArtifactBodyEnvelopeV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(bytes)));
+                const selected = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(bytes)));
                 const replacement = ArtifactBodyEnvelopeV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(Buffer.from(input.body))));
                 // Provenance may change; the selected content and binary reference stay authoritative.
                 if (!selected.success || !replacement.success || !sameStrictJsonValue(selected.data.body, replacement.data.body)) {
@@ -55,6 +63,7 @@ export async function restoreArtifactBodyRevision(input: Readonly<{
             }
             return await updateArtifactTx(tx, { actorUserId: input.actorUserId, artifactId: input.artifactId,
                 expectedRevision: input.expectedRevision,
+                provenance: input.provenance, provenanceDataEncryptionKey: input.provenanceDataEncryptionKey,
                 header: { bytes: input.header, expectedVersion: input.expectedRevision.headerVersion },
                 body: { bytes: input.body ?? bytes, expectedVersion: input.expectedRevision.bodyVersion }, restoredBlobId: revision.blobId });
         });

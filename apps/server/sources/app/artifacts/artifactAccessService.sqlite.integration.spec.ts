@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactPrivateRevisionMetadataV1Schema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0, openSessionDataKeyBundleV0, computeContentPublicKeyFingerprint } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -38,6 +38,68 @@ describe("Artifact document grants (real SQLite)", () => {
     }
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+
+    it.each(['plain', 'e2ee'] as const)('publishes revision-bound private attribution in the real %s header-only HTTP inventory', async mode => {
+        const ownerKeys = tweetnacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(ownerKeys.publicKey) : {}) } });
+        const artifactId = crypto.randomUUID();
+        const contentKey = tweetnacl.randomBytes(32);
+        const privateKey = tweetnacl.randomBytes(32);
+        const source = { sessionId: 'source-session', runId: 'source-run', machineId: 'source-machine', path: 'private/output.ts', sha: 'a'.repeat(64) };
+        const provenance = { savedBy: { kind: 'agent' as const, accountId: owner.id, sessionId: source.sessionId }, source };
+        const metadata = ArtifactPrivateRevisionMetadataV1Schema.parse({ v: 1, artifactId, bodyVersion: 2, provenance });
+        const seal = async (value: unknown, key: Uint8Array) => new Uint8Array(mode === 'plain'
+            ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value)) : await sealSessionDataKeyBundleV0(value, key));
+        const wrap = (key: Uint8Array, publicKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes }));
+        await db.artifact.create({ data: { id: artifactId, accountId: owner.id,
+            header: await seal({ title: 'Published output' }, contentKey),
+            body: await seal({ body: 'export const output = 1;' }, contentKey),
+            dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) : wrap(contentKey, ownerKeys.publicKey),
+            provenance: await seal(metadata, privateKey),
+            provenanceDataEncryptionKey: mode === 'plain' ? null : wrap(privateKey, ownerKeys.publicKey), headerVersion: 1, bodyVersion: 2,
+        } });
+        await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
+            const response = await app.inject({ method: 'GET', url: '/v1/artifacts', headers: { 'x-test-user-id': owner.id, ...protocolHeaders } });
+            expect(response.statusCode, response.body).toBe(200);
+            const rows = response.json();
+            const wire = rows.find((row: { id: string }) => row.id === artifactId);
+            expect(wire).not.toHaveProperty('body');
+            expect(wire).toMatchObject({ bodyVersion: 2, provenance: expect.any(String) });
+            if (mode === 'plain') {
+                expect(ArtifactPrivateRevisionMetadataV1Schema.parse(decodePlainArtifactStoredContent(wire.provenance))).toEqual(metadata);
+                expect(decodePlainArtifactStoredContent(wire.header)).toEqual({ title: 'Published output' });
+            }
+            if (mode === 'e2ee') {
+                const ownerPrivateKey = openEncryptedDataKeyEnvelopeV1({ envelope: privacyKit.decodeBase64(wire.provenanceDataEncryptionKey), recipientSecretKeyOrSeed: ownerKeys.secretKey });
+                expect(ownerPrivateKey).toEqual(privateKey);
+                expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(wire.provenance), ownerPrivateKey!)).toMatchObject({ status: 'authenticated', value: metadata });
+                expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(wire.header), contentKey)).toMatchObject({ status: 'authenticated', value: { title: 'Published output' } });
+                expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(wire.provenance), contentKey)).toEqual({ status: 'authentication_failed' });
+                const viewerKeys = tweetnacl.box.keyPair();
+                const viewer = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(viewerKeys.publicKey) } });
+                await db.artifactAccountGrant.create({ data: { artifactId, accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
+                await db.artifactKeyEnvelope.create({ data: { artifactId, recipientAccountId: viewer.id,
+                    encryptedDataKey: wrap(contentKey, viewerKeys.publicKey), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(viewerKeys.publicKey) } });
+                const contentOnly = await app.inject({ method: 'GET', url: '/v1/artifacts', headers: { 'x-test-user-id': viewer.id, ...protocolHeaders } });
+                expect(contentOnly.statusCode).toBe(200);
+                expect(contentOnly.json()[0]).toMatchObject({ id: artifactId, bodyVersion: 2, provenance: null, provenanceDataEncryptionKey: null });
+                expect(contentOnly.json()[0]).not.toHaveProperty('body');
+                const viewerContentKey = openEncryptedDataKeyEnvelopeV1({ envelope: privacyKit.decodeBase64(contentOnly.json()[0].dataEncryptionKey), recipientSecretKeyOrSeed: viewerKeys.secretKey });
+                expect(viewerContentKey).toEqual(contentKey);
+                expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(contentOnly.json()[0].header), viewerContentKey!)).toMatchObject({ status: 'authenticated', value: { title: 'Published output' } });
+                await db.artifactKeyEnvelope.update({ where: { artifactId_recipientAccountId: { artifactId, recipientAccountId: viewer.id } },
+                    data: { encryptedProvenanceDataKey: wrap(privateKey, viewerKeys.publicKey) } });
+                const granted = await app.inject({ method: 'GET', url: '/v1/artifacts', headers: { 'x-test-user-id': viewer.id, ...protocolHeaders } });
+                expect(granted.statusCode).toBe(200);
+                expect(granted.json()[0].provenanceDataEncryptionKey).not.toBe(wire.provenanceDataEncryptionKey);
+                expect(granted.json()[0]).not.toHaveProperty('body');
+                const viewerPrivateKey = openEncryptedDataKeyEnvelopeV1({ envelope: privacyKit.decodeBase64(granted.json()[0].provenanceDataEncryptionKey), recipientSecretKeyOrSeed: viewerKeys.secretKey });
+                expect(viewerPrivateKey).toEqual(privateKey);
+                expect(await openSessionDataKeyBundleV0(privacyKit.decodeBase64(granted.json()[0].provenance), viewerPrivateKey!)).toMatchObject({ status: 'authenticated', value: metadata });
+            }
+        });
+    });
 
     it.each(["account", "team", "group"] as const)("reports committed %s self-revocation without disclosing the remaining grants", async kind => {
         const owner = await db.account.create({ data: { encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });

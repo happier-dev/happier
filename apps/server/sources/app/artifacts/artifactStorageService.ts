@@ -33,10 +33,10 @@ export async function readArtifactStorageUsageInTx(tx: Tx, accountId: string): P
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
     const rows = await tx.$queryRaw<Array<{ usedBytes: bigint | number | string }>>(sql.sql`
         SELECT COALESCE(SUM(${identifier("contentBytes")}), 0) AS ${identifier("usedBytes")} FROM (
-            SELECT ${bytes("header")} + ${bytes("body")} AS ${identifier("contentBytes")}
+            SELECT ${bytes("header")} + ${bytes("body")} + COALESCE(${bytes("provenance")}, 0) AS ${identifier("contentBytes")}
             FROM ${identifier("Artifact")} a WHERE a.${identifier("accountId")} = ${accountId} AND ${ordinary}
             UNION ALL
-            SELECT ${bytes("body", "r")} AS ${identifier("contentBytes")}
+            SELECT ${bytes("body", "r")} + COALESCE(${bytes("provenance", "r")}, 0) AS ${identifier("contentBytes")}
             FROM ${identifier("ArtifactRevision")} r INNER JOIN ${identifier("Artifact")} a ON r.${identifier("artifactId")} = a.${identifier("id")}
             WHERE a.${identifier("accountId")} = ${accountId} AND ${ordinary}
             UNION ALL
@@ -54,8 +54,10 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     artifactId: string;
     nextHeaderBytes: number;
     nextBodyBytes: number;
+    nextProvenanceBytes?: number;
     currentHeaderBytes?: number;
     currentBodyBytes?: number;
+    currentProvenanceBytes?: number;
     retainCurrentBody?: boolean;
     revisionBytesDelta?: number;
     currentBlobId?: string | null;
@@ -65,16 +67,16 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
 }>): Promise<ArtifactQuotaExceeded | null> {
     const config = readArtifactStorageEnv(process.env);
     if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
-    const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes);
+    const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes + (input.nextProvenanceBytes ?? 0));
     const { sql, identifier, bytes } = storageSql();
     const rows = await tx.$queryRaw<Array<{ sizeBytes: bigint | number | string; blobId: string | null }>>(sql.sql`
-        SELECT ${bytes("body")} AS ${identifier("sizeBytes")}, ${identifier("blobId")} FROM ${identifier("ArtifactRevision")}
+        SELECT ${bytes("body")} + COALESCE(${bytes("provenance")}, 0) AS ${identifier("sizeBytes")}, ${identifier("blobId")} FROM ${identifier("ArtifactRevision")}
         WHERE ${identifier("artifactId")} = ${input.artifactId} ORDER BY ${identifier("bodyVersion")} DESC`);
     const currentRevisionBytes = storageSize(rows.reduce((sum, row) => sum + storageSize(row.sizeBytes), 0));
     const removedRevisionBytes = input.retainCurrentBody
         ? rows.slice(Math.max(0, config.revisionRetentionCount - 1)).reduce((sum, row) => sum + storageSize(row.sizeBytes), 0)
         : 0;
-    const revisionBytesDelta = (input.retainCurrentBody && config.revisionRetentionCount > 0 ? input.currentBodyBytes ?? 0 : 0)
+    const revisionBytesDelta = (input.retainCurrentBody && config.revisionRetentionCount > 0 ? (input.currentBodyBytes ?? 0) + (input.currentProvenanceBytes ?? 0) : 0)
         - removedRevisionBytes + (input.revisionBytesDelta ?? 0);
     const blobs = await tx.artifactBlob.findMany({ where: { artifactId: input.artifactId }, select: { id: true, storedSizeBytes: true } });
     const currentBlobBytes = storageSize(blobs.reduce((sum, blob) => sum + storageSize(blob.storedSizeBytes), 0));
@@ -91,7 +93,7 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     }
     if (config.accountLimitBytes === null) return null;
     const usage = await readArtifactStorageUsageInTx(tx, input.accountId);
-    const usedBytes = storageSize(usage.usedBytes + headBytes - (input.currentHeaderBytes ?? 0) - (input.currentBodyBytes ?? 0)
+    const usedBytes = storageSize(usage.usedBytes + headBytes - (input.currentHeaderBytes ?? 0) - (input.currentBodyBytes ?? 0) - (input.currentProvenanceBytes ?? 0)
         + revisionBytesDelta + projectedBlobBytes - currentBlobBytes);
     return usedBytes > config.accountLimitBytes
         ? { error: "quota_exceeded", budget: "account", limitBytes: config.accountLimitBytes, usedBytes }
@@ -103,11 +105,12 @@ export async function retainArtifactBodyRevisionInTx(tx: Tx, input: Readonly<{
     artifactId: string;
     bodyVersion: number;
     body: Uint8Array;
+    provenance?: Uint8Array | null;
     blobId?: string | null;
 }>) {
     const { revisionRetentionCount } = readArtifactStorageEnv(process.env);
     if (revisionRetentionCount > 0) {
-        await tx.artifactRevision.create({ data: { ...input, body: Buffer.from(input.body) } });
+        await tx.artifactRevision.create({ data: { ...input, body: Buffer.from(input.body), provenance: input.provenance ? Buffer.from(input.provenance) : null } });
     }
     const retained = await tx.artifactRevision.findMany({ where: { artifactId: input.artifactId },
         orderBy: { bodyVersion: "desc" }, take: revisionRetentionCount, select: { bodyVersion: true } });

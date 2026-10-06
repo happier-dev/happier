@@ -66,6 +66,8 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                     headerVersion: artifact.headerVersion,
                     body: privacyKit.encodeBase64(artifact.body),
                     bodyVersion: artifact.bodyVersion,
+                    provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
+                    provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
                     seq: artifact.seq,
                     createdAt: artifact.createdAt.getTime(),
                     updatedAt: artifact.updatedAt.getTime()
@@ -90,11 +92,19 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             data: string;
             expectedVersion: number;
         };
+        provenance?: string | null;
+        provenanceDataEncryptionKey?: string | null;
     }, callback: (response: any) => void) => {
         try {
             websocketEventsCounter.inc({ event_type: 'artifact-update' });
 
             const { artifactId, header, body } = data;
+
+            if ((data.provenance != null && typeof data.provenance !== 'string')
+                || (data.provenanceDataEncryptionKey != null && typeof data.provenanceDataEncryptionKey !== 'string')) {
+                callback?.({ result: 'error', message: 'Invalid parameters' });
+                return;
+            }
 
             // Validate input
             if (!artifactId) {
@@ -129,6 +139,8 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 artifactId,
                 header: header ? { bytes: privacyKit.decodeBase64(header.data), expectedVersion: header.expectedVersion } : undefined,
                 body: body ? { bytes: privacyKit.decodeBase64(body.data), expectedVersion: body.expectedVersion } : undefined,
+                provenance: data.provenance == null ? undefined : privacyKit.decodeBase64(data.provenance),
+                provenanceDataEncryptionKey: data.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(data.provenanceDataEncryptionKey),
             });
 
             if (!result.ok) {
@@ -182,13 +194,13 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 ? { value: body.data, version: result.body.version }
                 : undefined;
 
-            const legacyRecipient = result.ownerUpdate ?? { accountId: userId, cursor: result.cursor };
-            const updatePayload = buildUpdateArtifactUpdate(artifactId, legacyRecipient.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate);
-            eventRouter.emitUpdate({
-                userId: legacyRecipient.accountId,
-                payload: updatePayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
+            for (const recipient of result.recipientUpdates) {
+                eventRouter.emitUpdate({
+                    userId: recipient.accountId,
+                    payload: buildUpdateArtifactUpdate(artifactId, recipient.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate, recipient),
+                    recipientFilter: { type: 'user-scoped-only' }
+                });
+            }
 
             const response: any = { result: 'success' };
             if (headerUpdate) {
@@ -212,11 +224,19 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
         header: string;
         body: string;
         dataEncryptionKey: string;
+        provenance?: string | null;
+        provenanceDataEncryptionKey?: string | null;
     }, callback: (response: any) => void) => {
         try {
             websocketEventsCounter.inc({ event_type: 'artifact-create' });
 
             const { id, header, body, dataEncryptionKey } = data;
+
+            if ((data.provenance != null && typeof data.provenance !== 'string')
+                || (data.provenanceDataEncryptionKey != null && typeof data.provenanceDataEncryptionKey !== 'string')) {
+                callback?.({ result: 'error', message: 'Invalid parameters' });
+                return;
+            }
 
             // Validate input
             if (!id || typeof header !== 'string' || typeof body !== 'string' || typeof dataEncryptionKey !== 'string') {
@@ -238,6 +258,8 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                provenance: data.provenance == null ? undefined : privacyKit.decodeBase64(data.provenance),
+                provenanceDataEncryptionKey: data.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(data.provenanceDataEncryptionKey),
             });
 
             if (!result.ok) {
@@ -284,6 +306,8 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                     headerVersion: result.artifact.headerVersion,
                     body: Buffer.from(result.artifact.body).toString('base64'),
                     bodyVersion: result.artifact.bodyVersion,
+                    provenance: result.artifact.provenance ? privacyKit.encodeBase64(new Uint8Array(result.artifact.provenance)) : null,
+                    provenanceDataEncryptionKey: result.artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(result.artifact.provenanceDataEncryptionKey)) : null,
                     seq: result.artifact.seq,
                     createdAt: result.artifact.createdAt.getTime(),
                     updatedAt: result.artifact.updatedAt.getTime()

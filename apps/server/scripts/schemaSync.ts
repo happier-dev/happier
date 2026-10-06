@@ -107,7 +107,7 @@ function generateProviderSchemaFromPostgres(
         // Artifact migrations use LONGBLOB for stored content and wrapped keys;
         // Prisma's default Bytes mapping is BLOB and would disagree with that storage contract.
         body = body.replace(/^model\s+(?:Artifact|ArtifactRevision|ArtifactKeyEnvelope)\s+\{[\s\S]*?^\}/gm,
-            (model) => model.replace(/^([ \t]*\w+\s+Bytes)(?![^\n]*@db\.)/gm, "$1 @db.LongBlob"));
+            (model) => model.replace(/^([ \t]*\w+\s+Bytes\??)(?!\?)(?![^\n]*@db\.)/gm, "$1 @db.LongBlob"));
 
         // MySQL cannot create UNIQUE/INDEX keys on BLOB/TEXT columns without a key length.
         // `PublicSessionShare.tokenHash` stores a sha256 digest (32 bytes) and must be indexed.

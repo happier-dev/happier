@@ -4,7 +4,8 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { qualifyPluginArtifactAccountEncryptionMigrationInTx } from '@/app/plugins/availability/operations';
 import { artifactClassificationFromRelations } from './artifactClassification';
 import { readArtifactAccountEncryptionMigrationRowsInTx } from './artifactWriteService';
-import { openArtifactStoredContentPair, openArtifactStoredContentBytes } from './artifactStoredContent';
+import { openArtifactStoredContentPair, openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from './artifactStoredContent';
+import * as privacyKit from 'privacy-kit';
 
 /** The transition census also owns pagination; ordinary Artifact readers remain unchanged. */
 export async function readArtifactAccountEncryptionMigrationInventoryInTx(params: Readonly<{
@@ -21,12 +22,21 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
         const content = { accountId: params.accountId, artifactId: row.id, mode: mode.mode, dataEncryptionKey: row.dataEncryptionKey };
         const opened = openArtifactStoredContentPair({ ...content, header: row.header, body: row.body });
         if (!opened) return null;
+        const provenance = row.provenance ? openArtifactProvenanceBytes({ ...content, bodyVersion: row.bodyVersion,
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: row.provenance }) : null;
+        if (row.provenance && !provenance) return null;
+        if (!artifactProvenanceMatchesAccountMode({ mode: mode.mode, artifactId: row.id, bodyVersion: row.bodyVersion,
+            provenance, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey })) return null;
         const revisions: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['revisions'] = [];
         const envelopes = [{ ...opened, dataEncryptionKey: row.dataEncryptionKey }];
         for (const revision of row.revisions) {
             const body = openArtifactStoredContentBytes({ ...content, field: 'body', content: revision.body });
             if (!body) return null;
-            revisions.push({ bodyVersion: revision.bodyVersion, body: Buffer.from(body).toString('base64') });
+            const privateMetadata = revision.provenance ? openArtifactProvenanceBytes({ ...content, bodyVersion: revision.bodyVersion,
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, content: revision.provenance }) : null;
+            if (revision.provenance && !privateMetadata) return null;
+            revisions.push({ bodyVersion: revision.bodyVersion, body: Buffer.from(body).toString('base64'),
+                provenance: privateMetadata ? privacyKit.encodeBase64(privateMetadata) : null });
             envelopes.push({ header: opened.header, body, dataEncryptionKey: row.dataEncryptionKey });
         }
         const ownership: ArtifactAccountEncryptionMigrationOwnershipV1 | null = classification.kind === 'ordinary'
@@ -36,7 +46,9 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
         if (!ownership) return null;
         items.push({ id: row.id, ownership, header: Buffer.from(opened.header).toString('base64'), headerVersion: row.headerVersion,
             body: Buffer.from(opened.body).toString('base64'), bodyVersion: row.bodyVersion,
-            dataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'), revisions });
+            dataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'), revisions,
+            provenance: provenance ? privacyKit.encodeBase64(provenance) : null,
+            provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey)) : null });
     }
     return { ownerAccountId: params.accountId, encryptionMode: mode.mode, items,
         nextCursor: census.length > params.limit ? items.at(-1)!.id : null };
