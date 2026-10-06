@@ -1,3 +1,4 @@
+import { PROVIDER_USAGE_GAUGE_SETTINGS_SECTION } from '@/components/settings/connectedServices/providerUsageGaugeSettings';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 
@@ -17,20 +18,6 @@ export const SESSION_PROVIDER_LIMITS_SETTINGS = defineSettingsPage({
                 },
             },
         },
-        usageGauge: {
-            titleKey: 'settingsSession.providerUsageGauge.title',
-            featureId: 'connectedServices.quotas',
-            settings: {
-                gaugeVisible: { storage: { scope: 'account', key: 'sessionProviderUsageGaugeMode', access: 'read_write' }, titleKey: 'settingsSession.providerUsageGauge.visibilityTitle' },
-                gaugeLabels: { storage: { scope: 'account', key: 'sessionUsageGaugeLabels', access: 'read_write' }, titleKey: 'settingsSession.providerUsageGauge.labelsTitle' },
-                gaugeWindow: { storage: { scope: 'account', key: 'sessionProviderUsageGaugeWindowMode', access: 'read_write' },
-                    titleKey: 'settingsSession.providerUsageGauge.windowTitle',
-                    keywordKeys: [
-                        'settingsSession.providerUsageGauge.windowDailyTitle',
-                        'settingsSession.providerUsageGauge.windowWeeklyTitle',
-                    ],
-                },
-            },
-        },
+        usageGauge: PROVIDER_USAGE_GAUGE_SETTINGS_SECTION,
     },
 });

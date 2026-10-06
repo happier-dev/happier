@@ -14,7 +14,7 @@ import {
 } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useProfile, useSettingsSelector } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
 import {
     buildQualifiedPluginContributionKey,
@@ -38,7 +38,11 @@ import { resolveConnectedServiceRegistryEntryDisplayName } from './resolveConnec
  */
 export function useConnectedServicesIndex(options: Readonly<{ agents: 'load' | 'cached' }>) {
     const profile = useProfile();
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+        connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
+    }));
     const appShellProjection = useAppShellPluginUiProjection();
     const registrySnapshot = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();

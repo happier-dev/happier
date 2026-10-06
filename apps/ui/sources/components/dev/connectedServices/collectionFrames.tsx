@@ -50,6 +50,7 @@ export function renderCollectionFrame(frame: string): React.ReactNode | null {
     switch (frame) {
         case 'C1': case 'C1p': return <CollectionFrame presentation="list" />;
         case 'C2': case 'C2p': return <CollectionFrame presentation="grid" />;
+        case 'RDATA': case 'RDATAp': return <CollectionFrame presentation="list" realData />;
         case 'C1v': case 'C1vp': return <CollectionFrame presentation="list" hidden />;
         case 'A5': case 'A5p': return <CollectionFrame presentation="list" settled />;
         case 'D1': case 'D1p': return <DetailFrame accountKey="chatgpt:personal" />;
@@ -72,6 +73,13 @@ const CAST: readonly QualifiedConnectedAccountProfileV4[] = [
     account(CHATGPT, 'bot', 'bot@happier.dev'),
     account(ANTHROPIC, 'build', 'sk-ant-…4f2a', { kind: 'token', authenticationModeId: 'api-key', providerIdentity: undefined }),
     account(GITHUB, 'gh', 'leeroybrun', { kind: 'token', authenticationModeId: 'fine-grained-pat', providerIdentity: undefined }),
+];
+
+// The user's real-data shape, with invented identities: no credentials or Account writes.
+const REAL_DATA_CAST = [
+    account(CLAUDE, 'work', 'first@example.com', { providerIdentity: { email: 'first@example.com', accountId: '00ae5eea-6286-48bc-b82a-30a5f8492864' } }),
+    account(CLAUDE, 'personal', 'second@example.com', { providerIdentity: { email: 'second@example.com', accountId: 'aae57a12-f367-4e73-9c4d-f86413249c51' } }),
+    CAST[3]!,
 ];
 
 function pool(service: typeof CLAUDE, groupId: string, displayName: string, strategy: string, active: string, members: readonly string[]): QualifiedConnectedAccountGroupV4 {
@@ -156,12 +164,18 @@ function shortKey(sheet: ConnectedServicesIndexSheet, accountId: string): string
     return `${service}:${accountId}`;
 }
 
-function factsFor(key: string): ConnectedAccountIndexFacts {
+function factsFor(key: string, realData = false): ConnectedAccountIndexFacts {
     const usage = USAGE[key];
     if (!usage) return { usage: { kind: 'none' }, planLabel: null, subscription: null, recoveryCredits: null, fetchedAt: null, staleSince: null, refreshing: false, refresh: null };
     const fetchedAt = NOW - (usage.readAgoMs ?? 2 * MIN);
     return {
-        usage: usage.noLimits ? { kind: 'noLimits' } : { kind: 'meters', meters: projectIndexMeters(usage.windows.map(quotaMeter)) },
+        usage: usage.noLimits ? { kind: 'noLimits' } : { kind: 'meters', meters: projectIndexMeters((realData && key === 'claude:work' ? [
+            ['five_hour', 'five_hour', 42, 2 * HOUR],
+            ['seven_day', 'seven_day', 64, 4 * DAY],
+            ['seven_day_all', 'seven_day_all', 76, 4 * DAY],
+            ['seven_day_fable', 'seven_day_fable', 88, 4 * DAY],
+            ['spend', 'spend', 91, null],
+        ] satisfies readonly Window[] : usage.windows).map(quotaMeter)) },
         planLabel: usage.plan,
         subscription: usage.subscription ?? null,
         recoveryCredits: usage.resets ?? null,
@@ -182,12 +196,12 @@ const POOLS_BEFORE_BOT: readonly QualifiedConnectedAccountGroupV4[] = [
     pool(CHATGPT, 'codex-pool', 'Codex pool', 'priority', 'personal', ['personal']),
 ];
 
-function useCastModel(justConnected = false) {
+function useCastModel(justConnected = false, realData = false) {
     return React.useMemo(() => buildConnectedServicesIndexModel({
         transport: 'advertised-v4',
         entries: ENTRIES,
-        qualifiedAccounts: CAST,
-        qualifiedGroups: justConnected ? POOLS_BEFORE_BOT : POOLS,
+        qualifiedAccounts: realData ? REAL_DATA_CAST : CAST,
+        qualifiedGroups: realData ? [] : justConnected ? POOLS_BEFORE_BOT : POOLS,
         legacyServices: [],
         defaultAccountByServiceKey: {},
         resolveLabel: (candidate) => String(candidate?.projectedTitle ?? ''),
@@ -195,7 +209,7 @@ function useCastModel(justConnected = false) {
         presentDiagnostics: () => ({ primary: null, supportDetails: null }),
         loadingLabel: t('common.loading'),
         agentUses: AGENT_USES,
-    }), [justConnected]);
+    }), [justConnected, realData]);
 }
 
 function isDefaultTarget(target: QualifiedConnectedAccountPurposeBindingTargetV1): readonly string[] {
@@ -220,8 +234,9 @@ function railMeta(sheet: ConnectedServicesIndexSheet, accountId: string): Connec
     return { kind: 'usage', tightestPct: Math.min(...usage.windows.map((window) => window[2])), stale: (usage.readAgoMs ?? 0) > DAY };
 }
 
-function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexPresentation; hidden?: boolean; settled?: boolean }>) {
-    const model = useCastModel(props.settled === true);
+function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexPresentation; hidden?: boolean; settled?: boolean; realData?: boolean }>) {
+    const model = useCastModel(props.settled === true, props.realData === true);
+    const labels = props.realData ? {} : LABELS;
     const phone = useDeviceType() === 'phone';
     const present = presenter(props.hidden === true);
     const settledSheet = model.sheets.find((sheet) => sheet.service.localId === CHATGPT.localId);
@@ -237,13 +252,13 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
     const index = (
         <ConnectedServicesIndexView
             model={model}
-            labelsByKey={LABELS}
+            labelsByKey={labels}
             present={present}
             now={NOW}
             presentation={props.presentation}
             onPresentationChange={noop}
             compact={phone}
-            summary={{ needsYouCount: 1, asOf: NOW - 12 * MIN, onRefreshAll: noop }}
+            summary={{ needsYouCount: props.realData ? 0 : 1, asOf: NOW - 12 * MIN, onRefreshAll: noop }}
             connectMore={(
                 <ConnectedServicesConnectMore
                     model={model}
@@ -274,7 +289,7 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
                 ),
             } : null}
             renderAccount={({ sheet, account: indexAccount, render }) => (
-                <React.Fragment key={indexAccount.accountId}>{render(factsFor(shortKey(sheet, indexAccount.accountId)))}</React.Fragment>
+                <React.Fragment key={indexAccount.accountId}>{render(factsFor(shortKey(sheet, indexAccount.accountId), props.realData))}</React.Fragment>
             )}
             renderPool={({ sheet, pool: indexPool, entry, presentation, showDivider }) => {
                 const usage = derivePoolUsage({
@@ -311,7 +326,7 @@ function CollectionFrame(props: Readonly<{ presentation: ConnectedServicesIndexP
             <View style={styles.rail}>
                 <ConnectedServicesRailView
                     model={model}
-                    labelsByKey={LABELS}
+                    labelsByKey={labels}
                     selection={{ kind: 'index' }}
                     present={present}
                     identitiesHidden={props.hidden === true}

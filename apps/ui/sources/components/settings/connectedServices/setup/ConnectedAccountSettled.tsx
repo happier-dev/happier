@@ -10,7 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { useQualifiedConnectedAccountGroups } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountGroups';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
-import { useActiveServerAccountScope, useSettings } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useSettingsSelector } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
@@ -41,7 +41,11 @@ export function ConnectedAccountSettled(props: Readonly<{
     onDismiss: () => void;
     testID?: string;
 }>) {
-    const settings = useSettings();
+    const settings = useSettingsSelector((settings) => ({
+        connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+    }));
     const applySettings = useApplySettings();
     const { present } = useConnectedAccountIdentityPrivacy();
     const { account, onDismiss } = props;

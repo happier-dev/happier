@@ -214,14 +214,17 @@ describe('provider account usage selectors', () => {
             },
         });
 
+        snapshot.meters.push({ ...snapshot.meters[0]!, meterId: 'daily', label: 'Daily', windowDurationMs: 86_400_000, used: 30, remainingPct: 70 });
         const viewModel = selectors.computeProviderAccountUsageGaugeViewModel({
             snapshot,
             state: 'loaded_data',
             windowMode: 'most_constrained',
+            windowModes: ['weekly', 'daily'],
             nowMs: 2_000,
             formatter,
         });
 
+        expect(viewModel?.usageRings.map((ring) => ring.meterId)).toEqual(['weekly', 'daily']);
         expect(viewModel?.remainingPct).toBe(20);
         expect(viewModel?.recoveryCreditSummary).toEqual({
             availableCount: 1,

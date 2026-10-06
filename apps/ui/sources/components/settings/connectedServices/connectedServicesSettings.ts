@@ -1,3 +1,4 @@
+import { PROVIDER_USAGE_GAUGE_SETTINGS_SECTION } from './providerUsageGaugeSettings';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 
 /**
@@ -47,3 +48,9 @@ export const CONNECTED_SERVICES_SHARING_SETTINGS = [
     CONNECTED_SERVICES_SETTINGS.settings.sharingState,
     CONNECTED_SERVICES_SETTINGS.settings.sharingPerAgent,
 ];
+
+/** Composer gauges live on the collection's main page, rather than its sign-in subpage. */
+export const CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS = defineSettingsPage({
+    pageId: 'connectedServices',
+    sections: { usageGauge: PROVIDER_USAGE_GAUGE_SETTINGS_SECTION },
+});

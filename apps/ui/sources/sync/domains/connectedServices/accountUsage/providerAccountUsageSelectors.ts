@@ -167,6 +167,7 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
      */
     state: ProviderAccountUsageStateV1;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
+    windowModes?: readonly ConnectedServiceQuotaGaugeWindowMode[] | null;
     nowMs: number;
     formatter: ConnectedServiceQuotaGaugeLabelFormatter;
     providerDisplayName?: string | null;
@@ -177,6 +178,7 @@ export function computeProviderAccountUsageGaugeViewModel(params: Readonly<{
     const viewModel = computeConnectedServiceQuotaGaugeViewModel({
         snapshot: toGaugeQuotaSnapshot(params.snapshot),
         windowMode: params.windowMode,
+        windowModes: params.windowModes,
         nowMs: params.nowMs,
         formatter: params.formatter,
         providerDisplayName: params.providerDisplayName,

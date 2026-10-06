@@ -1,3 +1,5 @@
+import { ProviderUsageGaugeSettingsGroup } from './ProviderUsageGaugeSettingsGroup';
+import { CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS } from './connectedServicesSettings';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -12,6 +14,7 @@ import {
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { TeamCredentialCatalogSettingsGroup } from '@/components/settings/teams/credentials/TeamCredentialCatalogSettingsGroup';
@@ -21,7 +24,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute, buildNewConnectedAccountPoolRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { useActiveServerAccountScope, useAllMachines, useLocalSettingMutable, useSetting, useSettings } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useAllMachines, useLocalSettingMutable, useSetting, useSettingsSelector } from '@/sync/store/hooks';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -58,7 +61,10 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   const activeAccountScope = useActiveServerAccountScope();
   const index = useConnectedServicesIndex({ agents: 'load' });
   const { indexModel, agentEntries, agentsKnown, registrySnapshot, appShellProjection } = index;
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
+      connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+  }));
   const applySettings = useApplySettings();
   const labelsByKey = useSetting('connectedServicesProfileLabelByKey') ?? EMPTY_LABELS;
   const privacy = useConnectedAccountIdentityPrivacy();
@@ -184,7 +190,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemList>
         {!canAdd ? <SettingsPageHeader description={t('settings.connectedServicesSubtitle')} /> : null}
         {banner}
-        {canAdd ? connectMore : !projectionFailed ? (
+        {canAdd ? <ItemGroup surface="none">{connectMore}</ItemGroup> : !projectionFailed ? (
           <View style={styles.firstRun}>
             <SurfaceStateCard
               testID="connected-services-empty"
@@ -205,6 +211,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
             />
           </View>
         ) : null}
+        <ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />
       </ItemList>
     );
   }
@@ -241,6 +248,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       }}
       banner={banner}
       connectMore={connectMore}
+      preferences={<ProviderUsageGaugeSettingsGroup settings={CONNECTED_SERVICES_USAGE_GAUGE_SETTINGS.settings} />}
       sharedWithYou={(
         <TeamCredentialCatalogSettingsGroup
           title={t('teams.credentials.sharedWithYou')}

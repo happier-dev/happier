@@ -204,7 +204,7 @@ describe('useQualifiedConnectedAccountGroups', () => {
         expect(hook.getCurrent()).toEqual(expect.objectContaining({
             status: 'error',
             groups: [],
-            error: 'connectedServices.errors.generic',
+            error: 'connectedServices.errors.accountMachineUnavailable',
         }));
     });
 

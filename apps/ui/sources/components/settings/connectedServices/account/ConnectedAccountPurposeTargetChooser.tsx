@@ -23,7 +23,7 @@ import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServi
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useActiveServerAccountScope, useProfile, useSettings } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useProfile, useSettingsSelector } from '@/sync/store/hooks';
 import type { HomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPreferredLanguage, t } from '@/text';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -106,7 +106,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const profile = useProfile();
   const { present } = useConnectedAccountIdentityPrivacy();
   const locale = getPreferredLanguage();
-  const settings = useSettings();
+  const settings = useSettingsSelector((settings) => ({
+      connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
+  }));
   const pathname = usePathname();
   const registry = useProjectedConnectedServicesRegistry();
   const localizePluginText = useProjectedPluginLocalizedTextResolver();

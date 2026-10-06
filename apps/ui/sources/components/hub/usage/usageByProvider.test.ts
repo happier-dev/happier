@@ -43,6 +43,16 @@ const codex: UsageAccountInput = {
 };
 
 describe('groupUsageByProvider', () => {
+    it('presents readable labels from raw device-cached usage windows while retaining explicit labels', () => {
+        const ids = ['five_hour', 'seven_day', 'seven_day_all', 'seven_day_fable', 'spend', 'future_api_window'];
+        const meters = ids.map((meterId) => ({ meterId, label: meterId, remainingPct: 80, resetsAt: null }));
+        const [group] = groupUsageByProvider([{ ...claudeA, meters }]);
+        expect(group?.accounts[0]?.windows.map((window) => window.label))
+            .toEqual(['5-hour', 'Weekly', 'Weekly (all models)', 'Weekly (Fable)', 'Spend', 'Future API Window']);
+        expect(groupUsageByProvider([claudeA])[0]?.accounts[0]?.windows[0]?.label).toBe('5-hour limit');
+        expect(meters.map((meter) => meter.label)).toEqual(ids);
+    });
+
     it('colours each window by what is left, from the one quota tone owner, and ticks an account only when every window is healthy', () => {
         const windows = (remaining: ReadonlyArray<number | null>) => remaining.map((remainingPct, index) => ({
             meterId: `m${index}`, label: `M${index}`, remainingPct, resetsAt: null,

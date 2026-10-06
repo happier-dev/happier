@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { PluginSettingFieldV2 } from '@happier-dev/protocol';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
@@ -47,23 +48,6 @@ function compareFields(left: ManualAuthenticationField, right: ManualAuthenticat
     return left.id.localeCompare(right.id);
 }
 
-function isValidFieldValue(field: ManualAuthenticationField, value: string): boolean {
-    const schema = field.schema;
-    if (schema.type !== undefined && schema.type !== 'string') return false;
-    if (schema.minLength !== undefined && value.length < schema.minLength) return false;
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) return false;
-    if (schema.enum !== undefined && !schema.enum.includes(value)) return false;
-    if (schema.const !== undefined && schema.const !== value) return false;
-    if (schema.pattern !== undefined) {
-        try {
-            if (!new RegExp(schema.pattern).test(value)) return false;
-        } catch {
-            return false;
-        }
-    }
-    return true;
-}
-
 type ConnectedAccountManualFormProps = Readonly<{
     title: string;
     /** Inside the new-account draft, whose row already names the sign-in method. */
@@ -75,7 +59,6 @@ type ConnectedAccountManualFormProps = Readonly<{
         consoleUrl: string;
         createKeyTitle: string;
         billingNote: string;
-        shapePattern?: string;
         shapeHint?: string;
     }>;
     submitting: boolean;
@@ -106,12 +89,19 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
             .sort(compareFields),
         [props.fields],
     );
+    const validators = React.useMemo(() => new Map(fields.map((field) => {
+        try {
+            return [field.id, compilePluginJsonSchema(field.schema)] as const;
+        } catch {
+            return [field.id, () => false] as const;
+        }
+    })), [fields]);
     const submit = React.useCallback(async () => {
         const values = Object.fromEntries(
             props.fields.map((field) => [field.id, draft[field.id] ?? '']),
         );
         const invalid = fields
-            .filter((field) => !isValidFieldValue(field, values[field.id] ?? ''))
+            .filter((field) => !isValidPluginJsonSchemaValue(validators.get(field.id)!, values[field.id] ?? ''))
             .map((field) => field.id);
         if (invalid.length > 0) {
             setInvalidFieldIds(invalid);
@@ -119,7 +109,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         }
         const accepted = await props.onSubmit({ fields: values, ...(props.guided && displayName.trim() ? { displayName: displayName.trim() } : {}) });
         return accepted !== false;
-    }, [displayName, draft, fields, props]);
+    }, [displayName, draft, fields, props, validators]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
         setInvalidFieldIds([]);
@@ -144,11 +134,14 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
     const fieldControl = (field: ManualAuthenticationField) => {
         const title = resolveProjectedLocalizedText(field.title, props.localize);
         const invalid = invalidFieldIds.includes(field.id);
+        const error = invalid ? (draft[field.id]
+            ? t('connectedServicesSettings.manualFieldInvalid', { field: title })
+            : t('common.error')) : null;
         return <FieldTextInput
             testID={`connected-account-manual:${field.id}`}
             ref={registerInvalidFieldTarget(field.id)}
-            accessibilityLabel={invalid ? `${title}: ${t('common.error')}` : title}
-            error={invalid ? t('common.error') : null}
+            accessibilityLabel={error ? `${title}: ${error}` : title}
+            error={error}
             value={draft[field.id] ?? ''}
             onChangeText={(value) => {
                 setDraft((current) => ({ ...current, [field.id]: value }));
@@ -168,7 +161,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         />;
     };
     const guided = props.guided;
-    const keyShapeOk = Boolean(guided?.shapePattern && fields.some((field) => new RegExp(guided.shapePattern!).test(draft[field.id] ?? '')));
+    const keyShapeOk = fields.some((field) => field.schema.pattern && isValidPluginJsonSchemaValue(validators.get(field.id)!, draft[field.id] ?? ''));
     return (
         <ConnectedAccountFormSection
             embedded={props.embedded}
