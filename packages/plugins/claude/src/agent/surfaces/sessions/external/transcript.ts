@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
-import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol';
+import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import type {
@@ -163,7 +163,10 @@ export async function readClaudeExternalTranscriptBranch(params: Readonly<{
     let partial = false;
     while (true) {
         throwIfAborted(params.signal);
-        const page = await readJsonlFileBackwardPage({ filePath: params.filePath, endOffsetBytes, maxBytes: params.maxBytes, maxItems: 1 });
+        // The source byte bound also bounds the number of nonempty JSONL rows.
+        // Consume each read once instead of reopening an overlapping chunk for
+        // every row in a long conversation.
+        const page = await readJsonlFileBackwardPage({ filePath: params.filePath, endOffsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes) });
         throwIfAborted(params.signal);
         partial ||= Boolean(page.diagnostics?.length);
         for (let index = page.items.length - 1; index >= 0; index -= 1) {
@@ -193,7 +196,7 @@ export async function searchClaudeExternalTranscript(params: Readonly<{
     let match: { snippet: string; sourceItemId: string; messageIndex: number } | undefined;
     while (true) {
         throwIfAborted(params.signal);
-        const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: 1 });
+        const page = await readJsonlFileForward({ filePath: params.filePath, offsetBytes, maxBytes: params.maxBytes, maxItems: Math.max(1, params.maxBytes) });
         throwIfAborted(params.signal);
         partial ||= page.truncated || Boolean(page.diagnostics?.length);
         for (const line of page.items) {

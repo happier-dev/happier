@@ -3,7 +3,7 @@ import { open, stat, type FileHandle } from 'node:fs/promises';
 
 import type { AgentExternalSessionTranscriptItem, AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol';
+import { createExternalSessionContentMatchSnippet } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 import {
   readJsonlFileBackwardPage,
   readJsonlFileForwardLines,
@@ -117,7 +117,10 @@ async function readCodexExternalTranscriptProjection(params: Readonly<{
     let semanticTracker = createCodexRolloutSemanticTracker();
     while (true) {
       throwIfCodexExternalSessionInvocationStopped(params);
-      const page = await readJsonlFileForwardLines({ filePath: stream.filePath, offsetBytes, maxBytes, maxItems: 1, fileSystem });
+      // Every JSONL record occupies at least one byte. The existing file-byte
+      // bound also bounds its record count, so decode the read once rather than
+      // reading the remaining file again for each individual record.
+      const page = await readJsonlFileForwardLines({ filePath: stream.filePath, offsetBytes, maxBytes, maxItems: maxBytes, fileSystem });
       partial ||= page.truncated || Boolean(page.diagnostics?.length);
       for (const line of page.items) {
         const count = readCodexExternalRollbackCount(line.value);

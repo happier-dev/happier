@@ -298,6 +298,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     searchTarget: request.searchTarget,
                     ripgrep: request.ripgrep,
                     signal: request.signal,
+                    deadlineAtMs: request.deadlineAtMs,
                     ...(request.readCandidateIndexState
                         ? {
                             readCandidateIndexState: (candidate) => (
