@@ -7,6 +7,7 @@ import {
   BUILD_INPUT_RECORD,
   collectWorkspacePackageFingerprintDependencyNames,
   ensureWorkspacePackagesBuiltByName,
+  inspectWorkspaceQaStalePackages,
   isWorkspacePackageOutputCurrent,
   isWorkspacePackageOutputValid,
   readWorkspaceBuildFileDigest,
@@ -35,7 +36,7 @@ import {
   resolveInstalledRuntimePackage,
 } from '../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import * as workspaceDependencyBuildOrder from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
-import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { createWorkspaceChildBuildEnv, WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import {
   WORKSPACE_BUNDLE_PUBLICATION_MODES,
   resolveWorkspaceBundlePublicationMode,
@@ -386,12 +387,6 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
   maxConcurrentPluginBuilds = 2,
 }) {
   const normalizedWorkspaceNames = normalizeSourceDevSharedDepsWorkspaceNames(workspaceNames);
-  const ordinaryWorkspaceNames = normalizedWorkspaceNames.filter(
-    (workspaceName) => !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX),
-  );
-  const pluginWorkspaceNames = normalizedWorkspaceNames.filter(
-    (workspaceName) => workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX),
-  );
   const builtWorkspaceNames = [];
   const failedPluginBuilds = [];
 
@@ -400,7 +395,11 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
       const result = await ensureWorkspacePackagesBuiltByNameImpl(
         repoRoot,
         batchWorkspaceNames.map((workspaceName) => `@happier-dev/${workspaceName}`),
-        buildOptions,
+        {
+          ...buildOptions,
+          isolatePluginFailures: isolatePluginBuildFailures,
+          maxConcurrentBuilds: maxConcurrentPluginBuilds,
+        },
       );
       builtWorkspaceNames.push(
         ...normalizeSourceDevSharedDepsWorkspaceNames(result?.built),
@@ -414,46 +413,18 @@ async function ensureWorkspacePackagesBuiltWithPluginIsolation({
     }
   };
 
-  if (ordinaryWorkspaceNames.length > 0) {
-    const error = await runBatch(ordinaryWorkspaceNames);
-    if (error) throw error;
-  }
-  if (!isolatePluginBuildFailures && pluginWorkspaceNames.length > 0) {
-    const error = await runBatch(pluginWorkspaceNames);
-    if (error) throw error;
-  } else {
-    const pluginBuildResults = new Array(pluginWorkspaceNames.length);
-    const concurrency = Number.isInteger(maxConcurrentPluginBuilds) && maxConcurrentPluginBuilds > 0
-      ? maxConcurrentPluginBuilds
-      : 2;
-    let nextPluginIndex = 0;
-    const runPluginWorker = async () => {
-      while (nextPluginIndex < pluginWorkspaceNames.length) {
-        const index = nextPluginIndex;
-        nextPluginIndex += 1;
-        pluginBuildResults[index] = await runBatch([pluginWorkspaceNames[index]]);
-      }
-    };
-    await Promise.all(Array.from(
-      { length: Math.min(concurrency, pluginWorkspaceNames.length) },
-      () => runPluginWorker(),
-    ));
-    for (let index = 0; index < pluginWorkspaceNames.length; index += 1) {
-      const error = pluginBuildResults[index];
-      if (error) failedPluginBuilds.push(createBundledPluginPublicationFailure({
-        repoRoot,
-        packageName: `@happier-dev/${pluginWorkspaceNames[index]}`,
-        error,
-      }));
-    }
-  }
+  // One package graph owns dependency admission, concurrency and optional
+  // failures. Per-plugin graphs rechecked the same SDK closure for every
+  // plugin and misclassified shared dependency failures as optional failures.
+  const error = normalizedWorkspaceNames.length > 0 ? await runBatch(normalizedWorkspaceNames) : null;
+  if (error) throw error;
 
   const builtWorkspaceNameSet = new Set(normalizeSourceDevSharedDepsWorkspaceNames(builtWorkspaceNames));
   return {
     builtWorkspaceNames: normalizedWorkspaceNames.filter((workspaceName) => (
       builtWorkspaceNameSet.has(workspaceName)
     )),
-      failedPluginBuilds,
+    failedPluginBuilds,
   };
 }
 
@@ -1785,7 +1756,11 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
 
 export async function syncSharedDepsForSourceDev(opts = {}) {
   const repoRoot = resolveRepoRootOption(opts.repoRoot);
-  const env = opts.env ?? process.env;
+  const inheritedEnv = opts.env ?? process.env;
+  const env = { ...inheritedEnv, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    env: inheritedEnv,
+    buildMode: inheritedEnv[WORKSPACE_BUILD_MODE_ENV] ?? 'qa-runtime',
+  }) };
   const exists = opts.existsSync ?? existsSync;
   const mkdir = opts.mkdirSync ?? mkdirSync;
   const readFile = opts.readFileSync ?? readFileSync;
@@ -1842,6 +1817,12 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     exists,
     readFile,
   });
+  const withStalePackages = async (result) => {
+    const stalePackages = await inspectWorkspaceQaStalePackages(
+      repoRoot, workspaceNames.map((name) => `@happier-dev/${name}`),
+    );
+    return stalePackages.length > 0 ? { ...result, stalePackages } : result;
+  };
   const reportProgress = createSourceDevSharedDepsProgressReporter(opts);
   const workspaceBuildTimeoutMs = resolveSourceDevWorkspaceBuildTimeoutMs(opts.workspaceBuildTimeoutMs);
   const stampPath = opts.stampPath ?? resolveSourceDevSharedDepsStampPath(repoRoot);
@@ -1884,6 +1865,9 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       repoRoot,
       workspaceNames,
     }).length === 0
+    // A source-dev stamp proves materialization, not a successful current
+    // compile. Strict callers must re-enter package admission after QA reuse.
+    && (env[WORKSPACE_BUILD_MODE_ENV] !== 'strict' || collectStaleBuilds().length === 0)
   );
   resolvedLockOptions.tryResolveWaiter = async () => {
     const waitSignature = computeSignature();
@@ -1918,7 +1902,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       event: 'done',
       reason: 'current',
     });
-    return { synced: false, reason: 'current' };
+    return await withStalePackages({ synced: false, reason: 'current' });
   }
 
   const withLock = opts.withBuildSharedDepsLockImpl ?? withBuildSharedDepsLock;
@@ -2138,7 +2122,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     event: 'waiting',
     lockTimeoutMs: resolvedLockOptions.timeoutMs,
   });
-  return await withLock(async () => {
+  const result = await withLock(async () => {
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'workspace-lock',
       event: 'acquired',
@@ -2340,6 +2324,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     });
     return { synced: true, stamped: true };
   }, resolvedLockOptions);
+  return await withStalePackages(result);
 }
 
 /**
@@ -2366,6 +2351,7 @@ export async function prepareBundledWorkspaceDependenciesForCli(opts = {}) {
     : resolveCliBundledWorkspacePackageNames({ repoRoot: resolvedRepoRoot });
   const publicationMode = resolveSharedDepsPublicationMode(opts);
   const publishesArtifact = isArtifactPublicationMode(publicationMode);
+  const reportProgress = createSourceDevSharedDepsProgressReporter(opts);
   const ensureWorkspacePackagesBuilt =
     opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
   const buildResult = await ensureWorkspacePackagesBuiltWithPluginIsolation({
@@ -2385,6 +2371,13 @@ export async function prepareBundledWorkspaceDependenciesForCli(opts = {}) {
       includeDevDependencies: false,
       publicationMode,
       isolatePluginFailures: !publishesArtifact,
+      onPackageBuildResult: ({ packageName, reason, invalidation, elapsedMs, queueWaitMs }) => {
+        reportSourceDevSharedDepsProgress(reportProgress, {
+          stage: 'workspace-build', event: 'result',
+          workspaceName: packageName.replace(/^@happier-dev\//, ''),
+          reason, invalidation, durationMs: elapsedMs, queueWaitMs,
+        });
+      },
       // Both live and artifact publication use the package owner's content
       // identity, including deleted inputs and changed build scripts.
     },
