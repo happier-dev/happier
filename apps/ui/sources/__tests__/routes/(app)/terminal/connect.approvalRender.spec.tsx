@@ -6,6 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+let routeHash: string | undefined;
 const globalWindow = globalThis as typeof globalThis & { window?: Window & typeof globalThis };
 const originalWindow = globalWindow.window;
 
@@ -30,7 +31,7 @@ vi.mock('expo-router', async () => {
             setParams: vi.fn(),
         },
         pathname: '/terminal/connect',
-        params: {},
+        params: () => routeHash ? { '#': routeHash } : {},
     }).module;
 });
 
@@ -44,13 +45,12 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({
-        isAuthenticated: true,
-        credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
-        refreshFromActiveServer: vi.fn(async () => {}),
-    }),
+const authState = vi.hoisted(() => ({
+    isAuthenticated: true,
+    credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
+    refreshFromActiveServer: vi.fn(async () => {}),
 }));
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => authState }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: vi.fn(),
@@ -71,12 +71,13 @@ vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
 describe('TerminalConnectScreen approval render', () => {
     beforeEach(() => {
         vi.resetModules();
+        routeHash = undefined;
         globalWindow.window = {
             location: {
                 hash: '#key=dMuCgNDDm6evwo2KsBdJoLTGlW62vwlDxkDKsZAg00I&server=http%3A%2F%2F127.0.0.1%3A29785',
                 pathname: '/terminal/connect',
                 search: '',
-                href: 'http://127.0.0.1:55106/terminal/connect#key=dMuCgNDDm6evwo2KsBdJoLTGlW62vwlDxkDKsZAg00I&server=http%3A%2F%2F127.0.0.1%3A29785',
+                href: 'tauri://localhost/terminal/connect#key=dMuCgNDDm6evwo2KsBdJoLTGlW62vwlDxkDKsZAg00I&server=http%3A%2F%2F127.0.0.1%3A29785',
             },
             history: {
                 replaceState: vi.fn(),
@@ -93,6 +94,19 @@ describe('TerminalConnectScreen approval render', () => {
         }
     });
 
+    it('uses router pairing parameters before browser history reaches the terminal route', async () => {
+        const location = globalWindow.window!.location;
+        routeHash = location.hash.slice(1);
+        Object.assign(location, { href: 'tauri://localhost/', pathname: '/', hash: '' });
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        const screen = await renderScreen(<Screen />);
+        await act(async () => {});
+
+        expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
+        expect(screen.findByTestId('terminal-connect-reject')).toBeTruthy();
+    });
+
     it('renders the approval actions for an authenticated terminal-connect link', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
 
@@ -103,4 +117,14 @@ describe('TerminalConnectScreen approval render', () => {
         expect(screen.findByTestId('terminal-connect-approve')).toBeTruthy();
         expect(screen.findByTestId('terminal-connect-reject')).toBeTruthy();
     });
+    it('replaces the displayed request when a second desktop link arrives on the same route', async () => {
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+        const screen = await renderScreen(<Screen />);
+        expect(screen.getTextContent()).toContain('dMuCgNDDm6ev');
+        routeHash = `key=${'B'.repeat(43)}&server=http%3A%2F%2F127.0.0.1%3A29785`;
+        await screen.update(<Screen />);
+        expect(screen.getTextContent()).toContain('BBBBBBBBBBBB');
+        expect(screen.getTextContent()).not.toContain('dMuCgNDDm6ev');
+    });
+
 });

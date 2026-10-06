@@ -48,7 +48,8 @@ tempfile = "3.20"
 keyring = "4.2.0"
 happier-iroh-native = { path = "../../../packages/iroh-native/rust/happier-iroh-native" }
 tauri-plugin-autostart = "2"
-tauri-plugin-single-instance = "=2.4.0"
+tauri-plugin-single-instance = { version = "=2.4.0", features = ["deep-link"] }
+tauri-plugin-deep-link = "=2.4.9"
 tauri-plugin-updater = "2.9"
 
 [target."cfg(target_os = \"macos\")".dependencies]

@@ -259,6 +259,20 @@ describe('parseTerminalConnectUrl', () => {
         });
     });
 
+    it('reads pairing context from the local Tauri webview without allowing custom server protocols', () => {
+        const fragment = '#key=desktop-key&pairingSecret=desktop-secret&createdAt=1000&expiresAt=61000';
+        expect(parseTerminalConnectUrl(`tauri://localhost/terminal/connect${fragment}`)).toMatchObject({
+            publicKeyB64Url: 'desktop-key',
+            serverUrl: null,
+            pairing: { secretB64Url: 'desktop-secret', createdAtMs: 1000, expiresAtMs: 61000 },
+            compatibility: { admission: 'update_required' },
+        });
+        expect(parseTerminalConnectUrl(`tauri://other-host/terminal/connect${fragment}`)).toBeNull();
+        expect(parseTerminalConnectUrl(`tauri://localhost.example/terminal/connect${fragment}`)).toBeNull();
+        expect(parseTerminalConnectUrl('tauri://localhost/terminal/connect#key=desktop-key&server=tauri%3A%2F%2Flocalhost'))
+            .toEqual({ publicKeyB64Url: 'desktop-key', serverUrl: null });
+    });
+
     it('rejects non-terminal links', () => {
         expect(parseTerminalConnectUrl('happier://server?url=https%3A%2F%2Fstack.example.test')).toBeNull();
     });

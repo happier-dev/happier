@@ -3,6 +3,11 @@
   "productName": "Happier (preview)",
   "identifier": "dev.happier.app.preview",
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["happier-preview"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCRTk2MjE4RjNCMEYxRUYKUldUdjhiRHpHR0xwcTFIUjMvb1FBbW5HOUFYSkd5aGlHa204MWZuRk50ekF5WVZQdU1mVkRWWnkK",
       "endpoints": [

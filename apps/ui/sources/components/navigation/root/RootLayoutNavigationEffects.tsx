@@ -1,3 +1,4 @@
+import { installDesktopDeepLinks } from '@/desktop/deepLinks/installDesktopDeepLinks';
 import { router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
@@ -17,7 +18,7 @@ import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/serv
 import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
-import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
+import { desktopHostKind, invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
@@ -30,6 +31,11 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
  * to nothing that changes per navigation.
  */
 export function RootLayoutNavigationEffects(): React.ReactElement | null {
+    React.useEffect(() => {
+        if (Platform.OS === 'web' && desktopHostKind() === 'tauri') {
+            return installDesktopDeepLinks((href) => router.push(href));
+        }
+    }, []);
     const auth = useAuth();
     const isAuthenticated = auth.isAuthenticated;
     const refreshAuth = auth.refreshFromActiveServer;
