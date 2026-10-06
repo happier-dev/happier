@@ -137,7 +137,8 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown', holdFirstMi
         return <WorkflowRunComposer inputs={[]} definition={definition} values={{}} onChangeValues={() => {}} onCancel={() => {}}
             pending={state === 'submitting' || state === 'reconciling'}
             reconciling={state === 'reconciling'}
-            onRun={() => { pending = controller.runNow({ ...input, project: context.externalActionTarget.project }).then(result => { if (result) opened(result); }); }} />;
+            startProblem={controller.refusal?.message ?? null}
+            onRun={() => { pending = controller.runNow({ ...input, project: context.externalActionTarget.project, refusal: 'inline' }).then(result => { if (result) opened(result); }); }} />;
     }
     const screen = await renderScreen(<Host />);
     disposals.push(screen.unmount);
@@ -159,13 +160,15 @@ describe('Run start response-loss through the real composer, Machine transport a
         await expect(h.owner.execute({ actionId: 'workflow.run.start', input: h.input, context: h.context })).resolves.toMatchObject({ admission: 'existing' });
         expect(h.counts().admissions).toBe(1);
     });
-    it('reports a confirmed not-sent failure with retry available rather than waiting for a Run', async () => {
+    it('keeps a confirmed not-sent refusal in the composer with its reason and retry available', async () => {
         const h = await harness('not-sent');
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await h.pending();
         expect(h.opened).not.toHaveBeenCalled();
-        expect(Modal.alert).toHaveBeenCalledTimes(1);
-        expect(Modal.alert).toHaveBeenCalledWith('workflows.problem.title', 'workflows.problem.targetUnavailable');
+        // 04 §4.8: a known refusal stays in the review, never a system alert.
+        expect(Modal.alert).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-reason-text')?.props.children)
+            .toBe('workflows.problem.targetUnavailable'));
         expect(h.readState()).toBe('idle');
         expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
         expect(h.counts()).toEqual({ admissions: 0, reads: 0 });

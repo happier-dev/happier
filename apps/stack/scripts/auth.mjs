@@ -4,7 +4,7 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, getStackName, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { resolvePublicServerUrl } from './tailscale.mjs';
-import { getInternalServerUrl, getPublicServerUrlEnvOverride, getWebappUrlEnvOverride } from './utils/server/urls.mjs';
+import { resolveStackServerEndpoint, getPublicServerUrlEnvOverride, getWebappUrlEnvOverride } from './utils/server/urls.mjs';
 import { fetchHappierHealth, waitForHappierHealthOk } from './utils/server/server.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,7 +61,6 @@ import {
   getStackRuntimeStatePath,
   isPidAlive as isRuntimePidAlive,
   readStackRuntimeStateFile,
-  resolveTrustedStackRuntimeServerPort,
 } from './utils/stack/runtime_state.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
@@ -83,19 +82,8 @@ function resolveGuidedStackStartCommand({ stackName, startKind = 'dev' } = {}) {
   return `hstack stack dev ${name} --background`;
 }
 
-async function getInternalServerUrlCompat() {
-  const stackName = getStackName();
-  try {
-    const statePath = getStackRuntimeStatePath(stackName);
-    const st = await readStackRuntimeStateFile(statePath);
-    const port = await resolveTrustedStackRuntimeServerPort(st, { stackName });
-    if (port !== null) {
-      return { port, url: `http://127.0.0.1:${port}` };
-    }
-  } catch {
-    // ignore; fall back to env/default port
-  }
-  const { port, internalServerUrl } = getInternalServerUrl({ env: process.env, defaultPort: 3005 });
+async function getAuthServerEndpoint() {
+  const { port, internalServerUrl } = await resolveStackServerEndpoint();
   return { port, url: internalServerUrl };
 }
 
@@ -1085,19 +1073,7 @@ async function cmdCopyFrom({ argv, json }) {
   const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
 
   const resolveStackInternalServerUrlForAuth = async ({ stackName: name, env, defaultPort }) => {
-    const runtimeStatePath = getStackRuntimeStatePath(name);
-    try {
-      const st = await readStackRuntimeStateFile(runtimeStatePath);
-      const ownerPid = Number(st?.ownerPid);
-      const runtimeOwnerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isRuntimePidAlive(ownerPid) : false;
-      const port = Number(st?.ports?.server);
-      if (runtimeOwnerAlive && Number.isFinite(port) && port > 0) {
-        return `http://127.0.0.1:${port}`;
-      }
-    } catch {
-      // ignore; fall back to env/default port
-    }
-    const { internalServerUrl } = getInternalServerUrl({ env, defaultPort });
+    const { internalServerUrl } = await resolveStackServerEndpoint({ stackName: name, env, defaultPort });
     return internalServerUrl;
   };
 
@@ -1134,7 +1110,7 @@ async function cmdCopyFrom({ argv, json }) {
     stackName,
     cliIdentity: 'default',
   });
-  const { url: targetInternalServerUrl } = await getInternalServerUrlCompat();
+  const { url: targetInternalServerUrl } = await getAuthServerEndpoint();
   const targetCredentialPaths = resolveStackCredentialPaths({
     cliHomeDir: targetCli,
     serverUrl: targetInternalServerUrl,
@@ -1288,7 +1264,7 @@ async function cmdCopyFrom({ argv, json }) {
       // so we can seed DB accounts reliably.
       const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
       if (targetServerComponent === 'happier-server' && targetDbProvider === 'postgres' && withInfra && managed) {
-        const { port } = await getInternalServerUrlCompat();
+        const { port } = await getAuthServerEndpoint();
         const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
         const envPath = resolveStackEnvPath(stackName).envPath;
         const infra = await ensureHappyServerManagedInfra({
@@ -1428,7 +1404,7 @@ async function cmdStatus({ json }) {
   const { kv } = parseArgs(argv);
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
 
-  const { port, url: internalServerUrl } = await getInternalServerUrlCompat();
+  const { port, url: internalServerUrl } = await getAuthServerEndpoint();
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port, stackName });
   const { publicServerUrl } = await resolvePublicServerUrl({
     internalServerUrl,
@@ -1571,7 +1547,7 @@ async function cmdLogin({ argv, json }) {
   const { flags, kv } = parseArgs(argv);
 
   const tty = isTty();
-  const { port, url: internalServerUrl } = await getInternalServerUrlCompat();
+  const { port, url: internalServerUrl } = await getAuthServerEndpoint();
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port, stackName });
   const { publicServerUrl } = await resolvePublicServerUrl({
     internalServerUrl,

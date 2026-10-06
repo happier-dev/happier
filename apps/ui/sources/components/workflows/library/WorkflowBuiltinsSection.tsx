@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol';
+import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1, type BuiltinWorkflowPurposeV1 } from '@happier-dev/protocol';
+import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { openSessionGoalControl } from '@/components/sessions/workState/openSessionGoalControl';
@@ -12,6 +13,14 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t, tLoose } from '@/text';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
+
+/** Each built-in's mark says what it is for (lab `nav-N1`: a shield, a list, a target). */
+export const BUILTIN_WORKFLOW_PURPOSE_GLYPHS = {
+    goal: 'target',
+    review: 'shield-check',
+    plan: 'list-checks',
+    pull_request: 'git-pull-request',
+} as const satisfies Record<BuiltinWorkflowPurposeV1, IconName>;
 
 /** Built-in rows are projections of Protocol's catalog, never Account library records. */
 export function WorkflowBuiltinsSection(): React.ReactElement {
@@ -22,8 +31,10 @@ export function WorkflowBuiltinsSection(): React.ReactElement {
 
 function BuiltinRow({ entry, showDivider }: Readonly<{ entry: BuiltinWorkflowCatalogEntryV1; showDivider?: boolean }>) {
     const router = useRouter();
-    return <Item testID={`workflow-builtins:${entry.id}`} title={tLoose(entry.titleKey)} subtitle={tLoose(entry.descriptionKey)} showDivider={showDivider}
-        icon={<Icon name="tree-structure" />}
+    // "{n} steps" and the description only (04 §3.3, F15): a built-in's runs carry no library key for a strip.
+    const subtitle = [tLoose(entry.descriptionKey), t('workflows.examples.stepCount', { count: countWorkflowStepsV1(entry.definition.blocks) })].join(' · ');
+    return <Item testID={`workflow-builtins:${entry.id}`} title={tLoose(entry.titleKey)} subtitle={subtitle} showDivider={showDivider}
+        icon={<Icon name={BUILTIN_WORKFLOW_PURPOSE_GLYPHS[entry.purpose]} />}
         onPress={() => router.push(createWorkflowDefinitionRoute(entry.id) as never)}
         rightElement={entry.requiresOriginSession
             ? <WorkflowBuiltinSessionButton entry={entry} testID={`workflow-builtins:${entry.id}:session`} />

@@ -320,10 +320,11 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 }}
             />
             {reference.kind === 'literal' && props.renderLiteral !== undefined
-                ? props.renderLiteral(reference.value, (next) => props.onChange({
+                // The consumer's own field sits on the binding's line, like the plain value entry.
+                ? <View style={workflowEditorStyles.inlineLiteral}>{props.renderLiteral(reference.value, (next) => props.onChange({
                     kind: 'literal',
                     value: next as Extract<WorkflowValueReference, { kind: 'literal' }>['value'],
-                }))
+                }))}</View>
                 : null}
             {reference.kind === 'literal' && props.renderLiteral === undefined ? (
                 <TextInput

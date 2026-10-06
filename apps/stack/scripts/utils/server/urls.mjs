@@ -1,10 +1,32 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { getStackName, resolveActiveStackEnvFilePath } from '../paths/paths.mjs';
+import { getStackName, resolveActiveStackEnvFilePath, resolveStackEnvPath } from '../paths/paths.mjs';
 import { preferStackLocalhostHost, preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
 import { resolvePublicServerUrl } from '../../tailscale.mjs';
-import { resolveServerPortFromEnv } from './port.mjs';
+import { readPinnedServerPortFromEnvFile, resolveServerPortFromEnv } from './port.mjs';
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
+import { readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../stack/runtime_state.mjs';
+
+/** Runtime ingress wins over a retained port; only the process owner can attest it. */
+export async function resolveStackServerEndpoint({
+  env = process.env,
+  stackName = getStackName(env),
+  runtimeState,
+  defaultPort = 3005,
+  trustOptions = {},
+} = {}) {
+  const { baseDir, envPath } = resolveStackEnvPath(stackName, env);
+  const runtimePath = env.HAPPIER_STACK_STACK === stackName && env.HAPPIER_STACK_RUNTIME_STATE_PATH
+    ? env.HAPPIER_STACK_RUNTIME_STATE_PATH : join(baseDir, 'stack.runtime.json');
+  const state = runtimeState === undefined ? await readStackRuntimeStateFile(runtimePath) : runtimeState;
+  const runtimePort = await resolveTrustedStackRuntimeServerPort(state, {
+    stackName, envPath, cliHomeDir: env.HAPPIER_STACK_CLI_HOME_DIR || join(baseDir, 'cli'),
+  }, trustOptions);
+  const configuredPort = resolveServerPortFromEnv({ env, defaultPort: null });
+  const port = runtimePort ?? configuredPort ?? await readPinnedServerPortFromEnvFile(envPath) ?? defaultPort;
+  return { port, runtimePort, internalServerUrl: port ? `http://127.0.0.1:${port}` : null };
+}
 
 function readStackEnvRaw({ env, stackName }) {
   try {
@@ -101,6 +123,7 @@ export async function resolveStackCanonicalServerUrl({
 }
 
 export async function resolveServerUrls({ env = process.env, serverPort, allowEnable = true } = {}) {
+  serverPort ??= (await resolveStackServerEndpoint({ env })).port;
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const stackName =
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
@@ -124,6 +147,7 @@ export async function resolveServerUrls({ env = process.env, serverPort, allowEn
     envPublicUrl,
   });
   return {
+    serverPort,
     internalServerUrl,
     defaultPublicUrl,
     envPublicUrl,

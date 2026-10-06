@@ -385,6 +385,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 
   it('exposes a host-owned execution-run runtime surface without interpreting a malformed Agent descriptor', async () => {
     const runtimeCoreBackend = createStubRuntimeCoreBackend({
+      permissionCapability: 'static',
       runtimeDescriptor: {
         backendId: 'acme.sample.backend',
         runtimeKind: 'native',

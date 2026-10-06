@@ -57,6 +57,40 @@ afterEach(async () => {
     storage.setState(previous);
 });
 
+describe('workflow library page anatomy', () => {
+    it('lays saved rows on one page sheet like the sections below, and marks built-ins by purpose with their step count', async () => {
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: ['first', 'second', 'third'].map((definitionId) => (
+                { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                    metadata: { title: definitionId }, ownerAccountId: 'account-a', access: 'owner', contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null })) } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: { summaries: [], remainingSourceArtifactIds: [] } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        // A sheet's hairline sits between its rows and never after the group's last one.
+        const divider = (definitionId: string) => screen.findAll((node) => node.props.testID === `workflows-home:row:${definitionId}`
+            && Array.isArray(node.props.secondaryActions))[0]?.props.showDivider;
+        expect(divider('first')).toBe(true);
+        expect(divider('second')).toBe(true);
+        expect(divider('third')).toBe(false);
+        const { t } = await import('@/text');
+        const plan = screen.tree.findHostByTestId('workflow-builtins:builtin:plan-with-a-panel');
+        expect(plan).not.toBeNull();
+        const planCopy = plan!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
+        const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol');
+        const { countWorkflowStepsV1 } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
+        const planEntry = getBuiltinWorkflowCatalogV1().find((entry) => entry.id === 'builtin:plan-with-a-panel')!;
+        expect(planCopy).toContain(t('workflows.examples.stepCount', { count: countWorkflowStepsV1(planEntry.definition.blocks) }));
+        const marks = (id: string) => screen.findAll((node) => node.props.testID === `workflow-builtins:${id}`)[0]
+            ?.findAll((node) => typeof node.props.name === 'string').map((node) => node.props.name) ?? [];
+        expect(marks('builtin:plan-with-a-panel')).toContain('list-checks');
+        expect(marks('builtin:review-and-converge')).toContain('shield-check');
+        expect(marks('builtin:keep-going')).toContain('target');
+    });
+});
+
 describe('workflow library summaries and filter', () => {
     it('paints count and shared trigger wording, and filters attached triggers without losing manual workflows', async () => {
         execute.mockImplementation(async (actionId: string) => {

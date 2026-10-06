@@ -33,6 +33,7 @@ import {
     type HostSessionHooksOwner,
 } from '@/plugins/runtime/hooks/session/service';
 import { readActivePluginAccountSettings } from '@/plugins/runtime/context/accountSettingsStorage';
+import { createDaemonRuntimeAuthRefreshService, type RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 import type {
     EngineResolutionAgent,
     EngineResolutionBackend,
@@ -192,8 +193,13 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
     pluginId: string;
     agentId: string;
     happyHomeDir?: string;
+    nativeHome?: AgentExecutionRunHostServicesV1['nativeHome'];
+    refreshRuntimeAuthViaDaemon?: RuntimeAuthRefreshViaDaemon;
 }>): AgentExecutionRunHostServicesV1 & Disposable {
-    const assertActive = (): void => params.signal.throwIfAborted();
+    const assertActive = (): void => {
+        params.signal.throwIfAborted();
+        if (disposePromise) throw new Error('Execution Run host services are disposed');
+    };
     const runtimeId = `native-agent-run:${params.pluginId}:${params.agentId}:${randomUUID()}`;
     const storePaths = resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir });
     const authority = materializePluginRuntimeAuthority(
@@ -270,7 +276,27 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
     };
     if (params.signal.aborted) disposeOnAbort();
     else params.signal.addEventListener('abort', disposeOnAbort, { once: true });
+    const authServices = params.refreshRuntimeAuthViaDaemon
+        ? createDaemonRuntimeAuthRefreshService({ refreshViaDaemon: params.refreshRuntimeAuthViaDaemon })
+        : null;
     return Object.freeze({
+        ...(params.nativeHome ? { nativeHome: Object.freeze({
+            async readFiles(fileIds: readonly string[]) {
+                assertActive();
+                const files = await params.nativeHome!.readFiles(fileIds);
+                assertActive();
+                return files;
+            },
+        }) } : {}),
+        ...(authServices ? { auth: Object.freeze({ services: Object.freeze({
+            async refreshRuntimeAuth(...args: Parameters<typeof authServices.refreshRuntimeAuth>) {
+                assertActive();
+                const [request, options] = args;
+                return await authServices.refreshRuntimeAuth(request, {
+                    signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+                });
+            },
+        }) }) } : {}),
         features: Object.freeze({
             isEnabled: (featureId: string) => (
                 !params.signal.aborted && featureOwner.isEnabled(featureId)

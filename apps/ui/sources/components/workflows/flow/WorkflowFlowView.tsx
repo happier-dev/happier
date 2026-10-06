@@ -189,8 +189,8 @@ export function WorkflowFlowView(props: Readonly<{
     testIDPrefix?: string;
     /** `compact`: the live mini-map under a Work row — structure and state only. */
     density?: HappierWorkMapDensity;
-    /** The Agent that runs (or ran) a step, when its accepted selection is known; else a neutral mark. */
-    agentIdForNode?: (node: WorkflowFlowNode) => string | null;
+    /** The Agent mark of a step's accepted selection, when the caller knows it; else a neutral mark. */
+    agentMarkForNode?: (node: WorkflowFlowNode) => React.ReactNode | null;
 }>): React.ReactElement {
     const testIDPrefix = props.testIDPrefix ?? 'workflow-flow';
     const { theme } = useUnistyles();
@@ -244,9 +244,9 @@ export function WorkflowFlowView(props: Readonly<{
                 const glyph = FLOW_KIND_GLYPH[node.kind];
                 return (
                     <>
-                        {glyph === undefined
-                            ? <ExecutionRunAgentMark agentId={props.agentIdForNode?.(node) ?? null} size={compact ? 22 : 28} />
-                            : <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+                        {glyph !== undefined
+                            ? <Icon name={glyph} size={compact ? ICON_SIZE.xs : ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                            : props.agentMarkForNode?.(node) ?? <ExecutionRunAgentMark agentId={null} size={compact ? 22 : 28} />}
                         {compact || node.observed ? null : (
                             <View testID={`${testIDPrefix}-node-${node.nodeId}-ordinal`} style={styles.ordinal}>
                                 <Text style={styles.ordinalText}>{node.ordinal}</Text>

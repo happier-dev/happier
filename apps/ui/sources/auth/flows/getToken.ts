@@ -143,6 +143,7 @@ async function authGetTokenCore(params: AuthTokenCoreParams): Promise<AuthCreden
     const mayUseReleasedV1Fallback =
         params.credentialTarget === 'ordinary_home'
         && params.expectedAccountId === undefined
+        && params.expectedServerIdentityId === undefined
         && !params.requireKeyChallengeV2;
     if (serverFeaturesSnapshot.status !== 'ready' && !mayUseReleasedV1Fallback) {
         throw new HappyError(
@@ -312,10 +313,9 @@ export async function authGetToken(
             // Always refresh the assertion scheme before login. A stale v1
             // snapshot must not keep an upgraded server on replayable v1.
             force: true,
-            // A login probe that cannot answer promptly must release the
-            // caller to the released v1 request shape instead of holding the
-            // sign-in behind the shared probe's much longer attempt bound.
-            timeoutMs: FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS,
+            // Only an unbound login can use the released v1 fallback. Account-
+            // bound login needs discovery and inherits the shared attempt bound.
+            ...(options ? {} : { timeoutMs: FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS }),
         }),
         resolveAudience: () => resolveSelectedKeyChallengeV2Audience(addressAnchorUrl),
     });

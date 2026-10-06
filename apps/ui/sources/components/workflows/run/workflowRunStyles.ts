@@ -87,9 +87,16 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         marginHorizontal: -theme.margins.md,
         marginVertical: -theme.margins.sm,
     },
+    /** The Run's state mark leads its sentence, centred on the first line. */
+    outcomeLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.margins.sm,
+    },
     outcomeSentence: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
+        flexShrink: 1,
     },
     provenance: {
         ...Typography.default('regular'),
@@ -125,6 +132,11 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     action: {
         ...Typography.default('semiBold'),
         color: theme.colors.button.secondary.tint,
+    },
+    /** A link to where finished or running work lives ("Open conversation"): present, never loud. */
+    quietAction: {
+        ...Typography.default('regular'),
+        color: theme.colors.text.secondary,
     },
     section: {
         gap: theme.margins.sm,

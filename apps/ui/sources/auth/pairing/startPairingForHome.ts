@@ -6,7 +6,7 @@ import { createTrustedHomeQrCompletionAdapters } from '@/auth/pairing/trustedHom
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { pairingStart, type PairingCallTarget, type PairingStatus } from '@/sync/api/account/apiPairingAuth';
-import { FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS, getServerFeaturesSnapshot, observeAuthenticatedServerFeaturesFresh } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getServerFeaturesSnapshot, observeAuthenticatedServerFeaturesFresh } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { buildHomeConnectionDescriptorForProfile, getServerProfileById, reconcileServerProfileHomeConnectionDescriptor } from '@/sync/domains/server/serverProfiles';
 
@@ -34,7 +34,7 @@ export async function startPairingForHome(params: Readonly<{
         const active = getActiveServerSnapshot();
         const serverId = params.targetProfileId?.trim() || active.serverId;
         const runtimeTransport = serverId === active.serverId ? { runtimeOrigin: active.runtimeOrigin, runtimeCarrier: active.carrier } : {};
-        const snapshot = await getServerFeaturesSnapshot({ serverId, timeoutMs: FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS });
+        const snapshot = await getServerFeaturesSnapshot({ serverId, signal: params.signal });
         if (!isCurrent()) return { kind: 'cancelled' };
         if (snapshot.status === 'unsupported') return { kind: 'update_required' };
         if (snapshot.status !== 'ready') return failed('home_unreachable');

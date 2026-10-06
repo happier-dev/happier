@@ -32,6 +32,7 @@ import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/prov
 import type { SessionFollowPreparedContext } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
 import type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
+import type { RuntimeAuthRefreshViaDaemon } from '@/plugins/runtime/context/runtimeAuthRefresh';
 
 /**
  * The exact Session-owned Execution Run a tool profile is being composed for.
@@ -200,6 +201,8 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
      * occurrence registry, sidechain, or inherited tool profile.
      */
     sessionOwnedRunScope?: ExecutionRunHostRunScopeBinding;
+    /** Captures the Run materialization's activation; never uses parent Session auth. */
+    connectedServiceRuntimeAuthRefresh?: RuntimeAuthRefreshViaDaemon;
 }>;
 
 export type CliSessionRuntime = HostSessionRuntimePlan;

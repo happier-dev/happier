@@ -105,6 +105,7 @@ const workflowRunProjectionSelect = {
     workflowCheckpointEnvelope: true,
     createdAt: true,
     updatedAt: true,
+    finishedAt: true,
     assignments: { orderBy: { priority: "asc" as const }, take: 1, select: { machineId: true } },
     workflowInvocations: { take: 1, select: { id: true } },
 } satisfies Prisma.AutomationRunSelect;
@@ -195,6 +196,8 @@ function projectRun(row: WorkflowRunRow): WorkflowRunSummaryV1 {
         availability: availability(row),
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
+        // A row read through a narrower select carries no finish fact; omission says so.
+        ...(row.finishedAt === undefined ? {} : { finishedAt: row.finishedAt?.toISOString() ?? null }),
     };
 }
 

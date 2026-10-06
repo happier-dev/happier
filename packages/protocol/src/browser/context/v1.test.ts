@@ -1,6 +1,40 @@
 import { describe, expect, it } from 'vitest';
+import { SessionRunStreamReadEnvelopeSchema } from '../../sessions/control/contract.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 
 describe('browser context protocol contracts', () => {
+  it('preserves Browser bounds in composed control JSON in both dialects', () => {
+    const object = (value: unknown): Record<string, unknown> => {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected JSON Schema object');
+      return value as Record<string, unknown>;
+    };
+    for (const target of ['draft-7', 'draft-2020-12'] as const) {
+      for (const schema of [
+        zodSchemaToJsonSchemaObject(SessionRunStreamReadEnvelopeSchema, { target }),
+        SessionRunStreamReadEnvelopeSchema.toJSONSchema({ io: 'input', target, unrepresentable: 'any' }),
+      ]) {
+        const definitions = object(target === 'draft-7' ? schema.definitions : schema.$defs);
+        const page = Object.values(definitions).map(object).find((node) => {
+          if (!node.properties) return false;
+          const properties = object(node.properties);
+          return properties.kind !== undefined && object(properties.kind).const === 'browserPageReference';
+        });
+        if (!page) throw new Error('Expected composed Browser page reference');
+        const properties = object(page.properties);
+        const dereference = (value: unknown): Record<string, unknown> => {
+          const node = object(value);
+          const prefix = target === 'draft-7' ? '#/definitions/' : '#/$defs/';
+          return typeof node.$ref === 'string' && node.$ref.startsWith(prefix)
+            ? object(definitions[node.$ref.slice(prefix.length)])
+            : node;
+        };
+        expect(dereference(properties.contextId)).toEqual({ type: 'string', minLength: 1, maxLength: 256 });
+        expect(dereference(properties.capturedAtMs)).toEqual({
+          type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
+        });
+      }
+    }
+  });
   it('parses screenshot context as media reference metadata without inline bytes', async () => {
     const mod = await import('./v1.js').catch(() => null);
 

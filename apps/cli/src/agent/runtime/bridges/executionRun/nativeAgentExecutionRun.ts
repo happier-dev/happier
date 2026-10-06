@@ -26,7 +26,7 @@ import type { WorkStateService } from '@happier-dev/plugin-sdk/sessions/work-sta
 import { createExecutionRunHostBackendFromSessionRuntime } from '@happier-dev/plugin-sdk/host/registration';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { CreateCliExecutionRunBackendParams, EngineResolutionAgent } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
@@ -51,6 +51,7 @@ import { resolveNativeAgentSessionStateSharingPolicy } from '@/agent/runtime/reg
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import {
     createNativeAgentSessionInteractionOperations,
+    resolveNativeAgentSessionNativeHomeService,
     toNativeAgentUsageObservation,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import type { UsageObservation } from '@/usage/usageObservation';
@@ -181,6 +182,9 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     getPermissionRequestStore?: CreateCliExecutionRunBackendParams['getPermissionRequestStore'];
     mcpSelection?: SessionMcpSelectionV1;
     happyHomeDir?: string;
+    agent?: EngineResolutionAgent;
+    sourceEnvironment?: Readonly<Record<string, string>>;
+    refreshRuntimeAuthViaDaemon?: CreateCliExecutionRunBackendParams['connectedServiceRuntimeAuthRefresh'];
     createInvocationServices?: (params: Readonly<{
         currentSession: HostCurrentSessionUiServices;
         signal: AbortSignal;
@@ -317,6 +321,11 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             signal,
             ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
         });
+        const nativeHome = params.agent ? await resolveNativeAgentSessionNativeHomeService({
+            agent: params.agent,
+            sourceEnvironment: params.sourceEnvironment ?? {},
+        }) : null;
+        signal.throwIfAborted();
         const executionRunServices = createNativeAgentExecutionRunHostServices({
             signal,
             executionRunId: runId,
@@ -329,6 +338,8 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
             pluginId: params.lease.pluginId,
             agentId: params.lease.agentId,
             ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+            ...(nativeHome ? { nativeHome } : {}),
+            ...(params.refreshRuntimeAuthViaDaemon ? { refreshRuntimeAuthViaDaemon: params.refreshRuntimeAuthViaDaemon } : {}),
         });
         let context: AgentExecutionRunRuntimeContextV1;
         try {

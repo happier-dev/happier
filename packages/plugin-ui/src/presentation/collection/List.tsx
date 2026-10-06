@@ -69,8 +69,11 @@ export type HappierListSectionProps = Readonly<{
   count?: number;
   /** What the group's rows share, quiet at the header's end. */
   description?: string;
-  /** The type role of the heading's words; a dense table's groups take `caption`. */
-  titleRole?: 'label' | 'caption';
+  /**
+   * The type role of the heading's words; a dense table's groups take `caption`, and a group drawn as a page
+   * section (a page-scrolling list's groups) takes the page's section title.
+   */
+  titleRole?: 'label' | 'caption' | 'section';
   /** One control at the header's end ("See all"), beside — never inside — the heading's name. */
   action?: ReactNode;
   /**
@@ -294,9 +297,15 @@ export function HappierListSection({
   const titleStyle = theme
     ? titleRole === 'caption'
       ? { ...textStyle(theme, hostTypography, 'caption', theme.colors.secondaryText), fontWeight: '600' as const }
-      : textStyle(theme, hostTypography, 'label', theme.colors.text)
+      : titleRole === 'section'
+        ? { ...resolveHappierPageTextStyle('sectionTitle', hostTypography), color: theme.colors.text }
+        : textStyle(theme, hostTypography, 'label', theme.colors.text)
     : undefined;
-  const quietStyle = theme ? textStyle(theme, hostTypography, titleRole, theme.colors.mutedText) : undefined;
+  const quietStyle = theme
+    ? titleRole === 'section'
+      ? { ...resolveHappierPageTextStyle('sectionTitle', hostTypography), fontWeight: '400' as const, color: theme.colors.mutedText }
+      : textStyle(theme, hostTypography, titleRole, theme.colors.mutedText)
+    : undefined;
   // The visible heading: the title, its count and what its rows share. Only the title is the group's name.
   const hasAction = action !== undefined && action !== null && action !== false;
   const heading = count === undefined && description === undefined && !hasAction

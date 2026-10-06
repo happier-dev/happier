@@ -8,9 +8,8 @@ import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
 import { checkDaemonState, daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
-import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
+import { resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../utils/stack/runtime_state.mjs';
 import { syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
@@ -45,19 +44,8 @@ export async function resolveStackDaemonCommandContext({
   const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
 
-  let runtimePort = null;
   const runtimePath = (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim();
-  if (runtimePath) {
-    const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
-    runtimePort = await resolveTrustedStackRuntimeServerPort(state, {
-      stackName,
-      envPath: String(env.HAPPIER_STACK_ENV_FILE ?? '').trim(),
-      cliHomeDir: baseCliHomeDir,
-    });
-  }
-
-  const serverPort = runtimePort ?? resolveServerPortFromEnv({ env, defaultPort: 3005 });
-  const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
+  const urls = await resolveServerUrls({ env, allowEnable: false });
   const internalServerUrl = urls.internalServerUrl;
   const publicServerUrl = urls.publicServerUrl;
   const envForIdentity = applyCliRuntimeLaunchProvenanceEnv({

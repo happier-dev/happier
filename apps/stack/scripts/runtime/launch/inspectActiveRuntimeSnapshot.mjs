@@ -296,3 +296,11 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process
     producerStackBaseDir,
   };
 }
+
+/** Diagnostics inspect the selected deployment, not the controller's executable target. */
+export async function inspectStackRuntimeSelection({ stackBaseDir, env = process.env }) {
+  return await inspectActiveRuntimeSnapshot({
+    stackBaseDir, env,
+    ...(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? { requiredComponents: ['server'], target: null } : {}),
+  });
+}

@@ -70,6 +70,12 @@ export type HappierWorkMapViewProps<TNode extends HappierWorkMapNode> = Readonly
   /** Rendered after the nodes, inside the map. */
   footer?: ReactNode;
   /**
+   * `sequence`: the roots happen one after another (a workflow's top-level steps), so a spine joins
+   * each root to the next under its mark, as a lane joins its own steps. Omitted keeps roots unlinked:
+   * a producer that does not know how its roots relate never suggests an order.
+   */
+  rootLayout?: 'sequence' | 'separate';
+  /**
    * `compact` is the live mini-map a Work row carries under it (lab `.wm.sm`, `convo-W8full`):
    * smaller cards and marks, one-line labels, no subtitle line, the same structure and connectors.
    */
@@ -95,7 +101,10 @@ type WorkMapGeometry = Readonly<{
   markX: number;
   cardCenterY: number;
   railIndent: number;
+  /** Between a node's row and what it owns (its detail, its children). */
   itemGap: number;
+  /** Between one step of a sequence and the next (lab `--wm-step`). */
+  stepGap: number;
   connectorGap: number;
   mark: number;
   cardMinHeight: number;
@@ -108,11 +117,11 @@ type WorkMapGeometry = Readonly<{
 
 const GEOMETRY: Readonly<Record<HappierWorkMapDensity, WorkMapGeometry>> = {
   regular: {
-    markX: 24, cardCenterY: 24, railIndent: 36, itemGap: 8, connectorGap: 10, mark: 28, cardMinHeight: 48,
+    markX: 24, cardCenterY: 24, railIndent: 36, itemGap: 8, stepGap: 18, connectorGap: 10, mark: 28, cardMinHeight: 48,
     cardGap: 10, cardPaddingVertical: null, cardPaddingRight: 10, headerMinHeight: 32, framePadding: 10,
   },
   compact: {
-    markX: 16, cardCenterY: 17, railIndent: 26, itemGap: 6, connectorGap: 8, mark: 22, cardMinHeight: 34,
+    markX: 16, cardCenterY: 17, railIndent: 26, itemGap: 6, stepGap: 10, connectorGap: 8, mark: 22, cardMinHeight: 34,
     cardGap: 8, cardPaddingVertical: 4, cardPaddingRight: 9, headerMinHeight: 26, framePadding: 8,
   },
 };
@@ -127,7 +136,7 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
   const hairline = StyleSheet.hairlineWidth;
   const connector: ViewStyle = { position: 'absolute', backgroundColor: theme.colors.border };
   return StyleSheet.create({
-    container: { gap: g.itemGap },
+    container: { gap: g.stepGap },
     item: { gap: g.itemGap, minWidth: 0 },
     card: {
       flexDirection: 'row',
@@ -175,12 +184,18 @@ function createWorkMapStyles(theme: HappierWorkTheme, density: HappierWorkMapDen
     rowPressed: { backgroundColor: theme.colors.hover },
     // Sequence: children down a hairline rail that leaves from under the owner's mark; each child
     // draws its own segment so the rail stops at the last child's tick.
-    sequence: { paddingLeft: g.railIndent, gap: g.itemGap },
+    sequence: { paddingLeft: g.railIndent, gap: g.stepGap },
     sequenceItem: { minWidth: 0 },
-    rail: { ...connector, left: g.markX - g.railIndent, top: -g.itemGap, bottom: 0, width: hairline },
-    railEnd: { ...connector, left: g.markX - g.railIndent, top: -g.itemGap, height: g.itemGap + g.cardCenterY, width: hairline },
+    // The first child's rail rises through the owner's item gap; a later child's through the step gap.
+    rail: { ...connector, left: g.markX - g.railIndent, top: -g.stepGap, bottom: 0, width: hairline },
+    railEnd: { ...connector, left: g.markX - g.railIndent, top: -g.stepGap, height: g.stepGap + g.cardCenterY, width: hairline },
+    railFirst: { top: -g.itemGap },
+    railEndFirst: { top: -g.itemGap, height: g.itemGap + g.cardCenterY },
     tick: { ...connector, left: g.markX - g.railIndent, top: g.cardCenterY, width: g.railIndent - g.markX, height: hairline },
-    laneStack: { gap: g.itemGap },
+    laneStack: { gap: g.stepGap },
+    // A spine between consecutive items of a sequence that is not indented (the roots, a lane's
+    // stack): it leaves from under the previous card's mark and meets the next one's.
+    spine: { ...connector, left: g.markX, top: -g.stepGap, height: g.stepGap, width: hairline },
     // Lanes: a bus under the owner, one stub down into each lane.
     lanes: { flexDirection: 'row', alignItems: 'flex-start', gap: LANE_GAP, paddingTop: g.connectorGap },
     lane: { flex: 1, minWidth: 0 },
@@ -301,12 +316,14 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
       >
         {node.childNodeIds.map((childNodeId, index) => (
           <View key={childNodeId} style={appearance === 'lane' ? null : styles.sequenceItem}>
-            {appearance === 'lane' ? null : (
+            {appearance === 'lane' ? (index === 0 ? null : <WorkMapSpine style={styles.spine} />) : (
               <>
                 <View
                   accessibilityElementsHidden
                   importantForAccessibility="no-hide-descendants"
-                  style={index === node.childNodeIds.length - 1 ? styles.railEnd : styles.rail}
+                  style={index === node.childNodeIds.length - 1
+                    ? [styles.railEnd, index === 0 ? styles.railEndFirst : null]
+                    : [styles.rail, index === 0 ? styles.railFirst : null]}
                 />
                 <View
                   accessibilityElementsHidden
@@ -338,10 +355,22 @@ export function HappierWorkMapView<TNode extends HappierWorkMapNode>(props: Happ
   return (
     <View testID={testIDPrefix} accessibilityRole="list" style={styles.container} onLayout={onLayout}>
       {props.header}
-      {props.map.rootNodeIds.map((rootNodeId) => renderNode(rootNodeId))}
+      {props.rootLayout === 'sequence' && props.map.relationships === 'authored'
+        ? props.map.rootNodeIds.map((rootNodeId, index) => (
+          <View key={rootNodeId}>
+            {index === 0 ? null : <WorkMapSpine style={styles.spine} />}
+            {renderNode(rootNodeId)}
+          </View>
+        ))
+        : props.map.rootNodeIds.map((rootNodeId) => renderNode(rootNodeId))}
       {props.footer}
     </View>
   );
+}
+
+/** A decorative connector: hidden from assistive technology, which reads the DOM order instead. */
+function WorkMapSpine(props: Readonly<{ style: ViewStyle }>) {
+  return <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={props.style} />;
 }
 
 /** Side-by-side lanes under one bus: the bus runs from the first lane's stub to the last one's. */

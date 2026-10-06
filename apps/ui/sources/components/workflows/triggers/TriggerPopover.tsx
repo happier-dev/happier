@@ -120,9 +120,12 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
         onSubmit: (value: TriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>) => Promise<void> }>
 );
 
+/** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
+const TRIGGER_POPOVER_WIDTH = 380;
+
 const styles = StyleSheet.create((theme) => ({
     surface: {
-        width: 380,
+        width: TRIGGER_POPOVER_WIDTH,
         maxWidth: '100%',
     },
     foot: {
@@ -286,11 +289,13 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             open
             anchorRef={props.anchorRef}
             placement="auto"
-            maxWidthCap={420}
+            maxWidthCap={TRIGGER_POPOVER_WIDTH}
             maxHeightCap={640}
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
-            portal={{ web: true, native: true, matchAnchorWidth: false }}
+            // Beside its row, the popover starts level with it and only moves up as far as the
+            // window needs (lab T1); centring a tall form on a short row pinned it to the window top.
+            portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlignVertical: 'start' }}
         >
             {({ maxHeight }) => (
                 <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
@@ -300,7 +305,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         {/* The popover is a configuration page (07 §3 Sections): its title is the
                             summary, its description the next occurrence, and Done is its one primary,
                             beside the title (lab T1). */}
+                        {/* The popover is the surface: its rows sit on it directly, with no card inside it (lab T1). */}
                         <ItemGroup
+                            surface="none"
                             title={title}
                             {...(unavailableWhen !== undefined ? { description: unavailableWhen }
                                 : props.subtitle === undefined ? {} : { description: props.subtitle })}

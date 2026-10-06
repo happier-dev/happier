@@ -43,9 +43,9 @@ const FORCE_COOLDOWN_ENDPOINT_MISSING_MS = 60 * 1000;
 // longer attempt bound so an impatient caller cannot cancel or poison every
 // consumer coalesced onto the same request.
 const REQUEST_ATTEMPT_TIMEOUT_MS = 60 * 1000;
-// How long a foreground caller (login, endpoint discovery) waits for a public
-// feature observation before acting on its own fallback. The shared request
-// above keeps running for the consumers still waiting on it.
+// Opt-in wait budget for callers with a real fallback, such as unbound v1
+// login. Callers without a fallback wait for the shared attempt by default.
+// A wait budget never cancels the request for other consumers.
 export const FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS = 800;
 
 export type ServerFeaturesSnapshot =
@@ -738,12 +738,15 @@ export async function observeAuthenticatedServerFeaturesFresh(params: Readonly<{
 }
 
 export async function getServerFeaturesSnapshot(params?: {
+    /** Stop this caller's wait early only when it has its own fallback. Omit to await the shared attempt. */
     timeoutMs?: number;
     force?: boolean;
     serverId?: string;
+    /** Cancels this waiter without aborting other consumers' shared request. */
+    signal?: AbortSignal;
 }): Promise<ServerFeaturesSnapshot> {
     const request = getServerFeaturesSnapshotWithRetry({ ...params, projection: 'public' }, 2);
-    return await waitForServerFeaturesSnapshot(request, params?.timeoutMs);
+    return await waitForServerFeaturesSnapshot(request, params?.timeoutMs, params?.signal);
 }
 
 /**
@@ -815,8 +818,8 @@ export function deleteServerFeaturesSnapshot(params?: { serverId?: string }): vo
 export type ProbeServerFeaturesAtUrlOptions = Readonly<{
     /**
      * How long this caller waits for the shared request before acting on its own fallback.
-     * Defaults to `FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS`; `0` waits for the shared request's
-     * own attempt bound (for callers with no fallback of their own).
+     * Omit (or use `0`) to wait for the shared request's own attempt bound.
+     * A shorter budget is opt-in and requires a real fallback at the caller.
      */
     timeoutMs?: number;
     /** Force a refresh even when a URL-scoped snapshot is still fresh. */
@@ -827,7 +830,7 @@ export type ProbeServerFeaturesAtUrlOptions = Readonly<{
     runtimeOrigin?: string | null;
     /** Semantic browser Iroh carrier, where a loopback runtime origin cannot exist. */
     homeCarrier?: HomeCarrier;
-    /** Caller cancellation; it never changes focused-server state. */
+    /** Cancels this waiter without aborting other consumers' shared request or changing focus. */
     signal?: AbortSignal;
 }>;
 
@@ -882,9 +885,6 @@ export async function probeServerFeaturesAtUrl(
         String(input.serverId ?? '').trim() || undefined,
     );
     const force = input.force ?? false;
-    const waitBudgetMs = typeof input.timeoutMs === 'number' && Number.isFinite(input.timeoutMs)
-        ? Math.max(0, Math.trunc(input.timeoutMs))
-        : FOREGROUND_FEATURE_PROBE_WAIT_BUDGET_MS;
 
     const cachedEntry = endpointCache.get(cacheKey);
     const cached = cachedEntry?.kind === 'success' ? cachedEntry.value : null;
@@ -996,7 +996,7 @@ export async function probeServerFeaturesAtUrl(
             clearTimeout(timer);
         }
     });
-    return await waitForServerFeaturesSnapshot(request, waitBudgetMs, input.signal);
+    return await waitForServerFeaturesSnapshot(request, input.timeoutMs, input.signal);
 }
 
 export function resetServerFeaturesClientForTests(): void {
