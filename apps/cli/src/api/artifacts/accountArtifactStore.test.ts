@@ -3,13 +3,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { z } from 'zod';
 
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent,
   encodeBase64, decodeBase64, signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint,
   sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, createWorkflowDefinitionActions,
   workflowDefinitionArtifactSharingAdapterV1, readLaunchProfileArtifactV1,
   launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol';
 import { ArtifactBlobWriteV1Schema, type ArtifactBlobReadResponseV1 } from '@happier-dev/protocol';
-import { encryptWithDataKey } from '@/api/encryption';
+import { decryptWithDataKeyResult, encryptWithDataKey } from '@/api/encryption';
+import { createCliArtifactActions } from '@/session/actions/artifactActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, encodeAccountArtifactListCursor } from './accountArtifactStore';
@@ -666,21 +667,53 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
         header: encodePlainArtifactStoredContent({ title: 'Shared', ...(typeof priorBody === 'string' ? { excerpt: priorBody } : {}) }) }, expect.any(Object));
   });
 
-  it('keeps a retained actor distinct from the new restore caller in sealed body custody', async () => {
-    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+  it.each(['plain', 'e2ee'] as const)('restores retained %s body custody without inferring new caller attribution', async mode => {
+    const secret = randomBytes(32);
+    const publicKey = x25519.getPublicKey(secret);
+    const dataKey = randomBytes(32);
+    const dataEncryptionKey = mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER
+      : encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: publicKey, randomBytes }));
+    const encode = (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value)
+      : encodeBase64(encryptWithDataKey(value, dataKey));
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null
+      : { type: 'dataKey', publicKey, machineKey: secret } }, getAccountEncryptionMode: async () => mode });
     const provenance = { savedBy: { kind: 'agent' as const, accountId: 'owner', sessionId: 'old-session' } };
-    const savedBy = { kind: 'person' as const, accountId: 'editor' };
+    const retainedBody = encode({ body: 'prior', provenance });
+    let stored = { id: 'shared', ownerAccountId: 'owner', access: 'edit', encryptionMode: mode,
+      header: encode({ title: 'Shared' }), body: encode({ body: 'current' }),
+      headerVersion: 3, bodyVersion: 4, dataEncryptionKey, seq: 1, createdAt: 1, updatedAt: 2 };
     mockGet.mockImplementation(async (url: string) => ({ status: 200, data: url.endsWith('/revisions')
-      ? { revisions: [{ bodyVersion: 2, body: encodePlainArtifactStoredContent({ body: 'prior', provenance }), createdAt: 1, sizeBytes: 20 }], retentionCount: 10 }
-      : { id: 'shared', ownerAccountId: 'owner', access: 'edit', encryptionMode: 'plain',
-        header: encodePlainArtifactStoredContent({ title: 'Shared' }), body: encodePlainArtifactStoredContent({ body: 'current' }),
-        headerVersion: 3, bodyVersion: 4, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, seq: 1, createdAt: 1, updatedAt: 2 } }));
-    await expect(store.revisions.list({ artifactId: 'shared' })).resolves.toMatchObject({ revisions: [{ body: 'prior', provenance }] });
-    mockPost.mockResolvedValueOnce({ status: 200, data: { success: true, headerVersion: 4, bodyVersion: 5 } });
-    await expect(store.revisions.restore({ artifactId: 'shared', bodyVersion: 2, expectedRevision: { headerVersion: 3, bodyVersion: 4 }, savedBy }))
-      .resolves.toMatchObject({ ok: true });
-    expect(decodePlainArtifactStoredContent(mockPost.mock.calls[0]![1].body)).toEqual({ body: 'prior',
-      provenance: { savedBy, restoredFromBodyVersion: 2 } });
+      ? { revisions: [{ bodyVersion: 2, body: retainedBody, createdAt: 1, sizeBytes: 20 }], retentionCount: 10 }
+      : url.endsWith('/recipients') ? { artifactId: 'shared', ownerAccountId: 'owner', access: 'edit', encryptionMode: mode,
+        dataEncryptionKey, callerDataEncryptionKey: dataEncryptionKey, recipients: [] }
+      : stored }));
+    await expect(store.revisions.list({ artifactId: 'shared' })).resolves.toEqual({ artifactId: 'shared',
+      revisions: [{ bodyVersion: 2, body: 'prior', createdAt: 1, sizeBytes: 20 }], retentionCount: 10 });
+    // The HTTP boundary models the incumbent server's omitted-body restore:
+    // it selects retained bytes while the real CLI owner prepares the header and CAS.
+    mockPost.mockImplementationOnce(async (url: string, wire: unknown) => {
+      expect(url).toContain('/shared/revisions/2/restore');
+      const request = z.object({ expectedHeaderVersion: z.literal(3), expectedBodyVersion: z.literal(4), header: z.string() }).strict().parse(wire);
+      stored = { ...stored, header: request.header, body: retainedBody, headerVersion: 4, bodyVersion: 5 };
+      return { status: 200, data: { success: true, headerVersion: 4, bodyVersion: 5 } };
+    });
+    const execute = createCliArtifactActions({ store, resolvePublishCaller: async () => null });
+    await expect(execute({ actionId: 'artifact.revisions.restore', input: {
+      artifactId: 'shared', bodyVersion: 2, expectedRevision: { headerVersion: 3, bodyVersion: 4 },
+    }, context: { surface: 'cli', runtimeAccountId: 'editor' } })).resolves.toEqual({ artifactId: 'shared',
+      revision: { headerVersion: 4, bodyVersion: 5 } });
+    const wire: unknown = mockPost.mock.calls[0]![1];
+    expect(wire).not.toHaveProperty('body');
+    expect(JSON.stringify(wire)).not.toContain('editor');
+    expect(JSON.stringify(wire)).not.toContain('old-session');
+    const restored = await store.read('shared');
+    expect(restored).toMatchObject({ body: 'prior', revision: { headerVersion: 4, bodyVersion: 5 } });
+    expect(restored?.header).toEqual({ title: 'Shared', excerpt: 'prior' });
+    expect(stored.body).toBe(retainedBody);
+    const opened = mode === 'plain' ? decodePlainArtifactStoredContent(stored.body)
+      : decryptWithDataKeyResult(decodeBase64(stored.body), dataKey);
+    const expected = { body: 'prior', provenance };
+    expect(opened).toEqual(mode === 'plain' ? expected : { status: 'authenticated', value: expected });
   });
 
   it('restores a Workflow body while keeping current metadata and its header usable and sharable at the new revision', async () => {

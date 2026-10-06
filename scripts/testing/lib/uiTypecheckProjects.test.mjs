@@ -34,7 +34,7 @@ function publicFiniteCompiler(packageDir, fixtureDir, write, invocation) {
   assert.equal(resolve(packageDir, owner), resolve('scripts/workspaces/runTypeScriptCli.mjs'));
   const projects = [];
   const fixtureArgs = compilerArgs.map((arg, index) => {
-    if (compilerArgs[index - 1] !== '--project') return arg;
+    if (!['--project', '-p'].includes(compilerArgs[index - 1])) return arg;
     projects.push(arg);
     return join(fixtureDir, arg);
   });
@@ -67,7 +67,7 @@ function publicFiniteCompiler(packageDir, fixtureDir, write, invocation) {
 }
 
 function assertOneCheckerInvocations(nativeCalls, projects) {
-  assert.deepEqual(nativeCalls.map((args) => args[args.indexOf('--project') + 1]), projects);
+  assert.deepEqual(nativeCalls.map((args) => args[args.findIndex((arg) => arg === '--project' || arg === '-p') + 1]), projects);
   for (const args of nativeCalls) {
     const checkerOption = args.indexOf('--singleThreaded');
     assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1,
@@ -428,4 +428,155 @@ test('native UI projects redirect direct and transitive imports across the compl
 
 test('native CLI project boundary checks source and test types without rechecking source implementations', () => {
   assertNativeProjectBoundary(resolve('apps/cli'));
+});
+
+test('native test-package checker keeps source, suite and configuration semantic coverage with one checker', () => {
+  const packageDir = resolve('packages/tests');
+  const actual = ts.readConfigFile(join(packageDir, 'tsconfig.json'), ts.sys.readFile).config;
+  const cacheDir = resolve('node_modules/.cache');
+  mkdirSync(cacheDir, { recursive: true });
+  const fixtureDir = mkdtempSync(join(cacheDir, 'happier-tests-typecheck-'));
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: packageDir });
+  const write = (file, value) => {
+    mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
+    writeFileSync(join(fixtureDir, file), value);
+  };
+  try {
+    write('tsconfig.json', JSON.stringify({
+      ...actual,
+      compilerOptions: { ...actual.compilerOptions, types: [], paths: {},
+        tsBuildInfoFile: './cache/tests.tsbuildinfo' },
+    }));
+    write('src/model.ts', "export const label: string = 'ok';\n");
+    write('src/environment.d.ts', 'declare const fixtureEnvironment: string;\n');
+    write('suites/model.test.ts', "import { label } from '../src/model'; export const value: string = label + fixtureEnvironment;\n");
+    write('scripts/environment.d.mts', 'declare const fixtureScriptEnvironment: string;\n');
+    write('vitest.fixture.ts', 'export const label: string = fixtureScriptEnvironment;\n');
+    const publicCompiler = publicFiniteCompiler(packageDir, fixtureDir, write, invocation);
+    assert.deepEqual(publicCompiler.projects, ['tsconfig.json']);
+    const green = publicCompiler.run();
+    assert.equal(green.status, 0, green.stdout + green.stderr);
+    for (const [file, content] of [
+      ['src/model.ts', 'export const label: string = 42;\n'],
+      ['suites/model.test.ts', "import { label } from '../src/model'; export const value: number = label + fixtureEnvironment;\n"],
+      ['vitest.fixture.ts', 'export const label: number = fixtureScriptEnvironment;\n'],
+    ]) {
+      const original = readFileSync(join(fixtureDir, file), 'utf8');
+      write(file, content);
+      const red = publicCompiler.run();
+      assert.notEqual(red.status, 0, file);
+      assert.match(red.stdout + red.stderr, new RegExp(`${file.replaceAll('.', '\\.')}.*TS2322`, 'u'));
+      write(file, original);
+    }
+    const restored = publicCompiler.run();
+    assert.equal(restored.status, 0, restored.stdout + restored.stderr);
+    assertOneCheckerInvocations(publicCompiler.nativeCalls().slice(-1), [join(fixtureDir, 'tsconfig.json')]);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('native CLI source project includes the workspace resolver imported by UI configuration', () => {
+  const packageDir = resolve('apps/cli');
+  const actual = ts.readConfigFile(join(packageDir, 'tsconfig.source.json'), ts.sys.readFile).config;
+  assert.ok(readProject('tsconfig.source.json', packageDir).fileNames.includes(resolve('scripts/testing/vitestWorkspacePackageResolution.ts')),
+    'the composite CLI source project must explicitly own the shared resolver import');
+  const cacheDir = resolve('node_modules/.cache');
+  mkdirSync(cacheDir, { recursive: true });
+  const fixtureDir = mkdtempSync(join(cacheDir, 'happier-cli-config-closure-'));
+  const write = (file, value) => {
+    mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
+    writeFileSync(join(fixtureDir, file), value);
+  };
+  try {
+    const uiConfig = ts.createSourceFile('vitest.config.ts', readFileSync(join(uiDir, 'vitest.config.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+    const resolverImport = uiConfig.statements.find((statement) => ts.isImportDeclaration(statement)
+      && statement.moduleSpecifier.text === '../../scripts/testing/vitestWorkspacePackageResolution');
+    assert.ok(resolverImport, 'fixture must retain the real UI configuration import');
+    write('apps/ui/vitest.config.ts', resolverImport.getText(uiConfig)
+      + "\nexport const workspacePackages: readonly WorkspacePackageSpec[] = readBundledPluginWorkspacePackageSpecs('.');\n"
+      + 'export const workspacePlugin = createWorkspacePackageSourcesPlugin(workspacePackages);\n');
+    for (const file of ['scripts/testing/vitestWorkspacePackageResolution.ts', 'apps/cli/scripts/build-owned/bundledPluginMembership.ts']) {
+      write(file, readFileSync(resolve(file), 'utf8'));
+    }
+    const closureFiles = new Set(['../ui/vitest.config.ts', '../../scripts/testing/vitestWorkspacePackageResolution.ts',
+      'scripts/build-owned/bundledPluginMembership.ts']);
+    write('apps/cli/tsconfig.source.json', JSON.stringify({
+      ...actual, extends: join(packageDir, 'tsconfig.json'),
+      compilerOptions: { ...actual.compilerOptions, rootDir: '../..',
+        outDir: '../../cache/source', tsBuildInfoFile: '../../cache/source.tsbuildinfo' },
+      files: actual.files.filter((file) => closureFiles.has(file)),
+    }));
+    const result = spawnSync(process.execPath, [resolve('scripts/workspaces/runTypeScriptCli.mjs'),
+      '--singleThreaded', '--project', join(fixtureDir, 'apps/cli/tsconfig.source.json'), '--pretty', 'false'],
+    { encoding: 'utf8', cwd: fixtureDir });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('native CLI compilation uses one SDK declaration identity across package roots and public subpaths', () => {
+  const packageDir = resolve('apps/cli');
+  const actual = ts.readConfigFile(join(packageDir, 'tsconfig.json'), ts.sys.readFile).config;
+  const project = readProject('tsconfig.json', packageDir);
+  const sdkDir = resolve('packages/plugin-sdk');
+  const sdkPackage = JSON.parse(readFileSync(join(sdkDir, 'package.json'), 'utf8'));
+  for (const [subpath, entry] of Object.entries(sdkPackage.exports)) {
+    const specifier = '@happier-dev/plugin-sdk' + (subpath === '.' ? '' : subpath.slice(1));
+    const module = ts.resolveModuleName(specifier, join(packageDir, 'src/index.ts'), project.options, ts.sys).resolvedModule;
+    assert.equal(module?.resolvedFileName, resolve(sdkDir, entry.types),
+      `CLI must preserve the public declaration owner for ${specifier}`);
+  }
+  const cacheDir = resolve('node_modules/.cache');
+  mkdirSync(cacheDir, { recursive: true });
+  const fixtureDir = mkdtempSync(join(cacheDir, 'happier-cli-sdk-identity-'));
+  const write = (file, value) => {
+    mkdirSync(dirname(join(fixtureDir, file)), { recursive: true });
+    writeFileSync(join(fixtureDir, file), value);
+  };
+  try {
+    // Packaging materializes a physical CLI dependency copy. Reproduce that OS
+    // layout rather than relying on the development overlay's collapsing symlink.
+    const sdkManifest = { name: '@happier-dev/plugin-sdk', version: '0.0.0', type: 'module',
+      exports: { '.': { types: './dist/index.d.ts' }, './ui': { types: './dist/ui/index.d.ts' },
+        './ui/client': { types: './dist/ui/client/index.d.ts' } } };
+    const sdkApi = 'export interface PluginApi { label: string };\n';
+    for (const root of ['apps/cli/node_modules/@happier-dev/plugin-sdk', 'packages/plugin-sdk']) {
+      write(`${root}/package.json`, JSON.stringify(sdkManifest));
+      write(`${root}/dist/index.d.ts`, sdkApi);
+      write(`${root}/dist/ui/index.d.ts`, "export type { PluginApi } from '../index.js';\n");
+      write(`${root}/dist/ui/client/index.d.ts`, "export type { PluginApi } from '../../index.js';\n");
+    }
+    write('apps/cli/tsconfig.json', JSON.stringify({
+      extends: join(packageDir, 'tsconfig.json'),
+      compilerOptions: { types: [], paths: actual.compilerOptions.paths, rootDir: '../..',
+        tsBuildInfoFile: '../../cache/cli.tsbuildinfo' },
+      files: ['src/consumer.ts'], include: [],
+    }));
+    const consumer = "import type { PluginApi } from '@happier-dev/plugin-sdk';\n"
+      + "import type { PluginApi as UiApi } from '@happier-dev/plugin-sdk/ui';\n"
+      + "import type { PluginApi as ClientApi } from '@happier-dev/plugin-sdk/ui/client';\n"
+      + "import type { PluginApi as WorkspaceApi } from '../../../packages/plugin-sdk/dist/index';\n"
+      + 'declare const workspace: WorkspaceApi; export const host: PluginApi = workspace;\n'
+      + 'export const ui: UiApi = host; export const client: ClientApi = ui;\n';
+    write('apps/cli/src/consumer.ts', consumer);
+    const invocation = resolveTypeScriptCliInvocation({ repoRoot: resolve('.'), workspaceDir: packageDir });
+    const run = () => spawnSync(invocation.command, [...invocation.argsPrefix, '--singleThreaded',
+      '--project', join(fixtureDir, 'apps/cli/tsconfig.json'), '--pretty', 'false', '--listFiles'],
+    { encoding: 'utf8', cwd: fixtureDir });
+    const green = run();
+    assert.equal(green.status, 0, green.stdout + green.stderr);
+    const sdkFiles = green.stdout.split(/\r?\n/u).map((file) => resolve(file.trim()))
+      .filter((file) => file.includes('plugin-sdk/dist/'));
+    assert.deepEqual(sdkFiles.sort(), ['index.d.ts', 'ui/index.d.ts', 'ui/client/index.d.ts']
+      .map((file) => join(fixtureDir, 'packages/plugin-sdk/dist', file)).sort(),
+    'all SDK imports must consume the canonical workspace declarations once');
+    write('apps/cli/src/consumer.ts', consumer + 'export const invalid: number = client.label;\n');
+    const red = run();
+    assert.notEqual(red.status, 0);
+    assert.match(red.stdout + red.stderr, /consumer\.ts.*TS2322/u);
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });

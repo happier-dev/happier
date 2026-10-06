@@ -1,21 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentId } from '@/agents/catalog/catalog';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
 
-function buildArgs(overrides?: {
-    agentId?: AgentId | null;
-    sentFrom?: string;
-    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
-    appendSystemPrompt?: string;
-    displayText?: string;
-    model?: string | null;
-    fallbackModel?: string | null;
-    settings?: Record<string, unknown>;
-    session?: unknown;
-    metaOverrides?: Record<string, unknown>;
-}) {
+type SendMessageArgs = Parameters<typeof buildSendMessageMeta>[0];
+
+function buildArgs(overrides?: Partial<SendMessageArgs>): SendMessageArgs {
     return {
         sentFrom: overrides?.sentFrom ?? 'e2e',
         permissionMode: overrides?.permissionMode ?? 'default',
@@ -23,7 +13,7 @@ function buildArgs(overrides?: {
         displayText: overrides?.displayText,
         model: overrides?.model,
         fallbackModel: overrides?.fallbackModel,
-        agentId: overrides?.agentId ?? 'claude',
+        agentId: overrides?.agentId === undefined ? 'claude' : overrides.agentId,
         settings: overrides?.settings ?? settingsParse({}),
         session: overrides?.session ?? { id: 's1' },
         metaOverrides: overrides?.metaOverrides,
@@ -42,7 +32,7 @@ describe('buildSendMessageMeta', () => {
             claudeRemoteAdvancedOptionsJson: '{"settingSources":["project"]}',
         });
         const meta = buildSendMessageMeta(buildArgs({ settings, displayText: 'hello', agentId: 'claude' }));
-        const extras = meta as Record<string, unknown>;
+        const extras = meta;
 
         expect(extras.claudeRemoteAgentSdkEnabled).toBe(true);
         expect(extras.claudeRemoteSettingSourcesV2).toEqual(['project']);
@@ -60,7 +50,7 @@ describe('buildSendMessageMeta', () => {
 
     it('does not add provider extras for non-Claude agents', () => {
         const meta = buildSendMessageMeta(buildArgs({ agentId: 'codex' }));
-        const extras = meta as Record<string, unknown>;
+        const extras = meta;
 
         expect(extras.claudeRemoteAgentSdkEnabled).toBeUndefined();
         expect(extras.claudeRemoteSettingSources).toBeUndefined();
@@ -81,9 +71,9 @@ describe('buildSendMessageMeta', () => {
 
     it('omits appendSystemPrompt when the caller does not provide one', () => {
         const args = buildArgs({ agentId: null });
-        delete (args as any).appendSystemPrompt;
+        delete args.appendSystemPrompt;
 
-        const meta = buildSendMessageMeta(args as any);
+        const meta = buildSendMessageMeta(args);
 
         expect(Object.prototype.hasOwnProperty.call(meta, 'appendSystemPrompt')).toBe(false);
     });
@@ -122,8 +112,10 @@ describe('buildSendMessageMeta', () => {
             },
         }));
 
-        expect((meta as any).happier?.kind).toBe('review_comments.v1');
-        expect((meta as any).claudeRemoteAgentSdkEnabled).toBe(true);
+        expect(meta).toMatchObject({
+            happier: { kind: 'review_comments.v1' },
+            claudeRemoteAgentSdkEnabled: true,
+        });
     });
 
     it('keeps an explicit reasoningEffort meta override instead of replacing it from Claude session metadata', () => {
@@ -149,7 +141,7 @@ describe('buildSendMessageMeta', () => {
             },
         }));
 
-        expect((meta as any).reasoningEffort).toBe('medium');
+        expect(meta.reasoningEffort).toBe('medium');
     });
 
     it('does not overwrite an explicit Claude predecessor metadata override', () => {
@@ -159,6 +151,6 @@ describe('buildSendMessageMeta', () => {
             metaOverrides: { claudeCodeExperimentalAgentTeamsEnabled: false },
         }));
 
-        expect((meta as Record<string, unknown>).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
+        expect(meta.claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
     });
 });

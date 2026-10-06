@@ -255,7 +255,7 @@ describe('declared settings owner', () => {
         storage.setState({ settings: account, machines: { 'voice-machine': createMachineFixture({ id: 'voice-machine', activeAt: Date.now() }) } });
         const owner = createOwner(undefined, true, true, account);
         const declarations = await owner.action({ actionId: 'settings.list', input: { pageId: 'voiceConversations' } });
-        if (!('items' in declarations)) throw new Error('Missing readiness declaration');
+        if (!('items' in declarations) || !declarations.items) throw new Error('Missing readiness declaration');
         const readiness = declarations.items.find(item => item.anchor.endsWith('.readiness'));
         if (!readiness) throw new Error('Missing readiness declaration');
         expect(await throughActionExecutor(owner.action).execute('settings.invoke', { anchor: readiness.anchor }, { surface: 'ui', authority: 'present_user' }))

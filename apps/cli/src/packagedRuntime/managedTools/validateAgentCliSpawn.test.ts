@@ -31,33 +31,23 @@ function writeExecutable(filePath: string): void {
 }
 
 describe('validateAgentCliSpawn', () => {
-  it.each(['native', 'connected', 'provider', 'unknown'] as const)(
-    'denies positively signed-out native context but preserves %s launch context', async (context) => {
-      const root = createTempDirSync('happier-agent-spawn-auth-', tmpdir());
-      TEMP_DIRS.add(root);
-      const codex = writeExecutableShimSync({
-        dir: root, fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
-        contents: process.platform === 'win32'
-          ? '@echo off\r\necho Not logged in\r\nexit /b 1\r\n'
-          : '#!/bin/sh\necho "Not logged in" >&2\nexit 1\n',
-      });
-      envScope.patch({
-        HOME: root, USERPROFILE: root, CODEX_HOME: join(root, '.codex'),
-        HAPPIER_HOME_DIR: join(root, 'happier'), HAPPIER_CODEX_PATH: codex,
-        OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined,
-      });
-      const processEnv = {
-        ...process.env,
-        ...(context === 'connected' ? { CODEX_HOME: join(root, 'connected') } : {}),
-        ...(context === 'provider' ? { OPENAI_API_KEY: 'provider-test-key' } : {}),
-        ...(context === 'unknown' ? { PLUGIN_AUTH_CONTEXT: 'selected-account' } : {}),
-      };
-      const result = await validateAgentCliSpawn({ agentId: 'codex', processEnv, checkAuthentication: true });
-      expect(result).toMatchObject(context === 'native'
-        ? { ok: false, errorCode: 'agent_signed_out', agentId: 'codex' }
-        : { ok: true });
-    },
-  );
+  it('validates CLI availability independently of native authentication admission', async () => {
+    const root = createTempDirSync('happier-agent-spawn-auth-', tmpdir());
+    TEMP_DIRS.add(root);
+    const codex = writeExecutableShimSync({
+      dir: root, fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+      contents: process.platform === 'win32'
+        ? '@echo off\r\necho Not logged in\r\nexit /b 1\r\n'
+        : '#!/bin/sh\necho "Not logged in" >&2\nexit 1\n',
+    });
+    envScope.patch({
+      HOME: root, USERPROFILE: root, CODEX_HOME: join(root, '.codex'),
+      HAPPIER_HOME_DIR: join(root, 'happier'), HAPPIER_CODEX_PATH: codex,
+      OPENAI_API_KEY: undefined, CODEX_API_KEY: undefined,
+    });
+    // Effective credential admission belongs to daemon child preparation.
+    await expect(validateAgentCliSpawn({ agentId: 'codex' })).resolves.toEqual({ ok: true });
+  });
 
   it('accepts managed agent CLIs when PATH is missing the system install', async () => {
     const root = createTempDirSync('happier-agent-spawn-', tmpdir());
@@ -84,7 +74,6 @@ describe('validateAgentCliSpawn', () => {
     const result = await validateAgentCliSpawn({ agentId: 'gemini' });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected validation failure');
-    expect(result).toMatchObject({ errorCode: 'agent_cli_missing', agentId: 'gemini' });
     expect(result.errorMessage.toLowerCase()).toContain('gemini');
     expect(result.errorMessage).toContain('HAPPIER_GEMINI_PATH');
     expect(result.errorMessage.toLowerCase()).toContain('managed install');

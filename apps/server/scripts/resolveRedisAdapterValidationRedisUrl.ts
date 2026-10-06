@@ -17,6 +17,15 @@ type RedisMemoryServerModule = Readonly<{
 
 const REDIS_MEMORY_SERVER_VERSION = '7.2.4';
 
+function isRedisMemoryServerModule(value: unknown): value is RedisMemoryServerModule {
+    if (!value || typeof value !== 'object' || !('RedisMemoryServer' in value)) return false;
+    const server = value.RedisMemoryServer;
+    return server !== null
+        && (typeof server === 'object' || typeof server === 'function')
+        && 'create' in server
+        && typeof server.create === 'function';
+}
+
 function buildMissingRedisMemoryServerError(error: unknown): Error {
     const message = error instanceof Error ? error.message : String(error);
     return new Error(
@@ -33,7 +42,7 @@ function buildRedisMemoryServerStartError(error: unknown): Error {
 
 export async function resolveRedisAdapterValidationRedisUrl(params: {
     env: NodeJS.ProcessEnv;
-    loadRedisMemoryServer?: () => Promise<RedisMemoryServerModule>;
+    loadRedisMemoryServer?: () => Promise<unknown>;
 }): Promise<{
     redisUrl: string;
     redisMemory: RedisMemoryServerInstance | null;
@@ -46,12 +55,19 @@ export async function resolveRedisAdapterValidationRedisUrl(params: {
         };
     }
 
+    // The server owns this optional package, which may be absent after a valid
+    // install. Load it at runtime and narrow its 0.16 API at this external boundary.
+    const optionalPackageName = 'redis-memory-server';
     const loadRedisMemoryServer = params.loadRedisMemoryServer
-        ?? (async () => await import('redis-memory-server'));
+        ?? (async (): Promise<unknown> => await import(optionalPackageName));
 
     let redisMemoryModule: RedisMemoryServerModule;
     try {
-        redisMemoryModule = await loadRedisMemoryServer();
+        const loaded = await loadRedisMemoryServer();
+        if (!isRedisMemoryServerModule(loaded)) {
+            throw new Error('Missing RedisMemoryServer.create export');
+        }
+        redisMemoryModule = loaded;
     } catch (error) {
         throw buildMissingRedisMemoryServerError(error);
     }

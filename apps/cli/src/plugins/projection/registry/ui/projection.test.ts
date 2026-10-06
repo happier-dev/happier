@@ -181,7 +181,7 @@ describe('plugin UI projection family', () => {
             view(channelsPluginId, 'session-conversations-widget', 'widget'),
             view(channelsPluginId, 'channels', 'appPage'),
             view(triagePluginId, 'triage', 'appPage'),
-        ] as ResolvedContributionRegistry['uiViewsV2'];
+        ] satisfies NonNullable<ResolvedContributionRegistry['uiViewsV2']>;
         const registry: ResolvedContributionRegistry = {
             ...createEmptyResolvedContributionRegistry(),
             occurrenceIdsByPluginId: {

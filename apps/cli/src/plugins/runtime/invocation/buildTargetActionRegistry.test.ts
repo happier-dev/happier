@@ -15,6 +15,7 @@ import {
     type JsonValue,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -58,6 +59,7 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '../reload/run
 import { unexpectedCaptureSourceResolution } from '@/plugins/testkit/unexpectedCaptureSourceResolution';
 import { createCommittedContributedActionDefinitionLister } from './actions/createCommittedContributedActionDeps';
 import { createUnavailablePluginServices } from './services/unavailable';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 type BuildRegistryParams = Omit<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
@@ -266,13 +268,13 @@ function historyGapResetActionManifest() {
         },
         required: ['service', 'accountId'],
         additionalProperties: false,
-    } as const;
+    } satisfies PluginJsonSchema;
     const sourceConfigSchema = {
         type: 'object',
         properties: { credentialRef: sourceCredentialRefSchema },
         required: ['credentialRef'],
         additionalProperties: false,
-    } as const;
+    } satisfies PluginJsonSchema;
     const value = readCanonicalPluginManifest(createPluginManifestV2Fixture({
         id: 'acme.alpha',
         version: '1.2.3',
@@ -569,7 +571,7 @@ describe('buildTargetActionInvocationRegistry', () => {
         const listContributedActionDefinitions = createCommittedContributedActionDefinitionLister({
             tryAcquireRuntimeRegistryLease: () => tryAcquireAuthoritativePluginRuntimeRegistryLease({ controller }),
         });
-        const executor = createActionExecutor({ listContributedActionDefinitions });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), listContributedActionDefinitions });
         const id = formatQualifiedPluginActionId({ pluginId: 'acme.alpha', localId: 'run' });
         try {
             expect(listContributedActionDefinitions().map((definition) => definition.id)).toEqual([id]);

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
+import { createActionExecutor, type PluginJsonSchemaV2 } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions';
 import { createPluginWidgetAreaHostPortV1, PluginUiWidgetAreaResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
     createWidgetActionInputResolverV1, createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1,
@@ -15,6 +16,7 @@ import { WidgetSurface } from '@happier-dev/plugin-ui';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { createPluginUiPrivatePresentationHost } from '@/components/plugins/surfaces/pluginUiPrivatePresentationHost';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -88,10 +90,7 @@ const pin: WidgetInstanceV1 = { v: 1, id: 'pin', definition: { kind: 'installed'
  */
 function createArea() {
     const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
-    const transport = { ...boundary.transport, read: async (id: string) => {
-        const row = await boundary.transport.read(id);
-        return row ? { ...row, ownerAccountId: scope.accountId } : null;
-    } };
+    const transport = boundary.forAccount(scope.accountId);
     const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
     const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
     const widgetInputs = createWidgetActionInputResolverV1({
@@ -99,7 +98,7 @@ function createArea() {
         readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
-    const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs } as ActionExecutorDeps);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs }));
     const hostPort = createPluginWidgetAreaHostPortV1({ scope, pluginId: 'acme.prs', pageId: 'overview', declarations, isCurrent: () => true,
         execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
     // The mounted Host API's area method: the same port the native, declarative and hosted bridges reach.
@@ -165,7 +164,7 @@ function projectMovementFixture() {
         readDescriptor: async () => ({ inputs: { fields }, inputSchema }), readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
         validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
     });
-    const deps: ActionExecutorDeps = { widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs };
+    const deps = createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope, widgetSurfaceActions: { project: area }, widgetInputs });
     const executor = createActionExecutor(deps);
     const context = { surface: 'ui' as const, bypassApprovals: true, serverId: scope.serverId, expectedAccountId: scope.accountId };
     const bind = (projectId: string) => {
@@ -177,7 +176,7 @@ function projectMovementFixture() {
             },
             movement: {
                 readAdmission: (source, destination, signal) => readWidgetEntityMovementAdmission(deps, source, destination, { ...context, signal }),
-                execute: async effect => projectWidgetEntityMovementResult(await executor.execute(effect.actionId, effect.input, context), effect),
+                execute: async effect => projectWidgetEntityMovementResult(await executor.execute(ActionIdSchema.parse(effect.actionId), effect.input, context), effect),
             },
         };
         return { surface: ref, port, store: createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }) };

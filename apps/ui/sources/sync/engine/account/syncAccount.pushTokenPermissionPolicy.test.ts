@@ -145,7 +145,9 @@ describe('registerPushTokenIfAvailable push policy', () => {
         const { createAccountSettingsScope } = await import('@/sync/domains/settings/scope/accountSettingsScope');
         const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
-        saveAccountSettings(createAccountSettingsScope(homes.resolveServerProfileScopeId(home), 'account-a'), settingsParse(disabledSettings), 1);
+        const accountScope = createAccountSettingsScope(homes.resolveServerProfileScopeId(home), 'account-a');
+        if (!accountScope) throw new Error('Push policy fixture requires a valid Home/Account settings scope');
+        saveAccountSettings(accountScope, settingsParse(disabledSettings), 1);
         settingsUnavailable.add(homeAUrl);
         await registerPushTokenIfAvailable({ log: { log: () => {} } });
         expect(Notifications.getPermissionsAsync).toHaveBeenCalled();

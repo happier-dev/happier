@@ -30,6 +30,13 @@ describe('resolveRedisAdapterValidationRedisUrl', () => {
         })).rejects.toThrow(/REDIS_URL.*redis-memory-server/i);
     });
 
+    it('reports an unavailable optional dependency when its RedisMemoryServer export is missing', async () => {
+        await expect(resolveRedisAdapterValidationRedisUrl({
+            env: {},
+            loadRedisMemoryServer: async () => ({ RedisMemoryServer: undefined }),
+        })).rejects.toThrow(/redis-memory-server is unavailable/i);
+    });
+
     it('pins the embedded Redis fallback to a build-compatible version', async () => {
         const redisMemory = {
             start: vi.fn(async () => true),

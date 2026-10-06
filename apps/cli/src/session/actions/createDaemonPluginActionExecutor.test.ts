@@ -56,7 +56,7 @@ describe('createDaemonPluginActionExecutor', () => {
       // request contract; no internal dispatcher or authority service is mocked.
       expect(request).toEqual({ actionId: request.actionId, input: {}, surface: 'agent', startedBy: expectedStarter });
       return { matched: true, result: { ok: true, result: {
-        actionId: request.actionId, startedBy: request.startedBy, source: 'daemon',
+        actionId: request.actionId, startedBy: request.startedBy ?? null, source: 'daemon',
       } } };
     };
     const params = {

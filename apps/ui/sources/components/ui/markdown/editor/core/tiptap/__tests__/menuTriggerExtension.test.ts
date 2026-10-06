@@ -3,6 +3,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '@tiptap/core';
+// The referenced extension factory declaration does not carry this vendor augmentation.
+import '@tiptap/markdown';
 
 import { createMarkdownEditorExtensions } from '../createMarkdownEditorExtensions';
 import type { MenuTriggerKeyDownEvent, MenuTriggerState } from '../menuTriggerExtensionTypes';

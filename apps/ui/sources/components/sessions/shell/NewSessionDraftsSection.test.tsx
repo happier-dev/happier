@@ -275,17 +275,9 @@ function draft(
                 kind: 'newSession',
                 authoring: {
                     directory: { mutationId: 'm-dir', value: '/Users/alice/private-project' },
-                    executionTarget: {
-                        mutationId: 'm-machine',
-                        value: { serverId: 'server-a', machineId: 'machine-a' },
-                    },
-                    agentTarget: {
-                        mutationId: 'm-agent',
-                        value: {
-                            kind: 'agent',
-                            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                        },
-                    },
+                    serverId: { mutationId: 'm-server', value: 'server-a' },
+                    machineId: { mutationId: 'm-machine', value: 'machine-a' },
+                    agentId: { mutationId: 'm-agent', value: 'codex' },
                 },
             },
             extensions: {},
@@ -737,10 +729,11 @@ describe('NewSessionDraftsSection', () => {
             ...projection,
             document: {
                 ...projection.document,
+                v: 2,
                 target: {
                     ...projection.document.target,
                     authoring: {
-                        ...projection.document.target.authoring,
+                        directory: projection.document.target.authoring.directory,
                         agentTarget: {
                             mutationId: 'm-agent',
                             value: {

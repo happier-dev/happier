@@ -12,6 +12,7 @@ import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
+    PluginAccountCollectionContributionV1Schema,
     openPluginCollectionPrivatePayloadV1,
     PluginCollectionMutationRequestV1Schema,
     sealPluginCollectionPrivatePayloadV1,
@@ -234,7 +235,8 @@ async function sessionLinksContractFixture() {
     const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
     const contribution = PLUGIN_MANIFEST.contributes?.accountCollections?.find((entry) => entry.id === 'channel-state');
     if (!contribution) throw new Error('Missing canonical Channels collection');
-    const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'happier.channels', contribution });
+    const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'happier.channels',
+        contribution: PluginAccountCollectionContributionV1Schema.parse(contribution) });
     const ref = { pluginId: contract.pluginId, collectionId: contract.collectionId,
         schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest };
     const readAvailability = () => createPluginAccountAvailabilityReader({

@@ -172,6 +172,9 @@ for (const windows of [false, true]) {
 
 test('package build cancellation reaps the compiler, preserves dist, and exits with its signal', { skip: process.platform === 'win32' }, async (t) => {
   const setup = await fixture(t);
+  // The build owner parses the real project before starting its OS compiler boundary.
+  await writeFile(join(setup.root, 'tsconfig.json'), JSON.stringify({ files: ['source.ts'] }));
+  await writeFile(join(setup.root, 'source.ts'), 'export const value = 1;\n');
   const { child, stderr } = setup.start([buildRunner]);
   await waitUntil(() => readFile(setup.pidFile).then(() => true, () => false), `compiler did not start: ${stderr()}`);
   const pid = Number(await readFile(setup.pidFile, 'utf8'));

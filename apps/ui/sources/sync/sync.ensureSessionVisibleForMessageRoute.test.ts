@@ -3065,7 +3065,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             }),
         };
         vi.stubGlobal('localStorage', localStorageMock as unknown as Storage);
-        onTestFinished(() => vi.unstubAllGlobals());
+        onTestFinished(() => {
+            vi.unstubAllGlobals();
+        });
 
         const { sync } = await import('./sync');
         (sync as any).credentials = { token: tokenForSub('account-a') };

@@ -602,6 +602,7 @@
     "../../packages/protocol/src/sessions/metadata/metadataOverridesV1.ts",
     "../../scripts/testing/featureTestGating.ts",
     "../../scripts/testing/vitestWorkers.ts",
+    "../../scripts/testing/vitestWorkspacePackageResolution.ts",
     "../ui/sources/components/sessions/files/commits/commitPlanAcceptance.ts",
     "../ui/sources/sync/domains/session/changes/derivation/deriveTurnChangeSetsFromMessages.ts",
     "../ui/sources/sync/ops/actions/accountActionTransport.ts",

@@ -65,10 +65,26 @@ test('the finite Turbo graph is activated through the current package manager wi
     rootPackage.scripts['check:public-sdk:finite'],
     'apps/stack/bin/hstack-exec --script=check:public-sdk:finite:local',
   );
-  assert.equal(
-    rootPackage.scripts['check:public-sdk:finite:local'],
-    'turbo run api:finite test:finite typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/plugin-ui --filter=@happier-dev/sdk',
-  );
+  const publicCheckArgs = rootPackage.scripts['check:public-sdk:finite:local'].split(/\s+/u);
+  assert.deepEqual(publicCheckArgs.slice(0, 5), ['turbo', 'run', 'api:finite', 'test:finite', 'typecheck:finite']);
+  const publicPackageNames = publicCheckArgs.slice(5).map((arg) => {
+    assert.ok(arg.startsWith('--filter='), `unexpected public-check argument ${arg}`);
+    return arg.slice('--filter='.length);
+  });
+  assert.deepEqual(publicPackageNames.sort(), [
+    '@happier-dev/embed', '@happier-dev/plugin-sdk', '@happier-dev/plugin-ui', '@happier-dev/sdk',
+  ]);
+  const publicManifests = await Promise.all(publicPackageNames.map((name) =>
+    readJson(`packages/${name.slice('@happier-dev/'.length)}/package.json`)));
+  const publicTasks = publicCheckArgs.slice(2, 5);
+  for (const manifest of publicManifests) {
+    assert.ok(publicTasks.some((task) => typeof manifest.scripts[task] === 'string'),
+      `${manifest.name} contributes a selected finite task`);
+  }
+  for (const task of publicTasks) {
+    assert.ok(publicManifests.some((manifest) => typeof manifest.scripts[task] === 'string'),
+      `the selected graph has an owner for ${task}`);
+  }
   assert.equal(
     rootPackage.scripts['check:first-party-plugins:finite'],
     'apps/stack/bin/hstack-exec --script=check:first-party-plugins:finite:local',
