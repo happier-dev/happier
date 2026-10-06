@@ -56,6 +56,10 @@ reference and platforms. A target declares a `title`, `acceptedKinds`, an
 these into the manifest's existing contribution families; activation registers
 their handlers with `api.dragSources.register` and `api.dropTargets.register`.
 
+The target resolver's release `preview` can declare a bounded `glyph` alongside
+its verb, target and consequence. Marks belong to that preview, not a separate
+manifest icon or an Action-id convention; see the authoring guide below.
+
 Custom kinds use `plugin:<pluginId>/<sourceId>`. Targets can also accept declared
 built-in kinds such as `session` and `repository-file`; Happier supplies their
 qualified identity. Kind acceptance and an Action allowlist do not grant

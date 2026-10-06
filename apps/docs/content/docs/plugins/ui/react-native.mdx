@@ -249,10 +249,21 @@ The source's `reference` must satisfy its declared JSON schema. Its registered
 and optional subtitle. The registered `PluginDropTargetRuntime.resolve`
 receives the current item, semantic destination, input mode and target-local
 input. Return `{ status: 'allowed', effect: { actionId, input, preview } }`,
-where `preview` names the verb, target and optional consequence, or
+where `preview` names the verb, target, optional consequence and optional
+declared `glyph`, or
 `{ status: 'refused', reason: { code, message } }` with an optional preview.
 Keep this resolver free of writes: the host resolves again on release and
 dispatches the admitted Action through its existing approval policy.
+
+For example, a copy target can return
+`preview: { verb: 'Copy', target: 'Review queue', glyph: 'copy' }`.
+Choose a bounded named mark from `EntityDropPreviewV1['glyph']` in the SDK's
+types (see the generated [SDK surface](/plugins/api/surface)); arbitrary icon
+names are rejected. Omission uses the generic `add` mark.
+Core and plugin targets use the same field; Happier does not interpret your
+Action id or input to choose a mark. The released preview also supplies pending
+and settled feedback; refused feedback uses the refusal mark. A mark is
+presentation, not permission or a request to execute an Action.
 
 To make your reference attachable to a composer, set the source declaration's
 `composerAttachment` to one of your own declared attachment local ids. Register
@@ -299,6 +310,19 @@ the visible filter control and receives the item's local filter predicate;
 you passed to this List. They do not create, filter, or paginate a Data query;
 keep Account-backed paging and query currentness with the declared Data UI
 query instead.
+
+In the **0.3 development / Developer Preview** source contract, an optional
+`virtualizer` prop on `List` and `Collection` accepts the public
+`CollectionVirtualizer` interface from the root, components or presentation
+entry point. Most authors should omit it and keep the default native lists.
+A custom host adapter renders the supplied flat or sectioned window and its
+semantic cells, reports actual scrolling/content size, and publishes a
+positioning handle after mount (withdrawing it on unmount). It must preserve
+the supplied accessibility and layout facts. Revealing a row mounts its
+physical focus target; List still owns focus and selection, and Collection
+still owns its viewport memory. An adapter does not expose native refs or
+grant data/query authority. `Collection.virtualizer` covers its row and card
+Lists; page-scrolling rows continue to use the page's scroller.
 
 For a declared Resource, use `usePluginResource` from
 `@happier-dev/plugin-ui`. Use `useLivePluginResource` only when the

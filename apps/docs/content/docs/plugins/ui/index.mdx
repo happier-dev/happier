@@ -479,6 +479,13 @@ These are client host methods of a mounted surface. They are not daemon
 Actions: a plugin's daemon code still cannot answer a permission request as the
 person.
 
+In 0.3 development, host Agent/MCP callers can separately use the existing
+`session.permission.respond` Action. It requires approval by default; the user
+can explicitly waive that approval in shared Action settings. Current-request,
+offered-answer and access checks still apply. This does not expose the raw
+Action to plugin daemon code or change the user-action requirement for the
+mounted `respondToSessionPermission` method.
+
 A Session publishes its review findings as Review comments. To read them for a
 linked Session, call the `reviews.comments.list` host Action with that
 `sessionId`, or use `useReviewCommentProposalsForEntry` for proposed comments

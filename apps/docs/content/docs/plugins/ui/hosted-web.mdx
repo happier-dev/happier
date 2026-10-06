@@ -149,6 +149,9 @@ mount id and its reference or target-local input. Await the returned `ready`
 admission result, and call `dispose()` when the element retires. A source can
 receive an intentional Organize `handle` and `onState` feedback; its returned
 mount exposes staged keyboard, chooser, commit and cancel operations.
+Targets also accept `onState`: it reports that mounted target's current
+admission, pending settlement and retirement through the same host watch.
+Refused targets stay quiet; show their reason in the carried preview or chooser.
 
 Declare `readEntityDragItem`, `updateEntityDragDrop` and `watchEntityDragDrop`
 as required host methods when the renderer depends on this behavior. The
@@ -161,6 +164,11 @@ identity or consume ordinary OS file/text drags.
 
 Source/target declarations, pure admission and Action allowlists are described
 in the [entity authoring guide](/plugins/ui/react-native#entity-drag-and-drop-development).
+Targets declare the same optional bounded `preview.glyph` as native targets;
+the host's carried preview renders that mark. The hosted staged-move dock
+retains readable outcome words without importing the host's icon pack. Hosted
+Plugin UI Organize handles use the shared grip trigger, keyboard input and
+focus-visible chrome rather than a separate HTML-button interaction owner.
 Mount retirement and Account withdrawal prevent unissued effects; an already
 dispatched Action retains its own acknowledged or unknown outcome. These
 source contracts do not certify a loaded iframe, desktop child or native

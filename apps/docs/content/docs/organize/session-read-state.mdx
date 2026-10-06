@@ -98,8 +98,13 @@ the currently selected choice.
 
 Setting a reminder marks the session's current content read. With no stronger attention reason, a
 future reminder temporarily moves the session out of **Needs attention**. When the time arrives, the
-session returns there without becoming unread, even when no new message has arrived. Opening the
-session does not clear a due reminder; use **Remove reminder** or choose another time.
+session returns there without becoming unread, even when no new message has arrived. By default,
+opening the session clears a due reminder; future reminders stay scheduled. The clock clears, while
+the session keeps its list position until you leave. It then leaves **Needs attention** unless you
+kept it there or another attention reason still applies.
+
+Turn off **Settings → Session → Clear reminders on open** to remove due reminders manually with
+**Remove reminder** or choose another time.
 
 A reminder and **Keep in Needs attention** are separate choices. If you set a reminder on a kept
 session, the future reminder temporarily hides it from **Needs attention** without forgetting the

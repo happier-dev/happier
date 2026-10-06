@@ -717,8 +717,18 @@ migration and status-aware startup. Teams feature disablement does not relax
 this Account authentication boundary, and no client update floor follows.
 
 The managed installer shares the existing irreversible-migration admission and
-rollback path for both boundaries. SQLite migration admission rejects an old
-updater before opening the database; on candidate failure the updater queries
+rollback path for both boundaries. In current development source, SQLite
+migration admission inspects the existing schema and finished migration ledger
+before migration writes. A fresh database (including an empty ledger with no
+application tables) needs no updater handoff; an existing database, including a
+legacy schema without a ledger, still requires the managed installer's forward
+recovery capability. Stack server startup does not supply that contract: migrate
+existing data through the updated managed Personal Home installer with all other
+server processes stopped. Shared-DB QA consumers set
+`HAPPIER_SQLITE_AUTO_MIGRATE=0` and `HAPPIER_STACK_MIGRATE_MODE=skip` after the
+database owner has migrated it. Do not manually declare
+`HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY` to bypass admission.
+On candidate failure the updater queries
 the candidate migration executable against the existing migration ledger and
 refuses previous-runtime restoration if any included boundary is applied or
 cannot be determined. Recovery remains with the existing updater owner; there

@@ -24,13 +24,27 @@ The source plugin retains its private configuration-token encoding and provider-
 
 ## Mounted page actions (0.3 development)
 
-The client-target [`ui/mounted-v1`](../packages/plugins/triage/src/actions/mountedUiProtocol.ts) Action accepts finite semantic operations against a `mountId` from the current UI context. It opens/closes detail through the existing reducer and route settlement, controls the same detail Tabs and List/Board preference as the UI, applies a lens or saved view through the existing lens/view owners, sets bulk selection through the public Collection selection store, and refreshes/pages through the mounted window and continuation owners. The local-state Collection APIs are unchanged.
+The client-target [`ui/mounted-v1`](../packages/plugins/triage/src/actions/mountedUiProtocol.ts) Action accepts finite semantic operations against a `mountId` from the current UI context. It opens/closes detail through the existing reducer and route settlement, controls the same detail Tabs and List/Board preference as the UI, applies a lens or saved view through the existing lens/view owners, sets bulk selection through the public Collection selection store, and refreshes/pages through the mounted window and continuation owners. `focusRow` requests the Collection's physical row focus without activation; `peekRow` expands that row's table peek without opening detail (`expanded: false` closes it). Repeating the same peek intent is idempotent. Both require a key in the current Collection. `retryRun` and `cancelRun` reach the mounted bulk controller's existing Try again and Stop operations, preserving its retained identities and completed outcomes. The local-state Collection APIs are unchanged.
 
 The existing Account/plugin/generation ephemeral scope leases only the addressed page's callback. No React state, provider rows, or mount address is persisted. Choosing a saved view here applies its route lens, just like a shared view link; it does not write the Account's durable selected-view preference. Durable saved-view changes remain separately admitted Actions. An absent/inactive page or unavailable tab/selection/continuation returns `unavailable`; refused route settlement returns `rejected`. Agent/MCP callers require an answering mounted client; a headless CLI cannot operate another client's UI. Opaque current-context commands remain subject to the host's existing retirement and Action admission.
 
 ## Configured Session actions (0.3 development)
 
 The client-targeted `happier.triage/actions/sessions/run-configured-v1` Action runs a catalog `actionId` through the same configured action/profile/prompt and Session owners as a mounted press. Its exact input and result declarations are [`configuredActionRunProtocol.ts`](../packages/plugins/triage/src/actions/configuredActionRunProtocol.ts), not a second agent-only workflow. Callers supply exact `entries` (`entryRef` and `sourceInstanceId`) and a declared `destination`; optional settled `drafts` retain the host's canonical launch-input admission.
+
+An incomplete start returns `recovery` when the existing single/bulk controller
+still holds retry custody. Echo it as `resumeStart` with the same ordered entries,
+source instances, action and destination. Single recovery repeats its retained
+creation and delivery identities or resumes the reported phase. Bulk recovery
+retries only incomplete units, retaining successful outcomes and the exact inputs
+of units cancellation left unstarted. It does not resolve prompts or placement
+again. A mismatched continuation is refused before dispatch. Cancellation reaches
+the existing host/controller signal path; if a dispatched request has no answer,
+the result preserves that uncertainty rather than claiming nothing happened.
+These are invocation-local facts returned to the caller, not a durable retry
+record. A lost outer Action response supplies no recovery object and must not be
+treated as permission to start again. Prepared-workspace recovery obtains a fresh
+authorization when needed; it never echoes a spent authorization carrier.
 
 In current development source, agent/MCP/CLI contributed invocations route through the daemon's existing machine-scoped reverse RPC to an answering client, then through the ordinary Action executor and shared client dispatcher. The real invocation surface, exact contribution occurrence, cancellation and shared approval policy remain intact. A missing answering client fails closed before execution; loss of an issued acknowledgement is an unknown outcome, not permission to retry. This client dependency serves New Session authoring, input selection and navigation; it does not introduce a second Session creator.
 
@@ -74,6 +88,13 @@ the linked PR or Session also withdraws the entire hidden source slot's activity
 Changing or retiring the entry destroys its source instance. The Overview rail's
 `ScrollArea` stays mounted but disables scrolling for bounded source panels, whose
 own collections then own the viewport.
+
+PostHog's sensitive captured-variable reveal declares confirmation on its existing
+Action, so the shared approval policy applies on UI, Agent, MCP and CLI surfaces.
+The Stack trace panel invokes that Action through the host rather than making a
+separate local consent decision. Explicit Ask-first settings and user waivers
+retain their ordinary precedence. Revealed values stay in the active panel and
+are discarded when it is left; unfinished reads use its activity cancellation.
 
 [`TriageDetailInstance`](../packages/triage-sources/src/ui/detailPanel.tsx) binds
 the source root to that same real Tabs activity owner, independently of the

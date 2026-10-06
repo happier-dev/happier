@@ -1,5 +1,28 @@
 # Pending delivery architecture
 
+## Explicit non-interrupting delivery (development)
+
+**Steer now** requests immediate delivery of the exact Pending row without
+interrupting the agent. The server claims it as `send` when the foreground is
+ready and `steer` while a turn is active. An idle live runner accepts it through
+its ordinary prompt path. If active steering is unavailable before provider
+effect, the runner retains the same prompt and identity in its existing queue
+for the next safe input slot. **Send now** retains its separate interrupt-and-send
+behavior.
+
+The server's existing requested action accompanies the claimed provider action
+through the runner queue. This preserves the distinction from automatic
+`steer_if_active`: when that conditional steer becomes unavailable before effect,
+the canonical Pending owner returns it to ordinary delivery admission, including
+`after_runtime_idle`. Explicit steering does not require the foreground or
+background activity summary to become idle first.
+
+Claude terminal readiness uses positive native generation evidence even when a
+turn-start lifecycle signal is missing or delayed. Input safety and provider
+acceptance remain owned by the existing terminal readiness and custody paths.
+Once a provider effect may have occurred, steering failures do not automatically
+replay the prompt through ordinary delivery.
+
 ## UI settlement convergence (development)
 
 Pending provider acceptance carries the exact `localId` through `SessionClient`

@@ -280,6 +280,30 @@ including a saved definition's revision and `savedBy`, is retained rather than
 read from the current Artifact. The reviewed inline definition is not authority
 to replace a replay's stored graph.
 
+In 0.3 development, a lost Machine reply to `workflow.run.start` is an unknown
+admission outcome, not a refusal. The shared UI start controller reads the exact
+caller-allocated Run UUID through `workflow.run.get`; an admitted Run opens
+without resending Start. If it is not yet visible, the composer stays **Still
+starting…** and rereads only on the existing Account Run invalidation feed.
+Absence cannot prove rejection while the original request may still commit.
+An explicit transport `notSent` witness remains a typed, retryable failure.
+The Account lifetime fences reads, projection and navigation; server-side
+admission remains idempotent for the same Run UUID.
+
+In 0.3 development, Automation-origin Workflow claims materialize the accepted
+snapshot only on first admission. Subsequent claims carry the Run-owned snapshot
+through the claim client and executor into the origin-neutral coordinator, so
+Continue and daemon replacement preserve frozen definitions and per-run keys.
+The signed claim receipt excludes private snapshot bytes and reads them from
+the canonical Run row on replay.
+
+Automation warnings use the single daemon telemetry owner. Error messages,
+causes and transport payloads remain redacted; diagnostics retain a typed error
+name/code, the failing operation and recognized repository, packaged-runtime or
+Node code locations. Absolute user paths and function labels are not logged.
+Assignment-refresh failures leave the worker's last successful assignment
+cache intact; the existing reconciliation loop owns retries.
+
 Workflow conversation reply handoff reads a fresh owner-bound Run-key census
 through the authenticated storage client and uses Protocol's per-run key
 resolver before opening the final result. It refuses missing recipient material,
@@ -430,6 +454,17 @@ Run admission, before leaf effects. The Session-step producer renders the exact
 input, including frozen role and result-contract instructions, into admitting
 progress. The origin's context-only consumer uses that text verbatim rather
 than rendering it again. Definition authoring does not require a future Run origin.
+
+## Streamed transcript recovery (development)
+
+`api/session/streamedTranscriptWriter` retains a closed segment until the existing
+session outbox accepts its full snapshot into durable local custody. Its original
+completion or interruption intent and local id survive a failed admission; later
+output uses a separate segment. The keyed bridge releases only drained writers,
+including when output arrives during a flush. Unresolved terminal admission is
+recorded in the default file log and can be retried by a subsequent flush.
+Before local admission succeeds, that retained text is process-local. Once admitted,
+the existing session outbox owns reconnect delivery and restart recovery.
 
 ## CLI entry flow
 
@@ -924,6 +959,13 @@ inconsistent Home identities and existing advisory profiles cannot authorize
 pairing. Stack seeding does not manufacture a descriptor or copy routing trust
 from another Home.
 
+Stack's named-profile endpoint reconciliation refreshes an existing descriptor
+through the requested HTTPS or loopback carrier using that profile's credential.
+The authenticated Home publication supplies routing facts; the existing descriptor
+adoption owner enforces the saved Home identity and revision. Public fallback
+cannot refresh exact authority. The requested public URL may differ from the
+Home's canonical URL, so URL equality is not an identity or publication check.
+
 In the current 0.3 development UI, the system-task runner retains setup prompt answering after
 navigation. Reopening adopts that run only for its initiating Home and account; an initially
 identity-free Home uses the canonical saved-profile URL resolution, with ambiguous matches refused.
@@ -961,6 +1003,24 @@ install dry-runs, authentication claims and SSH execution retain their existing
 deadlines. The local adapters keep their distinct release-environment behavior.
 
 ### One CLI per computer (desktop setup, plan R12)
+
+In current development source, the desktop shell registers each release channel's custom URL
+scheme (`happier`, `happier-preview`, or `happier-dev`) through Tauri's deep-link plugin.
+The existing single-instance plugin forwards running-app links on Windows and Linux; macOS
+receives Opened events. The main-window presentation owner handles revealing or recreating the
+window. `installDesktopDeepLinks` subscribes before reading the plugin's startup URL snapshot
+and delegates URL interpretation to the existing system-path classifier and terminal-connect owners, preserving V4 Home custody and released
+update-required decisions. The renderer uses `desktopHost` and enables this plugin bridge only
+for Tauri; the parallel Electron evaluation has no deep-link plugin IPC.
+Terminal links reach `/terminal/connect` with pairing material in the fragment, where the
+terminal URL reader accepts the bundled webview's `tauri://localhost` route carrier while
+server addresses remain HTTP(S)-only. Router-provided fragments are resolved against the canonical
+terminal route even when browser history still shows the previous page. Existing confirmation,
+sign-in recovery, and URL clearing apply. This adds no automatic pairing approval. Channel-specific schemes allow installed channels
+to coexist; the CLI's default
+`happier://` link targets stable. Registration and cold/running/tray-only launches require live
+OS validation; macOS registration must be checked in the installed application bundle.
+
 
 A Happier home runs one CLI: the managed one, or a `happier` the person installed (npm, Homebrew, a
 manual copy). The answer lives in `<happier home>/cli-choice.json`
@@ -1217,6 +1277,15 @@ configuration, transcript ingestion, permissions, and recovery. The terminal hos
 provides the process and screen; `terminal/attachment` persists their association
 and owns attach, stop, and host disposition.
 
+Zellij command panes inherit the native server's environment. The Zellij adapter
+therefore passes the same launch environment when creating the server and submitting
+the command, through its shared background-server launch path. Launch-only passthrough
+values remain in the process environment rather than the one-shot launch-spec file.
+Claude's existing spawn owner disables prompt suggestions through that environment;
+the readiness parser continues to protect genuine user drafts.
+All native pane discovery, input, liveness, and cleanup actions use the handle's
+session name, so a second host cannot query or control another server.
+
 Terminal-host setup failures retain `SPAWN_FAILED` with optional, Protocol-owned
 `terminal_host_unavailable` detail. The session spawn action consumes that detail into
 its existing non-retryable `incompatible_target` settlement and preserves the optional
@@ -1408,6 +1477,12 @@ An incomplete termination keeps its exact process custody: concurrent callers sh
 the current attempt, while a rejected attempt can be retried rather than permanently
 replaying its rejection. Successful termination remains idempotent.
 
+Detached tmux creation uses the configured session `default-size` when no client
+is attached to that session. The shared tmux command owner reconciles the exact
+created window instead of inheriting dimensions from clients of unrelated sessions
+under tmux's `latest` sizing policy. It preserves inherited or explicit window
+sizing policy so attaching a client still controls its geometry. An unsuccessful
+geometry reconciliation is logged and does not retry a successful creation.
 Terminal-host creation failures retain the existing `not_created`,
 `created_and_absent`, or `created_or_uncertain` evidence independently from
 cleanup completion. Only a definitely unsubmitted tmux creation with complete
@@ -1489,6 +1564,10 @@ re-creation.
 
 Current 0.3 development source distinguishes `not_running` from confirmed `stopped`.
 `controlClient.stopDaemon` retains its existing incarnation-aware single-daemon stop owner.
+Force stop checks the runtime recorded by that owner rather than the stopping
+CLI's runtime directory, allowing a newer CLI to stop a proven daemon in an
+older immutable runner snapshot. Matching lifecycle scope, structured lock,
+OS process birth and the final process-identity recheck remain required.
 Publication presence shares authenticated control probing for PIDs hidden from the caller.
 Transient control failures remain unverified. After observing a hidden owner through
 authenticated ping or accepted authenticated stop, stop confirmation requires release of its previously captured lifecycle-lock snapshot, because control closes
@@ -1961,7 +2040,7 @@ This mechanism allows the server and mobile clients to drive local actions witho
 
 ### Session-log RPC scopes (0.3 development)
 
-Protocol's `rpc/methods.ts` declares method names and `rpc/index.ts` owns Session
+Protocol's `rpc/methods.ts` declares method names and `rpc/socket.ts` owns Session
 authorization and routing. The server consumes that classification for registration
 and dispatch; Machine diagnostics do not register Session-only methods.
 The canonical peer-route policy keeps `daemon.session.log.tail` server-required
@@ -2003,6 +2082,8 @@ Canonical build tasks do not pass through or restore from Turbo's cache. The roo
 
 The repository typecheck reuses those canonical builds as the source-compilation evidence for buildable workspace packages. It then runs the six remaining source-only graphs (Terminal Native, Plugin UI, App, CLI, Server, and the cross-package Tests workspace) with `--noEmit`. Their Turbo hashes include the exact emitted declaration roots they consume, rather than every workspace source tree. This avoids immediately compiling the same package a second time, avoids pulling all first-party Plugin builds into a typecheck, and still invalidates a cached source check when a consumed declaration changes. Plugin SDK and the external SDK retain separate test-project typechecks after their public declaration checks.
 
+In the development checkout, run the public `yarn typecheck` entry point. The execution owner selects the host and marks dispatched children with `HAPPIER_TYPECHECK_DISPATCHED=1`, including explicit local execution. The shared TypeScript runner refuses unmarked `typecheck:finite` and `typecheck:source:finite` invocations before starting the compiler. Turbo forwards and hashes this marker so dispatched children keep the selected host and an authorized cached result cannot satisfy an unmarked invocation. CI's public `check:public-sdk:finite` entry point grants the same permission through the execution owner.
+
 The shared TypeScript dist builder excludes test-only roots, including `.test-d.ts` and `.test-d.tsx`, through a build-only configuration extending the package project. It preserves package exclusions and leaves no-emit project selection unchanged. Root typecheck also runs the Protocol and Triage projects with `--noEmit`, in both ordinary and compiler-only modes, because their type tests previously relied on production compilation. Plugin UI's source check and Plugin SDK's test-project check continue to enforce their type tests.
 
 Generated-contract validation and mutable compiler-input preparation are separate finite facts. For example, the Plugin SDK Action-map and external SDK Action-wrapper checks are cacheable exact-input tasks, while synchronizing the physical declaration graph consumed by the Plugin SDK remains non-cacheable. This prevents an expensive semantic generator check from being repeated merely because declaration bytes must be refreshed through their canonical owner.
@@ -2015,7 +2096,13 @@ Live CLI dependency preparation also isolates Plugin build failures without seri
 
 Broad unit, integration, database, and runtime suites are not automatically parallelized by the finite graph. Many launch their own Vitest workers or share databases, ports, Stack processes, simulators, or Docker resources. They stay with their existing owner until a focused pilot proves isolation and measures end-to-end benefit; adding another outer fan-out on top of their internal concurrency would otherwise trade a visible serial command for less predictable process and memory contention.
 
-The source stack may start from a valid last-green runtime while changed source outputs refresh in the background. For the checkout-derived repository producer, `dev.mjs` schedules successful server/daemon reloads through the canonical runtime publisher, with one publication in flight plus one trailing identity recomputation; a full restart reconciles web, server, and daemon identities. Publication failure keeps the current snapshot selected and source services unchanged, and status is written through existing runtime state without restarting consumers. The detached Stack owner in `apps/stack/scripts/stack/run_script_with_stack_env.mjs` owns services and logs; the TUI attaches, displays the same state, and sends explicit controls. An unexpected TUI exit detaches from a healthy owner, while explicit quit/restart/stop retains the command's lifecycle semantics.
+The source stack may start from a valid last-green runtime while changed source outputs refresh in the background. Expo also requires its target-owned bundled Plugin UI inventory to exist before adopting last-green workspace outputs. A fresh Expo host awaits canonical UI preparation before Metro starts; a preparation failure surfaces at startup. These ignored runtime artifacts are generated on each host, rather than synchronized from the primary checkout. For the checkout-derived repository producer, `dev.mjs` schedules successful server/daemon reloads through the canonical runtime publisher, with one publication in flight plus one trailing identity recomputation; a full restart reconciles web, server, and daemon identities. Publication failure keeps the current snapshot selected and source services unchanged, and status is written through existing runtime state without restarting consumers. The detached Stack owner in `apps/stack/scripts/stack/run_script_with_stack_env.mjs` owns services and logs; the TUI attaches, displays the same state, and sends explicit controls. An unexpected TUI exit detaches from a healthy owner, while explicit quit/restart/stop retains the command's lifecycle semantics.
+
+For development services placed on a remote target, the target supervisor owns the worker and its independent SSH tunnel. Worker recovery retains a healthy tunnel and rechecks its lifetime at dispatch, replacing a tunnel that exited during backoff or retirement. Remote Expo readiness reports a degraded service at the existing readiness deadline, including with an attended TUI, and continues readiness recovery through the supervisor. Standalone attended Metro waits retain their cancellation-controlled checkpoints. An Expo heap failure is handled separately by the existing Expo process restart policy; it does not select a different host or start a local duplicate.
+
+Remote dependency bootstrap installs tools without workspace lifecycle scripts before loading the package-manager owner. That scriptless admission does not certify runtime readiness. The full install owner explicitly runs the canonical UI postinstall under the existing dependency-refresh lock before publishing readiness, including for daemon and build workers. UI patches and asset-generator sources participate through `apps/ui/package.json`'s `happier.installFreshnessInputs`; changing either reruns postinstall even when Yarn reuses installed packages. Postinstall failure leaves admission stale and fails preparation before a fresh Metro starts.
+
+In 0.3 web development, `apps/ui/metro.config.js` rewrites development bundle, source-map and HMR entry requests to `lazy=false`. Dynamic imports are included in the initial graph and still resolve asynchronously; `inlineRequires` defers module evaluation. This prevents Metro from retaining overlapping transitive graphs for each large optional presentation entry. Native development and production lazy bundling retain Expo's existing behavior. Web Babel uses Expo's existing `import.meta` transform so optional dependencies remain valid in Metro's script bundles; the Metro cache-version bump invalidates older transforms on restart. App and vendor source maps remain intact. A running Metro must be restarted to load this configuration change.
 
 ## Implementation references
 - CLI entry: `apps/cli/src/index.ts`
