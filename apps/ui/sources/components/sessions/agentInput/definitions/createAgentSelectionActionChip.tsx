@@ -22,6 +22,7 @@ const styles = StyleSheet.create({
 });
 
 export function createAgentSelectionActionChip(params: Readonly<{
+    readOnly?: boolean;
     anchorRef: React.RefObject<ViewInstance | null>;
     agentId: string;
     agentIdentityIcon?: React.ReactNode;
@@ -41,7 +42,9 @@ export function createAgentSelectionActionChip(params: Readonly<{
             testID={testID}
             accessibilityRole="button"
             accessibilityLabel={params.label}
-            onPress={params.onPress}
+            disabled={params.readOnly}
+            accessibilityState={{ disabled: params.readOnly === true }}
+            onPress={params.readOnly ? undefined : params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => [params.chipStyle(state.pressed), styles.chip]}
         >

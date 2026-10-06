@@ -21,6 +21,7 @@ type ChipStyle = (pressed: boolean) => any;
 type SessionModeChipControlLike = Pick<Parameters<typeof resolveSessionModeChipPresentation>[0], 'label' | 'selectedId'>;
 
 export function buildCoreAgentInputControlNodes(params: Readonly<{
+    readOnly?: boolean;
     showPermissionChip: boolean;
     permissionChipAnchorRef: React.RefObject<View | null>;
     permissionChipLabel: string | null;
@@ -136,6 +137,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     }) : null;
 
     const agentChip = params.hasAgentSelection ? createAgentSelectionActionChip({
+        readOnly: params.readOnly,
         anchorRef: params.agentChipAnchorRef,
         agentId: params.agentId,
         agentIdentityIcon: params.agentIdentityIcon,

@@ -506,7 +506,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                     />;
                     return presentation === 'chips' ? <React.Fragment key={field}>{rendered}</React.Fragment>
                         : <Item key={field} testID={`${testIDPrefix}-${engineField}-row`}
-                            title={t('workflows.page.sections.agentTitle')} mode="info" accessoryLayout="adaptive" rightElement={rendered} />;
+                            title={t('workflows.page.sections.agentTitle')} mode="info" accessoryLayout="stacked" rightElement={rendered} />;
                 }
                 const control = resolveSessionAuthoringFieldControl({
                     field,

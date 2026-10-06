@@ -286,13 +286,17 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
         });
     });
 
-    it('clears a newer Run reference-only edit with unchanged accepted text', () => {
+    it.each(['session', 'run'] as const)('clears a newer %s reference-only edit with unchanged accepted text', (kind) => {
         const sessionId = 'session-run-reference-clear';
         const runId = 'run-reference-clear';
-        const address = { kind: 'run', sessionId, runId } as const;
+        const address = kind === 'run'
+            ? { kind: 'run', sessionId, runId } as const
+            : { kind: 'session', sessionId } as const;
         const owner = createRepositoryComposerDocumentOwner({
             scope,
-            ref: { kind: 'participantMessage', sessionId, instanceId: runId },
+            ref: kind === 'run'
+                ? { kind: 'participantMessage', sessionId, instanceId: runId }
+                : { kind: 'session', sessionId },
             address,
         });
         owner.replaceDocument({

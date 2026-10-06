@@ -6,6 +6,7 @@ import { VoiceCaptureBusyError } from '@/voice/runtime/input/VoiceCaptureAdmissi
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import type { AgentInputAttachmentsRowItem } from './agentInputContracts';
+import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 
 // Exercise the installed color codec used by the real composer surface.
 vi.unmock('color');
@@ -309,6 +310,35 @@ describe('AgentInput (send button accessibility)', () => {
         vi.clearAllMocks();
     });
 
+    it('does not present a live permission badge above an editable workflow step', async () => {
+        const { WorkflowStepEditor } = await import('@/components/workflows/editor/WorkflowStepEditor');
+        const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
+        const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
+        const { createWorkflowAuthoringComposerCustody } = await import('@/components/sessions/authoring/authoringComposerCustody');
+        const { getPermissionModeBadgeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
+        const { SessionInstrumentStrip } = await import('./instrumentStrip');
+        const draft = createWorkflowEditorDraft({ draftId: 'workflow-authoring-badge', defaults: {
+            permissionMode: 'read-only',
+        } });
+        const step = draft.blocks[0];
+        if (step?.kind !== 'step') throw new Error('The default draft must contain an Agent step');
+        const screen = await renderScreen(<WorkflowStepEditor
+            draft={draft} step={step} ordinal={1} total={1} actions={[]} validation={validateWorkflowEditorDraft(draft)}
+            composerCustody={createWorkflowAuthoringComposerCustody(draft.draftId)}
+            composerScope={{ kind: 'machine', machineId: null }}
+            testIDPrefix="workflow-authoring-badge"
+            onSelect={() => {}} onCustomize={() => {}} onChangeDocument={vi.fn()} onChangeInput={vi.fn()}
+        />);
+        const badgeLabel = getPermissionModeBadgeLabelForAgentType('claude', 'read-only');
+        // Permission choices remain in the engine picker. Only the live
+        // status strip above the authored prompt must omit this badge.
+        const stripType = 'type' in SessionInstrumentStrip ? SessionInstrumentStrip.type : SessionInstrumentStrip;
+        const strips = screen.root.findAll((node) => node.type === stripType);
+        expect(strips).toHaveLength(1);
+        expect(strips[0]?.findAll((node) => typeof node.type === 'string' && String(node.type) === 'Text' && node.children.includes(badgeLabel))).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it.each(['agent', 'wait'] as const)('reads the full frozen %s document through the real composer without writing, voice or submit', async (kind) => {
         const { WorkflowStepEditor } = await import('@/components/workflows/editor/WorkflowStepEditor');
         const { WorkflowWaitBlockEditor } = await import('@/components/workflows/editor/WorkflowWaitBlockEditor');
@@ -346,6 +376,14 @@ describe('AgentInput (send button accessibility)', () => {
         // These are real rendered content nodes, not a mocked AgentInput prop inspection.
         const textNodes = screen.root.findAll((node) => String(node.type) === 'Text');
         expect(textNodes.some((node) => node.props.selectable === true && node.children.includes(document.text))).toBe(true);
+        const card = screen.findByTestId('agent-input-material-surface');
+        expect(flattenTestStyle(card?.props.style)).toMatchObject({ width: '100%', alignSelf: 'stretch' });
+        expect(flattenTestStyle(card?.props.style).borderWidth).toBeGreaterThan(0);
+        const prompt = textNodes.find((node) => node.children.includes(document.text));
+        expect(flattenTestStyle(prompt?.props.style)).toMatchObject({ textAlign: 'left' });
+        if (kind === 'agent') {
+            expect(screen.findByTestId('agent-input-agent-chip')).not.toBeNull();
+        }
         expect(textNodes.some((node) => node.children.includes('Frozen issue #42'))).toBe(true);
         expect(textNodes.some((node) => node.children.includes('Attached issue #42'))).toBe(true);
         expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
@@ -374,6 +412,7 @@ describe('AgentInput (send button accessibility)', () => {
         const { createWorkflowAuthoringComposerCustody } = await import('@/components/sessions/authoring/authoringComposerCustody');
         const { Text } = await import('@/components/ui/text/Text');
         const onSubmit = vi.fn();
+        const onAgentClick = vi.fn();
         const screen = await renderScreen(<ScopedAuthoringComposer
             custody={createWorkflowAuthoringComposerCustody('read-only-chips').entryFor('step')}
             scope={{ kind: 'machine', machineId: null }}
@@ -381,12 +420,18 @@ describe('AgentInput (send button accessibility)', () => {
             attachmentsEnabled
             placeholder="Read"
             onSubmit={onSubmit}
+            agentInputContext={{ agentType: 'claude', engineLabel: 'Frozen engine', onAgentClick }}
             extraActionChips={[{ key: 'contribution', render: () => <Text>Contributed context</Text> }]}
         />);
         expect(screen.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Contributed context'))).not.toHaveLength(0);
         expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
         expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer)/u.test(node.props.testID))).toHaveLength(0);
         expect(onSubmit).not.toHaveBeenCalled();
+        expect(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style)).toMatchObject({ width: '100%', alignSelf: 'stretch' });
+        const engine = screen.findByTestId('agent-input-agent-chip');
+        expect(engine?.props.disabled).toBe(true);
+        expect(engine?.props.onPress).toBeUndefined();
+        expect(onAgentClick).not.toHaveBeenCalled();
         await screen.unmount();
     });
 
