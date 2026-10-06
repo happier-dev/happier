@@ -25,8 +25,9 @@ function importedSpecifiers(source: string): string[] {
 }
 
 /** Only these exact neutral bindings may cross an admitted presentation leaf. */
-function importsOnlyNeutralInputContract(source: string, contract: 'field' | 'picker' = 'field'): boolean {
-  const specifier = '@happier-dev/plugin-sdk/actions';
+function importsOnlyNeutralPresentationContract(source: string, contract: 'field' | 'picker' | 'boardPreview' | 'dropPreview' = 'field'): boolean {
+  const specifier = contract === 'dropPreview' ? '@happier-dev/plugin-sdk'
+    : contract === 'boardPreview' ? '@happier-dev/plugin-sdk/ui' : '@happier-dev/plugin-sdk/actions';
   const syntax = ts.createSourceFile('actionInputFields.ts', source, ts.ScriptTarget.Latest, true);
   const imports = syntax.statements.filter((statement): statement is ts.ImportDeclaration =>
     ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
@@ -45,7 +46,9 @@ function importsOnlyNeutralInputContract(source: string, contract: 'field' | 'pi
   });
   const allowedBindings: Readonly<Record<string, boolean>> = contract === 'field'
     ? { InputFieldHint: true, readInputPath: false, writeInputPath: false }
-    : { actionInputOptionValueKey: false, readActionInputOptionValue: false };
+    : contract === 'picker'
+      ? { actionInputOptionValueKey: false, readActionInputOptionValue: false }
+      : contract === 'boardPreview' ? { WorkBoardPreviewLayoutV1: true } : { EntityDropPreviewV1: true };
   return bindings.length === Object.keys(allowedBindings).length
     && new Set(bindings.map(binding => binding.name)).size === bindings.length
     && bindings.every(binding => Object.hasOwn(allowedBindings, binding.name)
@@ -103,9 +106,13 @@ describe('author package boundary', () => {
       const isCanonicalRenderableImageContract = /presentation[\\/]content[\\/]renderableImage\.ts$/u.test(filePath);
       const isCanonicalLiveStreamReference = /presentation[\\/]media[\\/]liveStreamReference\.ts$/u.test(filePath);
       const isCanonicalInputFieldContract = /presentation[\\/]form[\\/]actionInputFields\.ts$/u.test(filePath)
-        && importsOnlyNeutralInputContract(source);
+        && importsOnlyNeutralPresentationContract(source);
       const isCanonicalInputPickerContract = /presentation[\\/]form[\\/]inputPicker\.tsx$/u.test(filePath)
-        && importsOnlyNeutralInputContract(source, 'picker');
+        && importsOnlyNeutralPresentationContract(source, 'picker');
+      const isCanonicalBoardPreviewContract = /presentation[\\/]artifacts[\\/]ArtifactPreviewCard\.tsx$/u.test(filePath)
+        && importsOnlyNeutralPresentationContract(source, 'boardPreview');
+      const isCanonicalDropPreviewContract = /presentation[\\/]interaction[\\/]ReleasePreview\.tsx$/u.test(filePath)
+        && importsOnlyNeutralPresentationContract(source, 'dropPreview');
       return importedSpecifiers(source)
         .filter((specifier) => !allowedPresentationSpecifier(specifier))
         .filter((specifier) => !(isTypeOnlyEnvironmentContract && specifier === '@happier-dev/plugin-sdk/ui'))
@@ -114,6 +121,8 @@ describe('author package boundary', () => {
         .filter((specifier) => !(isCanonicalLiveStreamReference && specifier === '@happier-dev/plugin-sdk/ui'))
         .filter((specifier) => !(isCanonicalInputFieldContract && specifier === '@happier-dev/plugin-sdk/actions'))
         .filter((specifier) => !(isCanonicalInputPickerContract && specifier === '@happier-dev/plugin-sdk/actions'))
+        .filter((specifier) => !(isCanonicalBoardPreviewContract && specifier === '@happier-dev/plugin-sdk/ui'))
+        .filter((specifier) => !(isCanonicalDropPreviewContract && specifier === '@happier-dev/plugin-sdk'))
         .map((specifier) => `${relative(sourceRoot, filePath)} → ${specifier}`);
     });
 
@@ -148,16 +157,45 @@ describe('author package boundary', () => {
   it('admits only the neutral input path values and erased field type, not an SDK service or transport', () => {
     const source = "import { readInputPath, writeInputPath, type InputFieldHint } from '@happier-dev/plugin-sdk/actions';";
     const picker = "import { actionInputOptionValueKey, readActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';";
-    expect(importsOnlyNeutralInputContract(source)).toBe(true);
-    expect(importsOnlyNeutralInputContract(picker, 'picker')).toBe(true);
-    expect(importsOnlyNeutralInputContract(source.replace('type InputFieldHint', 'InputFieldHint'))).toBe(false);
+    expect(importsOnlyNeutralPresentationContract(source)).toBe(true);
+    expect(importsOnlyNeutralPresentationContract(picker, 'picker')).toBe(true);
+    expect(importsOnlyNeutralPresentationContract(source.replace('type InputFieldHint', 'InputFieldHint'))).toBe(false);
     for (const [neutralSource, contract] of [[source, 'field'], [picker, 'picker']] as const) {
-      expect(importsOnlyNeutralInputContract(neutralSource.replace(' }', ', createActionsService }'), contract)).toBe(false);
-      expect(importsOnlyNeutralInputContract(neutralSource.replace('import {', 'import actions, {'), contract)).toBe(false);
-      expect(importsOnlyNeutralInputContract(neutralSource + "\nimport * as actions from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
-      expect(importsOnlyNeutralInputContract(neutralSource + "\nexport { createActionsService } from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
-      expect(importsOnlyNeutralInputContract(neutralSource + "\nimport('@happier-dev/plugin-sdk/actions');", contract)).toBe(false);
+      expect(importsOnlyNeutralPresentationContract(neutralSource.replace(' }', ', createActionsService }'), contract)).toBe(false);
+      expect(importsOnlyNeutralPresentationContract(neutralSource.replace('import {', 'import actions, {'), contract)).toBe(false);
+      expect(importsOnlyNeutralPresentationContract(neutralSource + "\nimport * as actions from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
+      expect(importsOnlyNeutralPresentationContract(neutralSource + "\nexport { createActionsService } from '@happier-dev/plugin-sdk/actions';", contract)).toBe(false);
+      expect(importsOnlyNeutralPresentationContract(neutralSource + "\nimport('@happier-dev/plugin-sdk/actions');", contract)).toBe(false);
     }
+  });
+
+  it('admits only the erased canonical Board preview type, not UI transport or other SDK bindings', () => {
+    const source = "import type { WorkBoardPreviewLayoutV1 } from '@happier-dev/plugin-sdk/ui';";
+    expect(importsOnlyNeutralPresentationContract(source, 'boardPreview')).toBe(true);
+    expect(importsOnlyNeutralPresentationContract(source.replace('import type', 'import'), 'boardPreview')).toBe(false);
+    expect(importsOnlyNeutralPresentationContract(source.replace(' }', ', PluginUiHostApi }'), 'boardPreview')).toBe(false);
+    expect(importsOnlyNeutralPresentationContract(source.replace('import type {', 'import type ui, {'), 'boardPreview')).toBe(false);
+    for (const extra of [
+      "import * as ui from '@happier-dev/plugin-sdk/ui';",
+      "export type { WorkBoardPreviewLayoutV1 } from '@happier-dev/plugin-sdk/ui';",
+      "import('@happier-dev/plugin-sdk/ui');",
+      "require('@happier-dev/plugin-sdk/ui');",
+    ]) {
+      expect(importsOnlyNeutralPresentationContract(`${source}\n${extra}`, 'boardPreview')).toBe(false);
+    }
+  });
+
+  it('admits only the erased canonical drop preview type, never a runtime or transport dependency', () => {
+    const source = "import type { EntityDropPreviewV1 } from '@happier-dev/plugin-sdk';";
+    expect(importsOnlyNeutralPresentationContract(source, 'dropPreview')).toBe(true);
+    expect(importsOnlyNeutralPresentationContract(source.replace('import type', 'import'), 'dropPreview')).toBe(false);
+    expect(importsOnlyNeutralPresentationContract(source.replace(' }', ', PluginDropTargetRuntime }'), 'dropPreview')).toBe(false);
+    for (const extra of [
+      "import * as sdk from '@happier-dev/plugin-sdk';",
+      "export type { EntityDropPreviewV1 } from '@happier-dev/plugin-sdk';",
+      "import('@happier-dev/plugin-sdk');",
+      "require('@happier-dev/plugin-sdk');",
+    ]) expect(importsOnlyNeutralPresentationContract(`${source}\n${extra}`, 'dropPreview')).toBe(false);
   });
 
   it('describes the published contents selected by the declared files inventory', () => {
