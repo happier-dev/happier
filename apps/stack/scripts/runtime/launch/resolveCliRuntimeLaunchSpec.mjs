@@ -56,9 +56,8 @@ export function resolveCliRuntimeLaunchSpec({ snapshot }) {
   }
   const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
   const runtimeRoot = snapshot.launchPath ?? snapshot.snapshotPath;
-  const entrypoint =
-    resolveRuntimeManifestEntrypoint({ snapshotPath: runtimeRoot, manifest: snapshot?.manifest, component: 'daemon' }) ||
-    join(runtimeRoot, 'cli', daemonComponent.binaryRelativePath);
+  const entrypoint = resolveRuntimeManifestEntrypoint({ snapshotPath: runtimeRoot, manifest: snapshot?.manifest, component: 'daemon' });
+  if (!entrypoint) throw new Error('[runtime] admitted snapshot daemon entrypoint is missing.');
   return {
     source: 'runtime',
     cliDir: join(runtimeRoot, 'cli'),

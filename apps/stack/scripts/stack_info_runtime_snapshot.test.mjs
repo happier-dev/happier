@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import http from 'node:http';
 
@@ -49,12 +49,34 @@ test('readStackInfoSnapshot reports active runtime snapshot metadata', async (t)
   }
 });
 
+test('stack info reports the selected foreign server snapshot for a shared database consumer', async (t) => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'qa-shared-info' });
+  const manifestPath = join(fixture.snapshotDir, 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.target = { platform: 'darwin', arch: 'arm64' };
+  manifest.components = { server: manifest.components.server };
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await rm(join(fixture.snapshotDir, 'cli'), { recursive: true, force: true });
+  await rm(join(fixture.snapshotDir, 'ui'), { recursive: true, force: true });
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\nHAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev\n');
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+    assert.equal(out.runtime.valid, true, out.runtime.errors.join('; '));
+    assert.equal(out.runtime.selectedSnapshotId, 'snap-1');
+    assert.deepEqual(Object.keys(out.runtime.snapshotComponents), ['server']);
+  } finally { restore(); }
+});
+
 test('stack info reports stale packages from the selected snapshot', async (t) => {
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'qa-last-green-info' });
   const manifestPath = join(fixture.snapshotDir, 'manifest.json');
   const { readFile } = await import('node:fs/promises');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  const stalePackages = [{ packageName: '@happier-dev/example', outputIdentity: 'prior-output', diagnosticSummary: 'error TS2322' }];
+  const stalePackages = [
+    { packageName: '@happier-dev/example', outputIdentity: 'prior-output', diagnosticSummary: 'error TS2322' },
+    { packageName: '@happier-dev/cli', reason: 'typecheck', errorCount: 1, files: ['src/index.ts'], diagnosticSummary: 'src/index.ts(1,1): error TS2322: fixture' },
+  ];
   manifest.components.daemon.stalePackages = stalePackages;
   await writeFile(manifestPath, JSON.stringify(manifest));
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });

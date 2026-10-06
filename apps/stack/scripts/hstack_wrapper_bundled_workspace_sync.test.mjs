@@ -10,6 +10,7 @@ import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 import { createStartableRuntimeSnapshotFixture } from './testkit/runtime_snapshot_start_testkit.mjs';
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
+import { writeManagedRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 import { coerceHappyMonorepoRootFromPath } from './utils/paths/paths.mjs';
 
 function stackRootDirFromMeta(metaUrl) {
@@ -199,6 +200,28 @@ function createStackManagementFixture(fixtureDir, stackName = 'qa-stack') {
   return { envPath, stackName, storageDir };
 }
 
+test('runtime activation publishes stored components without preparing source workspaces', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createRuntimeSnapshotFixture(t);
+  await writeManagedRuntimeSnapshotLayout({ stackDir: fixture.stackDir, snapshotId: 'stored' });
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot);
+  writeFileSync(join(fixture.stackDir, 'env'), [
+    `HAPPIER_STACK_STACK=${fixture.stackName}`, `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+    `HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${fixture.stackName}`,
+    'HAPPIER_STACK_RUNTIME_MODE=require', '',
+  ].join('\n'));
+  const env = bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.storageDir });
+  const result = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'runtime', fixture.stackName,
+    'activate', '--all', '--json'], { cwd: rootDir, env });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(existsSync(markerPath), false, 'activation must not read source workspace build inputs');
+  const selected = JSON.parse(result.stdout);
+  assert.ok(selected.snapshotId);
+  const manifest = JSON.parse(readFileSync(join(selected.snapshotPath, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.components.daemon.artifactFingerprint, 'daemon-stored');
+});
+
 function bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir }) {
   return buildStackFixtureEnv({
     homeDir: join(fixtureDir, 'home'),
@@ -248,6 +271,35 @@ function createSourceWorkspaceReadBoundary(fixtureDir, repoRoot) {
   ].join('\n'), 'utf8');
   return { loaderPath, markerPath };
 }
+
+test('shared-db preset stays metadata-only after runtime selection and on repeat invocation', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const fixture = await createRuntimeSnapshotFixture(t);
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixture.root, repoRoot);
+  writeFileSync(join(fixture.stackDir, 'env'), [
+    `HAPPIER_STACK_STACK=${fixture.stackName}`, `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+    'HAPPIER_DB_PROVIDER=sqlite', 'HAPPIER_STACK_RUNTIME_MODE=require', '',
+  ].join('\n'));
+  const sourceDir = join(fixture.storageDir, 'dev');
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(join(sourceDir, 'env'), 'HAPPIER_DB_PROVIDER=sqlite\n');
+  writeFileSync(join(sourceDir, 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/mirror', cliHomeDir: '/state/dev/cli' }],
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' } },
+  }));
+  const env = bundledWorkspaceFailureEnv({ fixtureDir: fixture.root, loaderPath, storageDir: fixture.storageDir });
+  for (const args of [
+    ['stack', 'env', fixture.stackName, 'shared-db', 'dev', '--json'],
+    [fixture.stackName, 'env', 'shared-db', 'dev', '--json'],
+  ]) {
+    const result = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), ...args], { cwd: rootDir, env });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(existsSync(markerPath), false, 'preset must not read checkout source build inputs');
+    assert.equal(JSON.parse(result.stdout).serverTarget, 'mac-host');
+    assert.match(readFileSync(join(fixture.stackDir, 'env'), 'utf8'), /HAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev/);
+  }
+});
 
 test('required runtime auth login does not admit checkout source workspaces before dispatch', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
@@ -1113,7 +1165,6 @@ test('hstack wrapper keeps dependency-consuming and mutating stack paths behind 
     const { stackName, storageDir } = createStackManagementFixture(fixtureDir);
     const env = bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir });
     const invocations = [
-      { args: ['stack', 'runtime', stackName, 'activate', '--json'], label: 'stack runtime activate' },
       { args: ['stack', 'start', stackName, '--source', '--json'], label: 'stack source start' },
       { args: ['stack', 'start', stackName, '--source', '--json', '--', '--runtime'], label: 'stack source start with forwarded runtime flag' },
       { args: ['stack', 'doctor', stackName, '--fix', '--json'], label: 'stack doctor --fix' },

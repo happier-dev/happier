@@ -488,7 +488,7 @@ function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
   ])).filter((packageDir) => existsSync(packageDir));
 }
 
-async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn } = {}) {
+async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn, force = false } = {}) {
   const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
   if (componentPkg?.name !== '@happier-dev/app') return;
   if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
@@ -518,7 +518,7 @@ async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = fa
     }
     return inspectLegacyOutputReadiness();
   };
-  if ((await inspectPostinstallReadiness()).length === 0) return;
+  if (!force && (await inspectPostinstallReadiness()).length === 0) return;
 
   const env = pmIn
     ? (envIn ?? process.env)
@@ -740,15 +740,17 @@ export async function ensureDepsInstalled(
   const nodeModules = join(installDir, 'node_modules');
   const stdio = quiet ? 'ignore' : 'inherit';
   const env = await preparePmEnv(installDir, envIn);
-  // Stack explicitly prepares the three component-owned lifecycle outputs after
-  // dependency admission. Keep Yarn from compiling every first-party workspace
+  // Stack explicitly prepares component-owned lifecycle outputs. Keep Yarn
+  // from compiling every first-party workspace
   // as an incidental install side effect while preserving third-party install
-  // scripts and the UI/CLI postinstalls that own real runtime prerequisites.
+  // scripts and the CLI postinstall that owns real runtime prerequisites. UI
+  // postinstall is run explicitly below: Yarn may skip lifecycle scripts after
+  // a scriptless bootstrap, and its outputs must precede freshness publication.
   // Server provider generation is already owned explicitly by
   // ensureComponentPrerequisites; its postinstall also runs build:shared and
   // would duplicate the source-dev/package publication owners.
   if (!String(env.HAPPIER_INSTALL_SCOPE ?? '').trim()) {
-    env.HAPPIER_INSTALL_SCOPE = 'ui,cli';
+    env.HAPPIER_INSTALL_SCOPE = 'cli';
   }
   const pm = await getComponentPm(installDir, env);
   if (onDependenciesReady && pm.name !== 'yarn') {
@@ -770,6 +772,16 @@ export async function ensureDepsInstalled(
     // mutable, but dependency inputs remain owned by the source checkout.
     preserveLockfile: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
   });
+  const installAndPrepare = async () => {
+    await runPm(pm, installArgs, { cwd: installDir, stdio, env });
+    const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
+    const uiDir = monorepoRoot && resolve(monorepoRoot) === resolve(installDir)
+      ? join(monorepoRoot, 'apps', 'ui')
+      : componentDir;
+    // The full installed tree belongs to every worker role. A markdown sentinel
+    // cannot prove changed patches or generated worker/webview assets are current.
+    await ensureUiPostinstallOutputs(uiDir, installDir, { quiet, env, pm, force: true });
+  };
 
   if (await pathExists(nodeModules)) {
     const skipRefresh =
@@ -814,11 +826,7 @@ export async function ensureDepsInstalled(
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
         }
-        await runPm(pm, installArgs, {
-          cwd: installDir,
-          stdio,
-          env,
-        });
+        await installAndPrepare();
       });
     }
 
@@ -834,11 +842,7 @@ export async function ensureDepsInstalled(
       // eslint-disable-next-line no-console
       console.log(`[local] installing ${label} dependencies (first run)...`);
     }
-    await runPm(pm, installArgs, {
-      cwd: installDir,
-      stdio,
-      env,
-    });
+    await installAndPrepare();
   };
   if (pm.name === 'yarn') {
     await withDependencyRefresh(
@@ -856,7 +860,7 @@ export async function ensureDepsInstalled(
   await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
 }
 
-async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, timeoutMs }) {
+async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, timeoutMs, captureFailureDiagnostic = quiet }) {
   const pm = await getComponentPm(packageDir, env);
   const stdio = quiet ? 'ignore' : 'inherit';
   if (pm.name === 'yarn') await ensureYarnReady({ dir: packageDir, env, quiet, pm });
@@ -866,7 +870,7 @@ async function runStackWorkspacePackageScript(packageDir, script, { env, quiet, 
     stdio,
     env,
     timeoutMs,
-    captureFailureDiagnostic: quiet,
+    captureFailureDiagnostic,
   });
 }
 

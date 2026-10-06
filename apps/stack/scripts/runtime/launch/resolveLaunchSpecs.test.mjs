@@ -8,6 +8,13 @@ import {
 } from './resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
 
+test('runtime launch refuses to invent a missing service entrypoint in a component snapshot', () => {
+  const snapshot = { snapshotPath: '/tmp/server-only', daemonDistClosureFingerprint: '1111111111111111',
+    manifest: { source: { serverComponent: 'happier-server-light' }, components: {} } };
+  assert.throws(() => resolveServerRuntimeLaunchSpec({ serverComponent: 'happier-server-light', snapshot }), /server.*entrypoint/);
+  assert.throws(() => resolveCliRuntimeLaunchSpec({ snapshot }), /daemon.*entrypoint/);
+});
+
 test('resolveCliRuntimeLaunchSpec returns a runtime binary command from the snapshot', () => {
   const resolved = resolveCliRuntimeLaunchSpec({
     snapshot: {
@@ -40,7 +47,7 @@ test('runtime CLI provenance is one canonical shape for daemon options and neste
       launchPath: '/tmp/runtime/builds/snap-a',
       daemonDistClosureFingerprint: 'abcdef1234567890',
       manifest: {
-        entrypoints: { daemon: 'cli/happier' },
+        components: { daemon: { entrypoint: 'cli/happier' } },
       },
     },
   });
@@ -188,8 +195,8 @@ test('resolveServerRuntimeLaunchSpec derives packaged migrations from the provid
   }).migration, { mode: 'disabled' });
 });
 
-test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the manifest entrypoint escapes the snapshot root', () => {
-  const resolved = resolveCliRuntimeLaunchSpec({
+test('resolveCliRuntimeLaunchSpec rejects a manifest entrypoint that escapes the snapshot root', () => {
+  assert.throws(() => resolveCliRuntimeLaunchSpec({
     snapshot: {
       snapshotPath: '/tmp/stack/runtime/builds/snap-1',
       daemonDistClosureFingerprint: '1111111111111111',
@@ -199,22 +206,11 @@ test('resolveCliRuntimeLaunchSpec falls back to the canonical cli path when the 
         },
       },
     },
-  });
-
-  assert.deepEqual(resolved, {
-    source: 'runtime',
-    cliDir: '/tmp/stack/runtime/builds/snap-1/cli',
-    entrypoint: '/tmp/stack/runtime/builds/snap-1/cli/happier',
-    nodeEntrypoint: '/tmp/stack/runtime/builds/snap-1/cli/package-dist/index.mjs',
-    command: '/tmp/stack/runtime/builds/snap-1/cli/happier',
-    args: [],
-    runtimeBacked: true,
-    daemonDistClosureFingerprint: '1111111111111111',
-  });
+  }), /daemon entrypoint/);
 });
 
-test('resolveServerRuntimeLaunchSpec falls back to the canonical server path when the manifest entrypoint escapes the snapshot root', () => {
-  const resolved = resolveServerRuntimeLaunchSpec({
+test('resolveServerRuntimeLaunchSpec rejects a manifest entrypoint that escapes the snapshot root', () => {
+  assert.throws(() => resolveServerRuntimeLaunchSpec({
     serverComponent: 'happier-server',
     dbProvider: 'postgres',
     snapshot: {
@@ -226,19 +222,5 @@ test('resolveServerRuntimeLaunchSpec falls back to the canonical server path whe
         },
       },
     },
-  });
-
-  assert.deepEqual(resolved, {
-    source: 'runtime',
-    serverDir: '/tmp/stack/runtime/builds/snap-1/server',
-    entrypoint: '/tmp/stack/runtime/builds/snap-1/server/happier-server',
-    command: '/tmp/stack/runtime/builds/snap-1/server/happier-server',
-    args: [],
-    migration: {
-      mode: 'packaged',
-      command: '/tmp/stack/runtime/builds/snap-1/server/happier-server-migrate',
-      args: [],
-      cwd: '/tmp/stack/runtime/builds/snap-1/server',
-    },
-  });
+  }), error => error.code === 'ERUNTIMESERVERCOMPONENTUNAVAILABLE' && error.reason === 'missing_admitted_server_entrypoint');
 });

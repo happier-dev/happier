@@ -1,5 +1,14 @@
 import { parseArgs } from '../utils/cli/args.mjs';
 
+export function parseRuntimeBuildTarget({ argv = [] } = {}) {
+  const { kv } = parseArgs(argv);
+  if (!kv.has('--target')) return { platform: process.platform, arch: process.arch };
+  const requested = String(kv.get('--target')).trim();
+  const match = /^(linux|darwin|windows|win32)-(x64|arm64)$/.exec(requested);
+  if (!match) throw new Error(`[build] invalid runtime target: ${requested}. Use <linux|darwin|windows>-<x64|arm64>.`);
+  return { platform: match[1] === 'windows' ? 'win32' : match[1], arch: match[2] };
+}
+
 function hasAnyExplicitComponent(selection) {
   return Object.values(selection).some(Boolean);
 }

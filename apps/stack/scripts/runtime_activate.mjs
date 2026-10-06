@@ -2,22 +2,22 @@ import './utils/env/env.mjs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getRootDir, getStacksStorageRoot, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { collectBuildSourceMetadata } from './build/collect_build_source_metadata.mjs';
 import {
   composeRuntimePublicationResult,
+  inspectLatestPublishedRuntimeSnapshot,
   publishRuntimeSnapshot,
   selectRuntimeSnapshot,
 } from './build/activate_runtime_snapshot.mjs';
 import { resolveLatestComponentArtifact } from './build/resolve_latest_component_artifact.mjs';
 import { pruneRuntimeSnapshots, resolveRuntimeRetentionPolicy } from './build/runtime_retention.mjs';
 import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
-import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
 import { ensureStackRuntimeModePrefer } from './runtime/shared/ensureStackRuntimeModePrefer.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
-import { createRuntimeSnapshotId } from './runtime/shared/runtime_snapshot_identity.mjs';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
-import { withRuntimePublicationAdmission } from './build/build_stack_artifacts.mjs';
+import { publishBuiltRepositoryRuntimeSnapshot, resolveRuntimePublicationRequiredComponents, withRuntimePublicationAdmission } from './build/build_stack_artifacts.mjs';
 
 function resolveSelectedComponents(flags) {
   const explicit = {
@@ -39,52 +39,6 @@ function assertNamedStack(env) {
   return stackName;
 }
 
-async function resolveActivationAuthority({ authority, selectedComponents }) {
-  if (authority.producerStackBaseDir === authority.consumerStackBaseDir) return authority;
-
-  const selected = Object.entries(selectedComponents)
-    .filter(([, enabled]) => enabled)
-    .map(([component]) => component);
-  const producerArtifacts = await Promise.all(
-    selected.map((component) => resolveLatestComponentArtifact({
-      stackBaseDir: authority.producerStackBaseDir,
-      component,
-    })),
-  );
-  if (producerArtifacts.every(Boolean)) return authority;
-
-  const legacyConsumerArtifacts = await Promise.all(
-    selected.map((component) => resolveLatestComponentArtifact({
-      stackBaseDir: authority.consumerStackBaseDir,
-      component,
-    })),
-  );
-  if (!legacyConsumerArtifacts.every(Boolean)) return authority;
-
-  return {
-    ...authority,
-    producerStackName: authority.consumerStackName,
-    producerStackBaseDir: authority.consumerStackBaseDir,
-    legacyConsumerStore: true,
-  };
-}
-
-function resolveActivationComponentFingerprints({ artifacts, currentInspection }) {
-  const componentFingerprints = {};
-  for (const component of ['web', 'server', 'daemon']) {
-    const artifactFingerprint = String(
-      artifacts[component]?.manifest?.artifactFingerprint
-      ?? (currentInspection.valid ? currentInspection.manifest?.components?.[component]?.artifactFingerprint : '')
-      ?? '',
-    ).trim();
-    if (!artifactFingerprint) {
-      throw new Error(`[runtime] cannot activate a complete runtime: ${component} has no selected or current artifact.`);
-    }
-    componentFingerprints[component] = artifactFingerprint;
-  }
-  return componentFingerprints;
-}
-
 /**
  * Producer admission covers artifact discovery, publication, selection and pruning.
  * Artifact discovery is deliberately outside the producer snapshot lock. The
@@ -96,11 +50,12 @@ export async function activateRuntimeForAuthority({
   stackName,
   selectedComponents,
   authority,
+  target = { platform: process.platform, arch: process.arch },
   env = process.env,
   retentionPolicy = resolveRuntimeRetentionPolicy({ env }),
   collectBuildSourceMetadataImpl = collectBuildSourceMetadata,
   resolveLatestComponentArtifactImpl = resolveLatestComponentArtifact,
-  inspectActiveRuntimeSnapshotImpl = inspectActiveRuntimeSnapshot,
+  inspectActiveRuntimeSnapshotImpl = inspectLatestPublishedRuntimeSnapshot,
   withWorkspaceBundleLockImpl = withWorkspaceBundleLock,
   publishRuntimeSnapshotImpl = publishRuntimeSnapshot,
   selectRuntimeSnapshotImpl = selectRuntimeSnapshot,
@@ -114,74 +69,48 @@ export async function activateRuntimeForAuthority({
       const resolvedArtifacts = {};
       for (const component of ['web', 'server', 'daemon']) {
         if (!selectedComponents[component]) continue;
-        const artifact = await resolveLatestComponentArtifactImpl({ stackBaseDir, component });
+        const artifact = await resolveLatestComponentArtifactImpl({ stackBaseDir, component, target });
         if (!artifact) {
-          throw new Error(`[runtime] no ${component} artifact is available for activation. Build it first.`);
+          throw new Error(`[runtime] no ${component} artifact for ${target.platform}/${target.arch} is available for activation. Build it first with hstack stack build ${stackName} --${component} --target=${target.platform === 'win32' ? 'windows' : target.platform}-${target.arch}.`);
         }
         resolvedArtifacts[component] = artifact;
       }
       return resolvedArtifacts;
     };
-    let artifacts = await resolveSelectedArtifacts();
-
+    // Admission precedes discovery and excludes all producer publishers/pruners,
+    // so a second artifact lookup under the snapshot lock cannot be newer.
+    const artifacts = await resolveSelectedArtifacts();
+    const published = await publishBuiltRepositoryRuntimeSnapshot({
+      authority, requestedComponents: Object.keys(artifacts), sourceMetadata, artifacts,
+      target, env, retentionPolicy, withWorkspaceBundleLockImpl, inspectActiveRuntimeSnapshotImpl,
+      publishRuntimeSnapshotImpl, selectRuntimeSnapshotImpl, pruneRuntimeSnapshotsImpl,
+    });
     const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
-    const publication = await withWorkspaceBundleLockImpl(async () => {
-      // The outside lookup avoids holding the snapshot lock during availability
-      // checks. Re-read the selected artifact at commit time so a completed
-      // publisher cannot be overwritten with the stale pre-lock selection.
-      artifacts = await resolveSelectedArtifacts();
-      const currentInspection = await inspectActiveRuntimeSnapshotImpl({ stackBaseDir });
-      const componentFingerprints = resolveActivationComponentFingerprints({ artifacts, currentInspection });
-      const snapshotId = createRuntimeSnapshotId({ sourceMetadata, componentFingerprints });
-      const published = await publishRuntimeSnapshotImpl({
-        producerStackBaseDir: stackBaseDir,
-        snapshotId,
-        sourceMetadata,
-        artifacts,
-        runtimeSnapshotKeepCount: retentionPolicy.runtimeSnapshotKeepCount,
-        externalReferenceStorageRoot: getStacksStorageRoot(env),
-        pruneAfterPublish: false,
-      });
-      await selectRuntimeSnapshotImpl({
-        consumerStackBaseDir: stackBaseDir,
-        producerStackBaseDir: stackBaseDir,
-        producerStackName: authority.producerStackName,
-        snapshotId: published.snapshotId,
-      });
-      const selectedRuntime = await selectRuntimeSnapshotImpl({
-        consumerStackBaseDir: authority.consumerStackBaseDir,
-        producerStackBaseDir: stackBaseDir,
-        producerStackName: authority.producerStackName,
-        snapshotId: published.snapshotId,
-      });
-      return {
-        published,
-        runtime: composeRuntimePublicationResult({
-          consumerStackName: authority.consumerStackName,
-          producerStackName: authority.producerStackName,
-          published,
-          selectedRuntime,
-        }),
-      };
-    }, {
+    const selectedRuntime = await withWorkspaceBundleLockImpl(() => selectRuntimeSnapshotImpl({
+      consumerStackBaseDir: authority.consumerStackBaseDir,
+      producerStackBaseDir: stackBaseDir,
+      producerStackName: authority.producerStackName,
+      snapshotId: published.snapshotId,
+      target,
+      requiredComponents: resolveRuntimePublicationRequiredComponents({ target, requestedComponents: Object.keys(artifacts) }),
+    }), {
       lockPath: runtimePaths.lockPath,
       errorLabel: 'runtime snapshot build lock',
       timeoutMs: Number(env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
     });
 
-    await pruneRuntimeSnapshotsImpl({
-      stackBaseDir,
-      keepCount: retentionPolicy.runtimeSnapshotKeepCount,
-      preserveSnapshotIds: [publication.published.snapshotId],
-      externalReferenceStorageRoot: getStacksStorageRoot(env),
-    });
     const { envPath } = resolveStackEnvPath(stackName, env);
     await ensureStackRuntimeModePreferImpl({ envPath });
     return {
       stackBaseDir,
       sourceMetadata,
       artifacts,
-      runtime: publication.runtime,
+      runtime: composeRuntimePublicationResult({
+        consumerStackName: authority.consumerStackName,
+        producerStackName: authority.producerStackName,
+        published,
+        selectedRuntime,
+      }),
     };
   } });
 }
@@ -211,15 +140,15 @@ async function main() {
   const selectedComponents = resolveSelectedComponents(flags);
   const retentionPolicy = resolveRuntimeRetentionPolicy({ env: process.env });
   const resolvedAuthority = resolveRuntimeBuildAuthority({ rootDir, consumerStackName: stackName, env: process.env });
-  const authority = await resolveActivationAuthority({
-    authority: resolvedAuthority,
-    selectedComponents,
-  });
+  const placement = await resolveControlledRuntimePlacement({ stackName, stackBaseDir: resolvedAuthority.consumerStackBaseDir,
+    sourceDir: resolvedAuthority.repoDir, env: process.env });
+  const authority = resolvedAuthority;
   const activation = await activateRuntimeForAuthority({
     rootDir,
     stackName,
     selectedComponents,
     authority,
+    target: placement.runtimeTarget,
     env: process.env,
     retentionPolicy,
   });

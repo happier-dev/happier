@@ -13,7 +13,7 @@ import {
   resolveRuntimeRetentionPolicy,
 } from './runtime_retention.mjs';
 
-async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
+async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt, target) {
   const snapshotDir = join(stackBaseDir, 'runtime', 'builds', snapshotId);
   await mkdir(join(snapshotDir, 'ui'), { recursive: true });
   await mkdir(join(snapshotDir, 'server'), { recursive: true });
@@ -21,6 +21,11 @@ async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
   await writeFile(join(snapshotDir, 'ui', 'index.html'), `<html>${snapshotId}</html>`);
   await writeFile(join(snapshotDir, 'server', 'happier-server'), `server ${snapshotId}\n`);
   await writeFile(join(snapshotDir, 'cli', 'happier'), `daemon ${snapshotId}\n`);
+  if (target) {
+    await mkdir(join(snapshotDir, 'cli/package-dist'), { recursive: true });
+    await writeFile(join(snapshotDir, 'cli/package-dist/index.mjs'), 'daemon node runtime');
+    await writeFile(join(snapshotDir, 'cli/package-dist/.build-manifest.json'), JSON.stringify({ fingerprint: '0123456789abcdef' }));
+  }
   await writeRuntimeManifest({
     manifestPath: join(snapshotDir, 'manifest.json'),
     manifest: {
@@ -28,6 +33,7 @@ async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
       snapshotId,
       sourceFingerprint: `source-${snapshotId}`,
       createdAt,
+      ...(target ? { target } : {}),
       components: {
         web: { artifactFingerprint: `web-${snapshotId}`, entrypoint: 'ui/index.html' },
         server: { artifactFingerprint: `server-${snapshotId}`, entrypoint: 'server/happier-server' },
@@ -37,6 +43,20 @@ async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
   });
   return snapshotDir;
 }
+
+test('snapshot retention keeps the newest publication for each consumer target', async (t) => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'runtime-retention-targets-'));
+  t.after(() => rm(stackBaseDir, { recursive: true, force: true }));
+  const arm = { platform: 'linux', arch: 'arm64' };
+  const x64 = { platform: 'linux', arch: 'x64' };
+  await writeRuntimeSnapshot(stackBaseDir, 'x64', '2026-10-05T00:00:00Z', x64);
+  await writeRuntimeSnapshot(stackBaseDir, 'arm-old', '2026-10-05T01:00:00Z', arm);
+  await writeRuntimeSnapshot(stackBaseDir, 'arm-new', '2026-10-05T02:00:00Z', arm);
+  const damaged = await writeRuntimeSnapshot(stackBaseDir, 'x64-damaged', '2026-10-05T03:00:00Z', x64);
+  await rm(join(damaged, 'server'), { recursive: true });
+  const result = await pruneRuntimeSnapshots({ stackBaseDir, keepCount: 1 });
+  assert.deepEqual(result.keptSnapshotIds.sort(), ['arm-new', 'x64']);
+});
 
 async function writeArtifact(stackBaseDir, component, fingerprint, createdAt, extraManifest = {}) {
   const artifactDir = join(stackBaseDir, 'artifacts', component, fingerprint);

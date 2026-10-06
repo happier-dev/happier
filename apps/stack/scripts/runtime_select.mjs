@@ -4,6 +4,8 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getRootDir } from './utils/paths/paths.mjs';
 import { selectActiveProducerRuntimeSnapshot } from './build/activate_runtime_snapshot.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
+import { resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
+import { assertRuntimeSnapshotId } from './runtime/shared/runtime_paths.mjs';
 
 function assertNamedStack(env) {
   const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
@@ -15,7 +17,7 @@ function assertNamedStack(env) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
+  const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   if (wantsHelp(argv, { flags })) {
     printResult({
@@ -23,10 +25,10 @@ async function main() {
       data: { json: true },
       text: [
         '[runtime] usage:',
-        '  hstack stack runtime <name> select [--json]',
+        '  hstack stack runtime <name> select [--snapshot=<id>] [--server] [--json]',
         '',
         'note:',
-        '  Selects the active complete snapshot already published by this stack\'s runtime build authority.',
+        '  Selects the newest complete snapshot for this stack\'s execution target, or the exact requested pin.',
         '  It does not build, publish, activate, or otherwise mutate that producer or this stack\'s launch mode.',
       ].join('\n'),
     });
@@ -41,11 +43,17 @@ async function main() {
     env: process.env,
     createRepoIdentityIfMissing: false,
   });
+  const placement = await resolveControlledRuntimePlacement({
+    stackName, stackBaseDir: authority.consumerStackBaseDir, sourceDir: authority.repoDir, env: process.env,
+  });
   const selectedRuntime = await selectActiveProducerRuntimeSnapshot({
     consumerStackBaseDir: authority.consumerStackBaseDir,
     producerStackBaseDir: authority.producerStackBaseDir,
     producerStackName: authority.producerStackName,
     consumerStackName: authority.consumerStackName,
+    target: placement.runtimeTarget,
+    requiredComponents: flags.has('--server') || process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined,
+    snapshotId: kv.has('--snapshot') ? assertRuntimeSnapshotId(kv.get('--snapshot')) : '',
   });
 
   printResult({

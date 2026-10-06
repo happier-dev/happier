@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
+  daemonControlPost,
   pingDaemon,
   readDaemonControlState,
   resolveDaemonRestartConfirmTimeoutMs,
@@ -30,6 +31,19 @@ async function writeDaemonState({ cliHomeDir, serverUrl, env, state }) {
   await mkdir(dirname(statePath), { recursive: true });
   await writeFile(statePath, JSON.stringify(state), 'utf8');
 }
+
+test('session cleanup can await the daemon lifecycle without a shorter HTTP cutoff', async () => {
+  await withServer(async (_req, res) => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ status: 'stopping' }));
+  }, async ({ port }) => {
+    const result = await daemonControlPost({
+      httpPort: port, path: '/stop', body: { stopSessions: true }, timeoutMs: null,
+    });
+    assert.deepEqual(result, { status: 'stopping' });
+  });
+});
 
 test('pingDaemon posts /ping with the daemon control token from state', async (t) => {
   const home = await mkdtemp(join(tmpdir(), 'hstack-daemon-control-client-'));

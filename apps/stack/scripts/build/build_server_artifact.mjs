@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/cli-common/componentArtifacts';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 import { runCapture } from '../utils/proc/proc.mjs';
+import { ensureWorkspacePackagesBuiltForComponent } from '../utils/proc/pm.mjs';
 
 const SERVER_RUNTIME_SUPPORT_ENTRYPOINT = '.happier-server-support.json';
 const SERVER_RUNTIME_SUPPORT_DIRECTORIES = Object.freeze(['generated', 'prisma', 'node_modules', 'runtime']);
@@ -61,6 +62,7 @@ async function readServerRuntimeSupportToolInputs({ serverComponent, buildDbProv
 export async function resolveServerRuntimeSupportInputs({
   rootDir,
   sourceMetadata,
+  target: runtimeTarget = { platform: process.platform, arch: process.arch },
   env = process.env,
 }) {
   void rootDir;
@@ -68,11 +70,14 @@ export async function resolveServerRuntimeSupportInputs({
   if (serverComponent !== 'happier-server' && serverComponent !== 'happier-server-light') {
     throw new Error('[build] server runtime support requires a recognized server component.');
   }
-  const target = resolveCurrentBinaryTarget({ availableTargets: SERVER_BINARY_TARGETS });
+  const target = resolveCurrentBinaryTarget({ availableTargets: SERVER_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch });
   const buildDbProviders = resolveServerRuntimeSupportBuildDbProviders({
     serverComponent,
     env,
   });
+  // Captures omit dist. Admit the server's workspace closure before reading
+  // sidecar bytes, including the Iroh wrapper, through the package-build owner.
+  await ensureWorkspacePackagesBuiltForComponent(join(sourceMetadata.repoDir, 'apps', 'server'), { env });
   const entries = await resolveServerRuntimeSupportEntries({
     repoRoot: sourceMetadata.repoDir,
     target,
@@ -115,12 +120,14 @@ export async function resolveServerRuntimeSupportInputs({
 export async function resolveServerSupportArtifactFingerprint({
   rootDir,
   sourceMetadata,
+  target,
   env = process.env,
   resolveServerRuntimeSupportInputsImpl = resolveServerRuntimeSupportInputs,
 }) {
   const supportInputs = await resolveServerRuntimeSupportInputsImpl({
     rootDir,
     sourceMetadata,
+    target,
     env,
   });
   return requireArtifactFingerprint(supportInputs?.fingerprint, 'server runtime support identity');
@@ -181,6 +188,7 @@ async function publishServerRuntimeSupportArtifact({
   supportArtifactDir,
   supportArtifactFingerprint,
   sourceMetadata,
+  target,
   env,
   resolveServerRuntimeSupportInputsImpl = resolveServerRuntimeSupportInputs,
   buildServerRuntimeSupportPayloadImpl = buildServerRuntimeSupportPayload,
@@ -203,6 +211,7 @@ async function publishServerRuntimeSupportArtifact({
     const supportInputs = await resolveServerRuntimeSupportInputsImpl({
       rootDir: sourceMetadata.repoDir,
       sourceMetadata,
+      target,
       env,
     });
     const observedFingerprint = requireArtifactFingerprint(
@@ -232,6 +241,7 @@ async function publishServerRuntimeSupportArtifact({
       const stagedSupportInputs = await resolveServerRuntimeSupportInputsImpl({
         rootDir: sourceMetadata.repoDir,
         sourceMetadata,
+        target,
         env,
       });
       const stagedFingerprint = requireArtifactFingerprint(
@@ -253,7 +263,7 @@ async function publishServerRuntimeSupportArtifact({
         manifest: {
           version: 1,
           component: 'server-support',
-          target: { platform: process.platform, arch: process.arch },
+          target,
           artifactFingerprint: supportArtifactFingerprint,
           sourceFingerprint: supportArtifactFingerprint,
           createdAt: sourceMetadata.builtAt,
@@ -282,6 +292,7 @@ export async function buildServerArtifact({
   artifactDir,
   artifactFingerprint,
   sourceMetadata,
+  target: runtimeTarget = { platform: process.platform, arch: process.arch },
   stalePackages = [],
   forceRebuild = false,
   env = process.env,
@@ -309,6 +320,7 @@ export async function buildServerArtifact({
   const observedSupportArtifactFingerprint = await resolveServerSupportArtifactFingerprintImpl({
     rootDir,
     sourceMetadata,
+    target: runtimeTarget,
     env,
   });
   const resolvedSupportArtifactFingerprint = requireArtifactFingerprint(
@@ -348,6 +360,7 @@ export async function buildServerArtifact({
     supportArtifactDir,
     supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
     sourceMetadata,
+    target: runtimeTarget,
     env,
     resolveServerRuntimeSupportInputsImpl,
     buildServerRuntimeSupportPayloadImpl,
@@ -367,7 +380,7 @@ export async function buildServerArtifact({
   if (serverComponent !== 'happier-server' && serverComponent !== 'happier-server-light') {
     throw new Error('[build] managed server artifact requires a recognized server component.');
   }
-  const target = resolveCurrentBinaryTarget({ availableTargets: SERVER_BINARY_TARGETS });
+  const target = resolveCurrentBinaryTarget({ availableTargets: SERVER_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch });
   const buildDbProviders = resolveServerRuntimeSupportBuildDbProviders({ serverComponent, env });
   const externals = String(
     env.HAPPIER_SERVER_BUN_EXTERNALS ?? SERVER_BINARY_DEFAULT_EXTERNALS.join(','),
@@ -407,7 +420,7 @@ export async function buildServerArtifact({
       manifest: {
         version: 1,
         component: 'server',
-        target: { platform: process.platform, arch: process.arch },
+        target: runtimeTarget,
         artifactFingerprint,
         serverSupportArtifactFingerprint: resolvedSupportArtifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,

@@ -9,15 +9,44 @@ import {
   upgradeDevTargetsConfigToVersion3,
 } from './config.mjs';
 
+test('QA placement is independent of build placement and shares ordered and automatic normalization', () => {
+  const base = {
+    version: 3,
+    targets: ['builder', 'qa1', 'qa2'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/state/${name}` })),
+    runtimePlacement: { build: { mode: 'prefer-target', targets: ['builder'], fallback: 'local' } },
+  };
+  const automatic = parseDevTargetsConfig({ ...base, runtimePlacement: { ...base.runtimePlacement, qa: { mode: 'auto', targets: ['qa2', 'qa1', 'qa2'], fallback: 'local' } } });
+  assert.deepEqual(automatic.runtimePlacement.qa.targets, ['qa2', 'qa1']);
+  assert.equal(automatic.runtimePlacement.qa.includeLocal, false);
+  assert.deepEqual(resolveDevTargetExecutionPolicy(automatic).qa, automatic.runtimePlacement.qa);
+  assert.deepEqual(automatic.runtimePlacement.build.targets, ['builder']);
+  const ordered = parseDevTargetsConfig({ ...base, runtimePlacement: { ...base.runtimePlacement, qa: { mode: 'prefer-target', targets: ['qa2', 'qa1', 'qa2'], fallback: 'local' } } });
+  assert.deepEqual(ordered.runtimePlacement.qa, { mode: 'prefer-target', targets: ['qa2', 'qa1'], fallback: 'local' });
+  assert.deepEqual(parseDevTargetsConfig({ ...base, runtimePlacement: { qa: { mode: 'local' } } }).runtimePlacement.qa, { mode: 'local' });
+  assert.throws(() => parseDevTargetsConfig({ ...base, runtimePlacement: { qa: { mode: 'auto', targets: ['absent'] } } }), /unknown target/);
+});
+
 test('runtime build placement uses the existing target and local fallback contract', () => {
   const config = parseDevTargetsConfig({
     version: 3,
     targets: [{ name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/worker' }],
     runtimePlacement: { build: { mode: 'prefer-target', target: 'worker' } },
   });
-  assert.deepEqual(config.runtimePlacement.build, { mode: 'prefer-target', target: 'worker', fallback: 'local' });
+  assert.deepEqual(config.runtimePlacement.build, { mode: 'prefer-target', targets: ['worker'], fallback: 'local' });
   assert.deepEqual(resolveDevTargetExecutionPolicy(config).build, config.runtimePlacement.build);
   assert.throws(() => parseDevTargetsConfig({ ...config, runtimePlacement: { build: { mode: 'prefer-target', target: 'absent' } } }), /unknown target/);
+});
+
+test('runtime build placement preserves the configured target order', () => {
+  const config = parseDevTargetsConfig({
+    version: 3,
+    targets: ['primary', 'secondary'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/worker/${name}` })),
+    runtimePlacement: { build: { mode: 'prefer-target', targets: ['secondary', 'primary', 'secondary'], fallback: 'local' } },
+  });
+  assert.deepEqual(config.runtimePlacement.build.targets, ['secondary', 'primary']);
+  assert.deepEqual(resolveDevTargetExecutionPolicy(config).build, config.runtimePlacement.build);
+  assert.throws(() => parseDevTargetsConfig({ ...config, runtimePlacement: { build: { mode: 'prefer-target', targets: [] } } }), /non-empty/);
+  assert.throws(() => parseDevTargetsConfig({ ...config, runtimePlacement: { build: { mode: 'prefer-target', targets: ['unknown'] } } }), /unknown target/);
 });
 
 test('resolveDevTargetsConfigPath keeps dev target state inside the selected stack', () => {

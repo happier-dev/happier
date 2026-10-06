@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { captureRuntimePublicationStartedSeq } from '../../build/build_stack_artifacts.mjs';
 
 import { appendBoundedTail, formatFailureDiagnostic, spawnProc } from '../proc/proc.mjs';
@@ -70,6 +71,7 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
   workerPath = fileURLToPath(new URL('./runtimeSnapshotPublicationWorker.mjs', import.meta.url)),
   spawnProcImpl = spawnProc,
 } = {}) {
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
   const request = Buffer.from(JSON.stringify({
     rootDir,
     authority,
@@ -168,6 +170,7 @@ export function createRepositoryRuntimePublicationController({
   isShuttingDown,
   logger,
 } = {}) {
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
   if (typeof resolveRepositoryRuntimePublicationComponents !== 'function') {
     throw new Error('repository runtime publication requires the component resolver');
   }

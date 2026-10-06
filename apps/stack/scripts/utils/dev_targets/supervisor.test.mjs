@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -11,8 +14,10 @@ import {
   startStackDevTargets,
   startStackDevTargetsInBackground,
 } from './supervisor.mjs';
-import { renderMutagenProject } from './mutagen_project.mjs';
+import { renderMutagenProject, resolveMutagenSessionName } from './mutagen_project.mjs';
 import { resolveRemoteStackStatePaths } from './remote_commands.mjs';
+import { writeManagedRuntimeSnapshotLayout } from '../../testkit/core/runtime_snapshot_layout.mjs';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
 const successfulDependencyBootstrap = async () => ({ code: 0 });
 
@@ -20,6 +25,146 @@ const remoteLightSqliteRuntimeConfig = Object.freeze({
   serverComponentName: 'happier-server-light',
   dbProvider: 'sqlite',
   environment: {},
+});
+
+async function writeProducerSyncProject(stackBaseDir, sourceDir, target) {
+  await mkdir(join(stackBaseDir, 'mutagen'), { recursive: true });
+  await writeFile(join(stackBaseDir, 'mutagen/mutagen.yml'), renderMutagenProject({ sourceDir, targets: [target], ownerId: 'producer' }));
+}
+
+function readySyncResult(target) {
+  return { code: 0, out: JSON.stringify([{ name: resolveMutagenSessionName(target.name), paused: false, status: 'watching', conflicts: [], excludedConflicts: 0,
+    successfulCycles: 1, alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) };
+}
+
+test('controlled lifecycle fails closed before a worker starts when retained-data admission fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-controlled-admission-'));
+  const target = { name: 'linux', platform: 'posix', ssh: 'linux-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/cli' };
+  const spawned = [];
+  let controller;
+  try {
+    await writeProducerSyncProject(root, '/source/repo', target);
+    await assert.rejects(async () => {
+      controller = await startStackDevTargets({
+        stackName: 'agent-qa', stackBaseDir: root, sourceDir: '/source/repo',
+        localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005',
+        runtimeSnapshot: { snapshotId: 'qa', producerStackBaseDir: root },
+        runtimeTarget: { platform: process.platform, arch: process.arch },
+        remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+        targetPlans: [{ target, services: { server: true, expo: false, daemon: false } }], env: {},
+      }, {
+        runProcess: async () => readySyncResult(target),
+        runCommand: async () => ({ code: 17 }), // SSH is a genuine system boundary.
+        spawnProcess: input => { const child = { ...input, exitCode: null }; spawned.push(child); return child; },
+        stopProcess: async child => { child.exitCode = 0; },
+        waitForRetry: async () => await new Promise(() => {}),
+        logger: { error() {} },
+      });
+    }, /retained server data operation failed/);
+    assert.equal(spawned.filter(child => child.command === 'ssh').length, 0);
+  } finally {
+    await controller?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('controlled supervisor transfers admitted bytes, waits for loaded identity and stops only its remote stack and forwards', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-controlled-lifecycle-' });
+  const snapshot = await writeManagedRuntimeSnapshotLayout({ stackDir: join(root, 'producer') });
+  const target = { name: 'linux', platform: 'posix', ssh: 'boundary-ssh', repoDir: process.cwd(), cliHomeDir: join(root, 'remote') };
+  const paths = resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'controlled' });
+  const syncStackBaseDir = join(root, 'producer-sync');
+  await writeProducerSyncProject(syncStackBaseDir, process.cwd(), target);
+  const credentialPath = join(root, 'credential');
+  await writeFile(credentialPath, '{}');
+  const calls = [];
+  const spawned = [];
+  const states = [];
+  const authorityPath = join(root, 'server-authority.json');
+  const execFileAsync = promisify(execFile);
+  const controller = await startStackDevTargets({
+    stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), sourceDir: process.cwd(),
+    syncStackBaseDir,
+    localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005', canonicalServerUrl: 'http://happier-agent-qa.localhost:3005',
+    credentialPath, runtimeSnapshot: snapshot, runtimeTarget: snapshot.manifest.target,
+    remoteServerRuntimeConfig: remoteLightSqliteRuntimeConfig,
+    targetPlans: [{ target, services: { server: true, expo: false, daemon: true } }],
+    onServerDataAuthority: async ({ targetName }) => { await writeFile(authorityPath, JSON.stringify({ targetName })); },
+    onTargetStateChange: state => states.push(state), env: {},
+  }, {
+    // SSH/process and network readiness are the only substituted boundaries.
+    runProcess: async input => {
+      calls.push(input);
+      const command = input.args.at(-1);
+      if (input.command === 'ssh' && !/stack (?:start|stop)/.test(command)
+        && (/runtime_artifact_transfer\.mjs|mkdir -p|s\.runtimeSnapshotId/.test(command))) {
+        await execFileAsync('/bin/bash', ['-c', command]);
+      }
+      return readySyncResult(target);
+    },
+    runCommand: async () => ({ code: 0, out: JSON.stringify({ retainedRemoteData: false }) }),
+    transferFile: async ({ localPath, remotePath }) => { await copyFile(localPath, remotePath); },
+    runDependencyBootstrap: async () => { throw new Error('controlled snapshots cannot bootstrap the moving source'); },
+    spawnProcess: input => {
+      const child = { ...input, exitCode: null };
+      spawned.push(child);
+      if (input.command === 'ssh' && input.args.at(-1).includes('stack start')) {
+        assert.equal(JSON.parse(readFileSync(authorityPath, 'utf8')).targetName, target.name);
+        writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ runtimeSnapshotId: snapshot.snapshotId }));
+      }
+      return child;
+    },
+    stopProcess: async child => { child.exitCode = 0; },
+    waitForProcess: async () => await new Promise(() => {}),
+    waitForServerReady: async () => {}, waitForDaemonReady: async () => {},
+  });
+  try {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.ok(states.some(state => state.status === 'running' && state.runtimeSnapshotId === snapshot.snapshotId));
+    const pointer = JSON.parse(await readFile(join(paths.stackBaseDir, 'runtime/current.json'), 'utf8'));
+    assert.equal(pointer.snapshotId, snapshot.snapshotId);
+    assert.equal(await readFile(join(pointer.snapshotPath, 'cli/happier'), 'utf8'), 'daemon\n');
+    const worker = spawned.find(child => child.command === 'ssh' && child.args.at(-1).includes('stack start'));
+    assert.ok(worker);
+    assert.doesNotMatch(worker.args.at(-1), /--watch|stack dev/);
+  } finally { await controller.close(); }
+  assert.ok(calls.some(input => input.command === 'ssh' && input.args.at(-1).includes('stack stop')));
+  assert.ok(spawned.every(child => child.exitCode === 0));
+});
+
+test('controlled pre-dispatch SSH unavailability is distinguishable from a rejected runtime or data contract', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-controlled-unavailable-' });
+  const target = { name: 'linux', platform: 'posix', ssh: 'boundary-ssh', repoDir: '/remote/repo', cliHomeDir: join(root, 'remote') };
+  await writeProducerSyncProject(root, process.cwd(), target);
+  await assert.rejects(startStackDevTargets({ stackName: 'agent-qa', stackBaseDir: root, sourceDir: process.cwd(),
+    localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005',
+    runtimeSnapshot: { snapshotId: 'qa' }, runtimeTarget: { platform: process.platform, arch: process.arch },
+    targetPlans: [{ target, services: { server: true, expo: false, daemon: false } }], env: {},
+  }, {
+    runProcess: async input => input.command === 'ssh' ? { code: 255 } : readySyncResult(target),
+    spawnProcess: input => ({ ...input, exitCode: null }),
+    stopProcess: async child => { child.exitCode = 0; }, logger: { error() {} },
+  }), error => error.remotePreDispatchUnavailable === true);
+  const snapshot = await writeManagedRuntimeSnapshotLayout({ stackDir: join(root, 'producer') });
+  let partialArchive;
+  const execFileAsync = promisify(execFile);
+  await assert.rejects(startStackDevTargets({ stackName: 'agent-qa', stackBaseDir: root, sourceDir: process.cwd(),
+    localServerPort: 3005, publicServerUrl: 'http://127.0.0.1:3005', runtimeSnapshot: snapshot, runtimeTarget: snapshot.manifest.target,
+    targetPlans: [{ target, services: { server: true, expo: false, daemon: false } }], env: {},
+  }, {
+    runProcess: async () => readySyncResult(target), runCommand: async ({ commandArgs }) => {
+      if (commandArgs?.[2]?.includes('rmSync')) await execFileAsync(process.execPath, commandArgs.slice(1));
+      return { code: 0, out: JSON.stringify({ retainedRemoteData: false }) };
+    },
+    transferFile: async ({ remotePath }) => {
+      partialArchive = remotePath;
+      await mkdir(dirname(remotePath), { recursive: true });
+      await writeFile(remotePath, 'partial upload');
+      const error = new Error('SCP disconnected'); Object.assign(error, { name: 'OpenSshExecutionError', code: 'command_failed', status: 255 }); throw error;
+    },
+    spawnProcess: input => ({ ...input, exitCode: null }), stopProcess: async child => { child.exitCode = 0; }, logger: { error() {} },
+  }), error => error.remotePreDispatchUnavailable === true);
+  await assert.rejects(stat(partialArchive), { code: 'ENOENT' });
 });
 
 test('only remote daemon placement requires local CLI workspace preparation', () => {
@@ -1793,6 +1938,92 @@ test('remote worker exit restarts its configured target lifecycle without restar
     await controller.close();
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('remote Expo replaces a tunnel that dies during worker recovery backoff', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-expo-dead-tunnel-' });
+  const target = { name: 'linux', platform: 'posix', ssh: 'linux-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/cli' };
+  const tunnels = [];
+  const workers = [];
+  let restarted;
+  const secondWorker = new Promise(resolve => { restarted = resolve; });
+  let retries = 0;
+  const controller = await startStackDevTargets({
+    stackName: 'repo-test', stackBaseDir: root, sourceDir: '/source/repo',
+    localServerPort: 3005, localExpoPort: 18081,
+    targetPlans: [{ target, services: { server: false, expo: true, daemon: false } }], env: {},
+  }, {
+    runDependencyBootstrap: successfulDependencyBootstrap,
+    runProcess: async () => ({ code: 0 }),
+    spawnProcess: input => {
+      let finish;
+      const completion = new Promise(resolve => { finish = resolve; });
+      const child = { ...input, exitCode: null, completion, finish };
+      if (input.command === 'ssh') {
+        if (input.args.includes('-N')) tunnels.push(child);
+        else {
+          workers.push(child);
+          if (workers.length === 2) restarted({ tunnel: tunnels.at(-1), worker: child });
+        }
+      }
+      return child;
+    },
+    stopProcess: async child => { child.exitCode = 0; child.finish({ code: 0, signal: 'SIGINT' }); },
+    waitForExpoReady: async () => {},
+    waitForRetry: async () => {
+      if (++retries !== 1) return await new Promise(() => {});
+      // The genuine SSH boundary can die after worker-exit won the race.
+      tunnels[0].exitCode = 255;
+      tunnels[0].finish({ code: 255, signal: null });
+    },
+    logger: { error() {} },
+  });
+  try {
+    workers[0].exitCode = 1;
+    workers[0].finish({ code: 1, signal: null });
+    const replacement = await secondWorker;
+    assert.equal(replacement.tunnel.exitCode, null, 'the replacement worker needs a live tunnel');
+    assert.equal(tunnels.length, 2);
+    assert.equal(tunnels[1].args[tunnels[1].args.indexOf('-L') + 1], tunnels[0].args[tunnels[0].args.indexOf('-L') + 1]);
+  } finally { await controller.close(); }
+});
+
+test('remote Expo readiness reports its owning deadline even in an attended TUI', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-expo-readiness-deadline-' });
+  const target = { name: 'linux', platform: 'posix', ssh: 'linux-ssh', repoDir: '/remote/repo', cliHomeDir: '/remote/cli' };
+  const originalFetch = globalThis.fetch;
+  // Network is a genuine boundary; retain the real Metro polling and supervisor.
+  globalThis.fetch = async () => new Response('', { status: 503 });
+  let degraded;
+  const failure = new Promise(resolve => { degraded = resolve; });
+  const controller = await startStackDevTargets({
+    stackName: 'repo-test', stackBaseDir: root, sourceDir: '/source/repo',
+    localServerPort: 3005, localExpoPort: 18081,
+    targetPlans: [{ target, services: { server: false, expo: true, daemon: false } }],
+    env: { HAPPIER_STACK_TUI: '1', HAPPIER_DEV_TARGET_EXPO_READY_TIMEOUT_MS: '1' },
+    onTargetStateChange: state => { if (state.status === 'degraded') degraded(state); },
+  }, {
+    runDependencyBootstrap: successfulDependencyBootstrap,
+    runProcess: async () => ({ code: 0 }),
+    spawnProcess: input => ({ ...input, exitCode: null }),
+    stopProcess: async child => { child.exitCode = 0; },
+    waitForProcess: async () => await new Promise(() => {}),
+    waitForRetry: async () => await new Promise(() => {}),
+    logger: { error() {} },
+  });
+  let timer;
+  try {
+    const state = await Promise.race([failure, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('no readiness failure was surfaced')), 1500);
+    })]);
+    assert.equal(state.phase, 'expo-readiness');
+    assert.equal(state.serviceStatus.expo, 'degraded');
+    assert.match(state.error, /timed out.*after 1ms/);
+  } finally {
+    clearTimeout(timer);
+    await controller.close();
+    globalThis.fetch = originalFetch;
   }
 });
 

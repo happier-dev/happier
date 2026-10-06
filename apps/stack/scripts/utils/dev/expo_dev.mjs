@@ -301,35 +301,26 @@ export async function ensureDevExpoServer({
       await prepareExpoWorkspace({ projectDir, env: preparationEnv, quiet });
     });
   };
-  const warnAndContinue = (error, { hasLastGreen }) => {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.warn(
-      (hasLastGreen
-        ? '[local] Expo workspace refresh failed; keeping the current last-green outputs.\n'
-        : '[local] Expo workspace preparation failed; starting Expo in a degraded state so the rest of the Stack remains available.\n')
-      + detail,
-    );
-  };
-  // Availability does not depend on freshness. Start or adopt Expo from the
-  // currently available workspace bytes while the canonical writer refreshes
-  // them in the background. This also covers remote checkouts where the
-  // readiness record is intentionally not synchronized even though usable
-  // outputs remain on disk.
-  void (async () => {
-    let hasLastGreen = false;
+  const prepareAndNotify = async () => {
+    await prepareWorkspace();
     try {
-      hasLastGreen = await hasUsableWorkspaceLastGreen({ projectDir });
-      await prepareWorkspace();
-      try {
-        onWorkspacePrepared?.();
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.warn(`[local] Expo workspace refresh notification failed.\n${detail}`);
-      }
+      onWorkspacePrepared?.();
     } catch (error) {
-      warnAndContinue(error, { hasLastGreen });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`[local] Expo workspace refresh notification failed.\n${detail}`);
     }
-  })();
+  };
+  // Fresh replicas lack the target-owned plugin inventories excluded from
+  // Mutagen. Their first preparation must complete before Metro can serve.
+  // A usable last-green workspace can still refresh without losing availability.
+  if (await hasUsableWorkspaceLastGreen({ projectDir })) {
+    void prepareAndNotify().catch((error) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`[local] Expo workspace refresh failed; keeping the current last-green outputs.\n${detail}`);
+    });
+  } else {
+    await prepareAndNotify();
+  }
 
   let desiredApiServerUrl = normalizeApiServerUrl(env.EXPO_PUBLIC_HAPPIER_SERVER_URL || apiServerUrl);
   const cliHomeDir = (baseEnv?.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim();

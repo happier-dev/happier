@@ -95,6 +95,7 @@ export async function resolveDaemonSupportArtifactFingerprint({
   rootDir,
   sourceMetadata,
   workspaceSourceFingerprint,
+  target: runtimeTarget = { platform: process.platform, arch: process.arch },
   env = process.env,
   runCaptureImpl = runCapture,
   resolveCurrentBinaryTargetImpl = resolveCurrentBinaryTarget,
@@ -103,7 +104,7 @@ export async function resolveDaemonSupportArtifactFingerprint({
 } = {}) {
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   if (!repoDir) throw new Error('[build] daemon support identity requires a repository directory.');
-  const target = resolveCurrentBinaryTargetImpl({ availableTargets: CLI_BINARY_TARGETS });
+  const target = resolveCurrentBinaryTargetImpl({ availableTargets: CLI_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch });
   const goVersion = await readDaemonSupportGoVersion({
     repoDir,
     env,
@@ -154,6 +155,7 @@ async function buildDaemonSupportArtifact({
   workspaceSourceFingerprint,
   expectedWorkspaceRuntimeIdentity,
   target,
+  runtimeTarget,
   env,
   runCaptureImpl,
   buildDaemonSupportArtifactPayloadImpl,
@@ -209,7 +211,7 @@ async function buildDaemonSupportArtifact({
         manifest: {
           version: 1,
           component: 'daemon-support',
-          target: { platform: process.platform, arch: process.arch },
+          target: runtimeTarget,
           artifactFingerprint: supportArtifactFingerprint,
           sourceFingerprint: sourceMetadata.sourceFingerprint,
           createdAt: sourceMetadata.builtAt,
@@ -244,6 +246,7 @@ export async function buildDaemonArtifact({
   artifactFingerprint,
   supportArtifactFingerprint,
   sourceMetadata,
+  target: runtimeTarget = { platform: process.platform, arch: process.arch },
   stalePackages = [],
   preparedWorkspacePublication,
   requiredCliDistInputFingerprint,
@@ -273,7 +276,7 @@ export async function buildDaemonArtifact({
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   const resolvedSupportArtifactFingerprint = String(
     supportArtifactFingerprint
-      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, workspaceSourceFingerprint, env }),
+      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, workspaceSourceFingerprint, env, target: runtimeTarget }),
   ).trim();
   if (!resolvedSupportArtifactFingerprint) {
     throw new Error('[build] daemon runtime artifact requires a daemon support identity.');
@@ -296,7 +299,7 @@ export async function buildDaemonArtifact({
     throw new Error('[build] immutable daemon artifact fingerprint is already bound to a different support artifact.');
   }
 
-  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
+  const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS, platform: runtimeTarget.platform, arch: runtimeTarget.arch });
   const externals = String(env.HAPPIER_CLI_BUN_EXTERNALS ?? '')
     .split(',')
     .map((value) => value.trim())
@@ -312,6 +315,7 @@ export async function buildDaemonArtifact({
       workspaceSourceFingerprint,
       expectedWorkspaceRuntimeIdentity: preparedWorkspacePublication?.workspaceRuntimeIdentity,
       target,
+      runtimeTarget,
       env,
       runCaptureImpl,
       buildDaemonSupportArtifactPayloadImpl,
@@ -346,13 +350,14 @@ export async function buildDaemonArtifact({
       manifest: {
         version: 1,
         component: 'daemon',
-        target: { platform: process.platform, arch: process.arch },
+        target: runtimeTarget,
         artifactFingerprint,
         daemonSupportArtifactFingerprint: resolvedSupportArtifactFingerprint,
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,
         source: sourceMetadata,
-        ...(stalePackages.length ? { stalePackages } : {}),
+        ...(stalePackages.length || built.stalePackages?.length
+          ? { stalePackages: [...stalePackages, ...(built.stalePackages ?? [])] } : {}),
         payloadDir: 'payload',
         entrypoint: built.entrypoint,
       },

@@ -9,6 +9,14 @@ function isWorkspaceBuildConfigFile(name) {
   return /^(?:rollup|vite|esbuild|babel|swc|rspack|tsup|happier-plugin-ui)\.config\.(?:js|cjs|mjs|ts|json)$/.test(name);
 }
 
+// Source capture and reconciliation share this package-output boundary. The
+// authored hosted-web tree is an input; its generated parents are not membership.
+export function isGeneratedPluginArtifactPath(path) {
+  const parts = String(path).replaceAll('\\', '/').replace(/^packages\/(?:plugins\/)?[^/]+\//, '').split('/');
+  if (parts[0] !== '.happier-plugin') return false;
+  return parts[1] !== 'ui' || parts[2] !== 'hosted-web';
+}
+
 // Both package admission and Stack source identities consume this input set.
 export function readWorkspaceBuildInputs(packageDir, {
   readDir = readdirSync,
@@ -21,10 +29,8 @@ export function readWorkspaceBuildInputs(packageDir, {
   const inputs = new Set();
   const visit = (path, { ignoreTests = true } = {}) => {
     const relativePath = relative(packageDir, path).split(sep).join('/');
-    if (excludeGeneratedPluginArtifacts && relativePath.startsWith('.happier-plugin/')
-      && relativePath !== '.happier-plugin/ui'
-      && relativePath !== '.happier-plugin/ui/hosted-web'
-      && !relativePath.startsWith('.happier-plugin/ui/hosted-web/')) return;
+    const generated = excludeGeneratedPluginArtifacts && isGeneratedPluginArtifactPath(relativePath);
+    if (generated && relativePath !== '.happier-plugin' && relativePath !== '.happier-plugin/ui') return;
     if (excludeGeneratedPluginManifest && relativePath === '.happier-plugin/plugin.json') return;
     const name = path.split(sep).at(-1) ?? '';
     if (
@@ -44,11 +50,11 @@ export function readWorkspaceBuildInputs(packageDir, {
       return;
     }
     if (entryStat.isDirectory()) {
-      if (includeDirectories) inputs.add(relativePath);
+      if (includeDirectories && !generated) inputs.add(relativePath);
       for (const childName of readDir(path)) visit(join(path, childName), { ignoreTests });
       return;
     }
-    inputs.add(relativePath);
+    if (!generated) inputs.add(relativePath);
   };
 
   let entries = [];
@@ -105,12 +111,13 @@ export function readWorkspaceBuildInputs(packageDir, {
 export function resolveWorkspaceBuildInputWatchPaths(packageDir, {
   existsSyncImpl = existsSync,
   excludeGeneratedPluginManifest = true,
+  excludeGeneratedPluginArtifacts = false,
   includeShippedFiles = false,
 } = {}) {
   const membershipRoots = ['src', 'sources', 'scripts', '.happier-plugin/ui/hosted-web'];
   return [...new Set([
     ...membershipRoots.map((path) => join(packageDir, path)),
-    ...readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, includeShippedFiles, includeDirectories: includeShippedFiles })
+    ...readWorkspaceBuildInputs(packageDir, { excludeGeneratedPluginManifest, excludeGeneratedPluginArtifacts, includeShippedFiles, includeDirectories: includeShippedFiles })
       .filter((path) => !membershipRoots.some((root) => path.startsWith(`${root}/`)))
       .map((path) => join(packageDir, path)),
   ])].filter((path) => existsSyncImpl(path));

@@ -10,7 +10,7 @@ import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeStateFile, isStackRuntimeProcessTrusted } from '../utils/stack/runtime_state.mjs';
+import { readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../utils/stack/runtime_state.mjs';
 import { syncStackRuntimeDaemonPidFromDaemonState } from '../utils/stack/runtime_daemon_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
@@ -49,20 +49,11 @@ export async function resolveStackDaemonCommandContext({
   const runtimePath = (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim();
   if (runtimePath) {
     const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
-    const candidate = Number(state?.ports?.server);
-    const serverPid = Number(state?.processes?.serverPid);
-    if (
-      Number.isFinite(candidate) &&
-      candidate > 0 &&
-      await isStackRuntimeProcessTrusted(serverPid, {
-        key: 'serverPid',
-        stackName,
-        envPath: String(env.HAPPIER_STACK_ENV_FILE ?? '').trim(),
-        cliHomeDir: baseCliHomeDir,
-      })
-    ) {
-      runtimePort = candidate;
-    }
+    runtimePort = await resolveTrustedStackRuntimeServerPort(state, {
+      stackName,
+      envPath: String(env.HAPPIER_STACK_ENV_FILE ?? '').trim(),
+      cliHomeDir: baseCliHomeDir,
+    });
   }
 
   const serverPort = runtimePort ?? resolveServerPortFromEnv({ env, defaultPort: 3005 });
@@ -221,7 +212,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           }
         }
 
-        await startLocalDaemonWithAuth({
+        const startResult = await startLocalDaemonWithAuth({
           cliBin,
           cliEntrypoint,
           cliNodeEntrypoint,
@@ -238,6 +229,16 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           cliIdentity: identity,
           ...runtimeProvenance,
         });
+        if (startResult?.ok === false) {
+          return {
+            ok: false,
+            action,
+            error: 'daemon_start_failed',
+            reason: startResult.reason || startResult.startOutput || startResult.excerpt || `Failed to start daemon (exit=${startResult.exitCode ?? 'unknown'})`,
+            cliIdentity: identity,
+            cliHomeDir,
+          };
+        }
 
         const status = await daemonStatusSummary({
           cliBin,
@@ -316,8 +317,15 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
     },
   });
 
+  if (res?.ok === false) process.exitCode = 1;
+
   if (json) {
     printResult({ json, data: { stackName, ...res } });
+    return;
+  }
+
+  if (res?.ok === false) {
+    console.error(`[stack] ${res.reason || res.error}${res.loginCmd ? `\nRun: ${res.loginCmd}` : ''}`);
     return;
   }
 

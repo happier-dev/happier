@@ -1,12 +1,68 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { writeArtifactManifest } from './runtime/shared/artifact_manifest.mjs';
 import { createRuntimeSnapshotFixture, runNode } from './testkit/runtime_snapshot_testkit.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
+import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
+
+test('existing local stack activation is unaffected by producer QA defaults and never probes a worker', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const producer = await createRuntimeSnapshotFixture(t, { stackName: 'repo-producer' });
+  const consumerStackName = 'existing-local-qa';
+  const consumerStackDir = join(producer.storageDir, consumerStackName);
+  await mkdir(join(consumerStackDir, 'server-light'), { recursive: true });
+  await writeFile(join(consumerStackDir, 'server-light', 'retained.db'), 'retained local data');
+  const manifest = JSON.parse(await readFile(join(producer.snapshotDir, 'manifest.json'), 'utf8'));
+  for (const [component, directory] of [['web', 'ui'], ['server', 'server'], ['daemon', 'cli']]) {
+    const entry = manifest.components[component];
+    const artifactDir = join(producer.stackDir, 'artifacts', component, entry.artifactFingerprint);
+    await cp(join(producer.snapshotDir, directory), join(artifactDir, 'payload'), { recursive: true });
+    await writeArtifactManifest({ artifactDir, manifest: { version: 1, component,
+      artifactFingerprint: entry.artifactFingerprint, sourceFingerprint: 'src-1',
+      target: { platform: process.platform, arch: process.arch }, createdAt: '2026-10-05T12:00:00.000Z',
+      source: { serverComponent: 'happier-server-light', dbProvider: 'sqlite' }, payloadDir: 'payload',
+      entrypoint: entry.entrypoint.slice(directory.length + 1),
+    } });
+  }
+  await writeFile(join(producer.stackDir, 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'worker', platform: 'posix', ssh: 'worker', repoDir: '/mirror', cliHomeDir: '/state' }],
+    runtimePlacement: { qa: { mode: 'auto', targets: ['worker'], fallback: 'local' } },
+  }));
+  const probeWitness = join(producer.root, 'unexpected-probe');
+  const wrapper = join(producer.root, 'apps', 'stack', 'bin', 'hstack-exec');
+  await mkdir(dirname(wrapper), { recursive: true });
+  // Genuine process boundary only: any attempted worker probe is observable.
+  await writeFile(wrapper, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(probeWitness)}, 'probed'); process.stdout.write('HSTACK_QA_HOST=malformed\\n');\n`, { mode: 0o755 });
+  const result = await runNode([join(rootDir, 'scripts/runtime_activate.mjs'), '--all', '--json'], { cwd: rootDir, env: {
+    ...process.env, HAPPIER_STACK_STORAGE_DIR: producer.storageDir,
+    HAPPIER_STACK_STACK: consumerStackName, HAPPIER_STACK_REPO_DIR: producer.root,
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: producer.stackName,
+  } });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).ok, true);
+  await assert.rejects(readFile(probeWitness), error => error.code === 'ENOENT');
+  assert.equal(await readFile(join(consumerStackDir, 'server-light', 'retained.db'), 'utf8'), 'retained local data');
+});
+
+test('zero-build runtime selection completes while producer compilation admission is held', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const producer = await createRuntimeSnapshotFixture(t, { stackName: 'repo-producer' });
+  const consumerStackName = 'qa-consumer';
+  await mkdir(join(producer.storageDir, consumerStackName), { recursive: true });
+  await withWorkspaceBundleLock(async () => {
+    const result = await runNode([join(rootDir, 'scripts/runtime_select.mjs'), '--json'], { cwd: rootDir, env: {
+      ...process.env, HAPPIER_STACK_STORAGE_DIR: producer.storageDir, HAPPIER_STACK_STACK: consumerStackName,
+      HAPPIER_STACK_REPO_DIR: producer.root, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: producer.stackName,
+      HAPPIER_STACK_NO_DEV_TARGETS: '1', HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS: '1',
+    } });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).snapshotId, 'snap-1');
+  }, { lockPath: join(producer.stackDir, 'runtime/publication.lock') });
+});
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
@@ -48,6 +104,12 @@ async function createWebArtifact(stackDir, {
 test('hstack stack runtime activate --web updates only the current runtime web payload', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'prod-dev' });
+
+  // This fixture is also its explicit producer. Persist that authority in the
+  // stack overlay: the real hstack wrapper intentionally scrubs caller-only
+  // authority overrides and activation no longer chooses a consumer store.
+  await writeFile(join(fixture.stackDir, 'env'),
+    `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\nHAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${fixture.stackName}\n`);
 
   await createWebArtifact(fixture.stackDir, {
     fingerprint: 'web-new',
@@ -116,6 +178,8 @@ test('hstack stack runtime activate --web updates only the current runtime web p
 test('hstack stack runtime activate --web fails closed when the active runtime server flavor mismatches the stack', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'prod-dev' });
+  await writeFile(join(fixture.stackDir, 'env'),
+    `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\nHAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${fixture.stackName}\n`);
 
   await createWebArtifact(fixture.stackDir, {
     fingerprint: 'web-new',
@@ -303,13 +367,14 @@ test('hstack stack runtime select does not create a repository producer identity
   await assert.rejects(readFile(gitIdentityPath, 'utf8'), { code: 'ENOENT' });
 });
 
-test('hstack stack runtime select fails closed when the producer has no active snapshot', async (t) => {
+test('hstack stack runtime select fails closed when the producer has no complete snapshot', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const producer = await createRuntimeSnapshotFixture(t, { stackName: 'repo-producer' });
   const consumerStackName = 'qa-consumer';
   const consumerStackDir = join(producer.storageDir, consumerStackName);
   const consumerEnvPath = join(consumerStackDir, 'env');
   await rm(join(producer.stackDir, 'runtime', 'current.json'), { force: true });
+  await rm(producer.snapshotDir, { recursive: true, force: true });
   await mkdir(consumerStackDir, { recursive: true });
   await writeFile(
     consumerEnvPath,
@@ -339,9 +404,8 @@ test('hstack stack runtime select fails closed when the producer has no active s
   );
 
   assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stderr, /producer.*active runtime snapshot/i);
-  assert.match(res.stderr, /stack build qa-consumer --server --daemon/i);
-  assert.match(res.stderr, /stack runtime qa-consumer activate --all/i);
+  assert.match(res.stderr, /producer.*complete runtime snapshot/i);
+  assert.match(res.stderr, /stack build qa-consumer --all --activate-runtime --target=/i);
   await assert.rejects(readFile(join(consumerStackDir, 'runtime', 'current.json'), 'utf8'), { code: 'ENOENT' });
 });
 
@@ -418,7 +482,7 @@ test('hstack stack runtime select rejects a symlink alias of its producer before
   assert.equal(await readFile(producerPointerPath, 'utf8'), producerPointerBefore);
 });
 
-test('hstack stack runtime select rejects a producer pointer chain that resolves back to its consumer', async (t) => {
+test('hstack stack runtime select does not treat a producer pin pointing to its consumer as a producer publication', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const consumer = await createRuntimeSnapshotFixture(t, { stackName: 'qa-consumer' });
   const producerStackName = 'producer-hop';
@@ -466,7 +530,7 @@ test('hstack stack runtime select rejects a producer pointer chain that resolves
   );
 
   assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stderr, /is the runtime producer/i);
+  assert.match(res.stderr, /no complete runtime snapshot/i);
   assert.equal(await readFile(consumerPointerPath, 'utf8'), consumerPointerBefore);
 });
 
@@ -493,7 +557,7 @@ test('hstack stack runtime select rejects a producer snapshot root symlink outsi
   await symlink(externalSnapshotDir, producer.snapshotDir, process.platform === 'win32' ? 'junction' : 'dir');
 
   const res = await runNode(
-    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'runtime', consumerStackName, 'select', '--json'],
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'runtime', consumerStackName, 'select', '--snapshot=snap-1', '--json'],
     {
       cwd: rootDir,
       env: {
@@ -578,7 +642,7 @@ test('hstack stack runtime select permits producer snapshots with reused compone
   );
 });
 
-test('hstack stack runtime select rejects unsafe producer snapshot ids without writing the consumer', async (t) => {
+test('hstack stack runtime select rejects unsafe explicit snapshot ids without writing the consumer', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const producer = await createRuntimeSnapshotFixture(t, { stackName: 'repo-producer' });
   const consumerStackName = 'qa-consumer';
@@ -609,7 +673,7 @@ test('hstack stack runtime select rejects unsafe producer snapshot ids without w
     );
 
     const res = await runNode(
-      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'runtime', consumerStackName, 'select', '--json'],
+      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'runtime', consumerStackName, 'select', `--snapshot=${snapshotId}`, '--json'],
       {
         cwd: rootDir,
         env: {

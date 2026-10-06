@@ -1506,6 +1506,33 @@ test('resolveTrustedStackRuntimeServerPort accepts a live trusted runtime compon
   assert.equal(port, 23456);
 });
 
+test('resolveTrustedStackRuntimeServerPort resolves a stack-owned remote forward without a local server pid', async () => {
+  const state = {
+    ownerPid: process.pid,
+    processes: {},
+    ports: { server: 23456 },
+    placement: { server: 'mac-host' },
+    remoteTargets: { 'mac-host': { services: { server: true } } },
+  };
+  const options = {
+    isPidAliveImpl: () => true,
+    isPidOwnedByStackImpl: async () => true,
+    listenerOwnershipOptions: {
+      listListenPidsImpl: async () => [process.pid],
+      isPidOwnedByStackImpl: async () => true,
+      getProcessGroupIdImpl: async () => process.pid,
+    },
+  };
+  assert.equal(await resolveTrustedStackRuntimeServerPort(state, { stackName: 'remote-qa' }, options), 23456);
+  assert.equal(await resolveTrustedStackRuntimeServerPort(state, { stackName: 'remote-qa' }, {
+    ...options, isPidAliveImpl: () => false,
+  }), null);
+  assert.equal(await resolveTrustedStackRuntimeServerPort(state, { stackName: 'remote-qa' }, {
+    ...options, listenerOwnershipOptions: { ...options.listenerOwnershipOptions, isPidOwnedByStackImpl: async () => false },
+  }), null);
+  assert.equal(await resolveTrustedStackRuntimeServerPort({ ...state, placement: { server: 'local' } }, { stackName: 'remote-qa' }, options), null);
+});
+
 test('resolveTrustedStackRuntimeServerPort rejects a trusted server pid that does not own the recorded port', async () => {
   const port = await resolveTrustedStackRuntimeServerPort(
     {

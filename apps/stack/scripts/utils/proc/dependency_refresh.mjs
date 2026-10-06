@@ -11,7 +11,9 @@ import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.
 // v5 could publish an --ignore-scripts bootstrap as a complete install.
 const REFRESH_STATE_VERSION = 6;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
-const DEPENDENCY_INSTALL_MODE = 'development-full-v1';
+// Earlier full admission relied on Yarn's lifecycle reuse and could omit UI
+// patches/assets. Only an explicitly completed UI postinstall proves this mode.
+const DEPENDENCY_INSTALL_MODE = 'development-full-ui-postinstall-v1';
 export const SCRIPTLESS_DEPENDENCY_INSTALL_MODE = 'development-scriptless-v1';
 
 function installDirLockKey(installDir) {

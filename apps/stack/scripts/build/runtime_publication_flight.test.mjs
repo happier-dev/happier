@@ -1,13 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { spawnTestProcess } from '../testkit/core/spawn_test_process.mjs';
+import { writeManagedRuntimeSnapshotLayout } from '../testkit/core/runtime_snapshot_layout.mjs';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { dirname, join } from 'node:path';
 import { withRuntimePublicationFlight } from './build_stack_artifacts.mjs';
+
+test('publication demand cannot join a completed flight for a different target', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'target-flight-' });
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const artifactDir = fixture.path('artifacts', 'web', 'first');
+  mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+  writeFileSync(join(artifactDir, 'payload', 'index.html'), '<html>web</html>');
+  const manifest = { version: 1, component: 'web', artifactFingerprint: 'first', sourceFingerprint: 'source', payloadDir: 'payload', entrypoint: 'index.html' };
+  writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+  const options = { authority, observedStartedSeq: 0, selection: { components: { web: true }, activateRuntime: false },
+    publish: async () => ({ artifacts: { web: { artifactDir, manifest } }, snapshotId: null }) };
+  await withRuntimePublicationFlight({ ...options, target: { platform: 'linux', arch: 'arm64' } });
+  await assert.rejects(withRuntimePublicationFlight({ ...options, target: { platform: 'linux', arch: 'x64' },
+    publish: async () => { throw new Error('target build required'); } }), /target build required/);
+});
 
 test('publication flights surface QA last-green packages for built and joined results', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'qa-stale-flight-' });
@@ -38,7 +55,9 @@ test('flight result reuse checks web payload integrity before joining', async (t
   mkdirSync(fixture.path('runtime'), { recursive: true });
   writeFileSync(fixture.path('runtime', 'publication-started.json'), JSON.stringify({ startedSeq: 1 }));
   writeFileSync(fixture.path('runtime', 'publication-success.json'), JSON.stringify({
-    seq: 1, components: ['web'], artifactFingerprints: { web: 'web' }, snapshotId: null,
+    seq: 1, targets: { [`${process.platform}/${process.arch}`]: { components: {
+      web: { seq: 1, artifactFingerprint: 'web', snapshotId: null },
+    } } },
   }));
   writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify({
     version: 1, component: 'web', artifactFingerprint: 'web',
@@ -66,36 +85,55 @@ import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-const [root, id, componentsJson, fail, observationRaw, clockBack] = process.argv.slice(1);
+const [root, id, componentsJson, fail, observationRaw, clockBack, optionsJson] = process.argv.slice(1);
+const options = JSON.parse(optionsJson || '{}');
 const components = JSON.parse(componentsJson);
 if (clockBack) { const now = Date.now; Date.now = () => now() - Number(clockBack); }
-const authority = { producerStackName: 'producer', producerStackBaseDir: root };
+const authority = { producerStackName: 'producer', producerStackBaseDir: root,
+  consumerStackName: id, consumerStackBaseDir: join(root, 'stacks', id) };
 const observedStartedSeq = observationRaw ? JSON.parse(observationRaw) : owner.captureRuntimePublicationStartedSeq({ authority });
 await writeFile(join(root, id + '.requested'), JSON.stringify(observedStartedSeq));
-const selection = { components: Object.fromEntries(components.map(c => [c, true])), activateRuntime: false };
+const selection = { components: Object.fromEntries(components.map(c => [c, true])), activateRuntime: options.activateRuntime === true };
+const env = { ...process.env, HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0',
+  HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'), HAPPIER_STACK_STACK: id };
 // The workload is the OS/compiler boundary: real processes and filesystem
 // artifacts. Admission, reuse, locking and runtime-state writes remain real.
-const publish = async () => {
+const publish = async ({ selection: admittedSelection = selection, selectConsumer = false } = {}) => {
+  const admittedComponents = Object.keys(admittedSelection.components).filter(c => admittedSelection.components[c]);
   await mkdir(join(root, 'preparing'));
   await writeFile(join(root, id + '.started'), String(Date.now()));
+  await writeFile(join(root, id + '.selection'), JSON.stringify({ ...admittedSelection, selectConsumer }));
   try {
     while (!existsSync(join(root, id + '.release'))) await delay(10);
     if (fail === 'fail') throw new Error('compiler failed');
     const input = await readFile(join(root, 'input'), 'utf8');
+    const source = { input, repoDir: root, sourceFingerprint: input,
+      serverComponent: 'happier-server-light', dbProvider: 'sqlite', builtAt: new Date().toISOString() };
     const artifacts = {};
-    for (const component of components) {
+    for (const component of admittedComponents) {
       const artifactDir = join(root, 'artifacts', component, input);
       await mkdir(join(artifactDir, 'payload'), { recursive: true });
       await writeFile(join(artifactDir, 'payload', 'entrypoint'), input);
+      if (component === 'daemon') {
+        await mkdir(join(artifactDir, 'payload', 'package-dist'), { recursive: true });
+        await writeFile(join(artifactDir, 'payload', 'package-dist', 'index.mjs'), 'export {};');
+        await writeFile(join(artifactDir, 'payload', 'package-dist', '.build-manifest.json'),
+          JSON.stringify({ fingerprint: '0123456789abcdef', fileCount: 1 }));
+      }
       const manifest = {
         version: 1, artifactFingerprint: input, component,
-        sourceFingerprint: input, source: { input },
+        sourceFingerprint: input, source,
         entrypoint: 'entrypoint', payloadDir: 'payload', createdAt: new Date().toISOString(),
       };
       await writeFile(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
       artifacts[component] = { artifactDir, manifest };
     }
-    return { ok: true, snapshotId: null, snapshotPath: null, artifacts, source: { input } };
+    const publication = admittedSelection.activateRuntime || selectConsumer
+      ? await owner.publishBuiltRepositoryRuntimeSnapshot({ authority, selection: admittedSelection,
+          requestedComponents: admittedComponents, sourceMetadata: source, artifacts, env,
+          retentionPolicy: { runtimeSnapshotKeepCount: 4 } })
+      : { snapshotId: null, snapshotPath: null };
+    return { ok: true, ...publication, artifacts, source };
   } finally { await rm(join(root, 'preparing'), { recursive: true }); }
 };
 const flight = owner.withRuntimePublicationFlight;
@@ -103,11 +141,12 @@ try {
   const result = await flight({
     authority,
     selection, observedStartedSeq,
-    env: { HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0' }, publish,
+    env, publish, selectConsumer: options.selectConsumer === true,
   });
   await writeFile(join(root, id + '.result'), JSON.stringify(result));
 } catch (error) {
   await writeFile(join(root, id + '.error'), error.message);
+  process.stderr.write(error.stack + '\\n');
   process.exitCode = 1;
 }
 `;
@@ -137,9 +176,30 @@ function waitForAny(paths, completion) {
 
 const waitFor = (path, completion) => waitForAny([path], completion);
 
-function launch(t, fixture, id, components = ['server'], fail = '', observedStartedSeq = '', clockBack = '') {
+function waitForPendingDemands(fixture, count, completion) {
+  const directory = fixture.path('runtime', 'publication-demands');
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const demands = readdirSync(directory).filter(name => !name.startsWith('.') && name.endsWith('.json'));
+      if (demands.length < count) return false;
+      watcher.close();
+      resolve();
+      return true;
+    };
+    const watcher = watch(directory, check);
+    watcher.on('error', error => { watcher.close(); reject(error); });
+    check();
+    completion.then(result => {
+      if (check()) return;
+      watcher.close();
+      reject(new Error(`workers exited before registering ${count} demands: ${JSON.stringify(result)}`));
+    }, error => { watcher.close(); reject(error); });
+  });
+}
+
+function launch(t, fixture, id, components = ['server'], fail = '', observedStartedSeq = '', clockBack = '', options = {}) {
   const child = spawnTestProcess(process.execPath, ['--input-type=module', '-e', workerSource,
-    fixture.root, id, JSON.stringify(components), fail, String(observedStartedSeq), String(clockBack)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    fixture.root, id, JSON.stringify(components), fail, String(observedStartedSeq), String(clockBack), JSON.stringify(options)], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   const completion = once(child, 'exit').then(([code]) => {
@@ -165,14 +225,14 @@ async function createFlightFixture(t, prefix) {
   return fixture;
 }
 
-test('three process waiters serialize preparation and join one trailing publication with latest inputs', async (t) => {
+test('five concurrent requests serialize preparation and join one trailing publication with latest inputs', async (t) => {
   const fixture = await createFlightFixture(t, 'runtime-publication-flight-');
   writeFileSync(fixture.path('input'), 'first');
   const first = launch(t, fixture, 'first');
   await waitFor(fixture.path('first.started'), first.completion);
-  const waiters = ['second', 'third', 'fourth'].map(id => ({ id, ...launch(t, fixture, id) }));
+  const waiters = ['second', 'third', 'fourth', 'fifth'].map(id => ({ id, ...launch(t, fixture, id) }));
   await Promise.all(waiters.map(({ id, completion }) => waitFor(fixture.path(id + '.requested'), completion)));
-  await delay(100);
+  await waitForPendingDemands(fixture, 5, Promise.all(waiters.map(({ completion }) => completion)));
   assert.equal(waiters.some(({ id }) => existsSync(fixture.path(id + '.error'))), false,
     'no waiter may begin preparation concurrently');
   writeFileSync(fixture.path('input'), 'latest');
@@ -188,15 +248,147 @@ test('three process waiters serialize preparation and join one trailing publicat
   await waitFor(fixture.path('late.requested'), late.completion);
   writeFileSync(fixture.path(trailing.id + '.release'), 'release');
   const completions = await Promise.all(waiters.map(({ completion }) => completion));
-  assert.deepEqual(completions.map(r => r.code), [0, 0, 0]);
+  assert.deepEqual(completions.map(r => r.code), [0, 0, 0, 0]);
   const results = waiters.map(({ id }) => JSON.parse(readFileSync(fixture.path(id + '.result'), 'utf8')));
-  assert.deepEqual(results.map(r => r.publicationFlight).sort(), ['built', 'joined', 'joined']);
+  assert.deepEqual(results.map(r => r.publicationFlight).sort(), ['built', 'joined', 'joined', 'joined']);
   assert.equal(waiters.filter(({ id }) => existsSync(fixture.path(id + '.started'))).length, 1);
   assert.ok(results.every(r => r.artifacts.server.manifest.artifactFingerprint === 'latest'));
   assert.ok(completions.some(r => /publication\.lock.*pid=/.test(r.stderr)), 'waiters report the actual producer holder');
   assert.equal((await late.completion).code, 0);
   assert.equal(JSON.parse(readFileSync(fixture.path('late.result'), 'utf8')).publicationFlight, 'joined');
   assert.equal(existsSync(fixture.path('late.started')), false);
+});
+
+test('mixed pending daemon, server and all demands share exactly one following publication', async (t) => {
+  const fixture = await createFlightFixture(t, 'runtime-flight-demand-union-');
+  writeFileSync(fixture.path('input'), 'first');
+  const first = launch(t, fixture, 'first');
+  await waitFor(fixture.path('first.started'), first.completion);
+  const waiters = [ ['daemon', ['daemon']], ['server', ['server']], ['all', ['web', 'server', 'daemon']] ]
+    .map(([id, components]) => ({ id, components, ...launch(t, fixture, id, components, '', '', '',
+      id === 'all' ? { activateRuntime: true, selectConsumer: true } : {}) }));
+  await Promise.all(waiters.map(({ id, completion }) => waitFor(fixture.path(id + '.requested'), completion)));
+  await waitForPendingDemands(fixture, 4, Promise.all(waiters.map(({ completion }) => completion)));
+  writeFileSync(fixture.path('input'), 'latest');
+  writeFileSync(fixture.path('first.release'), 'release');
+  assert.equal((await first.completion).code, 0);
+  const trailingPath = await waitForAny(waiters.map(({ id }) => fixture.path(id + '.started')),
+    Promise.all(waiters.map(({ completion }) => completion)));
+  const trailing = waiters.find(({ id }) => fixture.path(id + '.started') === trailingPath);
+  for (const { id } of waiters) writeFileSync(fixture.path(id + '.release'), 'release');
+  assert.ok((await Promise.all(waiters.map(({ completion }) => completion))).every(result => result.code === 0));
+  assert.equal(waiters.filter(({ id }) => existsSync(fixture.path(id + '.started'))).length, 1,
+    'the one following workload must build the union, whichever waiter acquires admission');
+  const built = JSON.parse(readFileSync(fixture.path(trailing.id + '.result'), 'utf8'));
+  assert.deepEqual(Object.keys(built.artifacts).sort(), ['daemon', 'server', 'web']);
+  const admittedSelection = JSON.parse(readFileSync(fixture.path(trailing.id + '.selection'), 'utf8'));
+  assert.equal(admittedSelection.activateRuntime, true, 'pending activation reaches the one admitted workload');
+  assert.equal(admittedSelection.selectConsumer, true, 'pending selection reaches the one admitted workload');
+  assert.ok(built.snapshotId, 'the union produces a selectable complete snapshot');
+  for (const { id, components } of waiters) {
+    const result = JSON.parse(readFileSync(fixture.path(id + '.result'), 'utf8'));
+    assert.ok(components.every(component => result.artifacts[component]?.manifest.artifactFingerprint === 'latest'));
+    assert.equal(result.selected === true, id === 'all', 'each requester controls only its own consumer selection');
+  }
+});
+
+test('an interleaved other-target success preserves earlier per-component completed demand', async (t) => {
+  const fixture = await createFlightFixture(t, 'runtime-flight-target-history-');
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const makeArtifact = (component, fingerprint, target) => {
+    const artifactDir = fixture.path('artifacts', component, fingerprint);
+    mkdirSync(join(artifactDir, 'payload'), { recursive: true });
+    writeFileSync(join(artifactDir, 'payload', 'entrypoint'), fingerprint);
+    const manifest = { version: 1, component, artifactFingerprint: fingerprint, sourceFingerprint: fingerprint,
+      entrypoint: 'entrypoint', payloadDir: 'payload', target };
+    writeFileSync(join(artifactDir, 'manifest.json'), JSON.stringify(manifest));
+    return { artifactDir, manifest };
+  };
+  const target = { platform: process.platform, arch: process.arch };
+  const otherTarget = { platform: process.platform, arch: process.arch === 'arm64' ? 'x64' : 'arm64' };
+  const web = makeArtifact('web', 'web-native', target);
+  const server = makeArtifact('server', 'server-native', target);
+  const foreign = makeArtifact('web', 'web-foreign', otherTarget);
+  for (const [component, artifact, flightTarget] of [['web', web, target], ['server', server, target], ['web', foreign, otherTarget]]) {
+    await withRuntimePublicationFlight({ authority, target: flightTarget,
+      selection: { components: { [component]: true }, activateRuntime: false },
+      publish: async () => ({ artifacts: { [component]: artifact }, snapshotId: null }) });
+  }
+  const joined = await withRuntimePublicationFlight({ authority, target, observedStartedSeq: 0,
+    selection: { components: { web: true, server: true }, activateRuntime: false },
+    publish: async () => { throw new Error('satisfied components must not rebuild'); } });
+  assert.equal(joined.publicationFlight, 'joined');
+  assert.equal(joined.artifacts.web.manifest.artifactFingerprint, 'web-native');
+  assert.equal(joined.artifacts.server.manifest.artifactFingerprint, 'server-native');
+});
+
+test('joined component history uses its retained snapshot or composes a successful mixed vector without rebuilding', async (t) => {
+  const fixture = await createFlightFixture(t, 'runtime-flight-component-snapshots-');
+  const owner = await import(ownerUrl);
+  const authority = { producerStackName: 'producer', producerStackBaseDir: fixture.root };
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  await writeManagedRuntimeSnapshotLayout({ stackDir: fixture.root, snapshotId: 'old' });
+  await writeManagedRuntimeSnapshotLayout({ stackDir: fixture.root, snapshotId: 'newer' });
+  const source = { repoDir: fixture.root, sourceFingerprint: 'managed-source', serverComponent: 'happier-server-light', dbProvider: 'sqlite' };
+  const artifact = (component, suffix) => {
+    const artifactDir = fixture.path('artifacts', component, `${component}-${suffix}`);
+    const path = join(artifactDir, 'manifest.json');
+    const manifest = { ...JSON.parse(readFileSync(path, 'utf8')), source };
+    writeFileSync(path, JSON.stringify(manifest));
+    return { artifactDir, manifest };
+  };
+  const completed = [];
+  for (const [component, suffix] of [['web', 'old'], ['server', 'newer']]) {
+    completed.push(await owner.withRuntimePublicationFlight({ authority, env,
+      selection: { components: { [component]: true }, activateRuntime: false },
+      publish: async () => {
+        const publication = await owner.publishBuiltRepositoryRuntimeSnapshot({ authority, env, selection: { components: { [component]: true } },
+          requestedComponents: ['web', 'server', 'daemon'], sourceMetadata: source,
+          artifacts: Object.fromEntries(['web', 'server', 'daemon'].map(c => [c, artifact(c, suffix)])),
+          retentionPolicy: { runtimeSnapshotKeepCount: 4 } });
+        return { ...publication, artifacts: { [component]: artifact(component, suffix) } };
+      } }));
+  }
+  const options = { authority, env, observedStartedSeq: 0,
+    publish: async () => { throw new Error('successful component history must not rebuild'); } };
+  const web = await owner.withRuntimePublicationFlight({ ...options,
+    selection: { components: { web: true }, activateRuntime: false } });
+  assert.equal(web.publicationFlight, 'joined');
+  assert.equal(web.snapshotId, completed[0].snapshotId, 'the newer server snapshot cannot replace the retained web completion');
+  const mixed = await owner.withRuntimePublicationFlight({ ...options,
+    selection: { components: { web: true, server: true }, activateRuntime: false } });
+  assert.equal(mixed.publicationFlight, 'joined');
+  assert.equal(mixed.artifacts.web.manifest.artifactFingerprint, 'web-old');
+  assert.equal(mixed.artifacts.server.manifest.artifactFingerprint, 'server-newer');
+  const manifest = JSON.parse(readFileSync(join(mixed.snapshotPath, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.components.web.artifactFingerprint, 'web-old');
+  assert.equal(manifest.components.server.artifactFingerprint, 'server-newer');
+});
+
+test('dead waiter demand does not add components or activation to the next publication', async (t) => {
+  const fixture = await createFlightFixture(t, 'runtime-flight-dead-demand-');
+  const child = spawnTestProcess(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await once(child, 'exit');
+  const demandDir = fixture.path('runtime', 'publication-demands');
+  mkdirSync(demandDir, { recursive: true });
+  const deadPath = join(demandDir, 'dead-waiter.json');
+  writeFileSync(deadPath, JSON.stringify({ pid: child.pid, target: { platform: process.platform, arch: process.arch },
+    components: ['daemon'], activateRuntime: true, selectConsumer: true, observedStartedSeq: 0 }));
+  const reusedPath = join(demandDir, 'reused-pid.json');
+  writeFileSync(reusedPath, JSON.stringify({ pid: process.pid,
+    processInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid) + '-prior-process',
+    target: { platform: process.platform, arch: process.arch }, components: ['web'],
+    activateRuntime: true, selectConsumer: true, observedStartedSeq: 0 }));
+  writeFileSync(fixture.path('input'), 'server-only');
+  writeFileSync(fixture.path('live.release'), 'release');
+  assert.equal((await launch(t, fixture, 'live').completion).code, 0);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(fixture.path('live.result'), 'utf8')).artifacts), ['server']);
+  const selection = JSON.parse(readFileSync(fixture.path('live.selection'), 'utf8'));
+  assert.equal(selection.activateRuntime, false);
+  assert.equal(selection.selectConsumer, false);
+  assert.equal(existsSync(deadPath), false, 'dead request is reclaimed by the publication owner');
+  assert.equal(existsSync(reusedPath), false, 'a live recycled PID does not retain the former process demand');
+  assert.deepEqual(readdirSync(demandDir), [], 'completed request leaves no live demand');
 });
 
 test('a failed process flight cannot satisfy its waiter', async (t) => {
@@ -314,6 +506,16 @@ test('a joined explicit request commits completed artifacts and selects its own 
     authority, selection: { ...selection, activateRuntime: false }, env,
     publish: async () => ({ artifacts, source: sourceMetadata, snapshotId: null, snapshotPath: null }),
   });
+  const published = await owner.buildStackArtifacts({
+    rootDir: fixture.path('absent-source'), argv: ['--daemon'],
+    authority, env, observedStartedSeq,
+  });
+  assert.equal(published.publicationFlight, 'joined');
+  assert.ok(published.snapshotId);
+  assert.equal(published.selected, false);
+  assert.equal(existsSync(join(authority.consumerStackBaseDir, 'runtime', 'current.json')), false);
+  assert.equal(JSON.parse(readFileSync(join(authority.producerStackBaseDir, 'runtime', 'current.json'), 'utf8')).snapshotId,
+    published.snapshotId);
   const joined = await owner.buildStackArtifacts({
     rootDir: fixture.path('absent-source'), argv: ['--all', '--activate-runtime'],
     authority, env, observedStartedSeq,
@@ -323,6 +525,7 @@ test('a joined explicit request commits completed artifacts and selects its own 
   assert.equal(joined.consumerStackName, 'consumer');
   assert.equal(built.snapshotId, null);
   assert.ok(joined.snapshotId);
+  assert.equal(joined.snapshotId, published.snapshotId);
   const pointer = JSON.parse(readFileSync(join(authority.consumerStackBaseDir, 'runtime', 'current.json'), 'utf8'));
   assert.equal(pointer.producerStackName, 'producer');
   assert.equal(pointer.snapshotId, joined.snapshotId);

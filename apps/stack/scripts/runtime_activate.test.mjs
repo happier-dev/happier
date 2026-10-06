@@ -101,20 +101,20 @@ test('runtime activation discovers artifacts outside the snapshot lock and commi
   assert.deepEqual(events, [
     'source-metadata',
     'resolve-server',
-    'resolve-server-at-commit',
     'validate-current',
     'publish-manifest',
     'select-producer',
-    'select-consumer',
     'retention',
+    'select-consumer',
     'runtime-mode',
   ]);
   assert.equal(result.runtime.consumerStackName, 'qa-consumer');
   assert.equal(result.runtime.producerStackName, 'repo-producer');
 });
 
-test('runtime activation re-resolves selected artifacts at commit after a waiting publication', async () => {
+test('runtime activation discovers artifacts after publication admission and retains them through commit', async () => {
   let snapshotLockHeld = false;
+  let publicationLockHeld = false;
   let resolveCount = 0;
   const authority = {
     consumerStackName: 'qa-consumer',
@@ -138,22 +138,19 @@ test('runtime activation re-resolves selected artifacts at commit after a waitin
     }),
     resolveLatestComponentArtifactImpl: async ({ component }) => {
       assert.equal(component, 'server');
+      assert.equal(publicationLockHeld, true);
+      assert.equal(snapshotLockHeld, false);
       resolveCount += 1;
-      if (resolveCount === 1) {
-        assert.equal(snapshotLockHeld, false);
-        return {
-          artifactDir: '/stacks/repo-producer/artifacts/server/server-old',
-          manifest: { artifactFingerprint: 'server-old' },
-        };
-      }
-      assert.equal(snapshotLockHeld, true);
       return {
         artifactDir: '/stacks/repo-producer/artifacts/server/server-new',
         manifest: { artifactFingerprint: 'server-new' },
       };
     },
     withWorkspaceBundleLockImpl: async (fn, options) => {
-      if (options.lockPath.endsWith('publication.lock')) return await fn({ waited: true });
+      if (options.lockPath.endsWith('publication.lock')) {
+        publicationLockHeld = true;
+        try { return await fn({ waited: true }); } finally { publicationLockHeld = false; }
+      }
       snapshotLockHeld = true;
       try {
         return await fn({ waited: true });
@@ -188,6 +185,6 @@ test('runtime activation re-resolves selected artifacts at commit after a waitin
     ensureStackRuntimeModePreferImpl: async () => {},
   });
 
-  assert.equal(resolveCount, 2);
+  assert.equal(resolveCount, 1);
   assert.equal(result.artifacts.server.manifest.artifactFingerprint, 'server-new');
 });

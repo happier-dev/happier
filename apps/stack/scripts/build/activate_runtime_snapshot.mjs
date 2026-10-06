@@ -1,7 +1,8 @@
-import { copyFile, lstat, mkdir, realpath, symlink } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { copyFile, lstat, mkdir, readdir, readlink, realpath, stat, symlink } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 
 import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime/componentCatalog';
+import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import {
@@ -15,6 +16,7 @@ import {
 import {
   isRetainedLegacyRuntimeSnapshotComponentReference,
   readRuntimeManifest,
+  RUNTIME_SNAPSHOT_COMPONENTS,
   resolveRuntimeManifestEntrypoint,
   validateRuntimeTarget,
   validateRuntimeManifest,
@@ -28,25 +30,30 @@ import {
 } from '../runtime/shared/runtime_paths.mjs';
 import { pathExists } from '../utils/fs/fs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
-import { inspectActiveRuntimeSnapshot } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { pruneRuntimeSnapshots } from './runtime_retention.mjs';
 import { createRuntimeSnapshotSourceMetadata } from '../runtime/shared/runtime_snapshot_identity.mjs';
+import { collectSnapshotRuntimePayloadErrors, inspectDaemonDistClosure } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 
 function resolveComponentDirectoryName(component) {
   return component === 'web' ? 'ui' : component === 'server' ? 'server' : 'cli';
 }
 
 async function materializeRuntimeComponent({ targetDir, sourceDir }) {
-  await symlink(sourceDir, targetDir, process.platform === 'win32' ? 'junction' : 'dir');
+  await symlink(process.platform === 'win32' ? sourceDir : relative(dirname(targetDir), sourceDir), targetDir,
+    process.platform === 'win32' ? 'junction' : 'dir');
 }
 
-async function validateRuntimeArtifact({ stackBaseDir, component, artifact }) {
+async function validateRuntimeArtifact({ stackBaseDir, component, artifact, target }) {
   const validation = validateArtifactManifest(artifact?.manifest);
   if (!validation.ok) {
     throw new Error(`[build] invalid ${component} artifact manifest: ${validation.errors.join('; ')}`);
   }
   if (validation.manifest.component !== component) {
     throw new Error(`[build] invalid ${component} artifact manifest: component identity does not match.`);
+  }
+  const targetValidation = validateRuntimeTarget(artifact.manifest, target);
+  if (!targetValidation.ok) {
+    throw new Error(`[build] ${component} artifact target is incompatible: ${targetValidation.errors.join('; ')}`);
   }
 
   const canonicalArtifactDir = resolveStackComponentArtifactDir({
@@ -166,10 +173,10 @@ async function resolveCanonicalCurrentComponentSource({
   };
 }
 
-async function resolveComponentSource({ stackBaseDir, component, artifact, currentSnapshot, sourceMetadata }) {
+async function resolveComponentSource({ stackBaseDir, component, artifact, currentSnapshot, sourceMetadata, target }) {
   const componentDirName = resolveComponentDirectoryName(component);
   if (artifact) {
-    const manifest = await validateRuntimeArtifact({ stackBaseDir, component, artifact });
+    const manifest = await validateRuntimeArtifact({ stackBaseDir, component, artifact, target });
     if (component === 'server') {
       assertCompatibleServerFlavor({
         sourceMetadata,
@@ -232,7 +239,7 @@ async function isPublishedRuntimeSnapshotReusable({
   arch,
 }) {
   const manifest = await readRuntimeManifest({ manifestPath: runtimePaths.manifestPath });
-  const validation = validateRuntimeManifest(manifest);
+  const validation = validateRuntimeManifest(manifest, { requiredComponents: Object.keys(sources) });
   if (!validation.ok || validation.manifest.snapshotId !== snapshotId) return false;
   if (validation.manifest.sourceFingerprint !== sourceMetadata.sourceFingerprint) return false;
   const targetValidation = validateRuntimeTarget(validation.manifest, { platform, arch });
@@ -240,10 +247,12 @@ async function isPublishedRuntimeSnapshotReusable({
 
   for (const [component, source] of Object.entries(sources)) {
     if (validation.manifest.components[component]?.artifactFingerprint !== source.artifactFingerprint) return false;
+    const componentPath = join(runtimePaths.snapshotDir, resolveComponentDirectoryName(component));
+    if (process.platform !== 'win32' && isAbsolute(await readlink(componentPath).catch(() => ''))) return false;
     try {
       await validatePublishedRuntimeComponentReference({
         producerStackBaseDir: stackBaseDir,
-        componentPath: join(runtimePaths.snapshotDir, resolveComponentDirectoryName(component)),
+        componentPath,
         component,
         manifest: validation.manifest,
         reusableSnapshotIds: validation.manifest.reusedSnapshotIds,
@@ -254,7 +263,7 @@ async function isPublishedRuntimeSnapshotReusable({
   }
   const daemonComponent = getFirstPartyComponentCatalogEntry('happier-daemon');
   if (
-    daemonComponent.nodeEntrypointRelativePath
+    sources.daemon && daemonComponent.nodeEntrypointRelativePath
     && !(await pathExists(join(runtimePaths.snapshotDir, 'cli', daemonComponent.nodeEntrypointRelativePath)))
   ) {
     return false;
@@ -272,22 +281,27 @@ export async function publishRuntimeSnapshot({
   platform = process.platform,
   arch = process.arch,
   pruneAfterPublish = true,
+  requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS,
 }) {
   const stackBaseDir = producerStackBaseDir;
   const runtimeSourceMetadata = createRuntimeSnapshotSourceMetadata({ sourceMetadata, snapshotId });
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir, snapshotId });
   await mkdir(runtimePaths.buildsDir, { recursive: true });
-  const currentInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
+  const currentInspection = await inspectLatestPublishedRuntimeSnapshot({ stackBaseDir, target: { platform, arch },
+    requiredComponents: requiredComponents.filter(component => !artifacts[component]) });
   const currentSnapshot = currentInspection.snapshot;
-  const webSource = await resolveComponentSource({ stackBaseDir, component: 'web', artifact: artifacts.web, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
-  const serverSource = await resolveComponentSource({ stackBaseDir, component: 'server', artifact: artifacts.server, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
-  const daemonSource = await resolveComponentSource({ stackBaseDir, component: 'daemon', artifact: artifacts.daemon, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
-  const sources = { web: webSource, server: serverSource, daemon: daemonSource };
-  const reusedSnapshotIds = [...new Set([
-    webSource.reusedSnapshotId,
-    serverSource.reusedSnapshotId,
-    daemonSource.reusedSnapshotId,
-  ].filter((value) => typeof value === 'string' && value.trim() && value !== snapshotId))];
+  if (!currentSnapshot && requiredComponents.some(component => !artifacts[component]) && currentInspection.failure) {
+    throw currentInspection.failure;
+  }
+  const components = RUNTIME_SNAPSHOT_COMPONENTS.filter(component => requiredComponents.includes(component)
+    || artifacts[component] || currentSnapshot?.manifest.components[component]);
+  const sources = {};
+  for (const component of components) {
+    sources[component] = await resolveComponentSource({ stackBaseDir, component, artifact: artifacts[component], currentSnapshot,
+      sourceMetadata: runtimeSourceMetadata, target: { platform, arch } });
+  }
+  const reusedSnapshotIds = [...new Set(Object.values(sources).map(source => source.reusedSnapshotId)
+    .filter((value) => typeof value === 'string' && value.trim() && value !== snapshotId))];
 
   if (await isPublishedRuntimeSnapshotReusable({
     stackBaseDir,
@@ -315,18 +329,10 @@ export async function publishRuntimeSnapshot({
   }
 
   await buildIntoTempThenReplace(runtimePaths.snapshotDir, async (tmpSnapshotDir) => {
-    await materializeRuntimeComponent({
-      sourceDir: webSource.sourceDir,
-      targetDir: join(tmpSnapshotDir, 'ui'),
-    });
-    await materializeRuntimeComponent({
-      sourceDir: serverSource.sourceDir,
-      targetDir: join(tmpSnapshotDir, 'server'),
-    });
-    await materializeRuntimeComponent({
-      sourceDir: daemonSource.sourceDir,
-      targetDir: join(tmpSnapshotDir, 'cli'),
-    });
+    for (const [component, source] of Object.entries(sources)) {
+      await materializeRuntimeComponent({ sourceDir: source.sourceDir,
+        targetDir: join(tmpSnapshotDir, resolveComponentDirectoryName(component)) });
+    }
 
     await writeRuntimeManifest({
       manifestPath: join(tmpSnapshotDir, 'manifest.json'),
@@ -338,23 +344,11 @@ export async function publishRuntimeSnapshot({
         createdAt: runtimeSourceMetadata.builtAt,
         source: runtimeSourceMetadata,
         reusedSnapshotIds,
-        components: {
-          web: {
-            artifactFingerprint: webSource.artifactFingerprint,
-            ...(webSource.stalePackages?.length ? { stalePackages: webSource.stalePackages } : {}),
-            entrypoint: webSource.entrypoint,
-          },
-          server: {
-            artifactFingerprint: serverSource.artifactFingerprint,
-            ...(serverSource.stalePackages?.length ? { stalePackages: serverSource.stalePackages } : {}),
-            entrypoint: serverSource.entrypoint,
-          },
-          daemon: {
-            artifactFingerprint: daemonSource.artifactFingerprint,
-            ...(daemonSource.stalePackages?.length ? { stalePackages: daemonSource.stalePackages } : {}),
-            entrypoint: daemonSource.entrypoint,
-          },
-        },
+        components: Object.fromEntries(Object.entries(sources).map(([component, source]) => [component, {
+          artifactFingerprint: source.artifactFingerprint,
+          ...(source.stalePackages?.length ? { stalePackages: source.stalePackages } : {}),
+          entrypoint: source.entrypoint,
+        }])),
       },
     });
   });
@@ -376,7 +370,7 @@ export async function publishRuntimeSnapshot({
   };
 }
 
-async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshotId }) {
+export async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshotId, target, requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS }) {
   const producerPaths = resolveStackRuntimePaths({ stackBaseDir: producerStackBaseDir, snapshotId });
   const physicalSnapshotContainmentError = await getRuntimeSnapshotPhysicalContainmentError({
     buildsDir: producerPaths.buildsDir,
@@ -386,14 +380,14 @@ async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshot
     throw new Error(physicalSnapshotContainmentError);
   }
   const manifest = await readRuntimeManifest({ manifestPath: producerPaths.manifestPath });
-  const validation = validateRuntimeManifest(manifest);
+  const validation = validateRuntimeManifest(manifest, { requiredComponents });
   if (!validation.ok) {
     throw new Error(`[runtime] cannot select invalid runtime snapshot: ${validation.errors.join('; ')}`);
   }
   if (validation.manifest.snapshotId !== snapshotId) {
     throw new Error('[runtime] cannot select runtime snapshot whose manifest identity does not match.');
   }
-  const targetValidation = validateRuntimeTarget(validation.manifest);
+  const targetValidation = validateRuntimeTarget(validation.manifest, target);
   if (!targetValidation.ok) {
     throw new Error(`[runtime] cannot select runtime snapshot: ${targetValidation.errors.join('; ')}`);
   }
@@ -402,6 +396,7 @@ async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshot
     ['server', 'server'],
     ['daemon', 'cli'],
   ]) {
+    if (!validation.manifest.components[component]) continue;
     const componentPath = join(producerPaths.snapshotDir, directoryName);
     if (!(await pathExists(componentPath))) {
       throw new Error(`[runtime] cannot select incomplete runtime snapshot: missing ${directoryName}.`);
@@ -414,6 +409,11 @@ async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshot
       reusableSnapshotIds: validation.manifest.reusedSnapshotIds,
     });
   }
+  const closure = validation.manifest.components.daemon
+    ? await inspectDaemonDistClosure({ snapshotPath: producerPaths.snapshotDir }) : { fingerprint: null, errors: [] };
+  const payloadErrors = await collectSnapshotRuntimePayloadErrors({ snapshotPath: producerPaths.snapshotDir,
+    components: Object.keys(validation.manifest.components) });
+  if (payloadErrors.length || closure.errors.length) throw new Error(payloadErrors[0] ?? closure.errors[0]);
   return { manifest: validation.manifest, producerPaths };
 }
 
@@ -441,6 +441,10 @@ async function validatePublishedRuntimeComponentReference({
   });
   const artifactManifest = await readArtifactManifest({ artifactDir });
   const artifactValidation = validateArtifactManifest(artifactManifest);
+  if (artifactValidation.ok && artifactManifest.target && manifest.target) {
+    const targetValidation = validateRuntimeTarget(artifactManifest, manifest.target);
+    if (!targetValidation.ok) throw new Error(`[runtime] ${component} artifact target is incompatible: ${targetValidation.errors.join('; ')}`);
+  }
   const componentStats = await lstat(componentPath).catch(() => null);
   const retainedLegacyReference = componentStats?.isSymbolicLink()
     && await isRetainedLegacyRuntimeSnapshotComponentReference({
@@ -493,6 +497,8 @@ export async function selectRuntimeSnapshot({
   producerStackBaseDir,
   producerStackName = '',
   snapshotId,
+  target = { platform: process.platform, arch: process.arch },
+  requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS,
 }) {
   const normalizedProducerStackName = String(producerStackName ?? '').trim();
   if (normalizedProducerStackName) {
@@ -501,14 +507,17 @@ export async function selectRuntimeSnapshot({
   const { manifest, producerPaths } = await validatePublishedRuntimeSnapshot({
     producerStackBaseDir,
     snapshotId,
+    target,
+    requiredComponents,
   });
   const consumerPaths = resolveStackRuntimePaths({ stackBaseDir: consumerStackBaseDir });
   await mkdir(consumerPaths.runtimeDir, { recursive: true });
 
   await buildIntoTempThenReplace(consumerPaths.currentDir, async (tmpCurrentDir) => {
-    await symlink(join(producerPaths.snapshotDir, 'ui'), join(tmpCurrentDir, 'ui'), process.platform === 'win32' ? 'junction' : 'dir');
-    await symlink(join(producerPaths.snapshotDir, 'server'), join(tmpCurrentDir, 'server'), process.platform === 'win32' ? 'junction' : 'dir');
-    await symlink(join(producerPaths.snapshotDir, 'cli'), join(tmpCurrentDir, 'cli'), process.platform === 'win32' ? 'junction' : 'dir');
+    for (const component of Object.keys(manifest.components)) {
+      const directory = resolveComponentDirectoryName(component);
+      await symlink(join(producerPaths.snapshotDir, directory), join(tmpCurrentDir, directory), process.platform === 'win32' ? 'junction' : 'dir');
+    }
     await copyFile(
       join(producerPaths.snapshotDir, 'manifest.json'),
       join(tmpCurrentDir, 'manifest.json'),
@@ -537,11 +546,60 @@ export async function selectRuntimeSnapshot({
   };
 }
 
+/** Published manifests are the target-specific authority; current.json is a consumer pin. */
+export async function inspectLatestPublishedRuntimeSnapshot({ stackBaseDir, target = { platform: process.platform, arch: process.arch }, requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS }) {
+  const { buildsDir } = resolveStackRuntimePaths({ stackBaseDir });
+  const entries = await readdir(buildsDir, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const snapshotPath = join(buildsDir, entry.name);
+    const manifest = await readRuntimeManifest({ manifestPath: join(snapshotPath, 'manifest.json') });
+    const validation = validateRuntimeManifest(manifest, { requiredComponents });
+    if (!validation.ok || validation.manifest.snapshotId !== entry.name) continue;
+    const targetValidation = validateRuntimeTarget(validation.manifest, target);
+    if (!targetValidation.ok) continue;
+    candidates.push({ snapshotId: entry.name,
+      createdAt: manifest.createdAt || (await stat(snapshotPath)).mtime.toISOString() });
+  }
+  candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.snapshotId.localeCompare(a.snapshotId));
+  const errors = [];
+  let failure = null;
+  for (const candidate of candidates) {
+    try {
+      const { manifest, producerPaths } = await validatePublishedRuntimeSnapshot({ producerStackBaseDir: stackBaseDir, snapshotId: candidate.snapshotId, target, requiredComponents });
+      const closure = manifest.components.daemon ? await inspectDaemonDistClosure({ snapshotPath: producerPaths.snapshotDir }) : { fingerprint: null };
+      return { valid: true, missing: false, errors: [], manifest,
+        snapshot: { snapshotId: candidate.snapshotId, snapshotPath: producerPaths.snapshotDir, manifest, producerStackBaseDir: stackBaseDir,
+          daemonDistClosureFingerprint: closure.fingerprint } };
+    } catch (error) {
+      failure ??= error;
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return { valid: false, missing: candidates.length === 0, errors, failure, manifest: null, snapshot: null };
+}
+
 export async function selectActiveProducerRuntimeSnapshot({
   consumerStackBaseDir,
   producerStackBaseDir,
   producerStackName,
   consumerStackName = '',
+  target = { platform: process.platform, arch: process.arch },
+  snapshotId = '',
+  requiredComponents = RUNTIME_SNAPSHOT_COMPONENTS,
+}) {
+  return await withWorkspaceBundleLock(() => selectProducerRuntimeSnapshot({
+    consumerStackBaseDir, producerStackBaseDir, producerStackName, consumerStackName, target, snapshotId, requiredComponents,
+  }), { lockPath: resolveStackRuntimePaths({ stackBaseDir: producerStackBaseDir }).lockPath,
+    errorLabel: 'runtime snapshot selection lock' });
+}
+
+async function selectProducerRuntimeSnapshot({
+  consumerStackBaseDir, producerStackBaseDir, producerStackName, consumerStackName, target, snapshotId, requiredComponents,
 }) {
   await assertDistinctRuntimeSelection({
     consumerStackBaseDir,
@@ -550,16 +608,17 @@ export async function selectActiveProducerRuntimeSnapshot({
     producerStackName,
   });
 
-  const inspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: producerStackBaseDir });
+  if (snapshotId) return await selectRuntimeSnapshot({ consumerStackBaseDir, producerStackBaseDir, producerStackName, snapshotId, target, requiredComponents });
+
+  const inspection = await inspectLatestPublishedRuntimeSnapshot({ stackBaseDir: producerStackBaseDir, target, requiredComponents });
   if (!inspection.valid || !inspection.snapshot) {
     const reason = inspection.missing
-      ? 'has no active runtime snapshot'
-      : `has an invalid active runtime snapshot${inspection.errors[0] ? `: ${inspection.errors[0]}` : ''}`;
+      ? `has no complete runtime snapshot for ${target.platform}/${target.arch}`
+      : `has no valid complete runtime snapshot for ${target.platform}/${target.arch}${inspection.errors[0] ? `: ${inspection.errors[0]}` : ''}`;
     const buildConsumerName = String(consumerStackName ?? '').trim() || '<consumer>';
     throw new Error(
       `[runtime] producer ${producerStackName} ${reason}. Publish through the repository authority with `
-      + `hstack stack build ${buildConsumerName} --server --daemon, then select the complete result with `
-      + `hstack stack runtime ${buildConsumerName} activate --all. These commands do not restart the producer or consumer.`,
+      + `hstack stack build ${buildConsumerName} --all --activate-runtime --target=${target.platform === 'win32' ? 'windows' : target.platform}-${target.arch}. These commands do not restart the producer or consumer.`,
     );
   }
 
@@ -577,6 +636,8 @@ export async function selectActiveProducerRuntimeSnapshot({
     producerStackBaseDir: resolvedProducerStackBaseDir,
     producerStackName: resolvedProducerStackName,
     snapshotId: inspection.snapshot.snapshotId,
+    target,
+    requiredComponents,
   });
 }
 
@@ -647,5 +708,6 @@ export async function activateRuntimeSnapshot({
     consumerStackBaseDir: stackBaseDir,
     producerStackBaseDir: stackBaseDir,
     snapshotId: published.snapshotId,
+    target: { platform, arch },
   });
 }

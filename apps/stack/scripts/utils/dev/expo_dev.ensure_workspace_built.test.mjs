@@ -80,7 +80,7 @@ function createExpoBaseEnv(tmp) {
 }
 
 async function startFixtureExpo({ tmp, uiDir, spawnOptions = undefined, ...overrides }) {
-  return await ensureDevExpoServer({
+  const result = await ensureDevExpoServer({
     startUi: true,
     startMobile: false,
     uiDir,
@@ -97,26 +97,22 @@ async function startFixtureExpo({ tmp, uiDir, spawnOptions = undefined, ...overr
     quiet: true,
     ...overrides,
   });
+  // The fixture Expo exits on its own; settle it before removing its executable.
+  await result.proc?.completion;
+  return result;
 }
 
-test('ensureDevExpoServer still starts Expo when the UI workspace build preflight fails', async () => {
+test('ensureDevExpoServer rejects a fresh workspace build failure before starting Expo', async () => {
   const fixture = await createExpoWorkspaceFixture({ workspaceBuildFails: true });
   try {
-    const result = await startFixtureExpo(fixture);
-
-    const deadlineMs = Date.now() + 3000;
-    while (Date.now() < deadlineMs && !(await readFile(fixture.expoStartedMarker, 'utf-8').catch(() => ''))) {
-      await delay(50);
-    }
-
-    assert.equal(result.skipped, false);
-    assert.equal(await readFile(fixture.expoStartedMarker, 'utf-8'), 'started\n');
+    await assert.rejects(startFixtureExpo(fixture), /fixture workspace build failed/);
+    await assert.rejects(readFile(fixture.expoStartedMarker), { code: 'ENOENT' });
   } finally {
     await rm(fixture.tmp, { recursive: true, force: true });
   }
 });
 
-test('ensureDevExpoServer keeps the stack available when the canonical app preflight fails', async () => {
+test('ensureDevExpoServer surfaces a fresh canonical app preflight failure before starting Expo', async () => {
   const fixture = await createExpoWorkspaceFixture();
   try {
     await mkdir(join(fixture.uiDir, 'scripts'), { recursive: true });
@@ -126,14 +122,8 @@ test('ensureDevExpoServer keeps the stack available when the canonical app prefl
       'utf-8',
     );
 
-    const result = await startFixtureExpo(fixture);
-    const deadlineMs = Date.now() + 3000;
-    while (Date.now() < deadlineMs && !(await readFile(fixture.expoStartedMarker, 'utf-8').catch(() => ''))) {
-      await delay(50);
-    }
-
-    assert.equal(result.skipped, false);
-    assert.equal(await readFile(fixture.expoStartedMarker, 'utf-8'), 'started\n');
+    await assert.rejects(startFixtureExpo(fixture), { code: 'HAPPIER_EXPO_CANONICAL_UI_PREFLIGHT_FAILED' });
+    await assert.rejects(readFile(fixture.expoStartedMarker), { code: 'ENOENT' });
   } finally {
     await rm(fixture.tmp, { recursive: true, force: true });
   }
@@ -260,7 +250,7 @@ test('completed UI workspace preparation retries an in-flight failed web publica
   }
 });
 
-test('ensureDevExpoServer starts from available workspace outputs while the first canonical UI publication continues', async () => {
+test('ensureDevExpoServer waits for the first canonical UI publication before starting Expo', async () => {
   const fixture = await createExpoWorkspaceFixture();
   let startPromise;
   try {
@@ -288,18 +278,12 @@ test('ensureDevExpoServer starts from available workspace outputs while the firs
       delay(2_000).then(() => 'blocked'),
     ]);
 
-    assert.equal(startupOutcome, 'started');
-    const expoDeadlineMs = Date.now() + 3000;
-    while (
-      Date.now() < expoDeadlineMs
-      && !(await readFile(fixture.expoStartedMarker, 'utf8').catch(() => ''))
-    ) {
-      await delay(20);
-    }
-    assert.equal(await readFile(fixture.expoStartedMarker, 'utf8'), 'started\n');
+    assert.equal(startupOutcome, 'blocked');
+    await assert.rejects(readFile(fixture.expoStartedMarker), { code: 'ENOENT' });
     await assert.rejects(() => readFile(completedPath, 'utf8'), /ENOENT/);
 
     await writeFile(releasePath, 'go\n', 'utf8');
+    await startPromise;
     const deadlineMs = Date.now() + 3000;
     while (Date.now() < deadlineMs && !(await readFile(completedPath, 'utf8').catch(() => ''))) {
       await delay(20);
@@ -355,6 +339,7 @@ test('ensureDevExpoServer adopts an existing Expo process while canonical refres
         "import { existsSync } from 'node:fs';",
         "import { writeFile } from 'node:fs/promises';",
         "import { setTimeout as delay } from 'node:timers/promises';",
+        'export function hasUsableUiWorkspaceLastGreen() { return true; }',
         'export async function ensureUiWorkspacePackagesBuilt() {',
         `  while (!existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
         `  await writeFile(${JSON.stringify(canonicalMarker)}, 'ready\\n');`,

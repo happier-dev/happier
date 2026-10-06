@@ -1,11 +1,11 @@
 import { inspectActiveRuntimeSnapshot } from './inspectActiveRuntimeSnapshot.mjs';
 
-export async function resolveActiveRuntimeSnapshot({ mode = 'source', stackBaseDir }) {
+export async function resolveActiveRuntimeSnapshot({ mode = 'source', stackBaseDir, target, env, requiredComponents }) {
   if (mode === 'source') {
     return null;
   }
 
-  const inspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
+  const inspection = await inspectActiveRuntimeSnapshot({ stackBaseDir, target, env, requiredComponents });
   if (inspection.snapshot) {
     return inspection.snapshot;
   }

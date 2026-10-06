@@ -441,6 +441,33 @@ test('hstack happier does not forward --runtime to the wrapped runtime CLI', asy
   assert.deepEqual(JSON.parse(res.stdout.trim()), ['session', 'run', 'list']);
 });
 
+test('hstack happier preserves tool source arguments in the runtime CLI', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, {
+    cliEntrypoint: 'cli/happier.mjs',
+    cliSource: 'process.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n',
+  });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: fixture.root,
+    HAPPIER_HOME_DIR: join(fixture.root, '.happy-home'),
+  };
+  const childArgs = ['tools', 'call', '--source', 'happier', '--tool', 'action_spec_search', '--args-json', '{"query":"triage"}', '--json'];
+  // Stack passthrough consumes its separator; direct happier invocation retains it.
+  for (const separator of [[], ['--']]) {
+    const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), '--runtime', ...separator, ...childArgs], { cwd: rootDir, env });
+    assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+    assert.deepEqual(JSON.parse(res.stdout.trim()), childArgs);
+  }
+  const nestedChildArgs = [...childArgs, '--', '--runtime', '--source', '--stack-help'];
+  const nested = await runNode([join(rootDir, 'scripts', 'happier.mjs'), '--runtime', ...nestedChildArgs], { cwd: rootDir, env });
+  assert.equal(nested.code, 0, `stderr:\n${nested.stderr}\nstdout:\n${nested.stdout}`);
+  assert.deepEqual(JSON.parse(nested.stdout.trim()), nestedChildArgs);
+});
+
 test('hstack happier does not forward --source to the wrapped source CLI', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createSourceCliFixture(t);

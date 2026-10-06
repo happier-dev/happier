@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
+import { resolveRemoteStackStatePaths } from './utils/dev_targets/remote_commands.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
@@ -104,4 +105,39 @@ test('hstack stack env unset missing key is a no-op that keeps existing entries'
   const afterUnset = await readFile(fixture.envPath, 'utf-8');
   assert.ok(afterUnset.includes('FOO=bar'), `expected existing key FOO to remain\n${afterUnset}`);
   assert.ok(afterUnset.includes('BAR=baz'), `expected existing key BAR to remain\n${afterUnset}`);
+});
+
+test('stack env shared-db opts a fresh QA stack into source server placement without copying secrets', async (t) => {
+  const fixture = await createStackEnvFixture(t, { initialEnv: 'HAPPIER_DB_PROVIDER=sqlite\nHAPPIER_STACK_SERVER_COMPONENT=happier-server-light\n' });
+  const storage = fixture.baseEnv.HAPPIER_STACK_STORAGE_DIR;
+  await mkdir(join(storage, 'dev'), { recursive: true });
+  await writeFile(join(storage, 'dev', 'env'), 'HAPPIER_DB_PROVIDER=sqlite\nHANDY_MASTER_SECRET=fixture-only-secret\n');
+  await writeFile(join(storage, 'dev', 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'mac-host', platform: 'posix', ssh: 'mac-host', repoDir: '/mirror', cliHomeDir: '/state/dev/cli', remoteServerPort: 43248 }],
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'mac-host', fallback: 'error' }, build: { mode: 'local' } } }));
+  await writeFile(join(storage, fixture.stackName, 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'mac-host', platform: 'posix', ssh: 'another-host', repoDir: '/other-mirror', cliHomeDir: '/other/dev/cli' },
+      { name: 'own-worker', platform: 'posix', ssh: 'own-worker', repoDir: '/own-mirror', cliHomeDir: '/own/cli' }] }));
+  const result = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'shared-db', 'dev', '--json'], { cwd: rootDir, env: fixture.baseEnv });
+  assert.equal(result.code, 0, result.stderr);
+  const written = await readFile(fixture.envPath, 'utf8');
+  assert.match(written, /HAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev/);
+  assert.match(written, /HAPPIER_STACK_RUNTIME_MODE=require/);
+  assert.match(written, /HAPPIER_SQLITE_AUTO_MIGRATE=0/);
+  assert.match(written, /METRICS_ENABLED=false/);
+  assert.doesNotMatch(written + result.stdout + result.stderr, /fixture-only-secret/);
+  const config = JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8'));
+  assert.equal(config.runtimePlacement.server.target, 'mac-host');
+  assert.equal(config.runtimePlacement.daemon.mode, 'local');
+  assert.equal(config.targets.find(target => target.name === 'mac-host').ssh, 'mac-host');
+  assert.equal(config.targets.find(target => target.name === 'mac-host').cliHomeDir, '/state/dev/cli');
+  assert.equal(config.targets.find(target => target.name === 'mac-host').remoteServerPort, null,
+    'QA must allocate its own remote server port rather than reuse the source listener');
+  assert.equal(config.targets.find(target => target.name === 'own-worker').ssh, 'own-worker');
+  const sourceTarget = config.targets.find(target => target.name === 'mac-host');
+  const sourceEnvPath = resolveRemoteStackStatePaths(sourceTarget, { stackName: 'dev' }).stackEnvPath;
+  assert.ok(written.includes(`HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=${sourceEnvPath}\n`),
+    'shared database reference must follow the active source remote-state owner');
+  assert.ok(!written.includes('HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=/state/dev/env\n'),
+    'the retained top-level copy is not the source server authority');
 });
