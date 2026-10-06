@@ -417,9 +417,6 @@ export async function applySqliteMigrationsFromEnvironment(params: Readonly<{
   if (!migrationsDir || !existsSync(migrationsDir)) {
     throw new Error(`SQLite migrations directory is missing: ${migrationsDir || '<empty>'}`);
   }
-  if (RELAY_RUNTIME_IRREVERSIBLE_MIGRATIONS.some(({ name }) => existsSync(join(migrationsDir, name)))) {
-    assertForwardRecoveryCapableUpdater(params.env);
-  }
   const databaseUrl = String(params.env.DATABASE_URL ?? '').trim();
   const dbPath = resolveSqliteDatabaseFilePath(databaseUrl);
   if (!dbPath) {
@@ -427,35 +424,44 @@ export async function applySqliteMigrationsFromEnvironment(params: Readonly<{
   }
   await mkdir(dirname(dbPath), { recursive: true }).catch(() => {});
 
-  const deploy = async (stageMigrationsDir: string): Promise<{ applied: string[] }> => {
-    const executor = await createBunSqliteExecutor({
-      databasePath: dbPath,
-      busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
-    });
-    try {
-      return await applySqliteMigrations({ executor, migrationsDir: stageMigrationsDir });
-    } finally {
-      executor.close();
-    }
-  };
-  const result = await runSessionSystemRecordMigrationDeployment({
-    migrationsDir,
-    isContractApplied: async () => await hasSessionSystemRecordContractMigration({
-      provider: 'sqlite',
-      databaseUrl,
-    }),
-    deploy: async (stage) => await deploy(stage.migrationsDir),
-    runFinalContractBackfill: async () => {
-      await runSessionSystemRecordFinalContractBackfill({ provider: 'sqlite', databaseUrl });
-    },
+  const executor = await createBunSqliteExecutor({
+    databasePath: dbPath,
+    busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
   });
-  return {
-    applied: [
-      ...(result.expand?.applied ?? []),
-      ...(result.contract?.applied ?? []),
-      ...result.final.applied,
-    ],
-  };
+  try {
+    if (RELAY_RUNTIME_IRREVERSIBLE_MIGRATIONS.some(({ name }) => existsSync(join(migrationsDir, name)))) {
+      // Admission describes the database before the entire staged deployment.
+      // Bootstrap has no prior runtime/data to restore; legacy schemas without
+      // a ledger are still existing databases and must remain protected.
+      const tables = await executor.queryTableNames();
+      const hasAppliedMigrations = tables.has('_prisma_migrations')
+        && (await executor.queryAppliedMigrations()).length > 0;
+      const hasExistingSchema = [...tables].some((name) => name !== '_prisma_migrations' && !name.startsWith('sqlite_'));
+      if (hasAppliedMigrations || hasExistingSchema) {
+        assertForwardRecoveryCapableUpdater(params.env);
+      }
+    }
+    const result = await runSessionSystemRecordMigrationDeployment({
+      migrationsDir,
+      isContractApplied: async () => await hasSessionSystemRecordContractMigration({
+        provider: 'sqlite',
+        databaseUrl,
+      }),
+      deploy: async (stage) => await applySqliteMigrations({ executor, migrationsDir: stage.migrationsDir }),
+      runFinalContractBackfill: async () => {
+        await runSessionSystemRecordFinalContractBackfill({ provider: 'sqlite', databaseUrl });
+      },
+    });
+    return {
+      applied: [
+        ...(result.expand?.applied ?? []),
+        ...(result.contract?.applied ?? []),
+        ...result.final.applied,
+      ],
+    };
+  } finally {
+    executor.close();
+  }
 }
 
 export async function applySqliteMigrationsIfNeeded(params: Readonly<{

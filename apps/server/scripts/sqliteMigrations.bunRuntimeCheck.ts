@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   applySqliteMigrations,
   applySqliteMigrationsFromEnvironment,
+  applySqliteMigrationsIfNeeded,
   type SqliteMigrationExecutor,
 } from '../sources/flavors/light/sqliteMigrations';
 
@@ -156,8 +157,40 @@ try {
     join(qualifiedMigrationsDir, activationMigrationName),
     { recursive: true },
   );
+  // The shared-DB consumer must not migrate, and an existing-data update must
+  // fail closed until the real updater supplies its recovery contract.
+  await applySqliteMigrationsIfNeeded({
+    env: { ...qualifiedEnv, HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
+    dataDir: root,
+  });
+  let admissionRejection: unknown;
+  try {
+    await applySqliteMigrationsFromEnvironment({ env: qualifiedEnv, dataDir: root });
+  } catch (error) {
+    admissionRejection = error;
+  }
+  if (!(admissionRejection instanceof Error)
+      || !admissionRejection.message.includes('forward-recovery-capable updater')) {
+    throw new Error('Existing SQLite data migrated without the updater recovery contract');
+  }
+  const unchangedDb = new Database(qualifiedDbPath);
+  try {
+    const boundary = unchangedDb.query(
+      'SELECT migration_name FROM _prisma_migrations WHERE migration_name = ?',
+    ).get(activationMigrationName);
+    const credential = unchangedDb.query(
+      'SELECT vendor FROM ServiceAccountToken WHERE id = ?',
+    ).get('credential-1');
+    if (boundary != null || credential?.vendor !== 'openai-codex') {
+      throw new Error('Rejected migration changed the existing ledger or credential');
+    }
+  } finally {
+    unchangedDb.close();
+  }
   await applySqliteMigrationsFromEnvironment({
-    env: qualifiedEnv,
+    // This upgrade fixture represents the managed installer's handoff, not a
+    // Stack capability override.
+    env: { ...qualifiedEnv, HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY: 'personal-home-update-record-v1' },
     dataDir: root,
   });
   const activatedDb = new Database(qualifiedDbPath);
@@ -183,6 +216,28 @@ try {
     }
   } finally {
     activatedDb.close();
+  }
+
+  // Replay fresh startup against the entire current migration tree, including
+  // EXPAND/backfill/CONTRACT. Admission must use the original empty database.
+  const freshDbPath = join(root, 'fresh.sqlite');
+  await applySqliteMigrationsFromEnvironment({
+    env: { DATABASE_URL: `file:${freshDbPath}`, HAPPIER_SQLITE_MIGRATIONS_DIR: sourceMigrationsDir },
+    dataDir: root,
+  });
+  const freshDb = new Database(freshDbPath);
+  try {
+    const appliedBoundary = freshDb.query(
+      'SELECT migration_name FROM _prisma_migrations WHERE migration_name = ? AND finished_at IS NOT NULL',
+    ).get(activationMigrationName);
+    if (appliedBoundary == null) throw new Error('Fresh bootstrap did not apply the irreversible boundary');
+    const integrity = freshDb.query('PRAGMA integrity_check').get();
+    if (integrity?.integrity_check !== 'ok') throw new Error('Fresh bootstrap failed SQLite integrity check');
+    if (freshDb.query('PRAGMA foreign_key_check').all().length > 0) {
+      throw new Error('Fresh bootstrap failed SQLite foreign-key check');
+    }
+  } finally {
+    freshDb.close();
   }
 } finally {
   await rm(root, { recursive: true, force: true });
