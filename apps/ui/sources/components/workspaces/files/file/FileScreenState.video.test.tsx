@@ -42,6 +42,8 @@ vi.mock('expo-video', async () => {
     };
 });
 import { FileBinaryState } from './FileScreenState';
+import { Text } from 'react-native';
+import { useWorkspaceFileDetailsLoading } from '../details/workspaceFileDetails/useWorkspaceFileDetailsLoading';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 let harness: Awaited<ReturnType<typeof createWorkspaceFileDownloadHarness>>;
 let currentScreen: Awaited<ReturnType<typeof renderScreen>> | null = null;
@@ -55,9 +57,73 @@ function file(revision = '[12,123]', focused = true, isActive = true) {
         <FileBinaryState {...props} />
     </DestinationInstanceHost>;
 }
+// Keep retained-details publication, workspace stat routing and encrypted prepared transfer real.
+function RefreshedVideo({ snapshotSignature }: Readonly<{ snapshotSignature: string }>) {
+    const state = useWorkspaceFileDetailsLoading({
+        scope: harness.scope, filePath: 'clip.mp4', diffMode: 'pending',
+        includeDiff: false, includeFile: true, isActive: true, snapshotSignature,
+        refreshFingerprint: snapshotSignature,
+    });
+    return <DestinationInstanceHost tabId="video" ref={{ kind: 'newTab', params: {} }} pathname="/" focused visible>
+        {state.error ? <Text testID="video-metadata-error">{state.error}</Text> : null}
+        {state.fileContent ? <FileBinaryState theme={theme} filePath="clip.mp4" workspaceScope={harness.scope}
+            videoMimeType="video/mp4" binaryPreviewRevision={state.fileContent.binaryPreviewRevision} isActive /> : null}
+    </DestinationInstanceHost>;
+}
 beforeEach(async () => { harness = await createWorkspaceFileDownloadHarness({ name: 'clip.mp4', bytes: new Uint8Array([1, 2, 3]) }); });
 afterEach(async () => { await currentScreen?.unmount(); currentScreen = null; await harness.reset(); boundary.players.length = 0; await act(async () => { boundary.appState?.emit('active'); }); fileSystem.current?.files.clear(); fileSystem.current?.deleteFile.mockClear(); });
 describe('workspace file video', () => {
+    it('retains playback through unrelated repository refreshes and reloads the selected same-size file', async () => {
+        const screen = currentScreen = await renderScreen(<RefreshedVideo snapshotSignature="snapshot-1" />);
+        await waitForPlayer(screen);
+        const first = screen.root.findAllByType('VideoView')[0]!.props.player;
+        const originalUri = [...fileSystem.current!.files.keys()][0]!;
+        await screen.update(<RefreshedVideo snapshotSignature="unrelated-snapshot-2" />);
+        await flushHookEffects();
+        expect(screen.root.findAllByType('VideoView')[0]!.props.player).toBe(first);
+        expect(fileSystem.current!.files.has(originalUri)).toBe(true);
+        expect(first.released).toBe(false);
+        harness.setStatResponse({ success: true, exists: true, kind: 'file', sizeBytes: 3, modifiedMs: 2 });
+        await screen.update(<RefreshedVideo snapshotSignature="selected-file-snapshot-3" />);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.root.findAllByType('VideoView')).toHaveLength(1);
+            expect(screen.root.findAllByType('VideoView')[0]!.props.player).not.toBe(first);
+        });
+        expect(first.released).toBe(true);
+        expect(fileSystem.current!.files.has(originalUri)).toBe(false);
+        expect([...fileSystem.current!.files.values()]).toEqual([[1, 2, 3]]);
+    });
+    it.each<Parameters<typeof harness.setStatResponse>[0]>([
+        { success: false, error: 'Machine disconnected' },
+        { success: true, exists: true, modifiedMs: 2 },
+        { success: true, exists: true, sizeBytes: 3 },
+    ])('reports unavailable revision metadata, retains playback, then recovers on a valid stat: %j', async (stat) => {
+        const screen = currentScreen = await renderScreen(<RefreshedVideo snapshotSignature="snapshot-1" />);
+        await waitForPlayer(screen);
+        const first = screen.root.findAllByType('VideoView')[0]!.props.player;
+        const originalUri = [...fileSystem.current!.files.keys()][0]!;
+        harness.setStatResponse(stat);
+        await screen.update(<RefreshedVideo snapshotSignature="snapshot-2" />);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findHostByTestId('video-metadata-error')).not.toBeNull();
+        });
+        expect(screen.root.findAllByType('VideoView')[0]!.props.player).toBe(first);
+        expect(first.released).toBe(false);
+        expect(fileSystem.current!.files.has(originalUri)).toBe(true);
+        harness.setStatResponse({ success: true, exists: true, kind: 'file', sizeBytes: 3, modifiedMs: 2 });
+        await screen.update(<RefreshedVideo snapshotSignature="snapshot-3" />);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.root.findAllByType('VideoView')).toHaveLength(1);
+            expect(screen.root.findAllByType('VideoView')[0]!.props.player).not.toBe(first);
+        });
+        expect(screen.findHostByTestId('video-metadata-error')).toBeNull();
+        expect(first.released).toBe(true);
+        expect(fileSystem.current!.files.has(originalUri)).toBe(false);
+        expect([...fileSystem.current!.files.values()]).toEqual([[1, 2, 3]]);
+    });
     it('renders interactive native controls and releases only when file identity changes or destination loses focus', async () => {
         const screen = currentScreen = await renderScreen(file());
         await waitForPlayer(screen);

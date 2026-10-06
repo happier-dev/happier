@@ -9223,6 +9223,9 @@ localTailscale: {
         `未ステージの変更 (${count})`,
       // File viewer strings
       fileReadFailed: "ファイルを読み込めませんでした",
+      androidFileActionsUnavailable: "このアプリのバージョンではAndroidのファイル操作を利用できません。Happierを更新して再試行してください。",
+      fileSharingUnavailable: "このデバイスではファイルを共有できません。",
+      fileCleanupFailed: "一時ファイルを削除できませんでした",
       fileTooLargeToPreview: "ファイルが大きすぎてプレビューできません",
       fileWriteFailed: "ファイルを書き込めませんでした",
       fileEditor: {

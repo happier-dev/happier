@@ -6,6 +6,8 @@ import { vi } from 'vitest';
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
 import { createMachineFixture } from '../fixtures/machineFixtures';
 
+type WorkspaceStatFileResponse = Awaited<ReturnType<typeof import('@/sync/domains/transfers/runtime/transferRuntime').callDaemonWorkspaceStatFileRpc>>;
+
 type BoundaryOwner = {
     native: NativeIrohModule;
     machineRPC(machineId: string, method: string, payload: unknown, options?: { onIssued?: () => void }): Promise<unknown>;
@@ -94,6 +96,7 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     const rpcRequests: { machineId: string; method: string; payload: unknown }[] = [];
     const nativeTunnelStarts: unknown[] = [];
     const nativeTunnelStops: string[] = [];
+    let statResponse: WorkspaceStatFileResponse = { success: true, exists: true, kind: 'file', sizeBytes: bytes.byteLength, modifiedMs: 1 };
     let transferCount = 0;
     let failChunk = false;
     let deferredChunk: { enter(): void; wait: Promise<void> } | null = null;
@@ -119,6 +122,7 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
         async machineRPC(machineId, method, payload, rpcOptions) {
             rpcOptions?.onIssued?.();
             rpcRequests.push({ machineId, method, payload });
+            if (method === RPC_METHODS.STAT_FILE) return statResponse;
             if (method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) {
                 const transferId = `workspace-download-${++transferCount}`;
                 publications.set(transferId, name);
@@ -158,6 +162,7 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     });
     return {
         scope, requests, rpcRequests, nativeTunnelStarts, nativeTunnelStops,
+        setStatResponse(response: WorkspaceStatFileResponse) { statResponse = response; },
         failNextChunk() { failChunk = true; },
         deferNextChunk() {
             let enter!: () => void;

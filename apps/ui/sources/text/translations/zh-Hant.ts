@@ -7569,6 +7569,9 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         stagedChanges: ({ count }: { count: number }) => `已暫存的更改 (${count})`,
         unstagedChanges: ({ count }: { count: number }) => `未暫存的更改 (${count})`,
         fileReadFailed: '讀取檔案失敗',
+        androidFileActionsUnavailable: "此應用版本不支援 Android 檔案操作。請更新 Happier 後重試。",
+        fileSharingUnavailable: "此裝置不支援檔案分享。",
+        fileCleanupFailed: "無法刪除暫存檔案",
         fileTooLargeToPreview: '檔案過大，無法預覽',
         fileWriteFailed: '寫入檔案失敗',
         fileEditor: {

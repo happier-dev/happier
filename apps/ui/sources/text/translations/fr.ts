@@ -8949,6 +8949,9 @@ export const fr = {
         `Modifications non indexées (${count})`,
       // File viewer strings
       fileReadFailed: "Échec de la lecture du fichier",
+      androidFileActionsUnavailable: "Les actions de fichiers Android ne sont pas disponibles dans cette version de l’application. Mettez Happier à jour et réessayez.",
+      fileSharingUnavailable: "Le partage de fichiers n’est pas disponible sur cet appareil.",
+      fileCleanupFailed: "Impossible de supprimer le fichier temporaire",
       fileTooLargeToPreview: "Fichier trop volumineux pour être prévisualisé",
       fileWriteFailed: "Échec de l’écriture du fichier",
     fileEditor: {

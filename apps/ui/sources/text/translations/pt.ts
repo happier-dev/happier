@@ -9079,6 +9079,9 @@ export const pt = {
         `Alterações não preparadas (${count})`,
       // File viewer strings
       fileReadFailed: "Falha ao ler o arquivo",
+      androidFileActionsUnavailable: "As ações de arquivos do Android não estão disponíveis nesta versão do app. Atualize o Happier e tente novamente.",
+      fileSharingUnavailable: "O compartilhamento de arquivos não está disponível neste dispositivo.",
+      fileCleanupFailed: "Não foi possível remover o arquivo temporário",
       fileTooLargeToPreview: "O arquivo é grande demais para pré-visualizar",
       fileWriteFailed: "Falha ao escrever o arquivo",
       fileEditor: {

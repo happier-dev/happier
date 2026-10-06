@@ -8949,6 +8949,9 @@ export const ru = {
         `Неподготовленные изменения (${count})`,
 	      // File viewer strings
 	      fileReadFailed: "Не удалось прочитать файл",
+	      androidFileActionsUnavailable: "Действия с файлами Android недоступны в этой версии приложения. Обновите Happier и повторите попытку.",
+	      fileSharingUnavailable: "Обмен файлами недоступен на этом устройстве.",
+	      fileCleanupFailed: "Не удалось удалить временный файл",
 	      fileTooLargeToPreview: "Файл слишком большой для предварительного просмотра",
 	      fileWriteFailed: "Не удалось записать файл",
 	      fileEditor: {

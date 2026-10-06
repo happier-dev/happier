@@ -8964,6 +8964,9 @@ export const pl = {
         `Nieprzygotowane zmiany (${count})`,
       // File viewer strings
       fileReadFailed: "Nie udało się odczytać pliku",
+      androidFileActionsUnavailable: "Operacje na plikach Android nie są dostępne w tej wersji aplikacji. Zaktualizuj Happier i spróbuj ponownie.",
+      fileSharingUnavailable: "Udostępnianie plików nie jest dostępne na tym urządzeniu.",
+      fileCleanupFailed: "Nie można usunąć pliku tymczasowego",
       fileTooLargeToPreview: "Plik jest zbyt duży, aby go wyświetlić",
       fileWriteFailed: "Nie udało się zapisać pliku",
       fileEditor: {

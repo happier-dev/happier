@@ -10,6 +10,7 @@ import {
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createNativeCacheFileSink, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { resolveWebFileBufferMaxBytes } from '@/sync/runtime/files/webFileBufferBudget';
 
 const PREVIEW_CACHE_DIRECTORY_NAME = 'happier-session-file-previews';
 const PREVIEW_TOO_LARGE_ERROR = 'File exceeds the preview size limit';
@@ -41,6 +42,7 @@ type PreviewDestination = Readonly<{
 }>;
 
 type PreviewByteLoader = (input: Readonly<{
+    maxBytes: number | null;
     destination: PreviewDestination;
     signal: AbortSignal | null;
 }>) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: string }>>;
@@ -67,7 +69,10 @@ async function createPreviewSource(input: Readonly<{
         return { ok: false, error: 'Unsupported preview type' };
     }
 
-    const maxBytes = input.maxBytes === null ? null : Number.isFinite(input.maxBytes) ? Math.max(0, Math.floor(input.maxBytes)) : 0;
+    const requestedMaxBytes = input.maxBytes === null ? null : Number.isFinite(input.maxBytes) ? Math.max(0, Math.floor(input.maxBytes)) : 0;
+    const maxBytes = Platform.OS === 'web'
+        ? Math.min(requestedMaxBytes ?? Infinity, resolveWebFileBufferMaxBytes())
+        : requestedMaxBytes;
     if (maxBytes !== null && maxBytes <= 0) {
         return { ok: false, error: PREVIEW_TOO_LARGE_ERROR };
     }
@@ -132,6 +137,7 @@ async function createPreviewSource(input: Readonly<{
 
     try {
         const load = await input.load({
+            maxBytes,
             destination,
             signal: input.signal ?? null,
         });
@@ -196,7 +202,8 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     expectedSizeBytes?: number | null;
     signal?: AbortSignal | null;
 }>): Promise<CreateSessionFilePreviewSourceResult> {
-    // Workspace video uses transfer-owned admission. Image/attachment/staged consumers retain their own limits.
+    // Native workspace video uses transfer-owned admission; web previews also use the shared buffering budget.
+    // Image/attachment/staged consumers retain their own limits.
     const maxBytes = input.maxBytes === null && isSupportedVideoMimeType(input.mimeType)
         ? null
         : typeof input.maxBytes === 'number' && Number.isFinite(input.maxBytes)
@@ -205,7 +212,7 @@ export async function createSessionFilePreviewSource(input: Readonly<{
     return await createPreviewSource({
         ...input,
         maxBytes,
-        load: async ({ destination, signal }) => {
+        load: async ({ destination, signal, maxBytes }) => {
             const download = await downloadDaemonWorkspaceFileToDestination({
                 machineId: input.scope.machineId,
                 serverId: input.scope.serverId,
@@ -239,7 +246,7 @@ export async function createSessionAttachmentPreviewSource(input: Readonly<{
         maxBytes: input.maxBytes,
         expectedSizeBytes: input.expectedSizeBytes,
         signal: input.signal,
-        load: async ({ destination, signal }) => {
+        load: async ({ destination, signal, maxBytes }) => {
             const context = (await import('@/sync/sync')).sync.getSessionAttachmentTransferContext(input.handle.sessionId, { purpose: 'attachmentPreview' });
             if (!context) return { ok: false, error: 'Session attachment scope is unavailable' };
             const download = await downloadDaemonSessionAttachmentToDestination({
@@ -247,7 +254,7 @@ export async function createSessionAttachmentPreviewSource(input: Readonly<{
                 attachmentHandle: input.handle,
                 destination,
                 signal,
-                onInit: async ({ sizeBytes }) => sizeBytes > input.maxBytes
+                onInit: async ({ sizeBytes }) => maxBytes !== null && sizeBytes > maxBytes
                     ? { success: false, error: PREVIEW_TOO_LARGE_ERROR }
                     : undefined,
             });
@@ -270,7 +277,7 @@ export async function createComposerStagedMediaPreviewSource(input: Readonly<{
         ? Math.max(0, Math.floor(input.maxBytes))
         : 0;
     // `inspectComposerContent` is the canonical protocol-owned upper bound;
-    // this preview owner adds only the caller's user-visible image limit.
+    // the shared preview sink also enforces the caller's image limit and the web buffering budget.
     const maxBytes = requestedMaxBytes;
     return await createPreviewSource({
         filePath: input.handle.name,
@@ -278,12 +285,12 @@ export async function createComposerStagedMediaPreviewSource(input: Readonly<{
         maxBytes,
         expectedSizeBytes: input.handle.sizeBytes,
         signal: input.signal ?? null,
-        load: async ({ destination, signal }) => {
+        load: async ({ destination, signal, maxBytes }) => {
             const inspection = await inspectComposerContent(
                 input.handle,
                 {
                     offset: 0,
-                    maxBytes: Math.min(maxBytes, input.handle.sizeBytes),
+                    maxBytes: Math.min(maxBytes ?? input.handle.sizeBytes, input.handle.sizeBytes),
                 },
                 { signal },
             );

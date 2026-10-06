@@ -8732,6 +8732,9 @@ export const zhHans = {
         `未暂存的更改 (${count})`,
       // File viewer strings
       fileReadFailed: "读取文件失败",
+      androidFileActionsUnavailable: "此应用版本不支持 Android 文件操作。请更新 Happier 后重试。",
+      fileSharingUnavailable: "此设备不支持文件分享。",
+      fileCleanupFailed: "无法删除临时文件",
       fileTooLargeToPreview: "文件过大，无法预览",
       fileWriteFailed: "写入文件失败",
       fileEditor: {

@@ -49,13 +49,14 @@ describe('workspace file native download actions through the prepared carrier', 
         return { screen, api: () => api! };
     }
 
-    it.each(['open', 'share'] as const)('retains granted bytes if cancellation arrives while native %s completion is pending', async action => {
+    it.each(['save', 'open', 'share'] as const)('reports the completed native %s result after app cancellation during handoff', async action => {
         const entered = createDeferred<void>();
         const release = createDeferred<void>();
-        const nativeAction = action === 'open' ? actions.openFile : actions.shareFile;
+        const nativeAction = action === 'save' ? actions.saveFile : action === 'open' ? actions.openFile : actions.shareFile;
         nativeAction.mockImplementationOnce(async () => {
             entered.resolve();
             await release.promise;
+            return { canceled: false };
         });
         const transfers = await renderTransfers();
         let pending: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']> | undefined;
@@ -63,13 +64,41 @@ describe('workspace file native download actions through the prepared carrier', 
             pending = transfers.api().startDownload({ path: 'recording.mp4', asZip: false, action });
             await entered.promise;
         });
+        const handoffState = transfers.api().downloadState;
         expect([...((await fs).files.values())]).toEqual([[1, 2, 3]]);
         await act(async () => {
             transfers.api().cancelDownload();
             release.resolve();
-            await expect(pending).resolves.toMatchObject({ ok: false, canceled: true });
+            await expect(pending).resolves.toEqual({ ok: true });
         });
-        expect([...((await fs).files.values())]).toEqual([[1, 2, 3]]);
+        expect(handoffState).toMatchObject({ status: 'downloading', cancelable: false });
+        expect(transfers.api().downloadState.status).toBe('done');
+        if (action === 'save') expect((await fs).files.size).toBe(0);
+        else expect([...((await fs).files.values())]).toEqual([[1, 2, 3]]);
+    });
+
+    it.each(['success', 'failure', 'canceled'] as const)('reports the native save %s result after its file surface unmounts', async outcome => {
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        actions.saveFile.mockImplementationOnce(async () => {
+            entered.resolve();
+            await release.promise;
+            if (outcome === 'failure') throw new Error('Document copy failed');
+            return { canceled: outcome === 'canceled' };
+        });
+        const transfers = await renderTransfers();
+        let pending: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']> | undefined;
+        await act(async () => {
+            pending = transfers.api().startDownload({ path: 'recording.mp4', asZip: false });
+            await entered.promise;
+        });
+        await transfers.screen.unmount();
+        release.resolve();
+        const expected = outcome === 'success' ? { ok: true }
+            : outcome === 'failure' ? { ok: false, error: 'Document copy failed' }
+            : { ok: false, error: 'Download canceled', canceled: true };
+        await expect(pending).resolves.toEqual(expected);
+        expect((await fs).files.size).toBe(0);
     });
 
     it('reports preparation as busy before a native destination is allocated', async () => {

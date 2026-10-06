@@ -90,6 +90,8 @@ WebM files open in the file view with playback controls, seeking, and fullscreen
 Playback depends on the codecs available on your device. The video downloads
 before playback starts, using the normal file transfer limits; a video can be
 larger than the text preview limit without being treated as oversized text.
+Web playback also uses the browser's memory budget for buffering files. A
+file-backed download may still succeed when a preview is too large.
 If loading or playback fails, use **Retry** or download the file to open it in
 another app.
 
@@ -100,6 +102,15 @@ file. **Open with…** lets you choose an installed app, and **Share…** sends 
 file to another app. Downloads from the file tree use the same save picker.
 Opening or sharing a file uses a temporary cached copy; use **Save as…** when
 you want to keep a file in a location you can find later.
+
+The transfer cancel control is available while the file downloads. Once Android
+opens its picker or chooser, use that dialog's controls instead.
+
+Opened or shared copies stay in Happier's private app cache so the receiving app
+can finish reading them. [Android may reclaim cache files when storage is low](https://developer.android.com/training/data-storage/app-specific),
+and you can clear Happier's cache in Android's app settings. These copies have no
+guaranteed retention period, and Happier does not currently purge them
+automatically after an **Open with…** or **Share…** action.
 
 If a save fails after you choose a destination, Happier tries to remove the
 incomplete document. If the document provider refuses deletion, the error

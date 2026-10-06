@@ -1,4 +1,5 @@
-export const WEB_DOWNLOAD_MEMORY_FALLBACK_MAX_BYTES = 50_000_000;
+import { WEB_FILE_BUFFER_MAX_BYTES } from '@/sync/runtime/files/webFileBufferBudget';
+export { WEB_FILE_BUFFER_MAX_BYTES as WEB_DOWNLOAD_MEMORY_FALLBACK_MAX_BYTES } from '@/sync/runtime/files/webFileBufferBudget';
 
 const WEB_DOWNLOAD_SIZE_LIMIT_ERROR = 'File exceeds the web download size limit';
 
@@ -168,7 +169,7 @@ export async function createWebDownloadFileSink(input: Readonly<{
     if (input.requireFileBacked) {
         throw new Error('File-backed web download is unavailable');
     }
-    const fallbackMaxBytes = Math.min(maxBytes, WEB_DOWNLOAD_MEMORY_FALLBACK_MAX_BYTES);
+    const fallbackMaxBytes = Math.min(maxBytes, WEB_FILE_BUFFER_MAX_BYTES);
     assertWithinLimit(expectedSizeBytes, fallbackMaxBytes);
     const chunks: Uint8Array[] = [];
     let writtenBytes = 0;

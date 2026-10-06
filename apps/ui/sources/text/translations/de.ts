@@ -9166,6 +9166,9 @@ export const de: TranslationStructure = {
           unstagedChanges: ({ count }: { count: number }) => `Nicht gestagete Änderungen (${count})`,
             // File viewer strings
             fileReadFailed: 'Die Datei ließ sich nicht lesen',
+            androidFileActionsUnavailable: "Android-Dateiaktionen sind in dieser App-Version nicht verfügbar. Aktualisiere Happier und versuche es erneut.",
+            fileSharingUnavailable: "Dateifreigabe ist auf diesem Gerät nicht verfügbar.",
+            fileCleanupFailed: "Die temporäre Datei konnte nicht entfernt werden",
             fileTooLargeToPreview: 'Die Datei ist zu groß für eine Vorschau',
             fileWriteFailed: 'Die Datei ließ sich nicht schreiben',
                 fileEditor: {

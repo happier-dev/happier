@@ -2703,6 +2703,7 @@
     "sources/sync/runtime/files/fileUriPath.ts",
     "sources/sync/runtime/files/localUploadSourceReader.ts",
     "sources/sync/runtime/files/nativeCacheFileSink.ts",
+    "sources/sync/runtime/files/webFileBufferBudget.ts",
     "sources/sync/runtime/homeCarrier.ts",
     "sources/sync/runtime/irohHomeTransportDiagnostics.ts",
     "sources/sync/runtime/nativeIrohTunnels/diagnostics.ts",

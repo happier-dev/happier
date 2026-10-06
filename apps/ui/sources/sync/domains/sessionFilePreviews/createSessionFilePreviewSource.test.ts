@@ -19,6 +19,7 @@ describe('createSessionFilePreviewSource', () => {
         vi.resetModules();
         vi.clearAllMocks();
         vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
     });
 
     it('creates revocable Blob object URLs on web', async () => {
@@ -325,6 +326,7 @@ describe('createSessionFilePreviewSource', () => {
         expect(downloadDaemonWorkspaceFileToDestinationMock).not.toHaveBeenCalled();
     });
     it('materializes an Android MP4 through the encrypted prepared workspace carrier without an image/text limit', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_FILES_DOWNLOAD_MAX_BYTES', '2');
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         const { createExpoFileSystemFileMock } = await import('@/dev/testkit/mocks/expoFileSystem');
         const fs = createExpoFileSystemFileMock();

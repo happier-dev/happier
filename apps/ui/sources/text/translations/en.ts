@@ -9238,6 +9238,9 @@ export const en = {
           unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
             // File viewer strings
             fileReadFailed: 'Failed to read file',
+            androidFileActionsUnavailable: "Android file actions are unavailable in this app build. Update Happier and try again.",
+            fileSharingUnavailable: "File sharing is unavailable on this device.",
+            fileCleanupFailed: "Could not remove the temporary file",
             fileTooLargeToPreview: 'File is too large to preview',
             fileWriteFailed: 'Failed to write file',
                 fileEditor: {

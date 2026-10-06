@@ -9304,6 +9304,9 @@ export const it = {
         `Modifiche non in stage (${count})`,
       // File viewer strings
       fileReadFailed: "Impossibile leggere il file",
+      androidFileActionsUnavailable: "Le azioni sui file Android non sono disponibili in questa versione dell’app. Aggiorna Happier e riprova.",
+      fileSharingUnavailable: "La condivisione dei file non è disponibile su questo dispositivo.",
+      fileCleanupFailed: "Impossibile rimuovere il file temporaneo",
       fileTooLargeToPreview: "Il file è troppo grande per l'anteprima",
       fileWriteFailed: "Impossibile scrivere il file",
     fileEditor: {

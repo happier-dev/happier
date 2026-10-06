@@ -14,6 +14,7 @@ import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUpl
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
 import { createWebDownloadFileSink, type WebDownloadFileSink } from './webDownloadFileSink';
+import { resolveWebDownloadMaxBytes } from '@/sync/runtime/files/webFileBufferBudget';
 import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
 import { t } from '@/text';
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
@@ -51,6 +52,7 @@ export type WorkspaceDownloadState =
         name: string;
         downloadedBytes: number;
         totalBytes: number;
+        cancelable?: boolean;
     }>
     | Readonly<{ status: 'done'; name: string; totalBytes: number }>
     | Readonly<{ status: 'canceled' }>
@@ -59,28 +61,6 @@ export type WorkspaceDownloadState =
 export type WorkspaceFileDownloadAction = 'save' | 'open' | 'share';
 
 export type WorkspaceTransferResult = { ok: true } | { ok: false; error: string; canceled?: true };
-
-function parseOptionalPositiveInt(value: unknown): number | undefined {
-    const raw = String(value ?? '').trim();
-    if (!raw) return undefined;
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return undefined;
-    const normalized = Math.floor(parsed);
-    return normalized > 0 ? normalized : undefined;
-}
-
-function resolveWebDownloadMaxBytes(): number {
-    return (
-        parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPIER_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPY_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES)
-        // Conservative default to prevent unbounded buffering on web.
-        ?? 50_000_000
-    );
-}
 
 function joinRepoPath(parentDir: string, relativePath: string): string {
     const cleanParent = String(parentDir ?? '').trim().replace(/\\/g, '/').replace(/\/+$/g, '');
@@ -341,7 +321,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     const [downloadState, setDownloadState] = React.useState<WorkspaceDownloadState>({ status: 'idle' });
 
     const uploadAbortRef = React.useRef<AbortController | null>(null);
-    const downloadAbortRef = React.useRef<AbortController | null>(null);
+    const downloadOperationRef = React.useRef<{ controller: AbortController; cancelable: boolean } | null>(null);
     const uploadAbortReasonRef = React.useRef<'user' | 'error' | null>(null);
     const mountedRef = React.useRef(false);
 
@@ -354,7 +334,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
             mountedRef.current = false;
             uploadAbortReasonRef.current = 'user';
             uploadAbortRef.current?.abort();
-            downloadAbortRef.current?.abort();
+            downloadOperationRef.current?.controller.abort();
         };
     }, []);
 
@@ -364,7 +344,8 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     }, []);
 
     const cancelDownload = React.useCallback(() => {
-        downloadAbortRef.current?.abort();
+        const operation = downloadOperationRef.current;
+        if (operation?.cancelable) operation.controller.abort();
     }, []);
 
     const startUploads = React.useCallback(async (input: Readonly<{ entries: readonly WorkspaceUploadEntry[]; destinationDir: string }>): Promise<WorkspaceTransferResult> => {
@@ -568,14 +549,15 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     }, [maxConcurrentUploads, onAfterUploadSuccess, onResolveUploadConflicts, stableWorkspaceScope]);
 
     const startDownload = React.useCallback(async (input: Readonly<{ path: string; asZip: boolean; action?: WorkspaceFileDownloadAction }>): Promise<WorkspaceTransferResult> => {
-        if (downloadAbortRef.current) {
+        if (downloadOperationRef.current) {
             return { ok: false, error: 'Download already in progress' };
         }
 
         const controller = new AbortController();
-        downloadAbortRef.current = controller;
+        const operation = { controller, cancelable: true };
+        downloadOperationRef.current = operation;
         const isCurrentDownload = (): boolean => (
-            mountedRef.current && downloadAbortRef.current === controller
+            mountedRef.current && downloadOperationRef.current === operation
         );
         const setCurrentDownloadState: typeof setDownloadState = (next) => {
             if (isCurrentDownload()) setDownloadState(next);
@@ -712,7 +694,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 await cleanupNativeSinkOnce();
                 await cleanupWebSinkOnce();
                 const webSinkFailure = webSinkFailureRef.current;
-                const message = webSinkFailure?.message ?? (error instanceof Error ? error.message : 'Download failed');
+                const message = webSinkFailure?.message ?? (error instanceof Error ? error.message : t('errors.operationFailed'));
                 failureMessage = message;
                 if (!webSinkFailure && controller.signal.aborted) {
                     setCurrentDownloadState({ status: 'canceled' });
@@ -759,6 +741,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     if (!isCurrentDownload() || controller.signal.aborted) {
                         return { ok: false, error: 'Download canceled', canceled: true };
                     }
+                    // Once Android owns the picker/copy/intent, app cancellation
+                    // cannot retract that side effect. Report its actual result.
+                    operation.cancelable = false;
+                    setCurrentDownloadState(prev => prev.status === 'downloading' ? { ...prev, cancelable: false } : prev);
                     const action = input.action ?? 'save';
                     const result = await performAndroidFileAction({ fileUri: nativeSinkRef.current.fileUri, name: res.name || 'download', action });
                     if (result.canceled) {
@@ -768,7 +754,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     }
                     keepNativeSink = action !== 'save';
                 } else if (!await shareNativeCacheFile(nativeSinkRef.current.fileUri, undefined, () => isCurrentDownload() && !controller.signal.aborted)) {
-                    throw new Error('File sharing is unavailable');
+                    throw new Error(t('files.fileSharingUnavailable'));
                 }
                 if (!keepNativeSink) await cleanupNativeSinkOnce();
             } else {
@@ -776,7 +762,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 return { ok: false, error: 'Download sink unavailable' };
             }
 
-            if (controller.signal.aborted) {
+            if (controller.signal.aborted && operation.cancelable) {
                 if (!keepNativeSink) await cleanupNativeSinkOnce();
                 setCurrentDownloadState({ status: 'canceled' });
                 return { ok: false, error: 'Download canceled', canceled: true };
@@ -787,11 +773,11 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 : prev);
             return { ok: true };
         } catch (error) {
-            let message = error instanceof Error ? error.message : 'Download failed';
+            let message = error instanceof Error ? error.message : t('errors.operationFailed');
             try {
                 await cleanupNativeSinkOnce();
             } catch (cleanupError) {
-                message += `; Failed to clean up downloaded file: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+                message += `; ${t('files.fileCleanupFailed')}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
             }
             failureMessage = message;
             setCurrentDownloadState({ status: 'error', error: message });
@@ -803,14 +789,14 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                     await cleanupWebSinkOnce();
                 }
             } catch (error) {
-                const cleanupMessage = error instanceof Error ? error.message : 'Download cleanup failed';
+                const cleanupMessage = error instanceof Error ? error.message : t('files.fileCleanupFailed');
                 const message = failureMessage
-                    ? `${failureMessage}; Failed to clean up downloaded file: ${cleanupMessage}`
+                    ? `${failureMessage}; ${t('files.fileCleanupFailed')}: ${cleanupMessage}`
                     : cleanupMessage;
                 setCurrentDownloadState({ status: 'error', error: message });
                 return { ok: false, error: message };
             } finally {
-                if (downloadAbortRef.current === controller) downloadAbortRef.current = null;
+                if (downloadOperationRef.current === operation) downloadOperationRef.current = null;
             }
         }
     }, [stableWorkspaceScope]);

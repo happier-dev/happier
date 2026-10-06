@@ -162,6 +162,12 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                         request: { path: input.filePath },
                     });
                     if (input.signal?.aborted) throw new Error(t('files.fileReadFailed'));
+                    // Retain the last good player and expose the ordinary retry error when its revision cannot be refreshed.
+                    if (videoMime && (!stat.success || !stat.exists
+                        || typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
+                        || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))) {
+                        throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
+                    }
                     if (
                         stat.success
                         && stat.exists === true
