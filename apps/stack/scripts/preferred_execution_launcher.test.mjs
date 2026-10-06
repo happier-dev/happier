@@ -801,12 +801,14 @@ test('automatic dispatch protects control work while keeping a selected local pa
     '#!/bin/sh',
     'printf "%s\\n" "$*" >> "$SCOPE_LOG"',
     'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in --slice=*) export TEST_CURRENT_CGROUP=/user.slice/${1#--slice=}/fixture.scope ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
     'exec "$@"',
     '',
   ].join('\n'));
+  await executable(join(binDir, 'sed'), '#!/bin/sh\ncase "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac\n');
 
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
     cwd: repoRoot,
@@ -4784,12 +4786,14 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     '#!/bin/sh',
     'printf "%s\\n" "$*" >> "$SYSTEMD_SCOPE_MARKER"',
     'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in --slice=*) export TEST_CURRENT_CGROUP=/user.slice/${1#--slice=}/fixture.scope ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
     'exec "$@"',
     '',
   ].join('\n'));
+  await executable(join(binDir, 'sed'), '#!/bin/sh\ncase "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac\n');
   await executable(join(binDir, 'vitest'), [
     '#!/bin/sh',
     'case "$*" in',
@@ -5347,6 +5351,13 @@ test('native launcher reuses a validated parent heavyweight reservation only for
     '',
   ].join('\n'));
   await executable(join(binDir, 'vitest'), '#!/bin/sh\nprintf "%s\\n" "$HSTACK_TEST_SLICE" > "$NESTED_SLICE_MARKER"\n');
+  await executable(join(binDir, 'sed'), [
+    '#!/bin/sh',
+    // The systemd adapter above owns the simulated kernel placement. Do not
+    // borrow the enclosing runner's real jobs cgroup for this OS fixture.
+    'case "$*" in *"/proc/self/cgroup") printf "/user.slice/%s/fixture.scope\\n" "${HSTACK_TEST_SLICE-unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac',
+    '',
+  ].join('\n'));
   await executable(outerScript, [
     '#!/bin/sh',
     'set -eu',
@@ -5639,6 +5650,8 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
   const scopedMarker = join(root, 'scoped-command');
   const fallbackMarker = join(root, 'fallback-command');
   const scopedArguments = join(root, 'systemd-run-arguments');
+  const scopeInvocations = join(root, 'scope-invocations');
+  const scopeUnits = join(root, 'scope-units');
   const fallbackScopeAttempt = join(root, 'unexpected-systemd-run');
   t.after(async () => await rm(root, { recursive: true, force: true }));
 
@@ -5670,12 +5683,25 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
   await executable(join(readyBin, 'systemd-run'), [
     '#!/bin/sh',
     'printf "%s\\n" "$*" > "$SYSTEMD_RUN_ARGUMENTS"',
+    'unit=; slice=',
     'while [ "$#" -gt 0 ]; do',
-    '  case "$1" in --nice=*) if [ "${1#--nice=}" -lt "${TEST_INHERITED_NICE:-0}" ]; then printf "Failed to set nice level: Permission denied\\n" >&2; exit 1; fi ;; esac',
+    '  case "$1" in --unit=*) unit=${1#--unit=} ;; --slice=*) slice=${1#--slice=} ;; --nice=*) if [ "${1#--nice=}" -lt "${TEST_INHERITED_NICE:-0}" ]; then printf "Failed to set nice level: Permission denied\\n" >&2; exit 1; fi ;; esac',
     '  [ "$1" = -- ] && { shift; break; }',
     '  shift',
     'done',
+    // systemd 259 identifies a default scope by process identity and execs the
+    // payload in that process. Procfs and systemd are genuine OS boundaries.
+    'if [ -z "$unit" ]; then token=$(/usr/bin/awk \'{print $22}\' /proc/$$/stat); unit=run-p$$-i$token.scope; fi',
+    'mkdir -p -- "$SCOPE_UNITS"',
+    'if ! mkdir "$SCOPE_UNITS/$unit"; then printf "Failed to start transient scope unit: Unit %s was already loaded or has a fragment file.\\n" "$unit" >&2; exit 42; fi',
+    'printf "%s|%s\\n" "$unit" "$slice" >> "$SCOPE_INVOCATIONS"',
+    'export TEST_CURRENT_CGROUP=/user.slice/user-1000.slice/user@1000.service/happier.slice/$slice/$unit',
     'exec "$@"',
+    '',
+  ].join('\n'));
+  await executable(join(readyBin, 'sed'), [
+    '#!/bin/sh',
+    'case "$*" in *"/proc/self/cgroup") printf "%s\\n" "${TEST_CURRENT_CGROUP-/user.slice/unscoped}" ;; *) exec /usr/bin/sed "$@" ;; esac',
     '',
   ].join('\n'));
   // OS boundary: systemd cannot raise an unprivileged child's inherited priority.
@@ -5695,7 +5721,7 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
     '',
   ].join('\n'));
 
-  const run = (binDir, home, marker, { inheritedNice = 0, protectedLocal = false } = {}) => spawnSync('/bin/sh', [
+  const run = (binDir, home, marker, { inheritedNice = 0, protectedLocal = false, command } = {}) => spawnSync('/bin/sh', [
     launcher,
     ...(protectedLocal ? ['--local'] : [
       '--heavyweight-admission',
@@ -5703,8 +5729,7 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
       '--machine=scope-profile',
     ]),
     '--',
-    'scoped-command',
-    marker === scopedMarker ? 'scoped' : 'fallback',
+    ...(command ?? ['scoped-command', marker === scopedMarker ? 'scoped' : 'fallback']),
   ], {
     cwd: repoRoot,
     env: {
@@ -5714,6 +5739,9 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
       ...(protectedLocal ? { HAPPIER_HSTACK_DISPATCH_CONTROL: '1' } : {}),
       SCOPED_MARKER: marker,
       SYSTEMD_RUN_ARGUMENTS: scopedArguments,
+      SCOPE_UNITS: scopeUnits,
+      SCOPE_INVOCATIONS: scopeInvocations,
+      TEST_LAUNCHER: launcher,
       FALLBACK_SCOPE_ATTEMPT: fallbackScopeAttempt,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
@@ -5742,6 +5770,22 @@ test('native launcher scopes admitted Linux work only when the systemd user slic
     assert.equal(inherited.status, 0, inherited.stderr);
     assert.equal(await readFile(scopedMarker, 'utf8'), 'scoped\n');
     assert.match(await readFile(scopedArguments, 'utf8'), /--nice=19 -- scoped-command scoped/);
+  }
+
+  for (const throughCriticalScope of [false, true]) {
+    await writeFile(scopeInvocations, '');
+    const nestedCommand = '"$TEST_LAUNCHER" --heavyweight-admission --class=validation --machine=scope-profile -- scoped-command scoped';
+    const command = throughCriticalScope
+      ? `systemd-run --user --scope --quiet --slice=happier-critical.slice -- ${nestedCommand}; result=$?; exit "$result"`
+      : `exec ${nestedCommand}`;
+    const nested = run(readyBin, join(root, `nested-home-${throughCriticalScope}`), scopedMarker, {
+      command: ['/bin/sh', '-c', command],
+    });
+    assert.equal(nested.status, 0, `critical transition: ${throughCriticalScope}\n${nested.stderr}`);
+    assert.equal(await readFile(scopedMarker, 'utf8'), 'scoped\n');
+    const scopes = (await readFile(scopeInvocations, 'utf8')).trim().split('\n');
+    assert.equal(scopes.length, throughCriticalScope ? 3 : 1);
+    assert.equal(scopes.at(-1).split('|')[1], 'happier-jobs.slice');
   }
 });
 
