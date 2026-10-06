@@ -7,6 +7,8 @@ import {
   buildConnectedServiceCredentialRecord,
   buildQualifiedPluginContributionKey,
   QualifiedConnectedAccountListResponseV4Schema,
+  QualifiedConnectedAccountPurposeBindingsV1Schema,
+  PluginSourceCustodyV1Schema,
   type QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
 import { ApiClient } from '@/api/api';
@@ -142,6 +144,13 @@ describe('foreground Connected Account admission through the applied plugin runt
             networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },
           },
         });
+        const admittedSourceCustody = PluginSourceCustodyV1Schema.parse(
+          runtime.registry.readPluginSourceCustody?.('happier.agent.codex'),
+        );
+        expect(admittedSourceCustody.kind).toBe('development');
+        const admittedOccurrenceId = runtime.registry.readPluginOccurrenceId?.('happier.agent.codex');
+        expect(admittedOccurrenceId).toEqual(expect.any(String));
+        expect(admittedOccurrenceId).not.toBe('');
         const wireRequest = ForegroundAgentRuntimeAdmissionRequestV1Schema.parse({
           v: 1, attemptId: 'attempt-qualified', sessionId: 'session-qualified', foregroundPid: process.pid,
           directory: root, agentId: 'codex', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
@@ -151,6 +160,10 @@ describe('foreground Connected Account admission through the applied plugin runt
           agentId: 'codex', bindings: wireRequest.connectedServices!, contributions: runtime.registry.contributes,
         });
         expect(Object.keys(wireRequest.connectedServices!.bindingsByServiceId)).toEqual([buildQualifiedPluginContributionKey(service)]);
+        const parsedPurposeBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+          v: 1, bindings: snapshot?.bindings,
+        });
+        expect(snapshot?.bindings).toEqual(parsedPurposeBindings.bindings);
         expect(snapshot?.bindings).toEqual([{
           purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
           target: { kind: 'account', account: { service, accountId: 'work' } },
@@ -178,7 +191,7 @@ describe('foreground Connected Account admission through the applied plugin runt
           connectedAccountRequestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
           resolveConnectedAccountRequestAuthHttpPort: () => 43122,
         });
-        expect(admitted).toMatchObject({ ok: true });
+        expect(admitted, admitted.ok ? undefined : admitted.error.code).toMatchObject({ ok: true });
         if (!admitted.ok) throw new Error(admitted.error.code);
         const cleanup = admitted.prepared.cleanup;
         if (!cleanup) throw new Error('Expected admitted foreground runtime to own bootstrap cleanup');

@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -11,13 +12,16 @@ import {
   type LoadInstalledPluginsResult,
 } from '@/plugins/discovery/load/installed';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
-import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import { createPackedTestConnectedAccountsRuntime } from '@/plugins/daemon/packedTestConnectedAccounts';
+import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { projectDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCatalog.js';
 
 const pluginId = 'examples.public-sdk-review-assistant';
 const pluginVersion = '0.1.0';
 const modelOrigin = 'https://models.example.com';
+const publicAuthoringEntry = new URL('../../../../../packages/plugin-sdk/examples/public-authoring/index.ts', import.meta.url);
 
 const daemonHost = {
   executionHost: 'daemon' as const,
@@ -32,7 +36,7 @@ async function readPublicAuthoringManifest(): Promise<ParsedPluginManifestV2> {
   // a handwritten source manifest would create a second authority beside
   // `definePlugin(publicAuthoringDefinition)`.
   const publicAuthoringModule = await import(
-    new URL('../../../../../packages/plugin-sdk/examples/public-authoring/index.ts', import.meta.url).href
+    publicAuthoringEntry.href
   ) as Readonly<{ manifest: unknown }>;
   const ingested = ingestPluginManifestV2(publicAuthoringModule.manifest);
   expect(ingested.ok, ingested.ok ? undefined : JSON.stringify(ingested.diagnostics)).toBe(true);
@@ -42,18 +46,16 @@ async function readPublicAuthoringManifest(): Promise<ParsedPluginManifestV2> {
 
 async function projectLoadedPlugins(
   loadResult: LoadInstalledPluginsResult,
-  happyHomeDir: string,
+  controller: PluginReloadController,
   grantedNetworkOrigins: readonly string[] = [modelOrigin],
 ) {
-  const runtime = await createAdmittedPluginRuntimeFixture({
-    happyHomeDir,
-    runtimeOptions: { pluginIds: loadResult.loadedPlugins.map(plugin => plugin.pluginId) },
-  });
+  const lease = controller.tryAcquireRuntimeRegistry();
+  if (!lease) throw new Error('Expected the development authoring owner to publish a serving registry');
   try {
-    const registry = runtime.registry.contributes;
-    const projection = buildPluginProjectionV2({ registry, generation: runtime.controller.getState().generation });
-    if (!runtime.registry.readPluginSourceCustody) throw new Error('Expected admitted plugin source custody reader');
-    const readSourceCustody = runtime.registry.readPluginSourceCustody;
+    const registry = lease.registry.contributes;
+    const projection = buildPluginProjectionV2({ registry, generation: controller.getState().generation });
+    if (!lease.registry.readPluginSourceCustody) throw new Error('Expected admitted plugin source custody reader');
+    const readSourceCustody = lease.registry.readPluginSourceCustody;
     const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
       plugins: loadResult.loadedPlugins.map((plugin) => {
         const sourceCustody = readSourceCustody(plugin.pluginId);
@@ -76,65 +78,101 @@ async function projectLoadedPlugins(
     });
     return { registry, projection, catalog };
   } finally {
-    await runtime.dispose();
+    await lease.release();
   }
 }
 
-async function installPublicAuthoringFixture(manifest: ParsedPluginManifestV2): Promise<Readonly<{
-  happyHomeDir: string;
-  pluginRoot: string;
-  setEnabled(enabled: boolean): Promise<void>;
-}>> {
+async function installPublicAuthoringFixture() {
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-public-authoring-home-'));
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-public-authoring-plugin-'));
-  const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-  await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
-  await writeFile(manifestPath, JSON.stringify(manifest), 'utf8');
-  const daemonEntrypoint = manifest.entrypoints?.daemon;
-  if (!daemonEntrypoint) throw new Error('public_authoring_daemon_entrypoint_missing');
-  const daemonEntrypointPath = join(pluginRoot, daemonEntrypoint);
-  await mkdir(dirname(daemonEntrypointPath), { recursive: true });
-  await writeFile(daemonEntrypointPath, 'export function activate() {}\n', 'utf8');
-  const store = createPluginStateStore({ happyHomeDir });
-
-  async function setEnabled(enabled: boolean): Promise<void> {
-    await store.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        [pluginId]: {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath,
-          },
-          compatibility: { status: 'compatible', diagnostics: [] },
-          install: {
-            mode: 'link',
-            manifestVersion: pluginVersion,
-            installedPath: null,
-          },
-          state: { enabled },
-        },
-      },
-    });
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
+  let owner: ReturnType<typeof createDaemonPluginRuntimeOwner> | null = null;
+  let disposed = false;
+  async function dispose() {
+    if (disposed) return;
+    disposed = true;
+    try {
+      await owner?.changeService.shutdown();
+    } finally {
+      try {
+        await runtime?.dispose();
+      } finally {
+        await rm(happyHomeDir, { recursive: true, force: true });
+      }
+    }
   }
-
-  await setEnabled(true);
-  return { happyHomeDir, pluginRoot, setEnabled };
+  try {
+    // Start with a genuinely published empty registry, then let the daemon's
+    // development owner establish source trust, host-access approval and custody.
+    runtime = await createAdmittedPluginRuntimeFixture({
+      happyHomeDir,
+      runtimeOptions: { pluginIds: [] },
+    });
+    const connectedAccounts = createPackedTestConnectedAccountsRuntime({
+      happyHomeDir,
+      pluginId,
+      runtimeRegistry: runtime.controller,
+    });
+    owner = createDaemonPluginRuntimeOwner({
+      happyHomeDir,
+      staleCandidateCleanup: 'disabled',
+      reloadController: runtime.controller,
+      connectedAccounts: connectedAccounts.owner,
+      reconcileConnectedAccountPurposePublication: connectedAccounts.reconcileRegistryPublication,
+    });
+    await owner.initialize();
+    const controlDevelopment = owner.changeService.controlPluginDevelopment;
+    if (!controlDevelopment) throw new Error('Expected canonical development-root control owner');
+    // Register the actual code-defined example. The single-file authoring path
+    // resolves its real relative modules without package installation or a UI build.
+    const registration = await controlDevelopment({
+      kind: 'registerExplicit',
+      rootPath: fileURLToPath(publicAuthoringEntry),
+    });
+    expect(registration.kind).toBe('status');
+    const pending = await owner.changeService.listPendingPluginChanges();
+    expect(pending.changes).toHaveLength(1);
+    const review = pending.changes[0];
+    if (!review || review.kind !== 'reviewRequired' || review.reviewKind !== 'installation') {
+      throw new Error('Expected the public example host-access installation review');
+    }
+    await expect(owner.changeService.decidePluginChange({
+      pendingChangeId: review.pendingChangeId,
+      decision: 'installAndTrust',
+      optionalSelections: [],
+    })).resolves.toMatchObject({ kind: 'committed', pluginId });
+    const sourceCustody = runtime.controller.readCurrentPluginSourceCustody?.(pluginId);
+    expect(sourceCustody).toMatchObject({ kind: 'development' });
+    expect(runtime.controller.readCurrentPluginOccurrenceId?.(pluginId)).toEqual(expect.any(String));
+    const changeService = owner.changeService;
+    return {
+      happyHomeDir,
+      controller: runtime.controller,
+      async setEnabled(enabled: boolean) {
+        await expect(changeService.requestPluginChange({
+          kind: enabled ? 'enable' : 'disable',
+          pluginId,
+        })).resolves.toMatchObject({ kind: 'committed', pluginId });
+      },
+      dispose,
+    };
+  } catch (error) {
+    try {
+      await dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Public authoring fixture preparation and cleanup failed');
+    }
+    throw error;
+  }
 }
 
 describe('public declarative voice model-pack authoring integration fixture', () => {
   it('flows cold-JSON settings and a model pack to the selected-daemon catalog without mixing executable Voice runtime state into the pack row', async () => {
     const manifest = await readPublicAuthoringManifest();
-    const fixture = await installPublicAuthoringFixture(manifest);
+    const fixture = await installPublicAuthoringFixture();
     try {
       const enabledLoad = await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir });
-      const enabled = await projectLoadedPlugins(enabledLoad, fixture.happyHomeDir);
-      const ungranted = await projectLoadedPlugins(enabledLoad, fixture.happyHomeDir, []);
+      const enabled = await projectLoadedPlugins(enabledLoad, fixture.controller);
+      const ungranted = await projectLoadedPlugins(enabledLoad, fixture.controller, []);
       const qualifiedPackId = `${pluginId}/english-small`;
       const qualifiedSettingsId = `${pluginId}/preferences`;
       const qualifiedVoiceProviderId = `${pluginId}/credentialed-browser`;
@@ -186,7 +224,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
       expect(enabled.catalog[0]).not.toHaveProperty('server');
 
       await fixture.setEnabled(false);
-      const disabled = await projectLoadedPlugins(await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir }), fixture.happyHomeDir);
+      const disabled = await projectLoadedPlugins(await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir }), fixture.controller);
 
       expect(disabled.projection.settingsById).not.toHaveProperty(qualifiedSettingsId);
       expect(disabled.projection.familiesById.voiceModelPacks?.entriesById ?? {}).not.toHaveProperty(qualifiedPackId);
@@ -195,10 +233,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
       );
       expect(disabled.catalog).toEqual([]);
     } finally {
-      await Promise.all([
-        rm(fixture.happyHomeDir, { recursive: true, force: true }),
-        rm(fixture.pluginRoot, { recursive: true, force: true }),
-      ]);
+      await fixture.dispose();
     }
   });
 });
