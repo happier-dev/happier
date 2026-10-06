@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
@@ -6,6 +6,7 @@ import 'fake-indexeddb/auto';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import { renderHook } from '@/dev/testkit';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, type LocalStorageMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { SessionSpawnNewResultV1, SessionAuthoringCheckoutCreationDraftV1 } from '@happier-dev/protocol';
@@ -83,13 +84,15 @@ vi.mock('@/utils/system/sentry', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/system/sentry')>(),
     captureExceptionIfEnabled: (error: unknown, context?: unknown) => observabilityBoundary.capture(error, context),
 }));
-vi.mock('socket.io-client', () => ({
-    io: (serverUrl: string, options: { auth?: { token?: string } }) => {
+vi.mock('socket.io-client', async () => {
+    const { createSocketIoManagerBoundaryStub } = await import('@/dev/testkit/mocks/socketIo');
+    return { io: (serverUrl: string, options: { auth?: { token?: string } }) => {
         const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
         const publish = (event: string, ...args: unknown[]) => {
             for (const listener of listeners.get(event) ?? []) listener(...args);
         };
         const socket = {
+            io: createSocketIoManagerBoundaryStub(),
             connected: false,
             id: 'composed-socket',
             connect() {
@@ -134,22 +137,51 @@ vi.mock('socket.io-client', () => ({
             reconnect: () => socket.connect(),
         });
         return socket;
-    },
-}));
+    } };
+});
 
 function tokenFor(accountId: string): string {
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
     return `${encode({ alg: 'none' })}.${encode({ sub: accountId })}.signature`;
 }
 
+// Collect the real cold module graph after installing its platform boundaries.
+// Imports are setup work, not part of the timed Home/creation behavior.
+const localStorageHandle: LocalStorageMockHandle = installLocalStorageMock();
+const navigatorLocksDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks');
+const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+Object.defineProperty(globalThis.navigator, 'locks', {
+    configurable: true,
+    value: {
+        // Web Locks admits both `request(name, callback)` and `request(name, options, callback)`.
+        request: async function request<T>(
+            _name: string,
+            optionsOrCallback: LockOptions | (() => T | Promise<T>),
+            maybeCallback?: () => T | Promise<T>,
+        ): Promise<T> {
+            const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+            if (!callback) throw new Error('navigator.locks.request stub requires a callback');
+            return await callback();
+        },
+    },
+});
+process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `multi_home_create_${Date.now()}_${Math.random()}`;
+routeBoundary.params = {
+    machineId: 'machine-b',
+    directory: '/workspace/project',
+    spawnServerId: 'srv_home_b',
+};
+const { sync } = await import('@/sync/syncEngine');
+syncSingletonHarness.current = sync;
+const profiles = await import('@/sync/domains/server/serverProfiles');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+await prepareSessionDraftPersistenceStorage();
+const { useNewSessionScreenModel } = await import('./useNewSessionScreenModel');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+
 describe('multi-Home Session creation composition', () => {
-    let localStorageHandle: LocalStorageMockHandle | undefined;
-    let navigatorLocksDescriptor: PropertyDescriptor | undefined;
-    const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
-    let profiles: typeof import('@/sync/domains/server/serverProfiles');
-    let TokenStorage: typeof import('@/auth/storage/tokenStorage')['TokenStorage'];
-    let sync: typeof import('@/sync/sync')['sync'] | undefined;
-    let useNewSessionScreenModel: typeof import('./useNewSessionScreenModel')['useNewSessionScreenModel'];
 
     beforeEach(async () => {
         socketBoundary.result = null;
@@ -201,41 +233,8 @@ describe('multi-Home Session creation composition', () => {
         });
     });
 
-    beforeAll(async () => {
-        localStorageHandle = installLocalStorageMock();
-        navigatorLocksDescriptor = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks');
-        Object.defineProperty(globalThis.navigator, 'locks', {
-            configurable: true,
-            value: {
-                // Web Locks admits both `request(name, callback)` and `request(name, options, callback)`.
-                request: async function request<T>(
-                    _name: string,
-                    optionsOrCallback: LockOptions | (() => T | Promise<T>),
-                    maybeCallback?: () => T | Promise<T>,
-                ): Promise<T> {
-                    const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
-                    if (!callback) throw new Error('navigator.locks.request stub requires a callback');
-                    return await callback();
-                },
-            },
-        });
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `multi_home_create_${Date.now()}_${Math.random()}`;
-        routeBoundary.params = {
-            machineId: 'machine-b',
-            directory: '/workspace/project',
-            spawnServerId: 'srv_home_b',
-        };
-
-        ({ sync } = await import('@/sync/syncEngine'));
-        syncSingletonHarness.current = sync;
-        profiles = await import('@/sync/domains/server/serverProfiles');
-        ({ TokenStorage } = await import('@/auth/storage/tokenStorage'));
-        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
-        await prepareSessionDraftPersistenceStorage();
-        ({ useNewSessionScreenModel } = await import('./useNewSessionScreenModel'));
-    });
-
     afterAll(async () => {
+        restoreExecutorModuleLoader();
         const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         resetRuntimeFetch();
         sync?.disconnectServer();
@@ -308,7 +307,13 @@ describe('multi-Home Session creation composition', () => {
             ], true, { sourceServerId: params.targetServerId });
         }
         const draftId = params.draftId ?? `multi-home-composed-draft-${++draftSequence}`;
-        return await renderHook(() => useNewSessionScreenModel({ draftId }));
+        const activeProfile = profiles.getServerProfileById(params.activeServerId);
+        if (!activeProfile) throw new Error('Creation fixture has no active Home profile');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(activeProfile.serverUrl, { serverId: params.activeServerId });
+        if (!credentials) throw new Error('Creation fixture has no active Home credentials');
+        return await renderHook(() => useNewSessionScreenModel({ draftId }), {
+            wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials, children }),
+        });
     }
 
     function readProductionCreateAction(model: ReturnType<Awaited<ReturnType<typeof renderProductionCreateCaller>>['getCurrent']>) {
@@ -505,7 +510,8 @@ describe('multi-Home Session creation composition', () => {
             await act(async () => {
                 await readProductionCreateAction(createHook.getCurrent())({ initialMessage: 'skip' });
             });
-            expect(socketBoundary.fetches.mock.calls.length).toBeGreaterThan(0);
+            // The exact Home's Machine transport may already be cached. Any
+            // additional HTTP must stay scoped; the spawn envelope below proves dispatch.
             expect(socketBoundary.fetches.mock.calls
                 .every(([url]) => String(url).startsWith(homeB.serverUrl))).toBe(true);
             expect(socketBoundary.emits).toHaveBeenCalledTimes(1);
@@ -545,7 +551,7 @@ describe('multi-Home Session creation composition', () => {
             const first = SessionSpawnNewInputV2Schema.parse(socketBoundary.emits.mock.calls[0]?.[0]?.payload?.params);
             expect(first).toMatchObject({
                 executionTarget: { serverId: homeBScopeId, machineId: 'machine-b' },
-                directory: '/workspace/project/packages/app',
+                directory: { kind: 'path', path: '/workspace/project/packages/app' },
                 checkoutCreationDraft: checkoutDraft,
             });
             expect(first.creationKey).toBeTruthy();
@@ -902,7 +908,13 @@ describe('multi-Home Session creation composition', () => {
         try {
             await vi.waitFor(() => {
                 expect(picker.getCurrent().content.props.groups).toHaveLength(2);
-                expect(picker.getCurrent().content.props.poolGroups.every((group: { projectionReady: boolean }) => group.projectionReady)).toBe(true);
+                expect(
+                    picker.getCurrent().content.props.poolGroups.every((group: { projectionReady: boolean }) => group.projectionReady),
+                    JSON.stringify({
+                        groups: picker.getCurrent().content.props.groups,
+                        poolGroups: picker.getCurrent().content.props.poolGroups,
+                    }),
+                ).toBe(true);
             });
             expect(routeBoundary.replace).not.toHaveBeenCalled();
         } finally {

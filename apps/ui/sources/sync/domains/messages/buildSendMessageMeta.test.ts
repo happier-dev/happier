@@ -6,7 +6,7 @@ import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMe
 
 function buildArgs(overrides?: {
     agentId?: AgentId | null;
-    sentFrom?: string;
+    sentFrom?: Parameters<typeof buildSendMessageMeta>[0]['sentFrom'];
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
     appendSystemPrompt?: string;
     displayText?: string;

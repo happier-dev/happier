@@ -15,6 +15,7 @@ const capture = vi.hoisted(() => {
     return {
         record(value: Record<string, unknown> | (() => Record<string, unknown>)) { options = value; },
         reset() { options = null; },
+        getRaw() { return options; },
         getResolved() { return typeof options === 'function' ? options() : options; },
     };
 });

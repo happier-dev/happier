@@ -139,9 +139,6 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     vi.doMock('@/sync/domains/automations/encodeAutomationTemplateCiphertextForAccount', () => ({
         encodeAutomationTemplateCiphertextForAccount: vi.fn(async ({ template }: { template: unknown }) => JSON.stringify(template)),
     }));
-    vi.doMock('@/sync/api/account/apiAccountEncryptionMode', () => ({
-        fetchAccountEncryptionMode: vi.fn(async () => ({ mode: 'plain', updatedAt: 0 })),
-    }));
     vi.doMock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
         resolveSessionComposerSend: vi.fn(({ input }: { input: string }) => ({ kind: 'send', text: input })),
     }));
@@ -210,7 +207,6 @@ await setupHarness();
 
 describe('useCreateNewSession configured ACP backend spawning', () => {
     beforeEach(() => {
-        vi.resetModules();
         clearNewSessionDraftMock.mockClear();
         sessionCreationRequestSpy.mockReset();
     });
