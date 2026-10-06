@@ -226,7 +226,6 @@ describe('InboxView mark as read', () => {
         await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer(credentials);
         answerReadState(homeA);
         answerReadState(homeB);
-        const { storage } = await import('@/sync/domains/state/storageStore');
         storage.setState({
             profileScope: { serverId: homeA, accountId: 'me' },
             settingsScope: { serverId: homeA, accountId: 'me' },

@@ -31,8 +31,10 @@ installSessionRouteCommonModuleMocks({
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const { createNavigationMock } = await import('@/dev/testkit');
-        const navigation = { ...createNavigationMock(), canGoBack: () => canGoBack, goBack: routerBackSpy };
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        const navigation = createReactNavigationNativeMock({
+            navigation: { canGoBack: () => canGoBack, goBack: routerBackSpy },
+        }).useNavigation();
         const boundary = createExpoRouterMock({ router: {
             back: routerBackSpy, push: routerPushSpy, replace: routerReplaceSpy,
         } });

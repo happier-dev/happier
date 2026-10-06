@@ -202,6 +202,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         saveNewSessionDraft({
             input: 'launch the session', selectedMachineId: 'm1', selectedPath: '/tmp',
             selectedProfileId: null, agentType: 'customAcp', backendTarget: configuredTarget,
+            selectedSecretId: null, acpSessionModeId: null,
             permissionMode: 'default', modelMode: 'default', updatedAt: 1,
         }, harness.params.draftScope);
         const before = loadNewSessionDraft(harness.params.draftScope);

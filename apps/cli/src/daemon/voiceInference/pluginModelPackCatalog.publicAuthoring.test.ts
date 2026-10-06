@@ -4,16 +4,15 @@ import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginRuntimeOccurrenceId, ingestPluginManifestV2, type ParsedPluginManifestV2 } from '@happier-dev/protocol';
+import { ingestPluginManifestV2, type ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
 import {
   loadInstalledPlugins,
   type LoadInstalledPluginsResult,
 } from '@/plugins/discovery/load/installed';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { projectDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCatalog.js';
 
 const pluginId = 'examples.public-sdk-review-assistant';
@@ -41,40 +40,42 @@ async function readPublicAuthoringManifest(): Promise<ParsedPluginManifestV2> {
   return ingested.manifest;
 }
 
-function projectLoadedPlugins(
+async function projectLoadedPlugins(
   loadResult: LoadInstalledPluginsResult,
+  happyHomeDir: string,
   grantedNetworkOrigins: readonly string[] = [modelOrigin],
 ) {
-  const contributions = projectLoadedPluginContributes({
-    loadResult,
-    provenance: 'external',
+  const runtime = await createAdmittedPluginRuntimeFixture({
+    happyHomeDir,
+    runtimeOptions: { pluginIds: loadResult.loadedPlugins.map(plugin => plugin.pluginId) },
   });
-  const registry = createResolvedContributionRegistry({
-    ...contributions,
-    occurrenceIdsByPluginId: Object.fromEntries(loadResult.loadedPlugins.map((plugin) => [
-      plugin.pluginId,
-      createPluginRuntimeOccurrenceId(plugin.pluginId),
-    ])),
-  });
-  const projection = buildPluginProjectionV2({ registry, generation: 12 });
-  const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
-    plugins: loadResult.loadedPlugins.map((plugin) => ({
-      pluginId: plugin.pluginId,
-      pluginVersion: plugin.manifest.version,
-      artifactBinding: {
-        kind: 'materialization',
-        sourceCustody: { kind: 'development', registeredRootId: 'public-authoring-fixture-local-generation' },
-      },
-      enabled: true,
-      authorization: { outcome: 'visible', code: 'plugin_final_available', requiresCurrentIntent: false },
-      grantedNetworkOrigins,
-      contributions: (registry.voiceModelPacks ?? [])
-        .filter((entry) => entry.pluginId === plugin.pluginId)
-        .map((entry) => entry.definition),
-    })),
-    host: daemonHost,
-  });
-  return { registry, projection, catalog };
+  try {
+    const registry = runtime.registry.contributes;
+    const projection = buildPluginProjectionV2({ registry, generation: runtime.controller.getState().generation });
+    if (!runtime.registry.readPluginSourceCustody) throw new Error('Expected admitted plugin source custody reader');
+    const readSourceCustody = runtime.registry.readPluginSourceCustody;
+    const catalog = projectDaemonPluginVoiceModelPackCatalogV1({
+      plugins: loadResult.loadedPlugins.map((plugin) => {
+        const sourceCustody = readSourceCustody(plugin.pluginId);
+        if (!sourceCustody) throw new Error('Expected admitted public authoring source custody');
+        return {
+          pluginId: plugin.pluginId,
+          pluginVersion: plugin.manifest.version,
+          artifactBinding: { kind: 'materialization' as const, sourceCustody },
+          enabled: true,
+          authorization: { outcome: 'visible' as const, code: 'plugin_final_available' as const, requiresCurrentIntent: false },
+          grantedNetworkOrigins,
+          contributions: (registry.voiceModelPacks ?? [])
+            .filter((entry) => entry.pluginId === plugin.pluginId)
+            .map((entry) => entry.definition),
+        };
+      }),
+      host: daemonHost,
+    });
+    return { registry, projection, catalog };
+  } finally {
+    await runtime.dispose();
+  }
 }
 
 async function installPublicAuthoringFixture(manifest: ParsedPluginManifestV2): Promise<Readonly<{
@@ -130,8 +131,8 @@ describe('public declarative voice model-pack authoring integration fixture', ()
     const fixture = await installPublicAuthoringFixture(manifest);
     try {
       const enabledLoad = await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir });
-      const enabled = projectLoadedPlugins(enabledLoad);
-      const ungranted = projectLoadedPlugins(enabledLoad, []);
+      const enabled = await projectLoadedPlugins(enabledLoad, fixture.happyHomeDir);
+      const ungranted = await projectLoadedPlugins(enabledLoad, fixture.happyHomeDir, []);
       const qualifiedPackId = `${pluginId}/english-small`;
       const qualifiedSettingsId = `${pluginId}/preferences`;
       const qualifiedVoiceProviderId = `${pluginId}/credentialed-browser`;
@@ -183,7 +184,7 @@ describe('public declarative voice model-pack authoring integration fixture', ()
       expect(enabled.catalog[0]).not.toHaveProperty('server');
 
       await fixture.setEnabled(false);
-      const disabled = projectLoadedPlugins(await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir }));
+      const disabled = await projectLoadedPlugins(await loadInstalledPlugins({ happyHomeDir: fixture.happyHomeDir }), fixture.happyHomeDir);
 
       expect(disabled.projection.settingsById).not.toHaveProperty(qualifiedSettingsId);
       expect(disabled.projection.familiesById.voiceModelPacks?.entriesById ?? {}).not.toHaveProperty(qualifiedPackId);

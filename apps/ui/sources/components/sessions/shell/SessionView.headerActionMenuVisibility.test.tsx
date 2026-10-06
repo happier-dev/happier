@@ -26,6 +26,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { buildRealmQualifiedSessionCompanionPreferenceKey } from '@/components/sessions/companion/state/sessionCompanionPreferenceKey';
+import type { SessionCompanionPreferencesV1 } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { createSessionBoardDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
@@ -85,7 +86,7 @@ const boardFeatureState = vi.hoisted(() => ({
   enabledServerIds: null as readonly string[] | null,
 }));
 const companionPreferenceState = vi.hoisted(() => ({
-  stored: undefined as undefined | Readonly<Record<string, unknown>>,
+  stored: undefined as undefined | SessionCompanionPreferencesV1[string],
 }));
 const companionPreferenceMutateSpy = vi.hoisted(() => vi.fn());
 const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false }));
@@ -612,7 +613,7 @@ const VISIBLE_COMPANION_PREFERENCE = Object.freeze({
   edge: 'trailing',
   density: 'compact',
   items: [{ kind: 'builtin', id: 'session_summary' }],
-});
+} satisfies SessionCompanionPreferencesV1[string]);
 
 function readCompanionRevealAddress(screen: RenderScreenResult): unknown {
   const paneHost = screen.findAll((node) => (node.type as unknown) === 'AppPaneScopeHost')[0];

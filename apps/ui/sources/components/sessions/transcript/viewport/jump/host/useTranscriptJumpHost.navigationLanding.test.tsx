@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { Message } from '@happier-dev/session-core/messages';
+import type { ChatTranscriptListItem } from '../../../chatListTypes';
 import { createSessionMessagesFixture, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -27,8 +28,8 @@ const MESSAGES: Readonly<Record<string, Message>> = {
     u2: user('u2', 12), a4: agent('a4', 12, 1), a5: agent('a5', 12, 2),
     a6: agent('a6', 12, 3), a7: agent('a7', 12, 4), a8: agent('a8', 12, 5),
 };
-const ROWS = Object.entries(MESSAGES).map(([messageId, message]) => ({
-    kind: 'message' as const, id: 'row-' + messageId, messageId, createdAt: message.createdAt, seq: message.seq,
+const ROWS: readonly ChatTranscriptListItem[] = Object.entries(MESSAGES).map(([messageId, message]) => ({
+    kind: 'message', id: 'row-' + messageId, messageId, createdAt: message.createdAt, seq: message.seq ?? null,
 }));
 function entry(id: string, seq: number): TranscriptNavigationEntry {
     return { id, sessionId: SESSION_ID, seq, routeMessageId: null, transcriptBlockIndex: 0,

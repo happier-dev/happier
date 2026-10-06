@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
+import { AccountProfileSchema } from '@happier-dev/protocol';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -54,11 +55,11 @@ describe('Settings → Account desktop shell', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { localSettingsParse } = await import('@/sync/domains/settings/localSettings');
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
-        storage.getState().applyProfile({ ...profileDefaults, id: 'desktop-profile', linkedProviders: [], connectedServices: [],
+        storage.getState().applyProfile(AccountProfileSchema.parse({ ...profileDefaults, id: 'desktop-profile', linkedProviders: [], connectedServices: [],
             connectedServicesV2: ['openai-codex', 'anthropic', 'gemini'].map((serviceId) => ({ serviceId, groups: [], profiles: [{
                 profileId: 'work', status: 'connected' as const, kind: 'oauth' as const, providerEmail: null,
                 providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
-            }] })) });
+            }] })) }));
         storage.setState({ isDataReady: true, profileScope: account.scope,
             localSettings: localSettingsParse({ settingsNavSidebarEnabled: true, settingsNavSidebarWidthPx: 230, settingsNavSidebarWidthBasisPx: 1200 }) });
         const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');

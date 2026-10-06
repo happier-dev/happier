@@ -23,7 +23,7 @@ export function NewSessionWizardPopoverItem(props: Readonly<{
     subtitle?: string | null;
     icon: React.ReactNode;
     popover?: AgentInputContentPopoverConfig;
-    boundaryRef: React.RefObject<RNView>;
+    boundaryRef: React.RefObject<RNView | null>;
 }>) {
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<RNView>(null);
@@ -75,7 +75,7 @@ export function NewSessionWizardDropdownSelectionItem(props: Readonly<{
     selectedId?: string | null;
     search?: boolean;
     searchPlaceholder?: string;
-    boundaryRef: React.RefObject<RNView>;
+    boundaryRef: React.RefObject<RNView | null>;
     onSelect: (id: string) => void;
 }>) {
     const [open, setOpen] = React.useState(false);

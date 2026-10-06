@@ -764,6 +764,7 @@ describe('executeContributedAction', () => {
     await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.action.plugin', localId: 'open-client' }, input: { destination: 'preview' } }, {
       surface, defaultSessionId: 'session-current', requiredContributedActionDangerLevel: 'safe',
     })).resolves.toEqual({ ok: true, result: { handledBy: 'client' } });
+    if (!fixture.registry.readPluginOccurrenceId) throw new Error('Expected admitted plugin occurrence reader');
     expect(requests).toEqual([{
       v: 1, action: { pluginId: 'acme.action.plugin', localId: 'open-client' },
       input: { destination: 'preview' }, surface,

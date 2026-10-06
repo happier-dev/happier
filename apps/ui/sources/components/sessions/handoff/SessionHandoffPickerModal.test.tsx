@@ -69,7 +69,7 @@ await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
-const { MachineSelector } = await import('@/components/ui/machines/MachineSelector');
+const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { renderScreen: renderScreenBase, invokeTestInstanceHandler, standardCleanup } = await import('@/dev/testkit');
@@ -90,11 +90,11 @@ async function applyFixtureState() {
     }
     await setActiveServerId(activeServerIdState);
     const machines = allMachinesState.map(machine => createMachineFixture({
-        ...machine, metadata: { ...createMachineFixture().metadata, ...machine.metadata },
+        ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
     }));
     const scoped = Object.fromEntries(Object.entries(machineListByServerIdState).map(([id, values]) =>
         [id, values.map((machine: Partial<Machine>) => createMachineFixture({
-            ...machine, metadata: { ...createMachineFixture().metadata, ...machine.metadata },
+            ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
         }))]));
     storage.setState({ isDataReady: true, machineListByServerId: scoped, machines: Object.fromEntries(machines.map(machine => [machine.id, machine])) });
     storage.getState().applySessions(Object.values(sessionsByIdState).map(session => createSessionFixture({

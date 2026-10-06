@@ -211,6 +211,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
     afterEach(() => {
         resetSessionSurfaceVisibilityForTests();
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
 
@@ -598,15 +599,18 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             },
         }));
 
+        const { sync } = await import('@/sync/sync');
+        const refreshSessions = vi.spyOn(sync, 'refreshSessions');
+        const applyMessages = vi.spyOn(storage.getState(), 'applyMessages');
         const baseParams: Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'> = {
             encryption,
             artifactDataKeys: new Map(),
-            applySessions: vi.fn(),
-            fetchSessions,
+            applySessions: storage.getState().applySessions,
+            fetchSessions: () => { void sync.refreshSessions(); },
             applyMessages,
             onSessionVisible: vi.fn(),
             isSessionMessagesLoaded: vi.fn(() => true),
-            getSessionMaterializedMaxSeq: vi.fn(() => 10),
+            getSessionMaterializedMaxSeq: () => 1,
             markSessionMaterializedMaxSeq: vi.fn(),
             onMessageGapDetected: vi.fn(),
             assumeUsers: vi.fn(async () => {}),
@@ -625,33 +629,18 @@ describe('socket new-message + coalescer: materialized max seq', () => {
 
         await handleUpdateContainer({
             ...baseParams,
-            updateData: buildPlainAuthSwitchUpdate({
-                sessionId: 's-cache-auth-maintenance',
-                messageId: 'm-auth-switch',
-                messageSeq: 11,
+            updateData: buildPlainNewMessageUpdate({
+                sessionId: 's-offscreen',
+                messageId: 'm2',
+                messageSeq: 2,
+                text: 'off-screen',
             }),
         });
 
-        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(refreshSessions).not.toHaveBeenCalled();
         expect(applyMessages).not.toHaveBeenCalled();
-        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-cache-auth-maintenance']).find(Boolean)).toEqual(
-            expect.objectContaining({
-                seq: 10,
-                updatedAt: 900,
-                meaningfulActivityAt: 800,
-                hasUnreadMessages: false,
-            }),
-        );
-
-        await vi.runAllTimersAsync();
-
-        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-cache-auth-maintenance']).find(Boolean)).toEqual(
-            expect.objectContaining({
-                seq: 11,
-                updatedAt: 1_011,
-                meaningfulActivityAt: 800,
-                hasUnreadMessages: false,
-            }),
+        expect(Object.values(storage.getState().sessionListRowsByServerId).map((rows) => rows['s-offscreen']).find(Boolean)).toEqual(
+            expect.objectContaining({ seq: 2, updatedAt: 1_002, hasUnreadMessages: true }),
         );
     });
 

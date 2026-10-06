@@ -11,7 +11,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot, setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import type { SessionSystemRecordStored } from '@happier-dev/protocol';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol';
 
 installDisconnectedServerSocketBoundary();
 
@@ -63,11 +63,11 @@ vi.mock('@/modal', async () => {
 vi.mock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
 
 function record(localId: string, kind: string, value: unknown): SessionSystemRecordStored {
-    return {
+    return SessionSystemRecordStoredSchema.parse({
         id: localId, address: { owner: 'host', namespace: 'surface', kind, localId },
         content: { t: 'plain', v: value }, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
         createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
-    };
+    });
 }
 
 function sessionWire(id: string) {

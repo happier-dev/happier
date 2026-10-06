@@ -983,7 +983,7 @@ function createChannelsHostApi(input: Readonly<{
     ) => {
       const subscriptionId = subscriptions.get(resourceLocalId);
       if (subscriptionId === undefined) throw new Error('Expected the Resource watch to be established.');
-      adapter.publishSubscriptionEvent({ version: 1, subscriptionId, kind: 'invalidated', digest });
+      adapter.publishResourceSubscriptionEvent({ version: 1, subscriptionId, kind: 'invalidated', digest });
     },
   };
 }

@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
-import { collectUnexpectedRawTextNodes, renderScreen, standardCleanup } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
@@ -106,7 +106,7 @@ describe('DropdownMenu model-style text node guard', () => {
                     }}
                 />)).tree;
 
-        expect(tree.root.findAll((node) => node.type === 'Text' && React.Children.toArray(node.props.children).includes('.')).length).toBeGreaterThan(0);
+        expect(findAllHostTestInstances(tree.root, (node) => node.type === 'Text' && React.Children.toArray(node.props.children).includes('.')).length).toBeGreaterThan(0);
         expect(collectUnexpectedRawTextNodes(tree.toJSON())).toEqual([]);
     });
 

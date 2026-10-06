@@ -56,7 +56,7 @@ function setMachine(input: { active?: boolean; daemonStateVersion?: number }) {
     const current = storage.getState().machines['machine-1'];
     // No heartbeat timestamp in this boundary fixture: the real presence
     // owner therefore uses the Home-published active bit, not a stale clock.
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', ...current, ...input, activeAt: 0 })], true, { sourceServerId: connection?.home.id });
+    storage.getState().applyMachines([createMachineFixture({ ...current, ...input, id: 'machine-1', activeAt: 0 })], true, { sourceServerId: connection?.home.id });
 }
 
 async function switchAccount(accountId: string) {

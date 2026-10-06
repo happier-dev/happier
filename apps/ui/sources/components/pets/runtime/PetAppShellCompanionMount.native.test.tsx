@@ -190,7 +190,8 @@ function seedPetsStorage() {
         sessions: source.sessionsById,
         sessionListRowsByServerId: source.sessionListRowsByServerId,
         ordinarySessionListMembershipByServerId: source.ordinarySessionListMembershipByServerId,
-        sessionListIndexByServerId: source.sessionListIndexByServerId,
+        sessionListIndexByServerId: Object.fromEntries(Object.entries(source.sessionListIndexByServerId)
+            .map(([serverId, index]) => [serverId, index == null ? index : [...index]])),
         concurrentSessionListCacheByServerId: source.concurrentSessionListCacheByServerId,
         sessionMessages: {},
         sessionPending: {},

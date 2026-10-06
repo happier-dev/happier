@@ -109,7 +109,6 @@ describe('doctor snapshot projection', () => {
           label: 'com.happier.cli.daemon.default', verification: 'verified', targetMode: 'default-following',
           ring: 'preview', instanceId: 'stack_main__id_default', scope: 'user', definitionPath: servicePath,
           executablePath: null, serverUrl: null, publicServerUrl: null, installed: true, running: true,
-          configuredCliVersion: '9.9.9-preview.1', runningCliVersion: '9.9.9-preview.1',
         }] },
         warnings: [{ code: 'inventoryWarning', severity: 'warning', message: 'Inventory warning', repairCommands: ['happier doctor repair'] }],
         localRelays: { relays: [] },

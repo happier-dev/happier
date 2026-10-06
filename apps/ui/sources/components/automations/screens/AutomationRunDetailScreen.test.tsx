@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -10,7 +10,7 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
+import { AutomationTriggerIdSchema, AutomationV3RunDetailSchema, createCanonicalJsonSigningInput, deriveAutomationOccurrenceKeyV1, sealAutomationRunResultStoredEnvelopeV1, sealAutomationRunFailureDetailStoredEnvelopeV1, serializeAutomationRunExecutionRecipeV1, type AutomationV3RunDetail, type AutomationV3RunListItem } from '@happier-dev/protocol';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 
 const routeParamsState = vi.hoisted(() => ({ id: 'a1', runId: 'run-1' }));
@@ -207,15 +207,16 @@ function privateDetail(row = run(), prefix = 'The admitted issue') {
         sourceSelectorId: '11111111-1111-4111-8111-111111111111', occurrenceId: 'occurrence-1',
         occurredAt: 10, payload: { issue: { number: 42 } }, sourceInstanceId: 'repository-acme-example',
         sourceContractVersion: 1, observationReceivedAt: 11, filter: { version: 1 as const, result: 'matched' as const } };
-    const cause = { kind: 'trigger' as const, triggerId: 'trigger-1', triggerRevision: 3,
-        triggerKind: 'pluginEvent' as const, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence }),
+    const triggerId = AutomationTriggerIdSchema.parse('trigger-1');
+    const cause = { kind: 'trigger' as const, triggerId, triggerRevision: 3,
+        triggerKind: 'pluginEvent' as const, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }),
         occurredAt: 10, evidence: { eventRef: evidence.eventRef, sourceSelectorId: evidence.sourceSelectorId } };
     const recipe = serializeAutomationRunExecutionRecipeV1({ v: 1, templateVersion: 4,
         template: { t: 'plain', v: { v: 1, prompt: prefix + ' private recipe' } },
         triggerEvidence: { t: 'plain', v: evidence },
         target: { kind: 'existingSession', sessionId: 'session-private-target' }, assignmentMachineIds: [] });
     if (recipe.kind !== 'available') throw new Error('Invalid producer recipe fixture');
-    return detail({ ...row, triggerId: 'trigger-1', cause }, {
+    return detail({ ...row, triggerId, cause }, {
         executionInputEnvelope: recipe.serialized,
         triggerEvidenceEnvelope: createCanonicalJsonSigningInput({ t: 'plain', v: evidence }),
         resultEnvelope: JSON.stringify(sealAutomationRunResultStoredEnvelopeV1({ mode: 'plain',
@@ -228,7 +229,7 @@ function privateDetail(row = run(), prefix = 'The admitted issue') {
 
 async function cache(rows: AutomationV3RunListItem[]) {
     const { storage } = await import('@/sync/domains/state/storage');
-    await act(async () => storage.getState().setAutomationRuns('a1', rows, null));
+    await act(async () => { await storage.getState().setAutomationRuns('a1', rows, null); });
 }
 async function open(row: AutomationV3RunListItem | null = run()) {
     await cache(row ? [row] : []);
@@ -290,7 +291,7 @@ describe('AutomationRunDetailScreen', () => {
 
     it('uses the built-in exact Run cache without refreshing the root page', async () => {
         const row = privateDetail().cause;
-        const screen = await respond(run({ triggerId: 'trigger-1', cause: row }));
+        const screen = await respond(run({ triggerId: AutomationTriggerIdSchema.parse('trigger-1'), cause: row }));
         expect(screen.getTextContent()).toContain('Failed');
         expect(screen.getTextContent()).toContain('Error: executor_unavailable');
         expect(screen.getTextContent()).toContain('trigger-1 · revision 3');
@@ -301,9 +302,13 @@ describe('AutomationRunDetailScreen', () => {
     });
 
     it('renders retired exact-turn history from the immutable cause', async () => {
-        const screen = await respond(run({ triggerId: 'turn-trigger-retired', triggerRetired: true, cause: {
-            kind: 'trigger', triggerId: 'turn-trigger-retired', triggerRevision: 7, triggerKind: 'sessionLifecycle',
-            occurrenceKey: 'turn:session-source:turn-exact', occurredAt: 10,
+        const triggerId = AutomationTriggerIdSchema.parse('turn-trigger-retired');
+        const screen = await respond(run({ triggerId, triggerRetired: true, cause: {
+            kind: 'trigger', triggerId, triggerRevision: 7, triggerKind: 'sessionLifecycle',
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: {
+                v: 1, kind: 'sessionLifecycle', event: 'parentTurnCompleted', occurredAt: 10,
+                sourceSessionId: 'session-source', sourceTurnId: 'turn-exact',
+            } }), occurredAt: 10,
             evidence: { event: 'parentTurnCompleted', sourceSessionId: 'session-source', sourceTurnId: 'turn-exact', policy: { kind: 'currentTurn' } },
         } }));
         expect(screen.getTextContent()).toContain('Trigger retired');
@@ -317,7 +322,8 @@ describe('AutomationRunDetailScreen', () => {
         const screen = await open();
         await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-stale-refresh-error')).toBeTruthy());
         expect(screen.getTextContent()).toContain('Failed');
-        const notice = screen.findAllByProps({ testID: 'automation-run-detail-stale-refresh-error' }).find(node => node.type === 'Item');
+        const notice = findAllHostTestInstances(screen.root, node => node.type === 'Item'
+            && node.props.testID === 'automation-run-detail-stale-refresh-error')[0];
         expect(notice?.props.accessibilityRole).toBe('alert');
         expect(notice?.props.accessibilityLiveRegion).toBe('assertive');
         expect(screen.findAllByProps({ testID: 'automation-run-detail-load-error' })).toHaveLength(0);
@@ -512,6 +518,7 @@ describe('AutomationRunDetailScreen', () => {
         const screen = await open(null);
         await waitForHomeGovernance(() => expect(screen.findByTestId('automation-run-detail-load-error')).toBeTruthy());
         const error = screen.findByTestId('automation-run-detail-load-error');
+        if (!error) throw new Error('Expected the cold-read load error notice');
         expect(error.props.role).toBe('alert');
         expect(error.props['aria-live']).toBe('assertive');
         harness.answer(serverId, DETAIL_PATH, { body: detail(run({ state: 'succeeded', errorCode: null })) });

@@ -316,7 +316,7 @@ async function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
 }
 function applySessionHome(serverId = account.home.id) {
     storage.getState().applySessions([createSessionFixture({ id: 's1', serverId, active: true, metadata: {
-        machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test',
+        machineId: 'm1', host: 'tester.local', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test',
     }, agentState: {} })]);
 }
 async function restoreHome(serverUrl: string) {

@@ -48,7 +48,9 @@ describe('project details route in cockpit mode with the real shell', () => {
         await screen.update(<runtime.Wrapper><Screen /></runtime.Wrapper>);
 
         expect(screen.findByType(ProjectDetailsMainPanel).props.forceOverviewMode).toBe(false);
-        expect(runtime.pane.scopeState.details).toMatchObject({
+        const scopeState = runtime.pane.scopeState;
+        if (!scopeState) throw new Error('Expected mounted project pane scope');
+        expect(scopeState.details).toMatchObject({
             isOpen: true, activeTabKey: tab.key, tabs: [expect.objectContaining({ key: tab.key, resource: { kind: 'file', path: '/repo/a.ts' } })],
         });
     });

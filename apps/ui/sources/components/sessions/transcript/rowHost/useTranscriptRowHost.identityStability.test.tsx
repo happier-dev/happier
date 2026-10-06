@@ -48,7 +48,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     });
 });
 
-import { createMachineFixture, renderHook } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, renderHook } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { createTranscriptMeasurementReconciler } from '@/components/sessions/transcript/measurement/transcriptMeasurementReconciler';
@@ -543,7 +543,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         });
         const hook = await renderHook(() => useTranscriptItemRenderer(
             createRendererDeps(createRendererProps({
-                metadata: { machineId: 'machine-1' },
+                metadata: createSessionFixture().metadata,
                 externalSessionOperationOwnerTarget: {
                     machineId: 'machine-1',
                     machineOnline: true,
@@ -596,7 +596,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         const onDismissExternalSessionOperation = vi.fn();
         const hook = await renderHook(() => useTranscriptItemRenderer(
             createRendererDeps(createRendererProps({
-                metadata: { machineId: 'machine-1' },
+                metadata: createSessionFixture().metadata,
                 onDismissExternalSessionOperation,
             })),
         ));

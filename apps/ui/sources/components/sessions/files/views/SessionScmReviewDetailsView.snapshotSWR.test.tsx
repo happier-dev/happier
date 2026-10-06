@@ -53,7 +53,7 @@ async function render(tick = 0) {
     function Probe() { pane = useAppPaneScope('session:s1'); return null; }
     const element = (nextTick: number) => <React.Fragment><Probe /><Tick tick={nextTick} /><SessionScmReviewDetailsView serverId={fixture.home.id} sessionId="s1" scopeId="session:s1" /></React.Fragment>;
     const screen = await fixture.render(element(tick));
-    return { ...screen, update: (nextTick: number) => screen.update(fixture.wrap(element(nextTick))) };
+    return { ...screen, updateElement: screen.update, update: (nextTick: number) => screen.update(fixture.wrap(element(nextTick))) };
 }
 function Tick(_props: Readonly<{ tick: number }>) { return null; }
 async function reviewProps(screen: Awaited<ReturnType<typeof render>>) {
@@ -180,7 +180,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         function Probe() { pane = useAppPaneScope('session:s1'); return null; }
         // The pane owner remains mounted to receive its child's unmount flush.
-        await screen.update(fixture.wrap(<Probe />));
+        await screen.updateElement(fixture.wrap(<Probe />));
         expect(scrollTop()).toBe(96);
     });
 

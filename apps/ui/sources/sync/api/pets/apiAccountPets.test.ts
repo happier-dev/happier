@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthCredentials } from "@/auth/storage/tokenStorage";
 import { upsertAndActivateServer } from "@/sync/domains/server/serverRuntime";
-import { resetRuntimeFetch, setRuntimeFetch } from "@/utils/system/runtimeFetch";
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from "@/utils/system/runtimeFetch";
 
 const credentials: AuthCredentials = { token: "token-1", secret: "secret-1" };
 
@@ -18,7 +18,7 @@ describe("apiAccountPets", () => {
     });
 
     it("fetches account pet metadata without requesting spritesheet bytes in the list response", async () => {
-        const fetchSpy = vi.fn<typeof fetch>(async () => (
+        const fetchSpy = vi.fn<RuntimeFetch>(async () => (
             new Response(JSON.stringify({
                 ok: true,
                 pets: [
@@ -64,7 +64,7 @@ describe("apiAccountPets", () => {
     });
 
     it("returns the typed unavailable result from a conflict response", async () => {
-        setRuntimeFetch(vi.fn<typeof fetch>(async () => (
+        setRuntimeFetch(vi.fn<RuntimeFetch>(async () => (
             new Response(JSON.stringify({
                 ok: false,
                 errorCode: "custom_pet_sync_unavailable",

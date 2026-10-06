@@ -51,7 +51,7 @@ describe('useSessionImagePreview', () => {
     afterEach(async () => { await fixture.dispose(); });
 
     it('waits for the session workspace target and retries once it becomes available', async () => {
-        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: { ...fixture.session.metadata!, machineId: null, path: null } }]);
+        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: null }]);
         const hook = await renderHook(() => useSessionImagePreview({
             sessionId: fixture.session.id, filePath: '.happier/uploads/messages/m1/file.png',
             enabled: true, cacheKey: 'sha-1', mimeType: 'image/png', sizeBytes: 3,
@@ -78,7 +78,7 @@ describe('useSessionImagePreview', () => {
             owner: { pluginId: 'acme.images', localId: 'image' }, mediaKind: 'image',
             mimeType: 'image/png', name: 'incident.png', sizeBytes: 3, sha256: 'a'.repeat(64),
         };
-        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: { ...fixture.session.metadata!, machineId: null, path: null } }]);
+        fixture.storage.getState().applySessions([{ ...fixture.session, metadata: null }]);
         const hook = await renderHook(({ staged }: { staged: ComposerContentHandleV1 }) => useSessionImagePreview({
             sessionId: '', filePath: staged.name, enabled: true, composerStagedMedia: staged,
         }), { initialProps: { staged: handle } });

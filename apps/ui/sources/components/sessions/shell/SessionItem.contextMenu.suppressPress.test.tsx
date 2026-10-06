@@ -57,7 +57,7 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const boundary = createReactNativeWebMock();
+        const boundary = await createReactNativeWebMock();
         return { ...boundary, Platform: { ...boundary.Platform, get OS() { return platformState.os; }, select: (values: Record<string, unknown>) => values[platformState.os] ?? values.default } };
     },
     router: async () => {
@@ -147,6 +147,9 @@ describe('SessionItem context menu press suppression', () => {
                         } else {
                             expect(patch.sharedMetadata.expectedVersion).toBe(wireSession.metadataVersion);
                             expect(patch.expectedOwnerMetadata).toEqual(wireSession.ownerMetadata);
+                        }
+                        if (wireSession.agentStateVersion === undefined) {
+                            throw new Error('Metadata mutation fixture requires an Agent state version');
                         }
                         const target = patch.mode === 'owner_migration' ? patch.target : patch;
                         wireSession = SessionCurrentProjectionRecordV1Schema.parse({ ...wireSession, metadataLayoutVersion: 1,

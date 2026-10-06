@@ -101,7 +101,8 @@ const focusState = vi.hoisted(() => ({ callbacks: new Set<() => void>() }));
 vi.mock('@react-navigation/native', async () => {
     const React = await import('react');
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return createReactNavigationNativeMock({
+    return {
+        ...createReactNavigationNativeMock(),
         useFocusEffect: (callback: () => void | (() => void)) => {
             React.useEffect(() => {
                 const run = () => { callback(); };
@@ -110,7 +111,7 @@ vi.mock('@react-navigation/native', async () => {
                 return () => { focusState.callbacks.delete(run); };
             }, [callback]);
         },
-    });
+    };
 });
 
 vi.mock('expo-constants', () => ({

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { flattenTestStyle, renderScreen } from '@/dev/testkit';
+import { findAllHostTestInstances, flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 
 installDropdownCommonModuleMocks({
@@ -41,7 +41,7 @@ describe('renderDropdownItemTriggerRightElement', () => {
         });
 
         const screen = await renderScreen(<>{node}</>);
-        const valueText = screen.tree.findAll((child) => child.type === 'Text' && child.props.children === 'Choose…');
+        const valueText = findAllHostTestInstances(screen.tree, (child) => child.type === 'Text' && child.props.children === 'Choose…');
         expect(valueText).toHaveLength(1);
         expect(flattenTestStyle(valueText[0]!.props.style).color).toBe('#aaa');
     });

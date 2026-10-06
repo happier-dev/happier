@@ -26,6 +26,7 @@ import type {
 import type { ComposerScopePluginPresentation } from '@/components/sessions/presentation/useComposerScopePluginPresentation';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import type { EndpointConnectivityStatus } from '@/sync/store/domains/realtime';
 import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtils';
 
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
@@ -212,7 +213,7 @@ const themeColors = {
 } as const;
 
 const routerPushSpy = vi.fn();
-let endpointConnectivityStatus: 'idle' | 'offline' | 'connecting' | 'online' | 'auth_failed' | 'shutting_down' = 'online';
+let endpointConnectivityStatus: EndpointConnectivityStatus = 'online';
 let isDataReadyState = false;
 let syncErrorState: {
     message: string;
@@ -1638,7 +1639,7 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findAllByTestId('session-cockpit-open-swipe-handle')).toHaveLength(0);
         const gesture = gestureHandlerState.gestures.find((candidate) => candidate.kind === 'pan');
         expect(gesture).toBeUndefined();
-        expect(storage.getState().localSettings.mobileWorkspaceExperienceV1).toBe('classic');
+        expect(canonicalStorage.getState().localSettings.mobileWorkspaceExperienceV1).toBe('classic');
     });
 
     it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {

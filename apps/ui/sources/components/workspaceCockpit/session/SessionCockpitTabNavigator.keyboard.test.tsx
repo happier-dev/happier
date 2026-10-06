@@ -89,7 +89,7 @@ const initialStorageState = storage.getState();
 let stopObservingPersistence: (() => void) | null = null;
 
 function renderScreen(element: React.ReactElement) {
-    return renderTestScreen(element, { wrapper: AppPaneProvider });
+    return renderTestScreen(element, { wrapper: ({ children }: React.PropsWithChildren) => <AppPaneProvider>{children}</AppPaneProvider> });
 }
 
 async function activatePersistenceRealm(serverId: string, accountId: string) {

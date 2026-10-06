@@ -215,7 +215,11 @@ describe('SCM hosting-provider plugin contributions', () => {
             await runtime.activatePluginsForValidation([pluginId]);
             const active = runtime.scmHostingProvidersById.get(pluginId + '/active');
             expect(active).toBeDefined();
-            expect(active && runtime.isPluginOccurrenceCurrent?.(pluginId, active.occurrenceId)).toBe(true);
+            if (!runtime.readPluginOccurrenceId || !runtime.isPluginOccurrenceCurrent) throw new Error('Expected admitted plugin occurrence owners');
+            const occurrenceId = runtime.readPluginOccurrenceId(pluginId);
+            if (!occurrenceId) throw new Error('Expected current SCM plugin occurrence');
+            expect(active?.occurrenceId).toBe(occurrenceId);
+            expect(runtime.isPluginOccurrenceCurrent(pluginId, occurrenceId)).toBe(true);
             expect(fixture.controller.isRuntimeRegistryCurrent(runtime)).toBe(true);
             const projection = buildPluginProjectionV2({
                 registry: runtime.contributes,

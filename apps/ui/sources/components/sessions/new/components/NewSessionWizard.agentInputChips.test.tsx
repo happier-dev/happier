@@ -102,7 +102,9 @@ describe('NewSessionWizard real AgentInput composition', () => {
         expect(input.envVarsCount).toBeUndefined();
         expect(input.envVarsPopover).toBeUndefined();
         expect(input.onEnvVarsClick).toBeUndefined();
-        const content = input.profilePopover?.renderContent({ maxHeight: 420, requestClose: () => {} });
+        const renderContent = input.profilePopover?.renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected the real Profile content renderer');
+        const content = renderContent({ maxHeight: 420, requestClose: () => {} });
         const popover = await renderScreen(<runtime.Wrapper>{content}</runtime.Wrapper>);
         expect(popover.findByType(ProfilesList).props.popoverBoundaryRef).toBe(boundaryRef);
     });
@@ -113,7 +115,6 @@ describe('NewSessionWizard real AgentInput composition', () => {
         props.footer.pathPopover = { renderContent: () => null };
         props.footer.resumePopover = { renderContent: () => null };
         props.footer.resumeSessionId = 'resume-1';
-        props.footer.onResumeClick = () => {};
         const { input } = await renderWizard(props);
         expect(input.machinePopover?.renderContent).toBeTypeOf('function');
         expect(input.pathPopover?.renderContent).toBeTypeOf('function');
@@ -149,9 +150,14 @@ describe('NewSessionWizard real AgentInput composition', () => {
         const { EnvironmentVariablesPreviewPanel } = await import('./EnvironmentVariablesPreviewPanel');
         const props = buildProps();
         const { screen, input } = await renderWizard(props);
-        const browser = presentation === 'inline' ? screen : await renderScreen(<runtime.Wrapper>
-            {input.profilePopover?.renderContent({ maxHeight: 420, requestClose: () => {} })}
-        </runtime.Wrapper>);
+        let browser = screen;
+        if (presentation === 'popover') {
+            const renderContent = input.profilePopover?.renderContent;
+            if (typeof renderContent !== 'function') throw new Error('Expected the real Profile content renderer');
+            browser = await renderScreen(<runtime.Wrapper>
+                {renderContent({ maxHeight: 420, requestClose: () => {} })}
+            </runtime.Wrapper>);
+        }
         const list: React.ComponentProps<typeof ProfilesList> = browser.findByType(ProfilesList).props;
         await act(async () => { list.onViewEnvironmentVariables?.(profile); });
         expect(props.profiles.openProfileEnvVarsPreview).not.toHaveBeenCalled();

@@ -8,7 +8,7 @@ import { installServerHookCommonModuleMocks } from './serverHookModuleTestHelper
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionState = vi.hoisted(() => ({
-  value: null as Partial<Session> | null,
+  value: null as (Omit<Partial<Session>, 'metadata'> & { metadata?: Partial<NonNullable<Session['metadata']>> }) | null,
 }));
 
 const capabilitiesState = vi.hoisted(() => ({
@@ -55,11 +55,11 @@ async function renderExecutionRunsBackendsHook(sessionId: string, serverId?: str
   const session = createSessionFixture({
     ...sessionState.value,
     serverId: serverId ?? undefined,
-    metadata: { path: '/tmp/linked', ...sessionState.value?.metadata },
+    metadata: { ...sessionState.value?.metadata, path: sessionState.value?.metadata?.path ?? '/tmp/linked', host: sessionState.value?.metadata?.host ?? 'tester.local' },
   });
   const resolvedSession = machineTargetState.value ? createSessionFixture({
     ...session,
-    metadata: { ...session.metadata, machineId: machineTargetState.value.machineId, path: machineTargetState.value.basePath },
+    metadata: { ...session.metadata, host: session.metadata?.host ?? 'tester.local', machineId: machineTargetState.value.machineId, path: machineTargetState.value.basePath },
   }) : session;
   const machine = createMachineFixture({ id: 'machine-direct', active: true });
   storage.setState({
@@ -194,7 +194,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     const exactSession = createSessionFixture({
       ...sessionState.value,
       serverId: 'server-canonical',
-      metadata: { path: '/tmp/linked', ...sessionState.value?.metadata },
+      metadata: { ...sessionState.value?.metadata, path: sessionState.value?.metadata?.path ?? '/tmp/linked', host: sessionState.value?.metadata?.host ?? 'tester.local' },
     });
     storage.setState({
       machineListByServerId: { 'server-canonical': [createMachineFixture({ id: 'machine-direct', active: true })] },

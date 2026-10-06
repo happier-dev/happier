@@ -230,6 +230,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
       });
       expect(claimed.ok).toBe(true);
       if (!claimed.ok) throw new Error(claimed.error.code);
+      if (!fixture.runtime.registry.readPluginSourceCustody) throw new Error('Expected admitted runtime source custody reader');
       const sourceCustody = fixture.runtime.registry.readPluginSourceCustody(fixture.agentPluginId);
       expect(sourceCustody?.kind).toBe('managed');
       if (sourceCustody?.kind !== 'managed') throw new Error('Physical authored Agent source is not managed');

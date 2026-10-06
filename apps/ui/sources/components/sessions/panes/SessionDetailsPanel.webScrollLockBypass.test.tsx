@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import type { ViewProps } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
@@ -13,7 +14,7 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             // React Native's host ref is the genuine DOM boundary. Keep all pane logic real.
-            View: React.forwardRef<HTMLElement, React.PropsWithChildren<Record<string, unknown>>>(
+            View: React.forwardRef<HTMLElement, ViewProps>(
                 function DomBackedView(props, ref) {
                     React.useImperativeHandle(ref, () => paneElement);
                     return React.createElement('View', props, props.children);

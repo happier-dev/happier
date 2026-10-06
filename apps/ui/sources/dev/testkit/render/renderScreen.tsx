@@ -29,15 +29,18 @@ declare module 'react-test-renderer' {
     }
 }
 
-function nodeMatchesTestId(node: ReactTestInstance, testID: string): boolean {
+function nodeMatchesTestId(node: Pick<ReactTestInstance, 'props'>, testID: string): boolean {
     return node.props?.testID === testID || node.props?.['data-testid'] === testID;
 }
 
+type HostTestInstance = Omit<ReactTestInstance, 'type'> & Readonly<{ type: string }>;
+
 export function findAllHostTestInstances(
     scope: Pick<ReactTestInstance, 'findAll'>,
-    predicate: (node: ReactTestInstance) => boolean,
+    predicate: (node: HostTestInstance) => boolean,
 ): ReactTestInstance[] {
-    return scope.findAll((node) => typeof node.type === 'string' && predicate(node));
+    // The renderer SDK's ElementType excludes Native host names; the actual boundary is guarded here.
+    return scope.findAll((node) => typeof node.type === 'string' && predicate(node as HostTestInstance));
 }
 
 function findAllByTestId(root: ReactTestInstance, testID: string): ReactTestInstance[] {
@@ -220,8 +223,8 @@ export function findTestInstanceByTypeWithProps(
 
 type RenderScreenQueryHelpers = Readonly<{
     root: ReactTestInstance;
-    findByType: (type: unknown) => ReactTestInstance;
-    findAllByType: (type: unknown) => ReactTestInstance[];
+    findByType: ReactTestRenderer['findByType'];
+    findAllByType: ReactTestRenderer['findAllByType'];
     findByProps: (props: Record<string, unknown>) => ReactTestInstance;
     findAllByProps: (props: Record<string, unknown>) => ReactTestInstance[];
     find: (predicate: (node: ReactTestInstance) => boolean) => ReactTestInstance;

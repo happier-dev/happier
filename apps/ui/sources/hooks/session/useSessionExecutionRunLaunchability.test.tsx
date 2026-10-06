@@ -94,7 +94,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         const { storage } = await import('@/sync/domains/state/storage');
         initialStorageState.sessions = storage.getState().sessions;
         storage.setState({ sessions: {} });
-        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude' } });
     });
     afterEach(async () => {
         await standardCleanup();
@@ -120,7 +120,7 @@ describe('useSessionExecutionRunLaunchability', () => {
 
         // An inactive Session whose Machine is unreachable cannot resume, so it cannot start agents.
         machineReachabilitySpy.mockImplementation(() => ({ machineReachable: false }));
-        sessionState.value = createSessionFixture({ id: 'session-1', active: false, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
+        sessionState.value = createSessionFixture({ id: 'session-1', active: false, serverId: 'server-explicit', metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude' } });
         const offline = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
         expect(offline.getCurrent()).toMatchObject({ canShowExecutionRunLauncher: false, launchUnavailableReason: 'machineOffline' });
         await offline.unmount();
@@ -132,7 +132,7 @@ describe('useSessionExecutionRunLaunchability', () => {
         await stopped.unmount();
 
         // A Session started outside Happier can start agents only while Happier's runner is attached.
-        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { flavor: 'claude' } });
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: 'server-explicit', metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude' } });
         externalSessionRuntimeSpy.mockImplementation(() => ({
             externalSessionLink: { v: 1 } as any,
             status: { runnerActive: false },
@@ -159,7 +159,7 @@ describe('useSessionExecutionRunLaunchability', () => {
 
     it('refreshes backend lookup when the preferred session server changes', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: undefined, metadata: { flavor: 'claude' } });
+        sessionState.value = createSessionFixture({ id: 'session-1', active: true, serverId: undefined, metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude' } });
         storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId: 'server-canonical' }) } });
         const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
         const hook = await renderHook((session: typeof sessionState.value) => useSessionExecutionRunLaunchability('session-1', session), {
@@ -194,7 +194,7 @@ describe('useSessionExecutionRunLaunchability', () => {
             id: 'same-session',
             active: true,
             serverId: 'home-a',
-            metadata: { flavor: 'claude', machineId: 'machine-a' },
+            metadata: { path: '/tmp/project', host: 'tester.local', flavor: 'claude', machineId: 'machine-a' },
         });
         sessionMachineTargetState.value = { machineId: 'machine-b', basePath: '/home-b/workspace' };
 
@@ -224,6 +224,7 @@ describe('useSessionExecutionRunLaunchability', () => {
             active: false,
             serverId: 'server-explicit',
             metadata: {
+                host: 'tester.local',
                 flavor: 'claude',
                 machineId: 'machine-stale',
                 path: '/tmp/stale',
@@ -246,7 +247,7 @@ describe('useSessionExecutionRunLaunchability', () => {
             active: false,
             serverId: 'server-explicit',
             metadataLayoutVersion: 1,
-            metadata: {},
+            metadata: { path: '', host: '' },
             ownerMetadataView: {
                 path: '/tmp/project',
                 host: 'devbox',

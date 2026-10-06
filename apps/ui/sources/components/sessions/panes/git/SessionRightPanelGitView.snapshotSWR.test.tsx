@@ -88,7 +88,7 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
             const count = rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length;
             expect(count).toBeGreaterThan(0);
-            await act(async () => vi.advanceTimersByTimeAsync(60_000));
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
             expect(rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length).toBeGreaterThan(count);
         } finally {
             vi.useRealTimers();

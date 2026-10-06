@@ -8,6 +8,7 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { projectAgentInputAttachmentRowItems } from './agentInputContracts';
+import { findAllHostTestInstances } from '@/dev/testkit';
 
 vi.mock('expo-haptics', () => ({
     impactAsync: vi.fn(async () => {}),
@@ -153,7 +154,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const scrollViews = screen.tree.root.findAll((node) => (
+        const scrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal === true
         ));
         expect(scrollViews.length).toBeGreaterThan(0);
@@ -342,7 +343,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const verticalScrollViews = screen.tree.root.findAll((node) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
         expect(verticalScrollViews.length).toBeGreaterThan(0);
@@ -379,7 +380,7 @@ describe('AgentInput (action bar auto layout)', () => {
             />,
         );
 
-        const verticalScrollViews = screen.tree.root.findAll((node) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
         expect(verticalScrollViews).toHaveLength(0);
@@ -416,7 +417,7 @@ describe('AgentInput (action bar auto layout)', () => {
             typeof node?.props?.testID === 'string'
             && node.props.testID.startsWith('native-content-body:')
         ));
-        const verticalScrollViews = screen.tree.root.findAll((node) => (
+        const verticalScrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal !== true
         ));
 
@@ -671,7 +672,7 @@ describe('AgentInput (action bar auto layout)', () => {
         );
 
         const pathChip = screen.tree.root.findByProps({ testID: 'agent-input-path-chip' });
-        const textNodes = pathChip.findAll((node) => node?.type === 'Text');
+        const textNodes = findAllHostTestInstances(pathChip, (node) => node?.type === 'Text');
         expect(textNodes.length).toBeGreaterThan(0);
         storageSettings = { ...storageSettings, agentInputChipDensity: 'labels' };
     });

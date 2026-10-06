@@ -76,7 +76,6 @@ describe('native prompt loop non-admission recovery', () => {
                 sessionId: 'session-1',
                 metadata: createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),
                 overrides: {
-                    sendSessionEvent: vi.fn(),
                     enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
                     getLastObservedMessageSeq: () => 0,
                     ensureMetadataSnapshot: async () => createTestMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 0 }),

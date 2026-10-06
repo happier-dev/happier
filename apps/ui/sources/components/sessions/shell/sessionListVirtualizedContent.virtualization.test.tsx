@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 
 // Genuine third-party render boundary; none of these list tests renders Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({

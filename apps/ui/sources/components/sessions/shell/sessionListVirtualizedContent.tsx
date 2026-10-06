@@ -14,7 +14,6 @@ import { SessionListViewEmptyState } from './SessionListViewEmptyState';
 import type { SessionListQueryPresentation } from '@/sync/domains/session/listing/sessionListIndexPresentation';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListViewContext, SessionListViewFilters } from './search/sessionListViewFilters';
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;

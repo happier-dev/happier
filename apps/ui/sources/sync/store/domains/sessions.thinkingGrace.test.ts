@@ -152,8 +152,6 @@ describe('sessions domain: thinking grace', () => {
     });
 
     it('starts thinkingGraceUntil only after thinking turns off (prevents UI flicker without streaming churn)', async () => {
-        mockSessionsDomainBoundaries();
-
         const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
@@ -236,8 +234,6 @@ describe('sessions domain: thinking grace', () => {
     });
 
     it('clears optimistic thinking and grace when a terminal primary turn projection arrives', async () => {
-        mockSessionsDomainBoundaries();
-
         const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
@@ -314,8 +310,6 @@ describe('sessions domain: thinking grace', () => {
     });
 
     it('does not keep legacy thinking or start grace after a terminal turn projection', async () => {
-        mockSessionsDomainBoundaries();
-
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
         vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
         vi.spyOn(globalThis, 'setTimeout');

@@ -317,7 +317,7 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         const homeB = await boundary.addHome('https://read-cursor-b.example.test', 'account-a');
         const activeSession = { ...createPlainSession({ sessionId }), lastViewedSessionSeq: 1 };
         const homeBSession = createSessionListRenderableSessionFixture({
-            ...createPlainSession({ sessionId }), serverId: homeB.id, lastViewedSessionSeq: 0,
+            ...createPlainSession({ sessionId }), lastViewedSessionSeq: 0,
         });
         storage.getState().applySessions([activeSession]);
         storage.getState().applyServerScopedSessionListRows(homeB.id, [homeBSession], {

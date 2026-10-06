@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentNativeResumeIdentityV1Schema, buildQualifiedPluginContributionKey, computeWorkspaceSyncPolicyDigest, deriveSessionCreationTagV1, MACHINE_PLAIN_DATA_KEY_MARKER,
   PluginManifestV2Schema, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionCurrentProjectionRecordV1Schema,
-  type SessionRollbackTarget } from '@happier-dev/protocol';
+  type ActionExecutorContext, type SessionRollbackTarget } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -19,6 +19,7 @@ import { getAgentCore, publishRuntimeCapabilities } from '@happier-dev/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 const outgoing: SocketRpcRequestPayload[] = [];
 let daemonAnswer: (request: SocketRpcRequestPayload) => unknown = () => { throw new Error('Unexpected daemon request'); };
@@ -264,8 +265,10 @@ describe('default Action executor Session lifecycle contracts', () => {
 
   it('reaches the source daemon when the owner metadata projection is unavailable on this device', async () => {
     const session = installSession();
+    const metadata = parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId: 'codex' } }, 1);
+    if (!metadata) throw new Error('Expected recipient-safe Session metadata');
     storage.setState({ sessions: { [session.id]: { ...session, metadataLayoutVersion: 1,
-      metadata: { v: 1, agentPresentation: { agentId: 'codex' } }, ownerMetadataView: null } } });
+      metadata, ownerMetadataView: null } } });
     daemonAnswer = () => ({ handoffId: 'handoff_1', status: { handoffId: 'handoff_1', status: 'completed', phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'none' } });
     expect(await executor().execute('session.handoff', { sessionId: 'sess_parent', targetMachineId: 'machine_2' }, context())).toMatchObject({ ok: true });
     expect(rpcRequests(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)[0]?.params).toMatchObject({ sessionId: 'sess_parent', targetMachineId: 'machine_2' });
@@ -277,8 +280,8 @@ describe('default Action executor Session lifecycle contracts', () => {
     const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const input = { sessionId: 'sess_parent', targetMachineId: 'machine_2', targetPath: '/target/repo', workspaceAction: {
       kind: 'create_relationship', mode: 'mirror_exactly', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, flushBeforeCommit: true } } as const;
-    const approval = { v: 1 as const, consequences: ['replace_nonempty_workspace_target'] as const, serverId,
-      machineId: 'machine_2', canonicalRoot: '/target/repo', rootFingerprint: 'a'.repeat(64), operationId: 'handoff-action-1' };
+    const approval = { v: 1, consequences: ['replace_nonempty_workspace_target'], serverId,
+      machineId: 'machine_2', canonicalRoot: '/target/repo', rootFingerprint: 'a'.repeat(64), operationId: 'handoff-action-1' } satisfies NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
     daemonAnswer = (request) => request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`)
       ? { type: 'approval_required', approval }
       : { handoffId: 'handoff_1', status: { handoffId: 'handoff_1', status: 'completed', phase: 'finalizing', recoveryActions: [] }, workspace: { kind: 'relationship', relationshipId: 'relationship_1', created: false } };
@@ -325,8 +328,10 @@ describe('default Action executor Session lifecycle contracts', () => {
     const native = await createPluginTestkit({ manifest: grokManifest, module: grokPlugin });
     const registered = native.registration('agents', 'grok');
     if (!registered?.factory || !registered.sessionRunnerFactory) throw new Error('Grok runtime did not register');
+    const sessionCapabilities = grok.capabilities.sessions;
+    if (!sessionCapabilities) throw new Error('Grok declaration has no Session capabilities');
     const externalPlugin = definePlugin({ id: 'acme.lifecycle', version: '1.0.0', agents: { lifecycle: {
-      declaration: { title: 'External Grok adapter', runtime: { kind: 'custom' }, primary: 'sessions', capabilities: grok.capabilities },
+      declaration: { title: 'External Grok adapter', runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { ...grok.capabilities, sessions: sessionCapabilities } },
       factory: registered.factory, sessionRunnerFactory: registered.sessionRunnerFactory,
     } } });
     const contributed = await createPluginTestkit({ manifest: externalPlugin.manifest, module: externalPlugin });

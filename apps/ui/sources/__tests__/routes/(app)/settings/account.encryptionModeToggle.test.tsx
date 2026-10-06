@@ -762,8 +762,10 @@ async function mountCurrentEncryptionHome(params: Readonly<{
             activeWorker?.onmessage?.(new MessageEvent('message', { data: cloned }));
         });
         await import('@/auth/password/passwordKdf.worker');
-        const workerHandler = globalThis.onmessage;
-        if (!workerHandler) throw new Error('Expected canonical password worker handler');
+        // This process-global callback is the Worker port, not a Window handler.
+        const registeredWorkerHandler: unknown = globalThis.onmessage;
+        if (typeof registeredWorkerHandler !== 'function') throw new Error('Expected canonical password worker handler');
+        const workerHandler = (event: MessageEvent<unknown>): unknown => registeredWorkerHandler(event);
         vi.stubGlobal('Worker', PasswordWorkerPort);
         restorePasswordWorker = () => {
             vi.stubGlobal('Worker', previousWorker);
@@ -839,7 +841,9 @@ async function mountCurrentEncryptionHome(params: Readonly<{
                     accountVersion += 1;
                     if (migration.keyProof) {
                         signingKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(new Uint8Array(Buffer.from(migration.keyProof.publicKey, 'base64')));
-                        contentKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(new Uint8Array(Buffer.from(migration.keyProof.contentPublicKey, 'base64')));
+                        const contentPublicKey = migration.keyProof.contentPublicKey;
+                        if (typeof contentPublicKey !== 'string') throw new Error('Expected migration Account content-key binding');
+                        contentKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(new Uint8Array(Buffer.from(contentPublicKey, 'base64')));
                     }
                 }
                 return Response.json({ success: true, mode, accountVersion, settingsVersion });
@@ -966,6 +970,7 @@ describe('Account encryption current Home authority', () => {
             const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
             const encryption = await createEncryptionFromAuthCredentials(home.credentials);
             const content = migration.settingsContent;
+            if (!content) throw new Error('Expected migrated Settings envelope');
             expect(content.t).toBe('encrypted');
             if (content.t !== 'encrypted') throw new Error('Expected encrypted Settings');
             await expect(encryption.decryptRaw(content.c)).resolves.toMatchObject({ clientEncryptionRequirementV1: 'follow_account' });
@@ -1014,7 +1019,7 @@ describe('Account encryption current Home authority', () => {
         vi.stubGlobal('window', { ...previousWindow, location: { assign: navigation } });
         const { Linking } = await import('react-native');
         const canOpen = vi.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
-        const open = vi.spyOn(Linking, 'openURL').mockResolvedValue();
+        const open = vi.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
         try {
             const { TokenStorage: currentTokens } = await import('@/auth/storage/tokenStorage');
             await currentTokens.clearPendingExternalAuth();

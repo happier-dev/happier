@@ -18,7 +18,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch, setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -101,7 +101,7 @@ type TestDesktopPetOverlayWindowStatePayload = Readonly<{
     activity?: unknown;
     layout?: unknown;
 }>;
-const runtimeFetchMock = vi.hoisted(() => vi.fn<typeof fetch>());
+const runtimeFetchMock = vi.hoisted(() => vi.fn<RuntimeFetch>());
 const getCredentialsMock = vi.hoisted(() => vi.fn());
 const currentnessResponse = vi.hoisted(() => ({ current: null as Response | null }));
 const assetResponseMock = vi.hoisted(() => vi.fn());

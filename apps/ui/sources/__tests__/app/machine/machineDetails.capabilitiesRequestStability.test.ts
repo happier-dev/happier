@@ -3,7 +3,7 @@ import { createMachineFixture, flushHookEffects, standardCleanup } from '@/dev/t
 import { installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { arrangeMachineDetailsHomeForTests, initializeMachineDetailsRuntimeForTests } from './machineDetailsRuntimeHarness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { CHECKLIST_IDS } from '@/sync/api/capabilities/checklistIds';
+import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 
 const route = { params: { id: 'machine-1' } as Record<string, string> };
 installTerminalRouteCommonModuleMocks({

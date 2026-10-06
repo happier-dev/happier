@@ -87,7 +87,9 @@ describe('/restore/lost-access', () => {
             serverId: capturedHome.serverId, serverUrl: capturedHome.serverUrl,
         });
         expect(pending?.secret).toEqual(expect.any(String));
-        const secret = decodeBase64(pending!.secret, 'base64url');
+        const encodedSecret = pending?.secret;
+        if (typeof encodedSecret !== 'string') throw new Error('Expected retained reset secret');
+        const secret = decodeBase64(encodedSecret, 'base64url');
         expect(secret).toHaveLength(32);
         const publicKey = encodeBase64(sodium.crypto_sign_seed_keypair(secret).publicKey);
         expect(oauthRequests).toHaveLength(1);

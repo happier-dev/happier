@@ -597,6 +597,7 @@ describe('ProviderIdentityItems', () => {
             expect(itemProps().find((p) => p.title === 'GitHub' && typeof p.rightElement?.props.onPress === 'function')).toBeTruthy();
         });
         const connectItem = itemProps().find((p) => p.title === 'GitHub' && typeof p.rightElement?.props.onPress === 'function');
+        if (!connectItem) throw new Error('GitHub connect action was not rendered');
 
         await act(async () => {
             await connectItem.rightElement.props.onPress();

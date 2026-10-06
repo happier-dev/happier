@@ -37,7 +37,7 @@ describe('MachineDetailScreen hydration', () => {
         await act(async () => {
             deferred!.resolve([createMachineFixture({
                 id: 'machine-missing', activeAt: Date.now(),
-                metadata: { displayName: 'Recovered Machine', host: 'host', platform: 'darwin' },
+                metadata: { ...createMachineFixture().metadata!, displayName: 'Recovered Machine', host: 'host', platform: 'darwin' },
             })]);
             await flushHookEffects({ cycles: 2, turns: 2 });
         });
@@ -56,7 +56,7 @@ describe('MachineDetailScreen hydration', () => {
     it('retries an unavailable machine without using the pull-to-refresh spinner', async () => {
         const offline = createMachineFixture({
             id: 'machine-missing', active: false, activeAt: Date.now() - 86_400_000,
-            metadata: { displayName: 'Offline Machine', host: 'host', platform: 'darwin' },
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Offline Machine', host: 'host', platform: 'darwin' },
         });
         home = await arrangeMachineDetailsHomeForTests(network, {
             serverUrl: 'https://machine-hydration-offline.example.test', machines: [offline],

@@ -7,6 +7,7 @@ import {
     DaemonContributionRegistryProjectionDescribeResponseSchema,
     MACHINE_PLAIN_DATA_KEY_MARKER,
     SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
+    PluginProjectionV2Schema,
     type PluginProjectedComposerAttachmentEntryV1,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
@@ -199,7 +200,7 @@ const httpWrites: HttpWrite[] = [];
 const rpcCalls: RpcCall[] = [];
 let enqueueResponse: (write: HttpWrite) => Promise<Response>;
 let resumeResponse: (call: RpcCall) => Promise<ResumeSessionResult>;
-let projection: PluginProjectionV2 = { v: 2, generation: 1, agentsById: {}, installedPackagesById: {}, familiesById: {} };
+let projection: PluginProjectionV2 = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {} });
 
 function configureSocket(socket: Socket) {
     // Socket.IO is the external transport boundary. Its actual listener and
@@ -311,9 +312,9 @@ const composerAttachments = [{
     key: '42', value: { issueId: 42 }, presentation: { label: 'Issue #42', typeLabel: 'Issue' },
 }];
 async function setComposerAttachmentProjection(entriesById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>>, generation = 1) {
-    projection = { v: 2, generation, agentsById: {}, installedPackagesById: {}, familiesById: {
+    projection = PluginProjectionV2Schema.parse({ v: 2, generation, familiesById: {
         composerAttachments: { family: 'composerAttachments', entriesById },
-    } };
+    } });
     publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm-target', serverId: runtime.serverId });
     await loadDaemonMergedProjectionCacheEntry({ machineId: 'm-target', serverId: runtime.serverId });
     await flushHookEffects();
@@ -363,17 +364,17 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         httpWrites.length = 0;
         rpcCalls.length = 0;
-        projection = { v: 2, generation: 1, agentsById: {}, installedPackagesById: {}, familiesById: {} };
+        projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {} });
         clearDaemonMergedProjectionCacheForTests();
         enqueueResponse = async write => acceptedEnqueue(write);
         resumeResponse = async () => ({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'Daemon RPC is not available' });
         storage.setState({ settings: { ...storage.getState().settings,
-            experiments: true, featureToggles: {}, codexBackendMode: 'acp', sessionMessageSendMode: 'server_pending',
+            experiments: true, featureToggles: {}, sessionMessageSendMode: 'server_pending',
             sessionBusySteerSendPolicy: 'steer_immediately', sessionInactiveResumePolicy: 'when_available',
         }, localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: false } });
         storage.getState().applySessions([createSessionFixture({
             id: 's1', serverId: runtime.serverId, active: false, activeAt: 100, presence: 0, seq: 0,
-            pendingVersion: 2, metadata: { machineId: 'm-target', flavor: 'codex', version: '999.0.0',
+            pendingVersion: 2, metadata: { machineId: 'm-target', host: 'tester.local', flavor: 'codex', version: '999.0.0',
                 path: '/tmp/target', homeDir: '/tmp', codexSessionId: 'codex-session-1' },
         })]);
         setMachineOnline(true);

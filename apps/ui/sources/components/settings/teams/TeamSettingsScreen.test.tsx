@@ -105,6 +105,7 @@ async function cancelApprovalOnHome(serverId: string) {
     try {
         const artifact = await context.fetchArtifact(APPROVAL_ARTIFACT_ID);
         if (!artifact) throw new Error('approval_artifact_missing');
+        if (typeof artifact.body !== 'string') throw new Error('approval_artifact_body_not_json_text');
         const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
         const canceled = ApprovalRequestV2Schema.parse({ ...request, status: 'canceled', updatedAtMs: Date.now() });
         await context.updateArtifact(artifact.id, buildApprovalRequestArtifactHeaderV1(canceled), JSON.stringify(canceled), artifact);

@@ -8,7 +8,7 @@ import { flushHookEffects, type FlushHookEffectsOptions } from '../hooks/flushHo
 export type RenderWithAppProvidersOptions = Readonly<{
     wrapper?: React.ComponentType<React.PropsWithChildren>;
     flushOptions?: FlushHookEffectsOptions;
-    createNodeMock?: renderer.TestRendererOptions['createNodeMock'];
+    createNodeMock?: (element: React.ReactElement<Record<string, unknown>>) => unknown;
 }>;
 
 export type RenderWithAppProvidersResult = Readonly<{
@@ -48,7 +48,8 @@ export async function renderWithAppProviders(
 ): Promise<RenderWithAppProvidersResult> {
     let tree!: renderer.ReactTestRenderer;
     const rendererOptions = options.createNodeMock
-        ? { createNodeMock: options.createNodeMock }
+        // React supplies an object props bag; the SDK erases it to unknown in React 19.
+        ? { createNodeMock: options.createNodeMock as renderer.TestRendererOptions['createNodeMock'] }
         : undefined;
 
     await act(async () => {

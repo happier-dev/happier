@@ -187,9 +187,10 @@ describe('SessionDetailsPanel browser product mount', () => {
         expect(caller.lifetime.isCurrent()).toBe(true);
         expect(screen.tree.findByType(SessionBoardDetailsSurface).props.callerHostedHtmlRuntime).toBe(caller);
         const session = storage.getState().sessions.s1;
-        if (!session.access) throw new Error('Expected canonical Session access');
+        const access = session.access;
+        if (!access) throw new Error('Expected canonical Session access');
         await act(async () => storage.getState().applySessions([{ ...session, access: {
-            ...session.access, capabilities: { ...session.access.capabilities, readTranscript: false },
+            ...access, capabilities: { ...access.capabilities, readTranscript: false },
         } }]));
         expect(caller.lifetime.isCurrent()).toBe(false);
     });

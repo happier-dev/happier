@@ -123,7 +123,10 @@ async function renderIndex(mode: 'split' | 'stacked' | null) {
     capturedProfilesListProps = null;
     routerMock.push.mockClear();
     return renderInCollectionLayout(
-        React.createElement(InjectedAuthProvider, { credentials: account.credentials }, React.createElement(ProfileSettingsIndex)),
+        React.createElement(InjectedAuthProvider, {
+            credentials: account.credentials,
+            children: React.createElement(ProfileSettingsIndex),
+        }),
         mode,
     );
 }

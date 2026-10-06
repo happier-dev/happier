@@ -1741,7 +1741,7 @@ describe('retained global Voice Run authority', () => {
       const retainedPolicy = { assistantLanguage: 'de-DE', welcome: { enabled: true, mode: 'on_first_turn' as const } };
       const retainedRun = ExecutionRunPublicStateSchema.parse(buildExecutionRunPublicState({ runId: 'run_legacy',
         transcript: { persistenceMode: 'persistent', epoch: 1 }, voicePolicy: retainedPolicy,
-        resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, providerSessionId: 'vs_legacy' },
+        resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, providerSessionId: 'vs_legacy' },
       }));
       const metadata = parseVoiceAgentRunMetadataV1(buildVoiceAgentRunMetadataV1({ runId: 'run_legacy',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resumeHandle: retainedRun.resumeHandle ?? null, updatedAtMs: 1 }));

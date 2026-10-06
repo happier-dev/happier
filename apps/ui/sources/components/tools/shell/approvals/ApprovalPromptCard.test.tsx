@@ -1,7 +1,7 @@
 import { renderWithSessionTranscriptSource, createTestSessionTranscriptSource } from '@/dev/testkit';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema, ApprovalRequestV2Schema, ARTIFACT_PLAIN_DATA_KEY_MARKER, API_TOKEN_FULL_GRANT_V1, buildApprovalRequestArtifactHeaderV1, computeExternalActionRequestEnvelopeDigestV1, encodePlainArtifactStoredContent, signExternalActionApprovalInputV1, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { ApprovalRequestSchema, ApprovalRequestV2Schema, ARTIFACT_PLAIN_DATA_KEY_MARKER, API_TOKEN_FULL_GRANT_V1, StrictJsonValueSchema, buildApprovalRequestArtifactHeaderV1, computeExternalActionRequestEnvelopeDigestV1, encodePlainArtifactStoredContent, signExternalActionApprovalInputV1, type ApprovalRequest, type ApprovalRequestV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
 import tweetnacl from 'tweetnacl';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -174,7 +174,7 @@ function withApiAdmission(request: ApprovalRequestV2): ApprovalRequestV2 {
             grant: API_TOKEN_FULL_GRANT_V1, machineId: origin.machineId, actionId: request.actionId,
             requestId: origin.requestId, target: origin.target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
-                v: 1, requestId: origin.requestId, target: origin.target, input: request.actionArgs,
+                v: 1, requestId: origin.requestId, target: origin.target, input: StrictJsonValueSchema.parse(request.actionArgs),
             }),
         },
     };

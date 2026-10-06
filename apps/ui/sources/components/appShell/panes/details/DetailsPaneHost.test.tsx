@@ -35,7 +35,7 @@ async function renderScreen(element: React.ReactElement) {
     return currentScreen;
 }
 function hostProps(): React.ComponentProps<typeof MultiPaneHostWithBottom> {
-    // Query the real layout host; React TestRenderer's SDK props are untyped.
+    // Query the real layout host through the component-typed renderer boundary.
     return currentScreen.root.findByType(MultiPaneHostWithBottom).props;
 }
 function useSettings(settings: Partial<ReturnType<typeof storage.getState>['localSettings']>) {

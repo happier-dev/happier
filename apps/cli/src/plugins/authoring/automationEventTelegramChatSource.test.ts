@@ -17,6 +17,7 @@ describe('Telegram chat Automation Event source', () => {
         });
         try {
         const registry = fixture.registry.contributes;
+        if (!registry.occurrenceIdsByPluginId) throw new Error('Expected admitted plugin occurrence projection');
         const occurrenceId = registry.occurrenceIdsByPluginId[PLUGIN_ID];
         expect(occurrenceId).toBeTruthy();
         expect(registry.automationEligibleEvents).toEqual([

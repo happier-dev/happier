@@ -97,8 +97,9 @@ async function seedCockpitState(element: React.ReactNode) {
         sessionCockpitSwipeAlwaysSessionsEnabled: swipeSettingsState.always,
         sessionCockpitSwipeNavigationEnabled: swipeSettingsState.swipe,
     }, isDataReady: true });
-    storage.getState().applySettingsLocal({ sessionCockpitBarSurfaceIds: cockpitPinsState.value,
-        navigationSurfacePlacementsV1: surfacePlacementsState.value });
+    storage.setState({ localSettings: { ...storage.getState().localSettings,
+        sessionCockpitBarSurfaceIds: cockpitPinsState.value,
+        navigationSurfacePlacementsV1: surfacePlacementsState.value } });
     if (route) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };

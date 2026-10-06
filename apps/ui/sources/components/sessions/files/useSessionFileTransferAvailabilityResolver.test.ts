@@ -152,7 +152,7 @@ describe('useSessionFileTransferAvailabilityResolver', () => {
         installTransferProjection({ features: transferFeatures({ transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } }) });
         const hook = await renderHook(() => useSessionFileTransferAvailabilityResolver('s1'));
         expect(hook.getCurrent()(64)).toBe(false);
-        await act(async () => installTransferProjection({ features: transferFeatures({ peerMediation: { enabled: false } }) }));
+        await act(async () => installTransferProjection({ features: transferFeatures({ peerMediation: { enabled: false, observability: { enabled: false } } }) }));
         expect(hook.getCurrent()(64)).toBe(false);
         await hook.unmount();
     });

@@ -36,7 +36,9 @@ beforeEach(async () => {
     ({ PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces'));
     ({ MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom'));
     const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId });
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', serverId: runtime.serverId })]);
+    const machine = createMachineFixture({ id: 'machine-1' });
+    storage.getState().applyMachines([machine]);
+    storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId, [runtime.serverId]: [machine] } });
     storage.getState().applySessions([{ ...session, metadata: session.metadata
         ? { ...session.metadata, machineId: 'machine-1' } : null }]);
     storage.setState({ localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: true } });
@@ -278,7 +280,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(runtime.pane.scopeState.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
+        expect(runtime.pane.scopeState?.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
     });
 
     it('stages a Project full-bleed details destination without enabling a docked details pane', async () => {
@@ -333,7 +335,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(runtime.pane.scopeState.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
+        expect(runtime.pane.scopeState?.details.overlay).toMatchObject({ destination: detailsPlacement.binding.destination });
     });
 
     it('hands an admitted right-pane open to the AppPane bottom selection owner without persisting input', async () => {
@@ -376,7 +378,7 @@ describe('AppPaneScopeHost plugin destinations', () => {
             })).resolves.toEqual({ ok: true });
         });
 
-        expect(runtime.pane.scopeState.bottom.selectedDestination).toEqual({
+        expect(runtime.pane.scopeState?.bottom.selectedDestination).toEqual({
             kind: 'plugin', destination: bottomPlacement.binding.destination,
         });
         expect(JSON.stringify(storage.getState().localSettings.appPaneScopesV1)).not.toContain('run-1');

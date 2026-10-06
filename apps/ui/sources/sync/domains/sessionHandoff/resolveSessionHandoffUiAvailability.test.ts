@@ -238,7 +238,7 @@ describe('resolveSessionHandoffUiAvailability', () => {
     it('uses an explicitly reachable machine target even when the session cache reader is stale', () => {
         storage.setState({ machines: { 'stale-machine': createMachineFixture({ id: 'stale-machine' }) },
             sessions: { 'session-1': createSessionFixture({ id: 'session-1',
-            metadata: { machineId: 'stale-machine', path: '/tmp/stale' } }) }, machineListByServerId: {
+            metadata: { ...createSessionFixture().metadata!, machineId: 'stale-machine', path: '/tmp/stale' } }) }, machineListByServerId: {
             'server-explicit': [createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),

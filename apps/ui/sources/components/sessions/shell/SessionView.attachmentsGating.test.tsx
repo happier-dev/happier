@@ -69,6 +69,7 @@ const sessionState = vi.hoisted(() => ({
     serverId: 'server-1',
     metadata: {
       machineId: 'm1',
+      host: 'tester.local',
       flavor: 'codex',
       version: '0.0.0',
       path: '/tmp',
@@ -88,7 +89,6 @@ const modalAlertSpy = vi.hoisted(() => vi.fn());
 installSessionShellCommonModuleMocks({
   reactNative: async () =>
     createReactNativeWebMock({
-      Platform: { OS: 'ios' },
       AppState: { currentState: 'active', addEventListener: vi.fn(() => ({ remove() {} })) },
       View: 'View',
       Text: 'Text',
@@ -406,6 +406,7 @@ describe('SessionView attachments gating', () => {
       active: true,
       metadata: {
         machineId: 'm1',
+        host: 'tester.local',
         flavor: 'codex',
         version: '0.0.0',
         path: '/tmp',

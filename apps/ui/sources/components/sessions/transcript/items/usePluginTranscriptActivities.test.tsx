@@ -109,7 +109,7 @@ const projection: PluginUiProjectionModel = Object.freeze({
 
 function response(
     value: unknown,
-    digest: string,
+    digest: Extract<DaemonPluginUiResourceReadResponse, { ok: true }>['digest'],
     resource: Readonly<{ pluginId: string; localId: string }> = {
         pluginId: 'acme.preview',
         localId: 'live-activity',
@@ -1009,6 +1009,7 @@ describe('plugin transcript Activity Resource projection', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         // React's renderer supports the runtime flag before its external types expose it.
         const strictModeOptions: renderer.TestRendererOptions & { unstable_strictMode: true } = {
+            createNodeMock: () => null,
             unstable_strictMode: true,
         };
         await act(async () => {

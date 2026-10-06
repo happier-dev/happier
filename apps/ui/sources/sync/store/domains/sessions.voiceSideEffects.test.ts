@@ -95,8 +95,6 @@ describe('sessions domain: no voice side effects', () => {
     });
 
     it('reconciles cached Request interrupted placeholders back to pending on reload even when agentStateVersion is unchanged', async () => {
-        mockSessionsDomainBoundaries();
-
         const { createReducer } = await import("@happier-dev/session-core/reducer");
         const { createSessionsDomain } = await import('./sessions');
         const { get, domain } = createHarness(createSessionsDomain, createReducer);

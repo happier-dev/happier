@@ -37,7 +37,7 @@ describe('foreground Connected Account admission through the applied plugin runt
       const nativeHome = join(root, 'persistent-codex-home');
       let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
       let cleanupAdmission: (() => void | Promise<void>) | null = null;
-      let cleanupMaterialization: (() => void | Promise<void>) | null = null;
+      const materializationCleanup: { current: (() => void | Promise<void>) | null } = { current: null };
       try {
         await mkdir(nativeHome, { recursive: true });
         env.patch({ HAPPIER_HOME_DIR: home, CODEX_HOME: nativeHome });
@@ -180,7 +180,7 @@ describe('foreground Connected Account admission through the applied plugin runt
                 purposes: projection.purposes, bindings: projection.bindings,
               }),
             });
-            cleanupMaterialization = materialized ? async () => {
+            materializationCleanup.current = materialized ? async () => {
               await materialized.cleanupOnExit?.();
               await materialized.materializationPurposeLease?.dispose();
             } : null;
@@ -214,7 +214,7 @@ describe('foreground Connected Account admission through the applied plugin runt
             await cleanupAdmission?.();
           } finally {
             try {
-              await cleanupMaterialization?.();
+              await materializationCleanup.current?.();
             } finally {
               phase('runtime-dispose-start');
               await runtime?.dispose();

@@ -127,7 +127,7 @@ beforeEach(async () => {
     machineRpc.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1 }) });
     connection = await restoreServerAccountForTest({ serverUrl: 'http://workflow-picker.test', accountId: 'workflow-picker-account' });
     home = await serveActionHomes({ homes: [{ key: 'picker', serverUrl: 'http://workflow-picker.test', accountId: 'workflow-picker-account' }],
-        route: async (request) => {
+        route: (request) => {
             if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (request.path === '/v1/artifacts') {
                 if (request.method !== 'POST') return delayedRead ?? Response.json([...artifacts.values()]);

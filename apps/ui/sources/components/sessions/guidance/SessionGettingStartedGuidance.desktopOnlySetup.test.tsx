@@ -5,6 +5,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionGuidanceCommonModuleMocks } from './sessionGuidanceTestHelpers';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerId, removeServerProfile, resolveServerProfileScopeId, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { dismissPendingSetupIntent } from '@/sync/domains/pending/dismissPendingSetupIntent';
+import { clearPendingSetupIntent, getPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -93,6 +95,7 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
     });
     afterEach(async () => {
         standardCleanup();
+        clearPendingSetupIntent();
         await setActiveServerId(initialServerId);
         await removeServerProfile(fixtureHomeId);
         storage.setState(initialStorageState, true);
@@ -120,7 +123,8 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
 
     it('keeps the setup action on the empty state after the user chose "I\'ll do this later" (never a blank pane)', async () => {
         tauriState.desktop = false;
-        storage.getState().applyLocalSettings({ sessionGettingStartedGuidanceDismissed: true });
+        dismissPendingSetupIntent();
+        expect(getPendingSetupIntent()?.phase).toBe('dismissed');
         const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
 
         for (const variant of ['sidebar', 'primaryPane', 'newSessionBlocking'] as const) {

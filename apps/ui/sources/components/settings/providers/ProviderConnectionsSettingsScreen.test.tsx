@@ -168,8 +168,9 @@ describe('ProviderConnectionsSettingsScreen', () => {
         vi.unstubAllGlobals();
     });
     beforeEach(() => {
-        const machine = createMachineFixture({ id: 'machine-a', revokedAt: null,
-            metadata: { host: 'tester.local', platform: 'darwin', displayName: 'Mac' } });
+        const machine = createMachineFixture({ id: 'machine-a', revokedAt: null });
+        if (!machine.metadata) throw new Error('canonical machine fixture metadata is unavailable');
+        machine.metadata.displayName = 'Mac';
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { 'server-a': [machine] } });
         providerHarness.reset();
         administrationTarget.controller.reset();

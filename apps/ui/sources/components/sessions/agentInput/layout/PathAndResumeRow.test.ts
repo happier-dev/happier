@@ -12,7 +12,8 @@ installSessionDetailsPanelCommonModuleMocks({
         return createReactNativeWebMock({
             // Forward actual native anchor refs; node identity is supplied by the renderer's SDK port.
             Pressable: React.forwardRef<View, React.ComponentProps<typeof import('react-native')['Pressable']>>(
-                (props, ref) => React.createElement('Pressable', { ...props, ref }, props.children),
+                (props, ref) => React.createElement('Pressable', { ...props, ref },
+                    typeof props.children === 'function' ? props.children({ pressed: false }) : props.children),
             ),
             useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
         });

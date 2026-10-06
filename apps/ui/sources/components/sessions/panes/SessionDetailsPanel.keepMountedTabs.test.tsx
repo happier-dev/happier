@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import type { SessionSystemRecordStored } from '@happier-dev/protocol';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol';
 import type { MountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
@@ -80,11 +80,11 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
 });
 
 function record(localId: string, kind: string, value: unknown): SessionSystemRecordStored {
-    return {
+    return SessionSystemRecordStoredSchema.parse({
         id: localId, address: { owner: 'host', namespace: 'surface', kind, localId },
         content: { t: 'plain', v: value }, revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
         createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
-    };
+    });
 }
 
 function sessionWire(id: string) {
@@ -165,7 +165,7 @@ describe.each([true, false])('SessionDetailsPanel exact-Home Board action (Home 
             runtime.pane.splitDetailsGroup?.({ axis: 'horizontal' });
             runtime.pane.openDetailsTab(createSessionBoardDetailsTab(), { intent: 'pinned' });
         });
-        expect(runtime.pane.scopeState?.details.groups.some(group => group.activeTabKey === 'board')).toBe(true);
+        expect(runtime.pane.scopeState?.details.groups?.some(group => group.activeTabKey === 'board')).toBe(true);
         expect(Boolean(screen.findHostByTestId('session-details-open-board'))).toBe(enabled);
         if (enabled) {
             await act(async () => runtime.pane.closeDetailsTab('board'));

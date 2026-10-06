@@ -1060,14 +1060,14 @@ describe('machineSpawnNewSession error mapping', () => {
   });
 
   it('does not send an initial prompt or spawn nonce to an unsupported daemon', async () => {
-    storage.setState({
-      ...initialStorageState,
-      profileScope: { serverId: 'server-a', accountId: 'account-1' },
+    storage.getState().activateProfileScope({ serverId: 'server-a', accountId: 'account-1' });
+    storage.setState((previous) => ({
+      ...previous,
       machines: {
-        ...initialStorageState.machines,
+        ...previous.machines,
         'machine-1': buildMachine({ id: 'machine-1', cliVersion: '0.0.9' }),
       },
-    }, true);
+    }), true);
     const { machineSpawnNewSession } = await import('./machines');
     const result = await machineSpawnNewSession({
       machineId: 'machine-1',

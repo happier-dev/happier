@@ -246,7 +246,7 @@ export interface NewSessionWizardFooterProps {
 }
 
 export interface NewSessionWizardProps {
-    popoverBoundaryRef: React.RefObject<RNView>;
+    popoverBoundaryRef: React.RefObject<RNView | null>;
     layout: NewSessionWizardLayoutProps;
     sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
     useColumnLayout?: boolean;

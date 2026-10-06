@@ -11,6 +11,7 @@ import {
     decodePlainArtifactStoredContent,
     REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL,
     SessionMetadataInactiveModelIntentPatchV1Schema,
+    ProviderBoundModelRefSchema,
     V2SessionRecordSchema,
     type ActionId,
     type ActionExecutorContext,
@@ -78,7 +79,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null =
 let webLocks: ReturnType<typeof installWebLockManagerMock>;
 
 function selection(modelId: string, providerConnectionId: string | null = null) {
-    return { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId, modelId };
+    return ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId, modelId });
 }
 const binding = {
     v: 1, connectionId: 'pc_active', contributionKey: null, connectionRevision: 1,
@@ -334,7 +335,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         });
         expect(await executeModel(modelInput('provider-model', 'pc_work'))).toMatchObject({ ok: false, errorCode: 'superseded', details: {
             status: 'superseded', requestedSelection: selection('provider-model', 'pc_work'), reason: 'accepted_intent_was_superseded' } });
-        expect(remote.readMetadata().modelSelectionIntentV1?.selection.modelId).toBe('newer-model');
+        expect(remote.readMetadata().modelSelectionIntentV1?.selection?.modelId).toBe('newer-model');
         expect(rpc.session).not.toHaveBeenCalled();
     });
 

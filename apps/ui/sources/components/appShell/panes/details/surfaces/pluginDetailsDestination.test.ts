@@ -38,7 +38,9 @@ import {
 installSessionDetailsPanelCommonModuleMocks();
 const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
 beforeEach(() => {
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', serverId: runtime.serverId })]);
+    const machine = createMachineFixture({ id: 'machine-1' });
+    storage.getState().applyMachines([machine]);
+    storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId, [runtime.serverId]: [machine] } });
 });
 async function renderScreen(element: React.ReactElement) {
     return renderPanelScreen(element, { wrapper: runtime.Wrapper });

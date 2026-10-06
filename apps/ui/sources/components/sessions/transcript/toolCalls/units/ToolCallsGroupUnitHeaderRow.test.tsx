@@ -170,7 +170,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findAllByType(await loadActivitySpinner())).toHaveLength(0);
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'minus-circle' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('tool-calls-group-status:permission_denied')).toMatchObject({
@@ -198,7 +198,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findAllByType(await loadActivitySpinner())).toHaveLength(0);
+        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'minus-circle' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('tool-calls-group-status:permission_canceled')).toMatchObject({

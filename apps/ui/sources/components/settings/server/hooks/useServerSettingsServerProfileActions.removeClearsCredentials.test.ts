@@ -100,7 +100,7 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
                 expiresAt: createdAt + 10 * 60 * 1000,
                 pending: 'oauth-pending' as const, migrationSubmissionAttempted: true,
             },
-        };
+        } satisfies Parameters<typeof TokenStorage.setPendingExternalAuth>[0];
         await expect(TokenStorage.setPendingExternalAuth(pending)).resolves.toBe(true);
         await profiles.setActiveServerId(active.id, { scope: 'device' });
         let revision = 0;

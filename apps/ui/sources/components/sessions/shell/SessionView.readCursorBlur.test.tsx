@@ -22,7 +22,8 @@ let markSessionViewedSpy: MockInstance<typeof import('@/sync/sync')['sync']['mar
 const readCursorRequests: Array<{ homeUrl: string; input: unknown }> = [];
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
-installDisconnectedServerSocketBoundary(socket => {
+installDisconnectedServerSocketBoundary((socket, serverUrl) => {
+    if (!serverUrl) throw new Error('Read-cursor transport fixture requires an explicit Home URL');
     vi.mocked(socket.connect).mockImplementation(() => {
         socket.connected = true;
         for (const listener of socket.listeners('connect')) listener();
@@ -30,7 +31,7 @@ installDisconnectedServerSocketBoundary(socket => {
     });
     vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, input: unknown) => {
         if (event === 'update-read-cursor') {
-            readCursorRequests.push({ homeUrl: socket.io.uri, input });
+            readCursorRequests.push({ homeUrl: serverUrl, input });
             return { result: 'success', lastViewedSessionSeq: (input as { lastViewedSessionSeq: number }).lastViewedSessionSeq };
         }
         return { v: 1, ok: true, admittedSessionIds: [] };

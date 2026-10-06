@@ -64,7 +64,7 @@ let ActualSurfaceHost: typeof import('@/components/plugins/surfaces')['PluginSur
 type SurfaceMountProps = React.ComponentProps<typeof import('@/components/plugins/surfaces')['PluginSurfacePlacementHost']>;
 
 function latestMountFor(descriptorId: string): SurfaceMountProps | null {
-    // React TestRenderer's untyped SDK props are narrowed at this fixture query boundary.
+    // The component query preserves the mounted surface's real public props.
     return mountedScreen?.tree.findAllByType(ActualSurfaceHost)
         .find(node => node.props.placement?.descriptorId === descriptorId)?.props ?? null;
 }
@@ -537,6 +537,7 @@ describe('AppScopeRightSidebar', () => {
 
             const destination = latestMountFor('detail-panel');
             expect(destination).toBeTruthy();
+            if (!destination) throw new Error('Expected the admitted detail-panel mount');
             expect(destination.launchInput).toBeUndefined();
         });
 

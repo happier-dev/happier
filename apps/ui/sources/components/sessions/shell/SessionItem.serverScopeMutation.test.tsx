@@ -106,8 +106,8 @@ const mutationRequests: Array<{ url: string; method: string; token: string | nul
 const mutationOrder: string[] = [];
 afterAll(() => network.dispose());
 
-async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]) {
-    const props = element.props as Partial<ModelBackedSessionItemTestProps>;
+async function renderScreen(element: React.ReactElement<ModelBackedSessionItemTestProps>) {
+    const props = element.props;
     if (props.session && props.serverId) {
         const homeUrl = `https://${props.serverId.replaceAll('_', '-')}.test`;
         const home = await network.addHome(homeUrl, 'row-account');
@@ -265,7 +265,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(
@@ -329,7 +329,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(
@@ -584,7 +584,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(
@@ -686,7 +686,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(
@@ -791,7 +791,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(
@@ -873,7 +873,7 @@ describe('SessionItem server-scoped mutations', () => {
             agentStateVersion: 1,
             thinking: false,
             thinkingAt: 0,
-            presence: 'offline',
+            presence: 0,
         });
 
         const screen = await renderScreen(

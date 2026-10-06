@@ -32,7 +32,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
     features: () => createRootLayoutFeaturesResponse({
         features: {
             devices: { simulatorPreview: { enabled: true } },
-            machines: { enabled: true, liveStream: { enabled: true, serverRouted: { enabled: true } } },
+            machines: { enabled: true, liveStream: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: true } } },
         },
         capabilities: { devices: { simulatorPreview: {
             ...DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,

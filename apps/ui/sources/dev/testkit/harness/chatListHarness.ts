@@ -558,7 +558,7 @@ export async function triggerLegendChatListEndReached(
  * at-end reads observe it.
  */
 export async function triggerLegendChatListInitialFill(
-    screen: ChatListHarness,
+    screen: Pick<RenderScreenResult, 'findByTestId'>,
     options: Readonly<{
         contentHeight?: number;
         flushOptions?: FlushHookEffectsOptions;

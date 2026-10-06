@@ -297,7 +297,14 @@ async function renderHarness(params: {
   const { NavigationContext, useNavigation } = await import('@react-navigation/native');
   function NavigationHarness() {
     const navigation = useNavigation();
-    return React.createElement(NavigationContext.Provider, { value: navigation }, React.createElement(Harness));
+    return React.createElement(NavigationContext.Provider, { value: {
+      ...navigation,
+      getState: () => {
+        const state = navigation.getState();
+        if (!state) throw new Error('Expected the draft fixture navigation state');
+        return state;
+      },
+    } }, React.createElement(Harness));
   }
   root = (await renderScreen(React.createElement(NavigationHarness))).tree;
 

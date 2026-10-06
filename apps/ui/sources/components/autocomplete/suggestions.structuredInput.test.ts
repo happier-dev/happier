@@ -523,7 +523,7 @@ describe('structured input autocomplete suggestions', () => {
                 id: 'machine-1',
                 active: true,
                 activeAt: 20,
-                metadata: { host: 'host.local', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/home/test/.happier' },
+                metadata: { host: 'host.local', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/home/test/.happier', homeDir: '/home/test' },
             }),
         } });
         machineRpcWithServerScopeMock.mockImplementation(async (params: { method?: string }) => {

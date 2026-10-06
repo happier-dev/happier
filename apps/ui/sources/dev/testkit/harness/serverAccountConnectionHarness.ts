@@ -2,7 +2,8 @@ import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-const socketBoundary = vi.hoisted(() => ({ configure: undefined as ((socket: Socket) => void) | undefined }));
+type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
+const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSocketBoundary | undefined }));
 
 /** Also reusable by cross-package suites whose host imports Socket before the UI harness. */
 export async function createSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
@@ -19,13 +20,13 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
             for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
             return socket;
         });
-        socketBoundary.configure?.(socket);
+        socketBoundary.configure?.(socket, args[0]);
         return socket;
     } };
 }
 
 /** Keep the real Socket and Sync owners; only the external transport is replaced. */
-export function installDisconnectedServerSocketBoundary(configure?: (socket: Socket) => void): void {
+export function installDisconnectedServerSocketBoundary(configure?: ConfigureSocketBoundary): void {
     socketBoundary.configure = configure;
     vi.mock('socket.io-client', createSocketIoClientBoundary);
 }

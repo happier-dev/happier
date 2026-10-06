@@ -94,7 +94,7 @@ vi.mock('expo-image', () => ({
 
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return createReactNavigationNativeMock({ useFocusEffect: () => {} });
+    return { ...createReactNavigationNativeMock(), useFocusEffect: () => {} };
 });
 
 vi.mock('expo-constants', () => ({

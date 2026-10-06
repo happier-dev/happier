@@ -298,9 +298,11 @@ async function renderRow(options: Readonly<{
 
     account = await createSecretSettingsTestHarness({ mode: 'e2ee' });
     const { sync } = await import('@/sync/sync');
+    const { storage } = await import('@/sync/domains/state/storage');
     const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
     requireOneShotAccountSettingsMutationApplied(await sync.mutateAccountSettingsOnce({
         expectedSettingsScope: account.scope,
+        expectedSettingsVersion: storage.getState().settingsVersion,
         mutate: (raw) => ({
             settings: { ...raw, ...(options.initialRawSettings ?? { secrets: SECRETS }) },
             value: undefined,

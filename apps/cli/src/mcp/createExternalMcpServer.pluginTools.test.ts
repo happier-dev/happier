@@ -56,9 +56,9 @@ describe('createExternalMcpServer plugin tools', () => {
         inputHints: {
           fields: [{
             path: 'scope',
-            title: { fallback: 'Scope' },
+            title: 'Scope',
             widget: 'select',
-            options: [{ value: 'diff', label: { fallback: 'Diff' } }],
+            options: [{ value: 'diff', label: 'Diff' }],
           }],
         },
         examples: { mcp: { argsExample: '{"scope":"diff"}' } },
@@ -106,9 +106,9 @@ describe('createExternalMcpServer plugin tools', () => {
             inputHints: {
               fields: [{
                 path: 'scope',
-                title: { fallback: 'Scope' },
+                title: 'Scope',
                 widget: 'select',
-                options: [{ value: 'diff', label: { fallback: 'Diff' } }],
+                options: [{ value: 'diff', label: 'Diff' }],
               }],
             },
             examples: { mcp: { argsExample: '{"scope":"diff"}' } },

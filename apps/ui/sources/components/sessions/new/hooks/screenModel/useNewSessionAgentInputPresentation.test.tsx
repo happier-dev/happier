@@ -32,7 +32,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         };
         const createChip = (stabilityKey: string, renderContent: () => string) => ({
             key: 'new-session-mcp',
-            controlId: 'mcp',
+            controlId: 'mcp' as const,
             stabilityKey,
             collapsedContentPopover: { title: 'MCP', label: 'MCP', renderContent },
             render: () => null,
